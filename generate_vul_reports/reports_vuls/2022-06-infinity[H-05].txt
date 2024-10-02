@@ -1,0 +1,13 @@
+[H-05] Missing Complication check intakeMultipleOneOrders
+Submitted by shenwilly
+An order’s type and it’s rules are defined in it’sComplication. Not checking it would allow anyone to take any orders regardless of their Complication’s rule, causing unexpected execution for order makers.
+takeMultipleOneOrdersassumes that allmakerOrdersare simple orderbook orders and the  Complication check is missing here.
+Proof of Concept
+Alice signs a makerOrder withPrivateSaleComplication, allowing only Bob to take the private sale order.A malicious trader callstakeMultipleOneOrdersto take Alice’s order, despite the Complication only allowing Bob to take it.
+Recommended Mitigation Steps
+AddcanExecTakeOneOrderfunction in IComplication.sol and implement it inInfinityOrderBookComplication(and future Complications) to supporttakeMultipleOneOrdersoperation, then modifytakeMultipleOneOrdersto use the check:
+function takeMultipleOneOrders() {...for (uint256 i = 0; i < numMakerOrders; ) {bytes32 makerOrderHash = _hash(makerOrders[i]);bool makerOrderValid = isOrderValid(makerOrders[i], makerOrderHash);bool executionValid = IComplication(makerOrders[i].execParams[0]).canExecTakeOneOrder(makerOrders[i]);require(makerOrderValid && executionValid, 'order not verified');require(currency == makerOrders[i].execParams[1], 'cannot mix currencies');require(isMakerSeller == makerOrders[i].isSellOrder, 'cannot mix order sides');uint256 execPrice = _getCurrentPrice(makerOrders[i]);totalPrice += execPrice; // @audit-issue missing complication check_execTakeOneOrder(makerOrderHash, makerOrders[i], isMakerSeller, execPrice);unchecked {++i;}}...}
+nneverlander (Infinity) confirmed and resolved:
+fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/0b7608a2c9efc71d902a9c90f4731ef434b42c31.
+HardlyDifficult (judge) commented:
+takeMultipleOneOrdersdoes not check restrictions set via the Complication. Agree with the High risk assessment here.

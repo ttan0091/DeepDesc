@@ -1,0 +1,21 @@
+Type of vulnerability: Reentrancy and Token Stuck Vulnerability
+Cause of vulnerability: Misuse of pre- and post-balance checks for COMP token transfer
+Execution process: An attacker claims COMP tokens on behalf of the contract, preventing the contract from claiming any COMP itself, and causing the claimed COMP to be stuck in the contract.
+Vulnerable code: 
+```solidity
+function claimCOMPAndTransfer(address[] calldata cTokens) external override onlyManagerContract nonReentrant returns (uint256) {
+    // Take a snapshot of the COMP balance before we claim COMP so that we don't inadvertently transfer
+    // something we shouldn't.
+    uint256 balanceBefore = COMP.balanceOf(address(this));
+    COMPTROLLER.claimComp(address(this), cTokens);
+    // NOTE: If Notional ever lists COMP as a collateral asset it will be cCOMP instead and it
+    // will never hold COMP balances directly. In this case we can always transfer all the COMP
+    // off of the contract.
+    uint256 balanceAfter = COMP.balanceOf(address(this));
+    uint256 amountClaimed = balanceAfter.sub(balanceBefore);
+    // NOTE: the onlyManagerContract modifier prevents a transfer to address(0) here
+    COMP.safeTransfer(treasuryManagerContract, amountClaimed);
+    // NOTE: TreasuryManager contract will emit a COMPHarvested event
+    return amountClaimed;
+}
+```

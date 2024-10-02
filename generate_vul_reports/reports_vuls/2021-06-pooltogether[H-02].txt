@@ -1,0 +1,9 @@
+[H-02]YearnV2YieldSourcewrong subtraction in withdraw
+Submitted by cmichel, also found by 0xRajeev
+When withdrawing from thevault, one redeemsyTokensfortokens, thus thetokenbalance of the contract should increase after withdrawal.
+But the contract subtracts thecurrentBalancefrom thepreviousBalance:
+uint256yShares=_tokenToYShares(amount);uint256previousBalance=token.balanceOf(address(this));// we accept losses to avoid being locked in the Vault (if losses happened for some reason)if(maxLosses!=0) {vault.withdraw(yShares,address(this),maxLosses);}else{vault.withdraw(yShares);}uint256currentBalance=token.balanceOf(address(this));// @audit-issue this seems wrongreturnpreviousBalance.sub(currentBalance);
+All vault withdrawals fail due to the integer underflow as thepreviousBalanceis less thancurrentBalance. Users won’t be able to get back their investment.
+Recommend that It should returncurrentBalance > previousBalance ? currentBalance - previousBalance : 0
+kamescg (PoolTogether) confirmed and patched:
+https://github.com/pooltogether/pooltogether-yearnv2-yield-source/pull/new/fix/90https://github.com/pooltogether/pooltogether-yearnv2-yield-source/pull/7

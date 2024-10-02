@@ -1,0 +1,23 @@
+[H-01] Unused ERC20 tokens are not refunded, and can be stolen by attacker
+Submitted by WatchPug
+Under certain circumstances, e.g.annualizedFeebeing minted tofeeBeneficiarybetween the time user sent the transaction and the transaction being packed into the block and causing amounts of underlying tokens for each basketToken to decrease. It’s possible or even most certainly that there will be some leftover basket underlying tokens, asBasketFacet.sol#joinPool()will only transfer required amounts of basket tokens from Join contracts.
+However, in the current implementation, only the leftover inputToken is returned.
+As a result, the leftover underlying tokens won’t be returned to the user, which constitutes users’ fund loss.
+SingleTokenJoinV2.solL57-L78
+functionjoinTokenSingle(JoinTokenStructV2calldata_joinTokenStruct)external{// ######## INIT TOKEN #########IERC20inputToken=IERC20(_joinTokenStruct.inputToken);inputToken.safeTransferFrom(msg.sender,address(this),_joinTokenStruct.inputAmount);_joinTokenSingle(_joinTokenStruct);// ######## SEND TOKEN #########uint256remainingIntermediateBalance=inputToken.balanceOf(address(this));if(remainingIntermediateBalance>0) {inputToken.safeTransfer(msg.sender,remainingIntermediateBalance);}}
+BasketFacet.solL143-L168
+functionjoinPool(uint256_amount,uint16_referral)externaloverridenoReentry{require(!this.getLock(),"POOL_LOCKED");chargeOutstandingAnnualizedFee();LibBasketStorage.BasketStoragestoragebs=LibBasketStorage.basketStorage();uint256totalSupply=LibERC20Storage.erc20Storage().totalSupply;require(totalSupply.add(_amount) <=this.getCap(),"MAX_POOL_CAP_REACHED");uint256feeAmount=_amount.mul(bs.entryFee).div(10**18);for(uint256i;i<bs.tokens.length;i++) {IERC20token=bs.tokens[i];uint256tokenAmount=balance(address(token)).mul(_amount.add(feeAmount)).div(totalSupply);require(tokenAmount!=0,"AMOUNT_TOO_SMALL");token.safeTransferFrom(msg.sender,address(this),tokenAmount);}...
+Furthermore, the leftover tokens in theSingleTokenJoinV2contract can be stolen by callingjoinTokenSingle()with fakeoutputBasketcontract andswap.exchangecontract.
+Recommended Mitigation Steps
+Consider:
+CallingIBasketFacet.calcTokensForAmount()first and only swap for exactly the desired amounts of tokens (likeSingleTokenJoin.sol);Or, refund leftover tokens.
+loki-sama (Amun) acknowledged
+[H-02] It might not be possible to withdraw tokens from the basket
+Submitted by Czar102, also found by csanuragjain
+Impact
+When enough basket token owners exit, it will be impossible to exit pool with the lastMIN_AMOUNTtokens because ofthischeck. This will result in locking some tokens forever.
+Recommended Mitigation Steps
+Consider resigning from this check or performing it only for the owner balance, who would need to have at leastMIN_AMOUNTtokens.
+loki-sama (Amun) disagreed with severity
+0xleastwood (Judge) commented:
+Nice find! I think this is valid:)

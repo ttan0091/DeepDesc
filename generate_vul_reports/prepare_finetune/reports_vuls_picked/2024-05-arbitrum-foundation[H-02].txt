@@ -1,0 +1,16 @@
+Type of vulnerability: Inheritance of Timers Across Different Challenge Trees
+Cause of vulnerability: Lack of additional validation to prevent rivals from dishonest challenge edge trees from inheriting timers from honest trees.
+Execution process: A malicious actor can inherit a timer from an honest challenge tree, allowing them to confirm a dishonest challenge edge, thereby confirming an incorrect assertion. This is done by ensuring that a dishonest edge inherits the timer from an honest edge, which accumulates sufficient time for confirmation, and then propagating this timer upwards to confirm the dishonest edge.
+Vulnerable code: 
+```solidity
+function checkClaimIdLink(EdgeStore storage store, bytes32 edgeId, bytes32 claimingEdgeId, uint8 numBigStepLevel) private view {
+    // the origin id of an edge should be the mutual id of the edge in the level below
+    if (store.edges[edgeId].mutualId() != store.edges[claimingEdgeId].originId) {
+        revert OriginIdMutualIdMismatch(store.edges[edgeId].mutualId(), store.edges[claimingEdgeId].originId);
+    }
+    // the claiming edge must be exactly one level below
+    if (nextEdgeLevel(store.edges[edgeId].level, numBigStepLevel) != store.edges[claimingEdgeId].level) {
+        revert EdgeLevelInvalid(edgeId, claimingEdgeId, nextEdgeLevel(store.edges[edgeId].level, numBigStepLevel), store.edges[claimingEdgeId].level);
+    }
+}
+```

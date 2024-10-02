@@ -1,0 +1,218 @@
+[H-01] Theredeemrelated functions are likely to be blocked
+Submitted byKingNFT, also found byxiaoming90,ladboy233,0x52,rvierdiiev, andHE1M
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexGmx.sol#L615
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexGmx.sol#L685
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexGmx.sol#L712
+Impact
+The followingredeemrelated functions are likely to be blocked, users will not be able to retrieve their funds.
+function _redeemPxGlp(address token,uint256 amount,uint256 minOut,address receiver);function redeemPxGlpETH(uint256 amount,uint256 minOut,address receiver);function redeemPxGlp(address token,uint256 amount,uint256 minOut,address receiver);
+Proof of Concept
+TheGlpManagercontract of GMX has acooldownDurationlimit on redeem/unstake (\_removeLiquidity()). While there is at least one deposit/stake (\_addLiquidity()) operation in the pastcooldownDurationtime, redemption would fail. Obviously this limitation is user-based,  andPirexGmxcontract is one such user.
+https://github.com/gmx-io/gmx-contracts/blob/c3618b0d6fc1b88819393dc7e6c785e32e78c72b/contracts/core/GlpManager.sol#L234
+Current setting of `cooldownDuration` is 15 minutes, the max value is 2 days.
+https://arbiscan.io/address/0x321f653eed006ad1c29d174e17d96351bde22649#readContract
+Due to the above limit, there are 3 risks that can block redemption for Pirex users.
+The normal case
+Let’s say there is 10% GMX users will use Pirex to manage their GLP.
+By checking recent history of GMX router contract, we can find the average stake interval is smaller than 1 minutehttps://arbiscan.io/address/0xa906f338cb21815cbc4bc87ace9e68c87ef8d8f1
+Let’s take
+averageStakeIntervalOfGMX = 30 seconds
+So if Pirex has 10% of GMX users, then
+averageStakeIntervalOfPirex = 30 ÷ 10% = 300 seconds
+The probability of successfully redeeming is a typical Poisson distribution:https://en.wikipedia.org/wiki/Poisson_distribution.
+With
+λ = cooldownDuration ÷ averageStakeIntervalOfPirex = 15 * 60 ÷ 300 = 3k = 0
+So we get
+P ≈ 1 ÷ (2.718 * 2.718 * 2.718) ≈ 0.05
+Conclusion
+If Pirex has 10 % of GMX users, then the redemption will fail with 95% probability.
+A full list of % of GMX users versus failure probability of redemption
+1% : 26%5% : 78%10% : 95%20% : 99.75%30% : 99.98%
+The attack case
+If an attacker, such as bad competitors of similar projects, try to exploit this vulnerability.
+Let’s estimate the cost for attack.
+An attacker can deposit a very small GLP, such as 1 wei, so we can ignore the GLP cost and only focus on GAS cost.
+By checking the explorer historyhttps://arbiscan.ioWe are safe to assume the cost for calling
+depositGlpETH()ordepositGlpis
+txCost = 0.1 USD
+To block redemption, attacker has to execute a deposit call every 15 minutes, so
+dailyCost = 24 * (60 / 15) * 0.1 = 9.6 USDyearCost = 365 * 9.6 = 3504 USD
+Conclusion
+If an attacker wants to block Pirex users funds, his yearly cost is only about 3.5k USD.
+GMX adjusts protocol parameters
+If GMX increasescooldownDurationto 2 days, it will obviously cause redemption not working.
+Tools Used
+VS Code
+Recommended Mitigation Steps
+Reserve some time range for redemption only. e.g. 1 of every 7 days.
+kphed (Redacted Cartel) confirmed
+
+[H-02] Users Receive Less Rewards Due To Miscalculations
+Submitted byxiaoming90, also found by__141345__
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L305
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L281
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L373
+Background
+The amount of rewards accrued by global and user states is computed by the following steps:
+Calculate seconds elapsed since the last update (block.timestamp - lastUpdate)Calculate the new rewards by multiplying seconds elapsed by the last supply ((block.timestamp - lastUpdate) * lastSupply)Append the new rewards to the existing rewards (rewards = rewards + (block.timestamp - lastUpdate) * lastSupply)
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L305
+/**@noticeUpdate global accrual state@paramglobalStateGlobalState  Global state of the producer token@paramproducerTokenERC20        Producer token contract*/function_globalAccrue(GlobalStatestorageglobalState,ERC20producerToken)internal{uint256totalSupply=producerToken.totalSupply();uint256lastUpdate=globalState.lastUpdate;uint256lastSupply=globalState.lastSupply;// Calculate rewards, the product of seconds elapsed and last supply// Only calculate and update states when neededif(block.timestamp!=lastUpdate||totalSupply!=lastSupply) {uint256rewards=globalState.rewards+(block.timestamp-lastUpdate) *lastSupply;globalState.lastUpdate=block.timestamp.safeCastTo32();globalState.lastSupply=totalSupply.safeCastTo224();globalState.rewards=rewards;..SNIP..}
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L281
+/**@noticeUpdate user rewards accrual state@paramproducerTokenERC20    Rewards-producing token@paramuseraddress  User address*/functionuserAccrue(ERC20producerToken,addressuser)public{if(address(producerToken) ==address(0))revertZeroAddress();if(user==address(0))revertZeroAddress();UserStatestorageu=producerTokens[producerToken].userStates[user];uint256balance=producerToken.balanceOf(user);// Calculate the amount of rewards accrued by the user up to this calluint256rewards=u.rewards+u.lastBalance*(block.timestamp-u.lastUpdate);u.lastUpdate=block.timestamp.safeCastTo32();u.lastBalance=balance.safeCastTo224();u.rewards=rewards;..SNIP..}
+When a user claims the rewards, the number of reward tokens the user is entitled to is equal to therewardStatescaled by the ratio of theuserRewardsto theglobalRewards. Refer to Line 403 below.
+TherewardStaterepresents the total number of a specific ERC20 reward token (e.g. WETH or esGMX) held by a producer (e.g. pxGMX or pxGPL).
+TherewardStateof each reward token (e.g. WETH or esGMX) will increase whenever the rewards are harvested by the producer (e.g.PirexRewards.harvestis called). On the other hand, therewardStatewill decrease if the users claim the rewards.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L373
+File:PirexRewards.sol373:functionclaim(ERC20producerToken,addressuser)external{..SNIP..395:// Transfer the proportionate reward token amounts to the recipient396:for(uint256i;i<rLen; ++i) {397:ERC20rewardToken=rewardTokens[i];398:addressrewardRecipient=p.rewardRecipients[user][rewardToken];399:addressrecipient=rewardRecipient!=address(0)400:                     ?rewardRecipient401:                     :user;402:uint256rewardState=p.rewardStates[rewardToken];403:uint256amount= (rewardState*userRewards) /globalRewards;..SNIP..417:     }
+How reward tokens are distributed
+The Multiplier Point (MP) effect will be ignored for simplicity. Assume that the emission rate is constant throughout the entire period (from T80 to T84) and the emission rate is 1 esGMX per 1 GMX staked per second.
+The graph below represents the amount of GMX tokens Alice and Bob staked for each second during the period.
+A = Alice and B = Bob; each block represents 1 GMX token staked.
+
+Based on the above graph:
+Alice staked 1 GMX token from T80 to T84. Alice will earn five (5) esGMX tokens at the end of T84.Bob staked 4 GMX tokens from T83 to T84. Bob will earn eight (8) esGMX tokens at the end of T84.A total of 13 esGMX will be harvested byPirexRewardscontract at the end of T84
+The existing reward distribution design in thePirexRewardscontract will work perfectly if the emission rate is constant, similar to the example above.
+In this case, the state variable will be as follows at the end of T84, assuming both the global and all user states have been updated and rewards have been harvested.
+rewardState = 13 esGMX tokens (5 + 8)globalRewards = 13AccrueduserRewardsof Alice = 5AccrueduserRewardsof Bob = 8
+When Alice calls thePirexRewards.claimfunction to claim her rewards at the end of T84, she will get back five (5) esGMX tokens, which is correct.
+(rewardState*userRewards) /globalRewards(13*5) /13=5
+Proof of Concept
+However, the fact is that the emission rate of reward tokens (e.g. esGMX or WETH) is not constant. Instead, the emission rate is dynamic and depends on various factors, such as the following:
+The number of rewards tokens allocated by GMX governance for each month. Refer tohttps://gov.gmx.io/t/esgmx-emissions/272. In some months, the number of esGMX emissions will be higher.The number of GMX/GLP tokens staked by the community. The more tokens being staked by the community users, the more diluted the rewards will be.
+The graph below represents the amount of GMX tokens Alice and Bob staked for each second during the period.
+A = Alice and B = Bob; each block represents 1 GMX token staked.
+
+The Multiplier Point (MP) effect will be ignored for simplicity. Assume that the emission rate is as follows:
+From T80 to 82: 2 esGMX per 1 GMX staked per second (Higher emission rate)From T83 to 84: 1 esGMX per 1 GMX staked per second (Lower emission rate)
+By manually computing the amount of esGMX reward tokens that Alice is entitled to at the end of T84:
+[1stakedGMX* (T82-T80) * 2esGMX/sec] + [1stakedGMX* (T84-T83) * 1esGMX/sec][1stakedGMX*3secs* 2esGMX/sec] + [1stakedGMX* 2secs* 1esGMX/sec]6+2=8
+Alice will be entitled to 8 esGMX reward tokens at the end of T84.
+By manually computing the amount of esGMX reward tokens that Bob is entitled to at the end of T84:
+[4stakedGMX* 2secs* 1esGMX/sec] =8
+Bob will be entitled to 8 esGMX reward tokens at the end of T84.
+However, the existing reward distribution design in thePirexRewardscontract will cause Alice to get fewer reward tokens than she is entitled to and cause Bob to get more rewards than he is entitled to.
+The state variable will be as follows at the end of T84, assuming both the global and all user states have been updated and rewards have been harvested.
+rewardState = 16 esGMX tokens (8 + 8)globalRewards = 13AccrueduserRewardsof Alice = 5AccrueduserRewardsof Bob = 8
+When Alice calls thePirexRewards.claimfunction to claim her rewards at the end of T84, she will only get back six (6) esGMX tokens, which is less than eight (8) esGMX tokens she is entitled to or earned.
+(rewardState*userRewards) /globalRewards(16*5) /13=6.15=6
+When Bob calls thePirexRewards.claimfunction to claim his rewards at the end of T84, he will get back nine (9) esGMX tokens, which is more than eight (8) esGMX tokens he is entitled to or earned.
+(rewardState*userRewards) /globalRewards(16*8) /13=9.85=9
+Impact
+As shown in the PoC, some users will lose their reward tokens due to the miscalculation within the existing reward distribution design.
+Recommended Mitigation Steps
+Update the existing reward distribution design to handle the dynamic emission rate. Implement the RewardPerToken for users and global, as seen in many of the well-established reward contracts below, which are not vulnerable to this issue:
+https://github.com/fei-protocol/flywheel-v2/blob/dbe3cb81a3dc2e46536bb8af9c2bdc585f63425e/src/FlywheelCore.sol#L226https://github.com/Synthetixio/synthetix/blob/2cb4b23fe409af526de67dfbb84aae84b2b13747/contracts/StakingRewards.sol#L61
+kphed (Redacted Cartel) confirmed
+
+[H-03] Malicious Users Can Drain The Assets Of Auto Compound Vault
+Submitted byxiaoming90, also found bypashov,adriro,poirots,unforgiven,bin2chen,PaludoX0,0xSmartContract,ladboy233,Ruhum,cccz,koxuan,8olidity, andrvierdiiev
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/PirexERC4626.sol#L156
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGmx.sol#L199
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGmx.sol#L315
+Proof of Concept
+Note: This issue affects both the AutoPxGmx and AutoPxGlp vaults. Since the root cause is the same, the PoC of AutoPxGlp vault is omitted for brevity.
+ThePirexERC4626.convertToSharesfunction relies on themulDivDownfunction in Line 164 when calculating the number of shares needed in exchange for a certain number of assets. Note that the computation is rounded down, therefore, if the result is less than 1 (e.g. 0.9), Solidity will round them down to zero. Thus, it is possible that this function will return zero.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/PirexERC4626.sol#L156
+File:PirexERC4626.sol156:functionconvertToShares(uint256assets)157:public158:view159:virtual160:returns(uint256)161:     {162:uint256supply=totalSupply;// Saves an extra SLOAD if totalSupply is non-zero.163:164:returnsupply==0?assets:assets.mulDivDown(supply,totalAssets());165:     }
+TheAutoPxGmx.previewWithdrawfunction relies on thePirexERC4626.convertToSharesfunction in Line 206. Thus, this function will also “round down”.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGmx.sol#L199
+File:AutoPxGmx.sol199:functionpreviewWithdraw(uint256assets)200:public201:view202:override203:returns(uint256)204:     {205:// Calculate shares based on the specified assets' proportion of the pool206:uint256shares=convertToShares(assets);207:208:// Save 1 SLOAD209:uint256_totalSupply=totalSupply;210:211:// Factor in additional shares to fulfill withdrawal if user is not the last to withdraw212:return213:             (_totalSupply==0||_totalSupply-shares==0)214:                 ?shares215:                 : (shares*FEE_DENOMINATOR) /216:                     (FEE_DENOMINATOR-withdrawalPenalty);217:     }
+TheAutoPxGmx.withdrawfunction relies on theAutoPxGmx.previewWithdrawfunction. In certain conditions, theAutoPxGmx.previewWithdrawfunction in Line 323 will return zero if the withdrawal amount causes the division within thePirexERC4626.convertToSharesfunction to round down to zero (usually due to a small amount of withdrawal amount).
+If theAutoPxGmx.previewWithdrawfunction in Line 323 returns zero, no shares will be burned at Line 332. Subsequently, in Line 336, the contract will transfer the assets to the users. As a result, the users receive the assets without burning any of their shares, effectively allowing them to receive assets for free.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGmx.sol#L315
+File:AutoPxGmx.sol315:functionwithdraw(316:uint256assets,317:addressreceiver,318:addressowner319:     )publicoverridereturns(uint256shares) {320:// Compound rewards and ensure they are properly accounted for prior to withdrawal calculation321:compound(poolFee,1,0,true);322:323:shares=previewWithdraw(assets);// No need to check for rounding error, previewWithdraw rounds up.324:325:if(msg.sender!=owner) {326:uint256allowed=allowance[owner][msg.sender];// Saves gas for limited approvals.327:328:if(allowed!=type(uint256).max)329:allowance[owner][msg.sender] =allowed-shares;330:         }331:332:_burn(owner,shares);333:334:emitWithdraw(msg.sender,receiver,owner,assets,shares);335:336:asset.safeTransfer(receiver,assets);337:     }
+Assume that the vault with the following state:
+Total Asset = 1000 WETHTotal Supply = 10 shares
+Assume that Alice wants to withdraw 99 WETH from the vault. Thus, she calls theAutoPxGmx.withdraw(99 WETH)function.
+ThePirexERC4626.convertToSharesfunction will compute the number of shares that Alice needs to burn in exchange for 99 WETH.
+assets.mulDivDown(supply,totalAssets())99WETH.mulDivDown(10shares, 1000WETH)(99*10) /1000990/1000=0.99=0
+However, since Solidity rounds0.99down to0, Alice does not need to burn a single share. She will receive 99 WETH for free.
+Impact
+Malicious users can withdraw the assets from the vault for free, effectively allowing them to drain the assets of the vault.
+Recommended Mitigation Steps
+Ensure that at least 1 share is burned when the users withdraw their assets.
+This can be mitigated by updating thepreviewWithdrawfunction to round up instead of round down when computing the number of shares to be burned.
+function previewWithdraw(uint256 assets)publicviewoverridereturns (uint256){// Calculate shares based on the specified assets' proportion of the pool-	uint256 shares = convertToShares(assets);+	uint256 shares = supply == 0 ? assets : assets.mulDivUp(supply, totalAssets());// Save 1 SLOADuint256 _totalSupply = totalSupply;// Factor in additional shares to fulfill withdrawal if user is not the last to withdrawreturn(_totalSupply == 0 || _totalSupply - shares == 0)? shares: (shares * FEE_DENOMINATOR) /(FEE_DENOMINATOR - withdrawalPenalty);}
+kphed (Redacted Cartel) confirmed
+
+[H-04] User’s Accrued Rewards Will Be Lost
+Submitted byxiaoming90
+If the user deposits too little GMX compared to other users (or total supply of pxGMX), the user will not be able to receive rewards after calling thePirexRewards.claimfunction. Subsequently, their accrued rewards will be cleared out (set to zero), and they will lose their rewards.
+The amount of reward tokens that are claimable by a user is computed in Line 403 of thePirexRewards.claimfunction.
+If the balance of pxGMX of a user is too small compared to other users (or total supply of pxGMX), the code below will always return zero due to rounding issues within solidity.
+uint256amount= (rewardState*userRewards) /globalRewards;
+Since the user’s accrued rewards is cleared at Line 391 within thePirexRewards.claimfunction (p.userStates[user].rewards = 0;), the user’s accrued rewards will be lost.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L373
+File:PirexRewards.sol368:/**369:@noticeClaim rewards370:@paramproducerTokenERC20    Producer token contract371:@paramuseraddress  User372:     */373:functionclaim(ERC20producerToken,addressuser)external{374:if(address(producerToken) ==address(0))revertZeroAddress();375:if(user==address(0))revertZeroAddress();376:377:harvest();378:userAccrue(producerToken,user);379:380:ProducerTokenstoragep=producerTokens[producerToken];381:uint256globalRewards=p.globalState.rewards;382:uint256userRewards=p.userStates[user].rewards;383:384:// Claim should be skipped and not reverted on zero global/user reward385:if(globalRewards!=0&&userRewards!=0) {386:ERC20[]memoryrewardTokens=p.rewardTokens;387:uint256rLen=rewardTokens.length;388:389:// Update global and user reward states to reflect the claim390:p.globalState.rewards=globalRewards-userRewards;391:p.userStates[user].rewards=0;392:393:emitClaim(producerToken,user);394:395:// Transfer the proportionate reward token amounts to the recipient396:for(uint256i;i<rLen; ++i) {397:ERC20rewardToken=rewardTokens[i];398:addressrewardRecipient=p.rewardRecipients[user][rewardToken];399:addressrecipient=rewardRecipient!=address(0)400:                     ?rewardRecipient401:                     :user;402:uint256rewardState=p.rewardStates[rewardToken];403:uint256amount= (rewardState*userRewards) /globalRewards;404:405:if(amount!=0) {406:// Update reward state (i.e. amount) to reflect reward tokens transferred out407:p.rewardStates[rewardToken] =rewardState-amount;408:409:producer.claimUserReward(410:address(rewardToken),411:amount,412:recipient413:                     );414:                 }415:             }416:         }417:     }
+The graph below represents the amount of GMX tokens Alice and Bob staked inPirexGmxfor each second during the period. Note that the graph is not drawn proportionally.
+Green = Number of GMX tokens staked by Alice
+Blue = Number of GMX tokens staked by Bob
+
+Based on the above graph:
+Alice staked 1 GMX token for 4 seconds (From T80 to T85)Bob staked 99999 GMX tokens for 4 seconds (From T80 to T85)
+Assume that the emission rate is 0.1 esGMX per 1 GMX staked per second.
+In this case, the state variable will be as follows at the end of T83, assuming both the global and all user states have been updated and rewards have been harvested.
+rewardState = 60,000 esGMX tokens (600,000 * 0.1)globalRewards = 600,000 (100,000 * 6)AccrueduserRewardsof Alice = 6AccrueduserRewardsof Bob = 599,994 (99,999 * 6)
+Following is the description ofrewardStatefor reference:
+TherewardStaterepresents the total number of a specific ERC20 reward token (e.g. WETH or esGMX) held by a producer (e.g. pxGMX or pxGPL).TherewardStateof each reward token (e.g. WETH or esGMX) will increase whenever the rewards are harvested by the producer (e.g.PirexRewards.harvestis called). On the other hand, therewardStatewill decrease if the users claim the rewards.
+At the end of T85, Alice should be entitled to 1.2 esGMX tokens (0.2/sec * 6).
+Following is the formula used in thePirexRewardscontract to compute the number of reward tokens a user is entitled to.
+amount= (rewardState*userRewards) /globalRewards;
+If Alice claims the rewards at the end of T85, she will get zero esGMX tokens instead of 1.2 esGMX tokens.
+amount= (rewardState*userRewards) /globalRewards;60,000*6/600,000360,000/600,000=0.6=0
+Since Alice’s accrued rewards are cleared at Line 391 within thePirexRewards.claimfunction (p.userStates[user].rewards = 0;), Alice’s accrued rewards will be lost. Alice will have to start accruing the rewards from zero after calling thePirexRewards.claimfunction.
+Another side effect is that since the 1.2 esGMX tokens that belong to Alice are still in the contract, they will be claimed by other users.
+Impact
+Users who deposit too little GMX compared to other users (or total supply of pxGMX), the user will not be able to receive rewards after calling thePirexRewards.claimfunction. Also, their accrued rewards will be cleared out (set to zero). Loss of reward tokens for the users.
+Additionally, thePirexRewards.claimfunction is permissionless, and anyone can trigger the claim on behalf of any user. A malicious user could call thePirexRewards.claimfunction on behalf of a victim at the right time when the victim’s accrued reward is small enough to cause a rounding error or precision loss, thus causing the victim accrued reward to be cleared out (set to zero).
+Recommended Mitigation Steps
+Following are some of the possible remediation actions:
+1. UseRewardPerTokenapproach
+Avoid calculating the rewards that the users are entitled based on the ratio ofuserRewardsandglobalRewards.
+Instead, consider implementing the RewardPerToken for users and global, as seen in many of the well-established reward contracts below, which are not vulnerable to this issue:
+https://github.com/fei-protocol/flywheel-v2/blob/dbe3cb81a3dc2e46536bb8af9c2bdc585f63425e/src/FlywheelCore.sol#L226https://github.com/Synthetixio/synthetix/blob/2cb4b23fe409af526de67dfbb84aae84b2b13747/contracts/StakingRewards.sol#L61
+2. Fallback logic ifamount == 0
+If theamountis zero, revert the transaction. Alternatively, if theamountis zero, do not clear out the user’s accrued reward state variable since the user did not receive anything yet.
+function claim(ERC20 producerToken, address user) external {..SNIP..uint256 amount = (rewardState * userRewards) / globalRewards;if (amount != 0) {// Update reward state (i.e. amount) to reflect reward tokens transferred outp.rewardStates[rewardToken] = rewardState - amount;producer.claimUserReward(address(rewardToken),amount,recipient);-			}+			} else {+				revert ZeroRewardTokens();+			}..SNIP..}
+kphed (Redacted Cartel) confirmed
+
+[H-05] Underlying assets stealing inAutoPxGmxandAutoPxGlpvia share price manipulation
+Submitted byJeiwan, also found byseyni,gogo,pashov,hl_,rbserver,peanuts,__141345__,unforgiven,Lambda,joestakey,JohnSmith,R2,Koolex,xiaoming90,yongskiws,carrotsmuggler,ladboy233,0xSmartContract,KingNFT,cccz,HE1M,rvierdiiev,koxuan,8olidity, and0xLad
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/PirexERC4626.sol#L156-L165
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/PirexERC4626.sol#L167-L176
+Impact
+pxGMX and pxGLP tokens can be stolen from depositors inAutoPxGmxandAutoPxGlpvaults by manipulating the price of a share.
+Proof of Concept
+ERC4626 vaults are subject to a share price manipulation attack that allows an attacker to steal underlying tokens from other depositors (this is aknown issueof Solmate’s ERC4626 implementation). Consider this scenario (this is applicable toAutoPxGmxandAutoPxGlpvaults):
+Alice is the first depositor of theAutoPxGmxvault;Alice deposits 1 wei of pxGMX tokens;in thedepositfunction (PirexERC4626.sol#L60), the amount of shares is calculated using thepreviewDepositfunction:functionpreviewDeposit(uint256assets)publicviewvirtualreturns(uint256){returnconvertToShares(assets);}functionconvertToShares(uint256assets)publicviewvirtualreturns(uint256){uint256supply=totalSupply;// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?assets:assets.mulDivDown(supply,totalAssets());}Since Alice is the first depositor (totalSupply is 0), she gets 1 share (1 wei);Alice thensends9999999999999999999 pxGMX tokens (10e18 - 1) to the vault;The price of 1 share is 10 pxGMX tokens now: Alice is the only depositor in the vault, she’s holding 1 wei of shares, and the balance of the pool is 10 pxGMX tokens;Bob deposits 19 pxGMX tokens and gets only 1 share due to the rounding in theconvertToSharesfunction:19e18 * 1 / 10e18 == 1;Alice redeems her share and gets a half of the deposited assets, 14.5 pxGMX tokens (less the withdrawal fee);Bob redeems his share and gets only 14.5 pxGMX (less the withdrawal fee), instead of the 19 pxGMX he deposited.
+// test/AutoPxGmx.t.solfunctiontestSharePriceManipulation_AUDIT()external{addressalice=address(0x31337);addressbob=address(0x12345);vm.label(alice,"Alice");vm.label(bob,"Bob");// Resetting the withdrawal fee for cleaner amounts.autoPxGmx.setWithdrawalPenalty(0);vm.startPrank(address(pirexGmx));pxGmx.mint(alice,10e18);pxGmx.mint(bob,19e18);vm.stopPrank();vm.startPrank(alice);pxGmx.approve(address(autoPxGmx),1);// Alice deposits 1 wei of pxGMX and gets 1 wei of shares.autoPxGmx.deposit(1,alice);// Alice sends 10e18-1 of pxGMX and sets the price of 1 wei of shares to 10e18 pxGMX.pxGmx.transfer(address(autoPxGmx),10e18-1);vm.stopPrank();vm.startPrank(bob);pxGmx.approve(address(autoPxGmx),19e18);// Bob deposits 19e18 of pxGMX and gets 1 wei of shares due to rounding and the price manipulation.autoPxGmx.deposit(19e18,bob);vm.stopPrank();// Alice and Bob redeem their shares.vm.prank(alice);autoPxGmx.redeem(1,alice,alice);vm.prank(bob);autoPxGmx.redeem(1,bob,bob);// Alice and Bob both got 14.5 pxGMX.// But Alice deposited 10 pxGMX and Bob deposited 19 pxGMX – thus, Alice stole pxGMX tokens from Bob.// With withdrawal fees enabled, Alice would've been penalized more than Bob// (14.065 pxGMX vs 14.935 pxGMX tokens withdrawn, respectively),// but Alice would've still gotten more pxGMX that she deposited.assertEq(pxGmx.balanceOf(alice),14.5e18);assertEq(pxGmx.balanceOf(bob),14.5e18);}
+Recommended Mitigation Steps
+Consider either of these options:
+In thedepositfunction ofPirexERC4626, consider requiring a reasonably high minimal amount of assets during first deposit. The amount needs to be high enough to mint many shares to reduce the rounding error and low enough to be affordable to users.On the first deposit, consider minting a fixed and high amount of shares, irrespective of the deposited amount.Consider seeding the pools during deployment. This needs to be done in the deployment transactions to avoid front-running attacks. The amount needs to be high enough to reduce the rounding error.Consider sending first 1000 wei of shares to the zero address. This will significantly increase the cost of the attack by forcing an attacker to pay 1000 times of the share price they want to set. For a well-intended user, 1000 wei of shares is a negligible amount that won’t diminish their share significantly.
+Picodes (judge) increased severity to High
+kphed (Redacted Cartel) confirmed
+
+[H-06] fee loss in AutoPxGmx and AutoPxGlp and reward loss in AutoPxGlp by callingPirexRewards.claim(pxGmx/pxGpl, AutoPx*)directly which transfers rewards to  AutoPx* pool without compound logic get executed and fee calculation logic and pxGmx wouldn’t be executed for those rewards
+Submitted byunforgiven, also found bybin2chenand0x52
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGlp.sol#L197-L296
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/vaults/AutoPxGmx.sol#L230-L313
+Impact
+Functioncompound()inAutoPxGmxandAutoPxGlpcontracts is for compoundingpxGLP(and additionallypxGMX) rewards. it works by callingPirexGmx.claim(px*, this)to collect the rewards of the vault and then swap the received amount (to calculate the reward, contract save the balance of a contract in that reward token before and after the call to theclaim()and by subtracting them finds the received reward amount) and deposit them inPirexGmxagain for compounding and in doing so it calculates fee based on what it received and inAutoPxGlpcase it calculatespxGMXrewards too based on the extra amount contract receives during the execution ofclaim(). But attacker can callPirexGmx.claim(px*, PirexGlp)directly and makePirexGmxcontract to transfer (gmxBaseRewardandpxGmx) rewards toAutoPxGlpand in this case the logics of fee calculation and reward calculation incompound()function won’t get executed and contract won’t get it’s fee from rewards and users won’t get theirpxGmxreward. So this bug would cause fee loss inAutoPxGmxandAutoPxGlpfor contract andpxGmx’s reward loss for users inAutoPxGlp.
+Proof of Concept
+The bug inAutoPxGmxis similar toAutoPxGlp, so we only give Proof of Concept forAutoPxGlp.
+This iscompound()function code inAutoPxGlpcontract:
+function compound(uint256 minUsdg,uint256 minGlp,bool optOutIncentive)publicreturns (uint256 gmxBaseRewardAmountIn,uint256 pxGmxAmountOut,uint256 pxGlpAmountOut,uint256 totalPxGlpFee,uint256 totalPxGmxFee,uint256 pxGlpIncentive,uint256 pxGmxIncentive){if (minUsdg == 0) revert InvalidParam();if (minGlp == 0) revert InvalidParam();uint256 preClaimTotalAssets = asset.balanceOf(address(this));uint256 preClaimPxGmxAmount = pxGmx.balanceOf(address(this));PirexRewards(rewardsModule).claim(asset, address(this));PirexRewards(rewardsModule).claim(pxGmx, address(this));// Track the amount of rewards receivedgmxBaseRewardAmountIn = gmxBaseReward.balanceOf(address(this));if (gmxBaseRewardAmountIn != 0) {// Deposit received rewards for pxGLP(, pxGlpAmountOut, ) = PirexGmx(platform).depositGlp(address(gmxBaseReward),gmxBaseRewardAmountIn,minUsdg,minGlp,address(this));}// Distribute fees if the amount of vault assets increaseduint256 newAssets = totalAssets() - preClaimTotalAssets;if (newAssets != 0) {totalPxGlpFee = (newAssets * platformFee) / FEE_DENOMINATOR;pxGlpIncentive = optOutIncentive? 0: (totalPxGlpFee * compoundIncentive) / FEE_DENOMINATOR;if (pxGlpIncentive != 0)asset.safeTransfer(msg.sender, pxGlpIncentive);asset.safeTransfer(owner, totalPxGlpFee - pxGlpIncentive);}// Track the amount of pxGMX receivedpxGmxAmountOut = pxGmx.balanceOf(address(this)) - preClaimPxGmxAmount;if (pxGmxAmountOut != 0) {// Calculate and distribute pxGMX fees if the amount of pxGMX increasedtotalPxGmxFee = (pxGmxAmountOut * platformFee) / FEE_DENOMINATOR;pxGmxIncentive = optOutIncentive? 0: (totalPxGmxFee * compoundIncentive) / FEE_DENOMINATOR;if (pxGmxIncentive != 0)pxGmx.safeTransfer(msg.sender, pxGmxIncentive);pxGmx.safeTransfer(owner, totalPxGmxFee - pxGmxIncentive);// Update the pxGmx reward accrual_harvest(pxGmxAmountOut - totalPxGmxFee);} else {// Required to keep the globalState up-to-date_globalAccrue();}emit Compounded(msg.sender,minGlp,gmxBaseRewardAmountIn,pxGmxAmountOut,pxGlpAmountOut,totalPxGlpFee,totalPxGmxFee,pxGlpIncentive,pxGmxIncentive);}
+As you can see contract collects rewards by callingPirexRewards.claim()and in the lineuint256 newAssets = totalAssets() - preClaimTotalAssets;contract calculates the received amount of rewards (by subtracting the balance after and before reward claim) and then calculates fee based on this amounttotalPxGlpFee = (newAssets * platformFee) / FEE_DENOMINATOR;and then sends the fee in the lineasset.safeTransfer(owner, totalPxGlpFee - pxGlpIncentive)forowner.
+The logic forpxGmxrewards are the same. As you can see the calculation of the fee is based on the rewards received, and there is no other logic in the contract to calculate and transfer the fee of protocol. So ifAutoPxGplreceives rewards withoutcompound()getting called then for those rewards fee won’t be calculated and transferred and protocol would lose it’s fee.
+In the line_harvest(pxGmxAmountOut - totalPxGmxFee)contract calls_harvest()function to update thepxGmxreward accrual and there is no call to_harvest()in any other place and this is the only place wherepxGmxreward accrual gets updated. The contract usespxGmxAmountOutwhich is the amount ofgmxcontract received during the call (code calculates it by subtracting the balance after and before reward claim:pxGmxAmountOut = pxGmx.balanceOf(address(this)) - preClaimPxGmxAmount;) so contract only handles accrual rewards in this function call and if somepxGmxrewards claimed for contract withoutcompund()logic execution then those rewards won’t be used in_harvest()and_globalAccrue()calculation and users won’t receive those rewards.
+As mentioned attacker can callPirexRewards.claim(pxGmx, AutoPxGpl)directly and makePirexRewadscontract to transferAutoPxGplrewards. This isclaim()code inPirexRewards:
+function claim(ERC20 producerToken, address user) external {if (address(producerToken) == address(0)) revert ZeroAddress();if (user == address(0)) revert ZeroAddress();harvest();userAccrue(producerToken, user);ProducerToken storage p = producerTokens[producerToken];uint256 globalRewards = p.globalState.rewards;uint256 userRewards = p.userStates[user].rewards;// Claim should be skipped and not reverted on zero global/user rewardif (globalRewards != 0 && userRewards != 0) {ERC20[] memory rewardTokens = p.rewardTokens;uint256 rLen = rewardTokens.length;// Update global and user reward states to reflect the claimp.globalState.rewards = globalRewards - userRewards;p.userStates[user].rewards = 0;emit Claim(producerToken, user);// Transfer the proportionate reward token amounts to the recipientfor (uint256 i; i < rLen; ++i) {ERC20 rewardToken = rewardTokens[i];address rewardRecipient = p.rewardRecipients[user][rewardToken];address recipient = rewardRecipient != address(0)? rewardRecipient: user;uint256 rewardState = p.rewardStates[rewardToken];uint256 amount = (rewardState * userRewards) / globalRewards;if (amount != 0) {// Update reward state (i.e. amount) to reflect reward tokens transferred outp.rewardStates[rewardToken] = rewardState - amount;producer.claimUserReward(address(rewardToken),amount,recipient);}}}}
+As you can see it can be called by anyone for any user. So to perform this attack, attacker would perform these steps:
+SupposeAutoPxGplhas pending rewards, for example 100pxGmxand 100weth.Attacker would callPirexRewards.claim(pxGmx, AutoPxGpl)andPirexRewards.claim(pxGpl, AutoPxGpl)andPirexRewardscontract would calculate and claim and transferpxGmxrewards andwethrewards ofAutoPxGpladdress.ThenAutoPxGplhas no pending rewards but the balance ofpxGmxandwethof contract has been increased.If anyone callsAutoPxGpl.compound()because there is no pending rewards contract would receive no rewards and because contract only calculates fee and rewards based on received rewards during the call tocompound()so contract wouldn’t calculate any fee or reward accrual for those 1000pxGmxandwethrewards.ownerofAutoPxGplwould lose his fee for those rewards and users ofAutoPxGplwould lose their claims for those 1000pxGmxrewards (because the calculation for them didn’t happen).
+This bug is because of the fact that the only logic handling rewards is incompound()function which is only handling receiving rewards by callingclaim()during the call tocompound()but it’s possible to callclaim()directly (PirexRewardscontract allows this) andAutoPxGplwon’t get notified about this new rewards and the related logics won’t get executed.
+Tools Used
+VIM
+Recommended Mitigation Steps
+Contract should keep track of it’s previous balance whencompound()get executed and update this balance in deposits and withdraws and claims so it can detect rewards that directly transferred to contract without call tocompound().
+kphed (Redacted Cartel) confirmed
+

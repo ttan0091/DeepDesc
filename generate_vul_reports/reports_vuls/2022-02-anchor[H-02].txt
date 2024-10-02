@@ -1,0 +1,18 @@
+[H-02]money-market-contracts/oracle#feed_prices()delayed transaction may disrupt price feeds
+Submitted by WatchPug
+https://github.com/code-423n4/2022-02-anchor/blob/7af353e3234837979a19ddc8093dc9ad3c63ab6b/contracts/money-market-contracts/contracts/oracle/src/contract.rs#L106-L113
+The implementation only takes two attributes:assetandprice. And thelast_updated_timeof the record will always be set to the currentblock.time.
+This makes it possible for the price feeds to be disrupted when the network is congested, or the endpoint is down for a while, or thefeederbot handled the message queue inappropriately, as a result, the transactions with stale prices get accepted as fresh prices.
+Since the price feeds are essential to the protocol, that can result in users’ positions being liquidated wrongfully and case fund loss to users.
+Proof of Concept
+Given:
+feederi connected to an endpoint currently experiencing degraded performance;ETH price is$10,000;Themax_ltvratio of ETH is60%.Alice borrowed5,000 USDCwith1 ETHas collateral;ETH price dropped to$9,000, to avoid liquidation, Alice repaid1,000 USD;The price of ETH dropped to$8,000;feedertries toupdateMainFeedData()with the latest price:$8,000, however, since the network is congested, the transactions were not get packed timely;ETH price rebound to$10,000; Alice borrowed another1,000 USDC;The txs send byfeederat step 3 finally got packed, the protocol now believes the price of ETH has suddenly dropped to$8,000, as a result, Alice’s position got liquidated.
+Recommended Mitigation Steps
+Change to:
+pubfnfeed_prices(deps:DepsMut,env:Env,info:MessageInfo,prices:Vec<(String,Decimal256,u64)>,) ->Result<Response,ContractError> {let mutattributes=vec![attr("action","feed_prices")];letsender_raw=deps.api.addr_canonicalize(info.sender.as_str())?;forpriceinprices{letasset:String=price.0;letmutupdated_time:u64=price.2;letprice:Decimal256=price.1;// Check feeder permissionletfeeder=read_feeder(deps.storage, &asset)?;iffeeder!=sender_raw{returnErr(ContractError::Unauthorized{});}letconfig:Config=read_config(deps.storage)?;ifenv.block.time.seconds() >updated_time{// reject stale priceif env.block.time.seconds() - updated_time > config.valid_period {returnErr(ContractError::InvalidInputs{});}}else{// reject future timestamp, graceFuturePeriod can be set to 3, which means < 3s is allowedif updated_time - env.block.time.seconds() > config.grace_future_period {returnErr(ContractError::InvalidInputs{});}updated_time=env.block.time.seconds();}attributes.push(attr("asset",asset.to_string()));attributes.push(attr("price",price.to_string()));store_price(deps.storage,&asset,&PriceInfo{last_updated_time:updated_time,price,},)?;}Ok(Response::new().add_attributes(attributes))}
+bitn8 (Anchor) disputed and commented:
+We currently have a mean shorting function that pulls multiple price feeds so that if one is stale it gets rejected.
+Alex the Entreprenerd (triage) commented:
+Seems like the warden has shown a specific scenario, contingent on external conditions.However, from the code, there seems to be no “mean shorting function”, at least in the code in scope.
+Albert Chon (judge) commented:
+Agreed with @Alex the Entreprenerd, oracle staleness is still an issue in this version of the code.

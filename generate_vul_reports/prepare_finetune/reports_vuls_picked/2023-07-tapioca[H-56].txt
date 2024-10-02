@@ -1,0 +1,20 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Lack of proper authorization checks in certain methods of the MagnetarV2.sol and MagnetarMarketModule.sol contracts, allowing malicious users to exploit approvals granted to Magnetar by other users.
+Execution process: A malicious user can call methods like `MARKET_BUY_COLLATERAL` or `depositRepayAndRemoveCollateralFromMarket` without being the owner of the tokens, by specifying an arbitrary `data.from` address. This allows them to use the approvals granted by other users to Magnetar, leading to unauthorized actions such as draining tokens or manipulating positions.
+Vulnerable code: 
+1. `MARKET_BUY_COLLATERAL` method in MagnetarV2.sol:
+```solidity
+else if (_action.id == MARKET_BUY_COLLATERAL) {
+    HelperBuyCollateral memory data = abi.decode(_action.call[4:],(HelperBuyCollateral));
+    IMarket(data.market).buyCollateral(data.from,data.borrowAmount,data.supplyAmount,data.minAmountOut,address(data.swapper),data.dexData);
+}
+```
+2. `depositRepayAndRemoveCollateralFromMarket` method in MagnetarMarketModule.sol:
+```solidity
+// deposit to YieldBox
+if (depositAmount > 0) {
+    _extractTokens(extractFromSender ? msg.sender : user,assetAddress,depositAmount);
+    IERC20(assetAddress).approve(address(yieldBox), depositAmount);
+    yieldBox.depositAsset(assetId,address(this),address(this),depositAmount,0);
+}
+```

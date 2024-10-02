@@ -1,0 +1,22 @@
+[H-09]BathPair.sol#rebalancePair()can be front run to steal the pending rebalancing amount
+Submitted by WatchPug
+https://github.com/code-423n4/2022-05-rubicon/blob/8c312a63a91193c6a192a9aab44ff980fbfd7741/contracts/rubiconPools/BathToken.sol#L756-L759
+functionunderlyingBalance()publicviewreturns(uint256) {uint256_pool=IERC20(underlyingToken).balanceOf(address(this));return_pool.add(outstandingAmount);}
+https://github.com/code-423n4/2022-05-rubicon/blob/8c312a63a91193c6a192a9aab44ff980fbfd7741/contracts/rubiconPools/BathToken.sol#L294-L303
+functionremoveFilledTradeAmount(uint256amt)externalonlyPair{outstandingAmount=outstandingAmount.sub(amt);emitLogRemoveFilledTradeAmount(IERC20(underlyingToken),amt,underlyingBalance(),outstandingAmount,totalSupply);}
+ForBathToken, there will be non-underlyingToken assets sitting on the contract that have filled to the contract and are awaiting rebalancing by strategists.
+We assume the rebalance will happen periodically, between one rebalance to the next rebalance,underlyingBalance()will decrease over time as the orders get filled, so that the price per share will get lower while the actual equity remain relatively stable. This kind of price deviation will later be corrected by rebalancing.
+Every time aBathPair.sol#rebalancePair()get called, there will be a surge of price per share for theBathToken, as a certain amount ofunderlyingTokenwill be transferred into the contract.
+This enables a well known attack vector, which allows the pending yields to be stolen by front run the strategist’sBathPair.sol#rebalancePair()transaction, deposit and take a large share of the vault, andwithdraw()right after therebalancePair()transaction for instant profit.
+Proof of Concept
+Given:
+CurrentunderlyingBalance()is100,000 USDC;Pending rebalancing amount is1000 USDC;strategistcallsrebalancePair();The attacker sends a deposit tx with a higher gas price to deposit100,000 USDC, take 50% share of the pool;After the transaction in step 1 is mined, the attacker callswithdraw()and retireve100,500 USDC.
+As a result, the attacker has stolen half of the pending yields in about 1 block of time.
+Recommendation
+Consider adding a new variable to track rebalancingAmount onBathToken.
+BathTokenshould be notified for any pending rebalancing amount changes viaBathPairin order to avoid sudden surge of pricePerShare overrebalancePair().
+rebalancingAmountshould be considered as part ofunderlyingBalance().
+bghughes (Rubicon) disputed and marked as duplicate:
+Bad issue due to#344#43#74
+HickupHH3 (judge) commented:
+It’s kinda like the flip side to#341, where an incoming deposit benefits by frontrunning.#221briefly mentions it: “Similar problem also affect the deposit function since it relies on the proper accounting of the underlying balance or outstanding amount too. The amount of BathToken (e.g. BathWETH) that depositer received might affected.”In this case, a depositor can execute the frontrun attack vector existseven if the strategist is actively rebalancing.  Hence, the high severity rating is justified.

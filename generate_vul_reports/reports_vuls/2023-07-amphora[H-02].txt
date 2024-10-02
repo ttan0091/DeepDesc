@@ -1,0 +1,14 @@
+[H-02] crvRewardsContractgetRewardcan be called directly, breaking vaultsclaimRewardsfunctionallity
+Submitted bysaid, also found byminhtrng
+crvRewardsContract of convex can be called by anyone on behalf of Vault, this will allow malicious users to callgetRewardand break the VaultclaimRewardsfunctionality.
+Proof of Concept
+Convex rewarded allow anyone to callgetRewardon behalf of any users:
+https://github.com/convex-eth/platform/blob/main/contracts/contracts/BaseRewardPool.sol#L263-L279
+This will break VaultclaimRewardsfunctionality that depends on thisgetReward:
+https://github.com/code-423n4/2023-07-amphora/blob/main/core/solidity/contracts/core/Vault.sol#L164-L229
+functionclaimRewards(address[]memory_tokenAddresses)externaloverrideonlyMinter{uint256_totalCrvReward;uint256_totalCvxReward;IAMPHClaimer_amphClaimer=CONTROLLER.claimerContract();for(uint256_i;_i<_tokenAddresses.length;) {IVaultController.CollateralInfomemory_collateralInfo=CONTROLLER.tokenCollateralInfo(_tokenAddresses[_i]);if(_collateralInfo.tokenId==0)revertVault_TokenNotRegistered();if(_collateralInfo.collateralType!=IVaultController.CollateralType.CurveLPStakedOnConvex) {revertVault_TokenNotCurveLP();}IBaseRewardPool_rewardsContract=_collateralInfo.crvRewardsContract;uint256_crvReward=_rewardsContract.earned(address(this));if(_crvReward!=0) {// Claim the CRV reward_totalCrvReward+=_crvReward;_rewardsContract.getReward(address(this),false);_totalCvxReward+=_calculateCVXReward(_crvReward);}...}
+This will allow malicious users to callgetRewardon behalf of Vaults, and basically prevent them to mint get the rewards and get the deserved AMPH tokens.
+Recommended Mitigation Steps
+Create another functionality inside Vault that similar toclaimRewards, but used CVX, CRV balance inside the contract, to perform the AMPH claim and claim the rewards.
+0xShaito (Amphora) confirmed and commented:
+True! We will fix this.Impact of the attack would be the loss of the rewards. No user deposits at risk.

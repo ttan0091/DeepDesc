@@ -1,0 +1,46 @@
+[H-01] Re-entrancy insettleAuctionallow stealing all funds
+Submitted by cmichel
+Note that theBasketcontract approved theAuctioncontract with all tokens and thesettleAuctionfunction allows the auction bonder to transfer all funds out of the basket to themselves.
+The only limiting factor is the check afterwards that needs to be abided by. It checks if enough tokens are still in the basket after settlement:
+// this is the safety check if basket still has all the tokens after removing arbitrary amountsfor(uint256i=0;i<pendingWeights.length;i++) {uint256tokensNeeded=basketAsERC20.totalSupply() *pendingWeights[i] *newRatio/BASE/BASE;require(IERC20(pendingTokens[i]).balanceOf(address(basket)) >=tokensNeeded);}
+The bonder can pass in anyinputTokens, even malicious ones they created.
+This allows them to re-enter thesettleAuctionmultiple times for the same auction.
+Calling this function at the correct time (such thatbondTimestamp - auctionStartmakesnewRatio < basket.ibRatio()), the attacker can drain more funds each time, eventually draining the entire basket.
+Proof Of Concept
+Assume that the currentbasket.ibRatiois1e18(the initial value).
+The basket publisher callsbasket.publishNewIndexwith some tokens and weights.
+For simplicity, assume that the pendingtokensare the same as tokens as before, only the weights are different, i.e., this would just rebalance the portfolio.
+The function call then starts the auction.
+The important step to note is that thetokensNeededvalue insettleAuctiondetermines how many tokens need to stay in thebasket.
+If we can continuously lower this value, we can keep removing tokens from thebasketuntil it is empty.
+ThetokensNeededvariable is computed asbasketAsERC20.totalSupply() * pendingWeights[i] * newRatio / BASE / BASE.
+The only variable that changes in the computation when re-entering the function isnewRatio(no basket tokens are burned, and the pending weights are never cleared).
+Thus if we can show thatnewRatiodecreases on each re-entrant call, we can move out more and more funds each time.
+newRatio decreases on each call
+After some time, the attacker callsbondForRebalance. This determines thebondTimestamp - auctionStartvalue insettleAuction.
+The attack is possible as soon asnewRatio < basket.ibRatio().
+For example, using the standard parameters the calculation would be:
+// a = 2 * ibRatiouint256a=factory.auctionMultiplier() *basket.ibRatio();// b = (bondTimestamp - auctionStart) * 1e14uint256b= (bondTimestamp-auctionStart) *BASE/factory.auctionDecrement();// newRatio = a - b = 2 * ibRatio - (bondTimestamp - auctionStart) * 1e14uint256newRatio=a-b;
+With our initial assumption ofibRatio = 1e18and callingbondForRebalanceafter 11,000 seconds (~3 hours) we will get our result thatnewRatiois less than the initialibRatio:
+newRatio = a - b =2*1e18- (11000) *1e14=2e18-1.1e18=0.9e18<1e18= basket.ibRatio
+This seems to be a reasonable value (when the pending tokens and weights are equal in value to the previous ones) as no other bonder would want to call this earlier such whennewRatio > basket.ibRatioas they would put in more total value in tokens as they can take out of the basket.
+re-enter on settleAuction
+The attacker creates a custom tokenattackerTokenthat re-enters theAuction.settleAuctionfunction ontransferFromwith parameters we will specify.
+They callsettleAuctionwithinputTokens = [attackerToken]to re-enter several times.
+In the inner-most call wherenewRatio = 0.9e18, they choose theinputTokens/outputTokensparameters in a way to pass the initialrequire(IERC20(pendingTokens[i]).balanceOf(address(basket)) >= tokensNeeded);check - transferring out any other tokens ofbasketwithoutputTokens.
+The function will continue to run and callbasket.setNewWeights();andbasket.updateIBRatio(newRatio);which will set the new weights (but not clear the pending ones) and set the newbasket.ibRatio.
+Execution then jumps to the 2nd inner call after theIERC20(inputTokens[i]=attackerToken).safeTransferFrom(...)and has the chance to transfer out tokens again.
+It will computenewRatiowith the new loweredbasket.ibRatioof0.9e18:newRatio = a - b = 2 * 0.9e18 - 1.1e18 = 0.7e18.
+Therefore,tokensNeededis lowered as well and the attacker was allowed to transfer out more tokens having carefully chosenoutputWeights.
+This repeats withnewRatio = 0.3.
+The attack is quite complicated and requires carefully precomputing and then setting the parameters, as well as sending back thebondAmounttokens to theauctioncontract which are then each time transferred back in the function body.
+But I believe this should work.
+Impact
+The basket funds can be stolen.
+Recommended Mitigation Steps
+Add re-entrancy checks (for example, OpenZeppelin’s “locks”) to thesettleAuctionfunction.
+frank-beard (Kuiper) confirmed
+Alex the Entreprenerd (judge) commented:
+Let’s dissect the finding to prove whether it’s valid or not.First of all, we do have the pre-conditions for re-entrancy:Allows any token as input (untrusted input)No re-entrancy modifierChecks are performed at the beginning, transfers in the middle, and state changes at the end (violation ofcheck effect interactionpattern)So in any case this is a report for reEntrancy (medium severity)However, the warden is showing a specific attack vector that, if proven, allows to steal the majority of funds from the basket.Let’s investigate (with a single re-entrant call example):The require checks at the top pass, as we’re rebalancing the basket, we’ll make sure to use an additional inputToken (malicious token), that will callsettleAuctionagain.This second call (Call B), will execute as normal, extracting the correct amount of value in return for rebalancing, the new ibRatio is 0.9 as shown by the warden POC.Call B ends by setting ibRatio to 0.9, andhasBondedto false (which will cause a revert if you try to perform this without re-entrancy)However, we have already entered and Call A can resume, it now has ibRatio set to 0.9 which allows it to further extract value (astokensNeededdecreases as ibRatio decreases)This can be extended to have further re-entrant calls and can be effectively executed until the basket is hollowed outThis is a Miro Board to highlight the dynamics of the exploit:https://miro.com/app/board/uXjVOZk4gxw=/?invite_link_id=246345621880Huge props to the warden, brilliant find!
+Alex the Entreprenerd (judge) commented:
+For mitigation:Adding a re-entrancy check would be the place to startRequiring the list of input tokens to match the output can also be useful to avoid any other shenanigansSetting the time difference (bondTimestamp,auctionStart) to be 0 would also negate the ability to further manipulate theibRatio

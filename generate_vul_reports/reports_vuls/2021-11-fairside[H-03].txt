@@ -1,0 +1,10 @@
+[H-03] Beneficiary cant getfairSideConvictionNFT unless they only claim once, and only after it’s fully vested
+Submitted by WatchPug, also found by cmichel
+Based on the context, once the beneficiary claimed all their vesting tokens, they should get thefairSideConvictionNFT.
+However, in the current implementation, if the beneficiary has claimed any amounts before it’s fully vested, then they will never be able to get thefairSideConvictionNFT, because at L138, it requires thetokenbClaimto be equal to the initial vesting amount.
+FSDVesting.solL124-L142
+functionclaimVestedTokens()externaloverrideonlyBeneficiary{uint256tokenClaim=calculateVestingClaim();require(tokenClaim>0,"FSDVesting::claimVestedTokens: Zero claimable tokens");totalClaimed=totalClaimed.add(tokenClaim);lastClaimAt=block.timestamp;fsd.safeTransfer(msg.sender,tokenClaim);emitTokensClaimed(msg.sender,tokenClaim,block.timestamp);if(amount==tokenClaim) {uint256tokenId=fsd.tokenizeConviction(0);fairSideConviction.transferFrom(address(this),msg.sender,tokenId);}}
+Recommendation
+Change to:
+functionclaimVestedTokens()externaloverrideonlyBeneficiary{uint256tokenClaim=calculateVestingClaim();require(tokenClaim>0,"FSDVesting::claimVestedTokens: Zero claimable tokens");totalClaimed=totalClaimed.add(tokenClaim);lastClaimAt=block.timestamp;fsd.safeTransfer(msg.sender,tokenClaim);emitTokensClaimed(msg.sender,tokenClaim,block.timestamp);if(amount==totalClaimed) {uint256tokenId=fsd.tokenizeConviction(0);fairSideConviction.transferFrom(address(this),msg.sender,tokenId);}}
+YunChe404 (FairSide) confirmed and disagreed with severity

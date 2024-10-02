@@ -1,0 +1,28 @@
+This code defines an internal view function named msgSender, which is designed to return the address of the message sender. The function is particularly useful in scenarios where the contract needs to handle forwarded calls, such as in the context of metatransactions or proxy contracts.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    Visibility: The function is marked as internal, meaning it can only be called from within the current contract or contracts deriving from it.
+    Mutability: The function is marked as view, indicating that it does not modify the state of the blockchain and can be called without incurring transaction costs.
+    Return Type: The function returns an address payable, which is a special type of address that can receive Ether.
+
+2. Logic for Identifying the Sender:
+    The function first checks if the msg.sender (the immediate caller of the function) is the contract itself (address(this)). This scenario typically occurs when the contract is acting as a proxy and forwarding calls from another address.
+    If msg.sender is the contract itself, the function proceeds to extract the original sender's address from the transaction data (msg.data).
+
+3. Extracting the Original Sender's Address:
+    The function creates a bytes memory array named array and initializes it with msg.data, which contains the raw transaction data.
+    It then sets index to the length of msg.data, which is used to locate the position of the original sender's address in the transaction data.
+    The function uses inline assembly to manipulate the EVM at a low level:
+      mload(add(array, index)) loads a 32byte word from memory starting at the position array + index. This word contains the original sender's address in the lower 20 bytes.
+      and(..., 0xffffffffffffffffffffffffffffffffffffffff) masks the loaded word to extract only the lower 20 bytes, which represent the original sender's address.
+    The result is assigned to the sender variable.
+
+4. Fallback to Immediate Sender:
+    If msg.sender is not the contract itself, the function simply assigns msg.sender to the sender variable. This handles the case where the function is called directly without being forwarded.
+
+5. Return Statement:
+    Finally, the function returns the sender variable, which contains the address of the original sender or the immediate sender, depending on the context of the call.
+
+This function is particularly useful in scenarios where contracts need to handle metatransactions or proxy calls, ensuring that the original sender's address is correctly identified and used within the contract logic.

@@ -1,0 +1,37 @@
+This code defines an internal function named _writeSnapshot, which is used to record a snapshot of a value associated with an owner's address at a specific block number. The function takes three parameters: the owner's address, the old value, and the new value, both of which are of type uint128.
+
+Here’s a detailed explanation of how this function works:
+
+1. Block Number Retrieval:
+   solidity
+   uint128 currentBlock = uint128(block.number);
+   
+   The function starts by obtaining the current block number using block.number and casting it to uint128 to match the data type of the snapshot's block number.
+
+2. Snapshot Count and Storage Retrieval:
+   solidity
+   uint256 ownerCountOfSnapshots = _countsSnapshots[owner];
+   mapping (uint256 => Snapshot) storage snapshotsOwner = _snapshots[owner];
+   
+   The function then retrieves the number of snapshots already taken for the owner from the _countsSnapshots mapping. It also retrieves the storage mapping _snapshots[owner] which holds the snapshots for the owner.
+
+3. Snapshot Update Logic:
+   solidity
+   if (ownerCountOfSnapshots != 0 && snapshotsOwner[ownerCountOfSnapshots.sub(1)].blockNumber == currentBlock) {
+       snapshotsOwner[ownerCountOfSnapshots.sub(1)].value = newValue;
+   } else {
+       snapshotsOwner[ownerCountOfSnapshots] = Snapshot(currentBlock, newValue);
+       _countsSnapshots[owner] = ownerCountOfSnapshots.add(1);
+   }
+   
+    The function checks if there are any snapshots for the owner and if the last snapshot was taken in the current block. If both conditions are true, it updates the value of the last snapshot to the new value.
+    If there are no snapshots or the last snapshot was not taken in the current block, it creates a new snapshot with the current block number and the new value, and increments the snapshot count for the owner.
+
+4. Event Emission:
+   solidity
+   emit SnapshotDone(owner, oldValue, newValue);
+   
+   Finally, the function emits an event SnapshotDone with the owner's address, the old value, and the new value. This event can be used to notify external systems or interfaces about the snapshot update.
+
+### Summary
+The _writeSnapshot function is designed to efficiently manage and update snapshots of values associated with specific addresses. It ensures that if multiple updates occur within the same block, only the latest value is recorded, thereby optimizing storage usage and reducing the number of snapshots needed. This function is particularly useful in scenarios where tracking changes over time at a blocklevel granularity is required, such as in financial or governance smart contracts.

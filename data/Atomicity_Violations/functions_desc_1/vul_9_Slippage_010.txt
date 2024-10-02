@@ -1,0 +1,38 @@
+This code defines an internal view function named _withdrawCollateralLiquidityTokens, which is designed to withdraw collateral liquidity tokens from a portfolio state based on certain conditions and factors. The function takes four parameters: portfolioState (a memory struct representing the state of the portfolio), factors (a memory struct containing various factors related to liquidation), blockTime (the current block time), and collateralToWithdraw (the amount of collateral to withdraw). The function returns an integer representing the remaining collateral to withdraw after the operation.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function starts by checking if there are any new assets in the portfolio state. It uses a require statement to ensure that portfolioState.newAssets.length is 0, meaning no new assets should be added during this operation. This is a safety check to prevent unintended modifications.
+
+2. Initialization of Market Parameters:
+    The function initializes an array of MarketParameters within the factors struct. The size of this array is determined by factors.cashGroup.maxMarketIndex, which indicates the maximum number of market indices to be considered.
+
+3. Iterating Through Portfolio Assets:
+    The function then iterates through each asset in portfolioState.storedAssets. For each asset, it performs several checks:
+      It skips assets marked for deletion (AssetStorageState.Delete).
+      It skips assets that are not liquidity tokens or do not match the currency ID specified in factors.cashGroup.
+
+4. Loading Market Data and Calculating Claims:
+    For each valid asset, the function calculates the market index and loads the corresponding market data using factors.cashGroup.loadMarket. This method is called with the current market index, a boolean indicating whether to use the stored data, and the current block time.
+    The function then calculates the cash and fCash claims associated with the asset using the getCashClaims method.
+
+5. Withdrawing Collateral:
+    If the cash claim is less than or equal to the amount of collateral to withdraw, the function:
+      Deletes the asset from the portfolio state.
+      Removes the liquidity corresponding to the asset’s notional value from the market.
+      Updates the remaining collateral to withdraw by subtracting the cash claim.
+    If the cash claim is greater than the collateral to withdraw, the function:
+      Calculates the number of tokens to remove proportionally.
+      Removes the calculated liquidity from the market and updates the cash and fCash claims.
+      Adjusts the notional value of the asset in the portfolio state and marks it for update.
+      Sets the collateral to withdraw to 0 since the required amount has been withdrawn.
+
+6. Updating Portfolio State:
+    After modifying the liquidity tokens, the function adds the net fCash asset to the portfolio state. This is done by calling portfolioState.addAsset with the appropriate parameters.
+
+7. Termination Conditions:
+    The function checks if the collateral to withdraw has reached 0. If so, it returns 0 immediately, indicating that the operation is complete.
+    If the loop completes and there is still collateral to withdraw, the function returns the remaining amount.
+
+This function is crucial for managing collateral liquidity tokens within a portfolio, ensuring that withdrawals are handled correctly and efficiently while maintaining the integrity of the portfolio state.

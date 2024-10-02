@@ -1,0 +1,20 @@
+Type of vulnerability: Incorrect Token Supply Calculation
+
+Cause of vulnerability: The `price()` function does not account for afEth tokens held in the contract for pending withdrawals, leading to an overestimation of the total supply and an incorrect price calculation.
+
+Execution process:
+1. A user calls `requestWithdraw()` to initiate a withdrawal, transferring their afEth to the contract.
+2. The user's afEth is not burned immediately but remains in the contract, increasing the contract's balance.
+3. When `price()` is called, it uses the total supply of afEth without subtracting the tokens held for pending withdrawals, resulting in an inflated total supply.
+4. This inflated total supply leads to a lower calculated price for afEth, which in turn causes depositors to receive more afEth than they should when calling `deposit()`.
+
+Vulnerable code:
+```solidity
+function price() public view returns (uint256) {
+    if (totalSupply() == 0) return 1e18;
+    AbstractStrategy vEthStrategy = AbstractStrategy(vEthAddress);
+    uint256 safEthValueInEth = (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) * safEthBalanceMinusPending()) / 1e18;
+    uint256 vEthValueInEth = (vEthStrategy.price() * vEthStrategy.balanceOf(address(this))) / 1e18;
+    return ((vEthValueInEth + safEthValueInEth) * 1e18) / totalSupply();
+}
+```

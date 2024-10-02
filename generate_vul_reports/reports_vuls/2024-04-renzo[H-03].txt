@@ -1,0 +1,23 @@
+[H-03] ETH withdrawals from EigenLayer always fail due toOperatorDelegator’s nonReentrantreceive()
+Submitted byLessDupes, also found byblutorque,ilchovski,0x73696d616f,zzykxx,kennedy1030, andKupiaSec
+https://github.com/code-423n4/2024-04-renzo/blob/519e518f2d8dec9acf6482b84a181e403070d22d/contracts/Delegation/OperatorDelegator.sol#L269
+https://github.com/code-423n4/2024-04-renzo/blob/519e518f2d8dec9acf6482b84a181e403070d22d/contracts/Delegation/OperatorDelegator.sol#L501
+Vulnerability details
+TheOperatorDelegator.completeQueuedWithdrawal()function is used by admins to finalize previously initiated withdraws of shares from EigenLayer.
+We note that both this and the OperatorDelegator’sreceive()functions arenonReentrant:
+File:OperatorDelegator.sol265:functioncompleteQueuedWithdrawal(266:IDelegationManager.Withdrawalcalldatawithdrawal,267:IERC20[]calldatatokens,268:uint256middlewareTimesIndex269:     )externalnonReentrantonlyNativeEthRestakeAdmin{270:uint256gasBefore=gasleft();271:if(tokens.length!=withdrawal.strategies.length)revertMismatchedArrayLengths();272:273:// complete the queued withdrawal from EigenLayer with receiveAsToken set to true274:delegationManager.completeQueuedWithdrawal(withdrawal,tokens,middlewareTimesIndex,true);---501:receive()externalpayablenonReentrant{502:// check if sender contract is EigenPod. forward full withdrawal eth received503:if(msg.sender==address(eigenPod)) {504:restakeManager.depositQueue().forwardFullWithdrawalETH{ value:msg.value}();
+However, thereceive()function is normally called by theEigenPodin the call stack originated by the L274completeQueuedWithdrawal()whenreceiveAsTokens == truelike in this case. This particular instance of reentrancy is not only acceptable but also required to allow ETH redemptions from EigenLayer. However, thenonReentrantmodifier prevents it.
+Impact
+All withdrawals that include any amount of ETH will be permanently stuck in EigenLayer and won’t be redeemable. Only amounts coming from new deposits can be redeemed and the team will have no way to fill the withdrawal queues. To unblock them, the team will necessarily have to upgradeOperatorDelegator.
+Proof of Concept
+To prove the concept, it’s sufficient to upgradeOperatorDelegatoron a mainnet fork and initiate a withdrawal that has ETH among the withdrawn strategies.
+While it would be too bulky to provide a coded PoC, you can find inthis GH Gistthe Foundry traces of such failed call on a mainnet fork.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Consider removingnonReentrantfrom OperatorDelegator’sreceive, or applying the modifier only in casemsg.sender != eigenPod.
+Assessed type
+Reentrancy
+jatinj615 (Renzo) confirmed via duplicate Issue #571
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.

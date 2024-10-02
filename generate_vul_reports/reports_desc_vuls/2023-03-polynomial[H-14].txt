@@ -1,0 +1,13 @@
+Type of vulnerability: Liquidation Logic Flaw
+Cause of vulnerability: The liquidation logic allows a position that is barely unhealthy to be fully liquidated in two transactions due to the harsh slashing mechanism.
+Execution process: A position with a collateral ratio just below the liquidation threshold is half liquidated, but due to the additional liquidation bonus, the remaining collateral ratio falls below the full liquidation threshold, causing the position to be fully liquidated in the next transaction.
+Vulnerable code: 
+```solidity
+uint256 safetyRatioNumerator = position.collateralAmount.mulWadDown(collateralPrice);
+uint256 safetyRatioDenominator = position.shortAmount.mulWadDown(markPrice);
+safetyRatioDenominator = safetyRatioDenominator.mulWadDown(collateral.liqRatio);
+uint256 safetyRatio = safetyRatioNumerator.divWadDown(safetyRatioDenominator);
+if (safetyRatio > 1e18) return maxDebt;
+maxDebt = position.shortAmount / 2;
+if (safetyRatio < WIPEOUT_CUTOFF) maxDebt = position.shortAmount;
+```

@@ -1,0 +1,22 @@
+Type of vulnerability: Arbitrary External Call
+Cause of vulnerability: Lack of restriction on the function called on the router during liquidation, allowing an attacker to manipulate the execution flow.
+Execution process: 
+1. Attacker identifies an unhealthy position to liquidate.
+2. Attacker calls `PARMinerV2.liquidate()` with crafted `dexTxnData` to specify `UniswapV2Router.swapExactTokensForETH()`.
+3. The liquidation process transfers collateral to `PARMinerV2`.
+4. The arbitrary router call (`swapExactTokensForETH()`) swaps collateral for ETH and sends it to the attacker's contract.
+5. Attacker's contract swaps ETH for PAR and deposits PAR back into `PARMinerV2`.
+6. The final check in `liquidate()` passes as the PAR balance of `PARMinerV2` increases, allowing the attacker to steal collateral.
+Vulnerable code: 
+```solidity
+function liquidate(address position, bytes calldata dexTxnData) external {
+    // Liquidation process
+    _a.parallel().core().liquidatePartial(position);
+    // Receive liquidated collateral
+    // Arbitrary router call
+    (bool success, ) = router.call(dexTxnData);
+    require(success, "Router call failed");
+    // Check final PAR balance
+    require(IERC20(PAR).balanceOf(address(this)) > initialBalance, "Balance check failed");
+}
+```

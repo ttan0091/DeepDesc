@@ -1,0 +1,15 @@
+Type of vulnerability: Timing-based Race Condition
+Cause of vulnerability: Use of non-strict inequalities (`<=` and `>=`) in time checks, allowing both auction phases to be active simultaneously when `block.timestamp == minter.getAuctionEndTime(_tokenid)`.
+Execution process: An attacker waits until `block.timestamp == minter.getAuctionEndTime(_tokenid)`, places multiple bids to become the winner, claims the auctioned NFT, and then cancels all bids to receive multiple refunds, draining the contract's ETH.
+Vulnerable code: 
+```solidity
+function claimAuction(uint256 _tokenid) public {
+    require(block.timestamp >= minter.getAuctionEndTime(_tokenid), "Auction not ended");
+    // Auction claim logic
+}
+
+function cancelBid(uint256 _tokenid, uint256 index) public {
+    require(block.timestamp <= minter.getAuctionEndTime(_tokenid), "Auction ended");
+    // Bid cancellation logic
+}
+```

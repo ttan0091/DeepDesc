@@ -1,0 +1,11 @@
+[H-15]VaderRouter._swapperforms wrong swap
+Submitted by cmichel
+The 3-path hop inVaderRouter._swapis supposed to first swapforeignassets to native assets, and then the received native assets to different foreign assets again.
+Thepool.swap(nativeAmountIn, foreignAmountIn)accepts the foreign amount as thesecondargument.
+The code however mixes these positional arguments up and tries to perform apool0foreign -> native swap by using theforeignamount as thenative amount:
+function_swap(uint256amountIn,address[]calldatapath,addressto)privatereturns(uint256amountOut) {if(path.length==3) {// ...// @audit calls this with nativeAmountIn = amountIn. but should be foreignAmountIn (second arg)returnpool1.swap(0,pool0.swap(amountIn,0,address(pool1)),to);}}// @audit should be this insteadreturnpool1.swap(pool0.swap(0,amountIn,address(pool1)),0,to);
+Impact
+All 3-path swaps through theVaderRouterfail in the pool check whenrequire(nativeAmountIn = amountIn <= nativeBalance - nativeReserve = 0)is checked, as foreign amount is sent butnativeamount is specified.
+Recommended Mitigation Steps
+Usereturn pool1.swap(pool0.swap(0, amountIn, address(pool1)), 0, to);instead.
+SamSteinGG (sponsor) confirmed

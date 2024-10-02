@@ -1,0 +1,34 @@
+Type of vulnerability: Reentrancy and Eth-lost vulnerability
+Cause of vulnerability: The mutualConsent modifier does not revert on the first call, allowing the lender to send ETH which is lost if the borrower has not yet consented.
+Execution process: 
+1. Lender calls `addCredit` or `increaseCredit` with ETH.
+2. The function does not revert but sets the lender's consent.
+3. The sent ETH is lost as the function body is not executed.
+4. Borrower attempts to call the function to consent, but the transaction reverts because no ETH is sent.
+Vulnerable code: 
+```solidity
+modifier mutualConsent(address _signerOne, address _signerTwo) {
+    if(_mutualConsent(_signerOne, _signerTwo)) {
+        // Run whatever code needed 2/2 consent
+        _;
+    }
+}
+
+function _mutualConsent(address _signerOne, address _signerTwo) internal returns(bool) {
+    if(msg.sender != _signerOne && msg.sender != _signerTwo) {
+        revert Unauthorized();
+    }
+    address nonCaller = _getNonCaller(_signerOne, _signerTwo);
+    // The consent hash is defined by the hash of the transaction call data and sender of msg,
+    // which uniquely identifies the function, arguments, and sender.
+    bytes32 expectedHash = keccak256(abi.encodePacked(msg.data, nonCaller));
+    if(!mutualConsents[expectedHash]) {
+        bytes32 newHash = keccak256(abi.encodePacked(msg.data, msg.sender));
+        mutualConsents[newHash] = true;
+        emit MutualConsentRegistered(newHash);
+        return false;
+    }
+    delete mutualConsents[expectedHash];
+    return true;
+}
+```

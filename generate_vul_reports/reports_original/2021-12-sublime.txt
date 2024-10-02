@@ -1,0 +1,180 @@
+[H-01] InCreditLine#_borrowTokensToLiquidate, oracle is used wrong way
+Submitted by 0x0x0x
+Current implementation to get the price is as follows:
+(uint256 _ratioOfPrices, uint256 _decimals) = IPriceOracle(priceOracle).getLatestPrice(_borrowAsset, _collateralAsset);
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/CreditLine/CreditLine.sol#L1050
+But it should not consultborrowToken / collateralToken, rather it should consult the inverse of this result. As a consequence, inliquidatethe liquidator/lender can lose/gain funds as a result of this miscalculation.
+Mitigation step
+Replace it with
+(uint256 _ratioOfPrices, uint256 _decimals) = IPriceOracle(priceOracle).getLatestPrice(_collateralAsset, _borrowAsset);
+ritik99 (Sublime) confirmed
+[H-02] Wrong returns ofSavingsAccountUtil.depositFromSavingsAccount()can cause fund loss
+Submitted by WatchPug
+The functionSavingsAccountUtil.depositFromSavingsAccount()is expected to return the number of equivalent shares for given_asset.
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/Pool/Pool.sol#L225-L267
+/***@noticeinternal function used to get amount of collateral deposited to the pool*@param_fromSavingsAccountif true, collateral is transferred from _sender's savings account, if false, it is transferred from _sender's wallet*@param_toSavingsAccountif true, collateral is transferred to pool's savings account, if false, it is withdrawn from _sender's savings account*@param_assetaddress of the asset to be deposited*@param_amountamount of tokens to be deposited in the pool*@param_poolSavingsStrategyaddress of the saving strategy used for collateral deposit*@param_depositFromaddress which makes the deposit*@param_depositToaddress to which the tokens are deposited*@return_sharesReceived number of equivalent shares for given _asset*/function_deposit(bool_fromSavingsAccount,bool_toSavingsAccount,address_asset,uint256_amount,address_poolSavingsStrategy,address_depositFrom,address_depositTo)internalreturns(uint256_sharesReceived) {if(_fromSavingsAccount) {_sharesReceived=SavingsAccountUtil.depositFromSavingsAccount(ISavingsAccount(IPoolFactory(poolFactory).savingsAccount()),_depositFrom,_depositTo,_amount,_asset,_poolSavingsStrategy,true,_toSavingsAccount);}else{_sharesReceived=SavingsAccountUtil.directDeposit(ISavingsAccount(IPoolFactory(poolFactory).savingsAccount()),_depositFrom,_depositTo,_amount,_asset,_toSavingsAccount,_poolSavingsStrategy);}}
+However, sincesavingsAccountTransfer()does not return the result of_savingsAccount.transfer(), but returned_amountinstead, which means thatSavingsAccountUtil.depositFromSavingsAccount()may not return the actual shares (when pps is not 1).
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/SavingsAccount/SavingsAccountUtil.sol#L11-L26
+functiondepositFromSavingsAccount(ISavingsAccount_savingsAccount,address_from,address_to,uint256_amount,address_token,address_strategy,bool_withdrawShares,bool_toSavingsAccount)internalreturns(uint256) {if(_toSavingsAccount) {returnsavingsAccountTransfer(_savingsAccount,_from,_to,_amount,_token,_strategy);}else{returnwithdrawFromSavingsAccount(_savingsAccount,_from,_to,_amount,_token,_strategy,_withdrawShares);}}
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/SavingsAccount/SavingsAccountUtil.sol#L66-L80
+functionsavingsAccountTransfer(ISavingsAccount_savingsAccount,address_from,address_to,uint256_amount,address_token,address_strategy)internalreturns(uint256) {if(_from==address(this)) {_savingsAccount.transfer(_amount,_token,_strategy,_to);}else{_savingsAccount.transferFrom(_amount,_token,_strategy,_from,_to);}return_amount;}
+As a result, the recorded_sharesReceivedcan be wrong.
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/Pool/Pool.sol#L207-L223
+function_depositCollateral(address_depositor,uint256_amount,bool_transferFromSavingsAccount)internalnonReentrant{uint256_sharesReceived=_deposit(_transferFromSavingsAccount,true,poolConstants.collateralAsset,_amount,poolConstants.poolSavingsStrategy,_depositor,address(this));poolVariables.baseLiquidityShares=poolVariables.baseLiquidityShares.add(_sharesReceived);emitCollateralAdded(_depositor,_amount,_sharesReceived);}
+PoC
+Given:
+the price per share of yearn USDC vault is1.2Alice deposited12,000 USDCtoyearnstrategy, received10,000share tokens;Alice created a pool, and added all the12,000 USDCfrom the saving account as collateral; The recordedCollateralAddedgot the wrong number:12000which should be10000;Alice failed to borrow money with the pool and tries tocancelPool(), it fails as the recorded collateralsharesare more than the actual collateral.
+As a result, Alice has lost all the12,000 USDC.
+If Alice managed to borrow with the pool, when the loan defaults, the liquidation will also fail, and cause fund loss to the lenders.
+Recommendation
+Change to:
+functionsavingsAccountTransfer(ISavingsAccount_savingsAccount,address_from,address_to,uint256_amount,address_token,address_strategy)internalreturns(uint256) {if(_from==address(this)) {return_savingsAccount.transfer(_amount,_token,_strategy,_to);}else{return_savingsAccount.transferFrom(_amount,_token,_strategy,_from,_to);}}
+ritik99 (Sublime) confirmed
+[H-03] denial of service
+Submitted by certora
+https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/Pool/Pool.sol#L645if the borrow token is address(0) (ether), and someone calls withdrawLiquidity, it calls SavingsAccountUtil.transferTokens which will transfer to msg.sender, msg.value (of withdrawLiquidity, because it’s an internal function). In other words, the liquidity provided will pay to themselves and their liquidity tokens will still be burned. therefore they will never be able to get their funds back.
+Recommended Mitigation Steps
+the bug is inhttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccountUtil.solIt is wrong to use msg.value in transferTokens because it’ll be the msg.value of the calling function.
+therefore every transfer of ether using this function is wrong and dangerous, the solution is to remove all msg.value from this function and just transfer _amount regularly.
+**ritik99 (Sublime) confirmed**
+[H-04] Yearn token <> shares conversion decimal issue
+Submitted by cmichel
+The yearn strategyYearnYieldconverts shares to tokens by doingpricePerFullShare * shares / 1e18:
+function getTokensForShares(uint256 shares, address asset) public view override returns (uint256 amount) {if (shares == 0) return 0;// @audit should divided by vaultDecimalsamount = IyVault(liquidityToken[asset]).getPricePerFullShare().mul(shares).div(1e18);}
+But Yearn’sgetPricePerFullShareseems to beinvault.decimals()precision, i.e., it should convert it aspricePerFullShare * shares / (10 ** vault.decimals()).
+The vault decimals are the sameas the underlying token decimals
+Impact
+The token and shares conversions do not work correctly for underlying tokens that do not have 18 decimals.
+Too much or too little might be paid out leading to a loss for either the protocol or user.
+Recommended Mitigation Steps
+Divide by10**vault.decimals()instead of1e18ingetTokensForShares.
+Apply a similar fix ingetSharesForTokens.
+ritik99 (Sublime) confirmed
+[H-05] Aave’s share tokens are rebasing breaking current strategy code
+Submitted by cmichel, also found by WatchPug and leastwood
+When depositing into Aave through theAaveYield.lockTokenscontract strategy, one receives thesharesReceivedamount corresponding to the diff ofaTokenbalance, which is just always the deposited amount as aave is a rebasing token and1.0 aToken = 1.0 underlyingat each deposit / withdrawal.
+Note that thissharesReceived(the underlying deposit amount) is cached in abalanceInSharesmap inSavingsAccount.depositwhich makes this sharestaticand not dynamically rebasing anymore:
+functiondeposit(uint256_amount,address_token,address_strategy,address_to)externalpayableoverridenonReentrantreturns(uint256) {require(_to!=address(0),'SavingsAccount::deposit receiver address should not be zero address');uint256_sharesReceived=_deposit(_amount,_token,_strategy);balanceInShares[_to][_token][_strategy] =balanceInShares[_to][_token][_strategy].add(_sharesReceived);emitDeposited(_to,_sharesReceived,_token,_strategy);return_sharesReceived;}functiongetTokensForShares(uint256shares,addressasset)publicviewoverridereturns(uint256amount) {if(shares==0)return0;addressaToken=liquidityToken(asset);(, , , , , , ,uint256liquidityIndex, , ) =IProtocolDataProvider(protocolDataProvider).getReserveData(asset);// @audit-info tries to do (user shares / total shares) * underlying amount where underlying amount = scaledBalance * liquidityIndexamount=IScaledBalanceToken(aToken).scaledBalanceOf(address(this)).mul(liquidityIndex).mul(shares).div(IERC20(aToken).balanceOf(address(this)));}
+However, thegetTokensForSharesfunction uses a rebasing total share supply ofIERC20(aToken).balanceOf(this).
+POC
+SavingsAccount deposits 1000 DAI for user and user receives 1000 aDAI as shares. These shares are cached inbalanceInShares[user][dai][aave].Time passes, Aave accrues interest for lenders, and the initial 1000 aTokens balance has rebased to 1200 aTokensSavingsAccountwithdraws 1000 aDAI shares for user which callsAaveYield.unlockTokens. The user receives only 1000 DAI. The interest owed to the user is not paid out.Note thatgetTokensForSharesalso returns the wrong amount as1200 * 1000 / 1200 = 1000
+Impact
+Interest is not paid out to users.
+Pool collateral is measured without the interest accrued as it usesgetTokensForShareswhich will lead to early liquidations and further loss.
+Recommended Mitigation Steps
+If the user shares are not rebasing, you cannot have the “total shares supply” (the shares in the contract) be rebasing as ingetTokensForShares. Also withdrawing the share amount directly from Aave as in_withdrawERCdoes not withdraw the yield.
+A fix could be to create anon-rebasingwrapper LP token that is paid out to the user proportional to the current strategy TVL at time of user deposit.
+ritik99 (Sublime) acknowledged:
+We’ve been aware of this issue for some time.. ended up including the AaveYield file in the scope by mistake! We do not plan to include the Aave strategy in our launch (we maintain a strategy registry that allows us to add/drop yield strategies), and as noted in #128, we will be utilizingwrapper contractsthat mimics behaviour of non-rebasing LP tokens
+0xean (judge) commented:
+going to side with the warden since they believed the contract to be in scope and it’s a valid concern.
+[H-06] Anyone can liquidate credit line when autoLiquidation is false without supplying borrow tokens
+Submitted by harleythedog
+Impact
+It is intended that if a credit line has autoLiquidation as false, then only the lender can be the liquidator (see docs here:https://docs.sublime.finance/sublime-docs/smart-contracts/creditlines). However, this is not correctly implemented, and anyone can liquidate a position that has autoLiquidation set to false.
+Even worse, when autoLiquidation is set to false, the liquidator does not have to supply the initial amount of borrow tokens (determined by_borrowTokensToLiquidate) that normally have to be transferred when autoLiquidation is true. This means that the liquidator will be sent all of the collateral that is supposed to be sent to the lender, so this represents a huge loss to the lender. Since the lender will lose all of the collateral that they are owed, this is a high severity issue.
+Proof of Concept
+The current implementation of liquidate is here:https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/CreditLine/CreditLine.sol#L996.
+Notice that the autoLiquidation value is only used in one place within this function, which is in this segment of the code:
+...if(creditLineConstants[_id].autoLiquidation&&_lender!=msg.sender) {uint256_borrowTokens=_borrowTokensToLiquidate(_borrowAsset,_collateralAsset,_totalCollateralTokens);if(_borrowAsset==address(0)) {uint256_returnETH=msg.value.sub(_borrowTokens,'Insufficient ETH to liquidate');if(_returnETH!=0) {(boolsuccess, ) =msg.sender.call{value:_returnETH}('');require(success,'Transfer fail');}}else{IERC20(_borrowAsset).safeTransferFrom(msg.sender,_lender,_borrowTokens);}}_transferCollateral(_id,_collateralAsset,_totalCollateralTokens,_toSavingsAccount);emitCreditLineLiquidated(_id,msg.sender);}
+So, ifautoLiquidationis false, the code inside of the if statement will simply not be executed, and there are no further checks that the sender HAS to be the lender ifautoLiquidationis false. This means that anyone can liquidate a non-autoLiquidation credit line, and receive all of the collateral without first transferring the necessary borrow tokens.
+For a further proof of concept, consider the test file here:https://github.com/code-423n4/2021-12-sublime/blob/main/test/CreditLines/2.spec.ts. If the code on line 238 is changed fromlet _autoLiquidation: boolean = true;tolet _autoLiquidation: boolean = false;, all the test cases will still pass. This confirms the issue, as the final test case “Liquidate credit line” has theadminas the liquidator, which should not work in non-autoLiquidations since they are not the lender.
+Tools Used
+Inspection and confirmed with Hardhat.
+Recommended Mitigation Steps
+Add the following require statement somewhere in theliquidatefunction:
+require(creditLineConstants[_id].autoLiquidation||msg.sender==creditLineConstants[_id].lender,"not autoLiquidation and not lender");
+ritik99 (Sublime) labeledsponsor confirmed
+[H-07] SavingsAccount withdrawAll and switchStrategy can freeze user funds by ignoring possible strategy liquidity issues
+Submitted by hyh, also found by cmichel
+Impact
+Full withdrawal and moving funds between strategies can lead to wrong accounting if the corresponding market has tight liquidity, which can be the case at least forAaveYield. That is, as the whole amount is required to be moved at once from Aave, bothwithdrawAllandswitchStrategywill incorrectly account for partial withdrawal as if it was full whenever the corresponding underlying yield pool had liquidity issues.
+withdrawAllwill delete user entry, locking the user funds in the strategy: user will get partial withdrawal and have the corresponding accounting entry removed, while the remaining actual funds will be frozen within the system.
+switchStrategywill subtract full number of shares for the_amountrequested from the old strategy, while adding lesser partial number of shares for_tokensReceivedto the new one with the same effect of freezing user’s funds within the system.
+Proof of Concept
+SavingsAccount.withdrawAllhttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L286
+SavingsAccount.switchStrategy:https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L152
+When full withdrawal or strategy switch is performed it is one withdraw viaunlockTokenswithout checking the amount received.
+In the same time the withdraw can fail for example for the strategy switch if old strategy is having liquidity issues at the moment, i.e. Aave market is currently have utilization rate too high to withdraw the amount requested given current size of the lending pool.
+AaveunlockTokensreturn is correctly not matched with amount requested:https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/yield/AaveYield.sol#L217
+But, for example,withdrawAllignores the fact that some funds can remain in the strategy and deletes the use entry after one withdraw attempt:https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L294https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L312
+switchStrategyremoves the old entry completely:https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L181
+Recommended Mitigation Steps
+For bothwithdrawAllandswitchStrategythe immediate fix is to account for tokens received in both cases, which are_amountafterunlockTokensforwithdrawAlland_tokensReceivedforswitchStrategy.
+More general handling of the liquidity issues ideally to be addressed architecturally, given the potential issues with liquidity availability any strategy withdrawals can be done as follows:
+Withdraw what is possible on demand, leave the amount due as is, i.e. do not commit to completing the action in one go and notify the user the action was partial (return actual amount)Save to query and repeat for the remainder funds on the next similar action (this can be separate flag triggered mode)
+ritik99 (Sublime) disagreed with severity:
+The above issue requires making a few assumptions - (i) the underlying yield protocol does not have sufficient reserves to facilitate the withdrawal of a single user, (ii) the user attempts to withdraw all their assets during such times of insufficient reserves.We agree that the above could be a possibility, but would be unlikely. The underlying yield protocols undergo an interest rate spike during high utilization ratios to bring reserves back to normal levels, and some revert if they cannot withdraw the necessary amount (for eg,Compound). During live deployment, only those strategies that work expectedly would be onboarded, while others wouldn’t (for eg, Aave as a strategy wouldn’t be integrated until theirwrappers for aTokensare ready for use). Hence we suggest reducing severity to (2) medium-riskalso similar to #144
+0xean (judge) commented:
+While I understand the argument regarding this being an unlikely scenario, I don’t believe that is a sufficient reason to downgrade the issue give the impact to a user and the lost funds.2 — Med: Assets not at direct risk, but the function of the protocol or its availability could be impacted, or leak value with a hypothetical attack path with stated assumptions, but external requirements.In this scenario - Assets are at a direct risk.
+[H-08] Possibility to drain SavingsAccount contract assets
+Submitted by kemmio
+Impact
+A malicious actor can manipulate switchStrategy() function in a way to withdraw tokens that are locked in SavingsAccount contract
+(the risk severity should be reviewed)
+Proof of Concept
+Firstly an attacker need to deploy a rogue strategy contract implementing IYield.getSharesForTokens() and IYield.unlockTokens() functions
+and calling switchStrategy() with _currentStrategy = ROGUECONTRACTADDRESS (_newStrategy can be any valid strategy e.g. NoYield)
+https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L160
+require(_amount!=0,'SavingsAccount::switchStrategy Amount must be greater than zero');
+Bypass this check by setting _amount > 0, since it will be overwritten in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L162
+_amount=IYield(_currentStrategy).getSharesForTokens(_amount,_token);
+getSharesForTokens() should be implemented to always return 0, hence to bypass the overflow in lineshttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L164-L167
+balanceInShares[msg.sender][_token][_currentStrategy] =balanceInShares[msg.sender][_token][_currentStrategy].sub(_amount,'SavingsAccount::switchStrategy Insufficient balance');
+since balanceInShares[msg.sender][_token][_currentStrategy] == 0 and 0-0 will not overflow
+The actual amount to be locked is saved in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L169
+uint256_tokensReceived=IYield(_currentStrategy).unlockTokens(_token,_amount);
+the rouge unlockTokens() can check asset balance of the contract and return the full amount
+After that some adjustment are made to set approval for the token or to handle native assets casehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L171-L177
+uint256_ethValue;if(_token!=address(0)) {IERC20(_token).safeApprove(_newStrategy,_tokensReceived);}else{_ethValue=_tokensReceived;}_amount=_tokensReceived;
+Finally the assets are locked in the locked strategy and shares are allocated on attackers acounthttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L179-L181
+uint256_sharesReceived=IYield(_newStrategy).lockTokens{value:_ethValue}(address(this),_token,_tokensReceived);balanceInShares[msg.sender][_token][_newStrategy] =balanceInShares[msg.sender][_token][_newStrategy].add(_sharesReceived);
+Proof of Concept
+import"@openzeppelin/contracts/token/ERC20/IERC20.sol";contractAttacker{functiongetSharesForTokens(uint256amount,addresstoken)externalpayablereturns(uint256){return0;}functionunlockTokens(addresstoken,uint256amount)externalpayablereturns(uint256){uint256bal;if(token==address(0))bal=msg.sender.balance;elsebal=IERC20(token).balanceOf(msg.sender);returnbal;}}
+Recommended Mitigation Steps
+Add a check for _currentStrategy to be from strategy list like the one in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L159
+require(IStrategyRegistry(strategyRegistry).registry(_newStrategy), 'SavingsAccount::_newStrategy do not exist');
+ritik99 (Sublime) disputed:
+The savings account contract doesn’t hold any tokens, so it is not possible to lock tokens in a new strategy, hence this attack will not work. Nevertheless it is something we will explore further to limit unexpected state changes
+0xean (judge) commented:
+Based on the review of the warden I believe this is a valid attack path.  This line would need to change to the amount of tokens that are to be “stolen” but otherwise this does seem accurate.
+bal=IERC20(token).balanceOf(msg.sender);
+[H-09]PriceOracleDoes Not Filter Price Feed Outliers
+Submitted by leastwood
+Impact
+If for whatever reason the Chainlink oracle returns a malformed price due to oracle manipulation or a malfunctioned price, the result will be passed onto users, causing unintended consequences as a result.
+In the same time it’s possible to construct mitigation mechanics for such cases, so user economics be affected by sustainable price movements only. As price outrages provide a substantial attack surface for the project it’s worth adding some complexity to the implementation.
+Proof of Concept
+https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/PriceOracle.sol#L149-L161
+functiongetLatestPrice(addressnum,addressden)externalviewoverridereturns(uint256,uint256) {uint256_price;uint256_decimals;(_price,_decimals) =getChainlinkLatestPrice(num,den);if(_decimals!=0) {return(_price,_decimals);}(_price,_decimals) =getUniswapLatestPrice(num,den);if(_decimals!=0) {return(_price,_decimals);}revert("PriceOracle::getLatestPrice - Price Feed doesn't exist");}
+The above code outlines how prices are utilised regardless of their actual value (assuming it is always a non-zero value).
+Recommended Mitigation Steps
+Consider querying both the Chainlink oracle and Uniswap pool for latest prices, ensuring that these two values are within some upper/lower bounds of each other. It may also be useful to track historic values and ensure that there are no sharp changes in price. However, the first option provides a level of simplicity as UniswapV3’s TWAP implementation is incredibly resistant to flash loan attacks. Hence, the main issue to address is a malfunctioning Chainlink oracle.
+ritik99 (Sublime) disputed:
+The described suggestion is fairly complex - besides the increase in code complexity, we’d also have to decide the bounds within which the Uniswap and Chainlink oracles should report prices that won’t be trivial. We’ve also noted in theassumptionssection of our contest repo that oracles are assumed to be accurate
+0xean (judge) commented:
+” We expect these feeds to be fairly reliable.” - Based on this quote, I am going to leave this open at the current risk level.  These are valid changes that could significantly reduce the risk of the implementation and unintended liquidations.Fairly reliable != 100% reliable
+[H-10] Wrong implementation ofNoYield.sol#emergencyWithdraw()
+Submitted by WatchPug, also found by 0x1f8b
+https://github.com/code-423n4/2021-12-sublime/blob/9df1b7c4247f8631647c7627a8da9bdc16db8b11/contracts/yield/NoYield.sol#L78-L83
+functionemergencyWithdraw(address_asset,addresspayable_wallet)externalonlyOwnerreturns(uint256received) {require(_wallet!=address(0),'cant burn');uint256amount=IERC20(_asset).balanceOf(address(this));IERC20(_asset).safeTransfer(_wallet,received);received=amount;}
+receivedis not being assigned prior to L81, therefore, at L81,receivedis0.
+As a result, theemergencyWithdraw()does not work, in essence.
+Recommendation
+Change to:
+functionemergencyWithdraw(address_asset,addresspayable_wallet)externalonlyOwnerreturns(uint256received) {require(_wallet!=address(0),'cant burn');received=IERC20(_asset).balanceOf(address(this));IERC20(_asset).safeTransfer(_wallet,received);}
+ritik99 (Sublime) confirmed
+0xean (judge) commented:
+upgrading to High  sev based on assets being “lost” directly.  IE the emergency function will not work.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-11] Unable To CallemergencyWithdrawETH inNoYieldContract
+Submitted by leastwood
+Impact
+TheemergencyWithdrawfunction is implemented in all yield sources to allow theonlyOwnerrole to drain the contract’s balance in case of emergency. The contract considers ETH as a zero address asset. However, there is a call made on_assetwhich will revert if it is the zero address. As a result, ETH tokens can never be withdrawn from theNoYieldcontract in the event of an emergency.
+Proof of Concept
+Consider the case where_asset == address(0). An external call is made to check the contract’s token balance for the target_asset. However, this call will revert as_assetis the zero address. As a result, theonlyOwnerrole will never be able to withdraw ETH tokens during an emergency.
+functionemergencyWithdraw(address_asset,addresspayable_wallet)externalonlyOwnerreturns(uint256received) {require(_wallet!=address(0),'cant burn');uint256amount=IERC20(_asset).balanceOf(address(this));IERC20(_asset).safeTransfer(_wallet,received);received=amount;}
+Affected function as per below:https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/yield/NoYield.sol#L78-L83
+Recommended Mitigation Steps
+Consider handling the case where_assetis the zero address, i.e. the asset to be withdrawn under emergency is the ETH token.
+ritik99 (Sublime) confirmed0xean (judge) commented:
+Upgrading to Sev 3 in line with #4  / #115 as this results in funds being stuck in the contract.

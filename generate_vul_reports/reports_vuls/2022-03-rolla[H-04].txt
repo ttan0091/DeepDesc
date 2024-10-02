@@ -1,0 +1,18 @@
+[H-04]EIP712MetaTransaction.executeMetaTransaction()failed txs are open to replay attacks
+Submitted by WatchPug
+Any transactions that fail based on some conditions that may change in the future are not safe to be executed again later (e.g. transactions that are based on others actions, or time-dependent etc).
+In the current implementation, once the low-level call is failed, the whole tx will be reverted and so that_nonces[metaAction.from]will remain unchanged.
+As a result, the same tx can be replayed by anyone, using the same signature.
+EIP712MetaTransaction.sol#L86
+functionexecuteMetaTransaction(MetaActionmemorymetaAction,bytes32r,bytes32s,uint8v)externalpayablereturns(bytesmemory) {require(_verify(metaAction.from,metaAction,r,s,v),"signer and signature don't match");uint256currentNonce=_nonces[metaAction.from];// intentionally allow this to overflow to save gas,// and it's impossible for someone to do 2 ^ 256 - 1 meta txsunchecked{_nonces[metaAction.from] =currentNonce+1;}// Append the metaAction.from at the end so that it can be extracted later// from the calling context (see _msgSender() below)(boolsuccess,bytesmemoryreturnData) =address(this).call(abi.encodePacked(abi.encodeWithSelector(IController(address(this)).operate.selector,metaAction.actions),metaAction.from));require(success,"unsuccessful function call");emitMetaTransactionExecuted(metaAction.from,payable(msg.sender),currentNonce);returnreturnData;}
+See also the implementation of OpenZeppelin’sMinimalForwarder:
+https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.5.0/contracts/metatx/MinimalForwarder.sol#L42-L66
+Proof of Concept
+Given:
+The collateral is USDC;Alice got10,000 USDCin the wallet.Alice submitted a MetaTransaction tooperate()and_mintOptionsPosition()with10,000 USDC;Before the MetaTransaction get executed, Alice sent1,000 USDCto Bob;The MetaTransaction submited by Alice in step 1 get executed but failed;A few days later, Bob sent1,000 USDCto Alice;The attacker can replay the MetaTransaction failed to execute at step 3 and succeed.
+Alice’s10,000 USDCis now been spent unexpectedly against her will and can potentially cause fund loss depends on the market situation.
+Recommended Mitigation Steps
+Failed txs should still increase the nonce.
+While implementating the change above, consider adding one more check to require sufficient gas to be paid, to prevent “insufficient gas griefing attack” as described inthis article.
+0xca11 (Rolla) confirmed, resolved, and commented:
+Meta transactions replay and insufficient gas griefing attacks are now prevented sinceRollaProject/quant-protocol#80.

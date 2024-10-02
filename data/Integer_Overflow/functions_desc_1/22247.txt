@@ -1,0 +1,27 @@
+This code defines a smart contract named PIGGY_BANK, which includes a mapping to store account balances and a function to collect funds from these accounts. Here’s a detailed explanation of how this contract works:
+
+1. Mapping Definition:
+    mapping (address => uint) public Accounts;
+    This line declares a public mapping named Accounts. The mapping associates Ethereum addresses with unsigned integer values, representing the balance of each account. The public keyword automatically generates a getter function for the mapping, allowing external contracts and accounts to query the balance of any address.
+
+2. Function Definition:
+    function Collect(uint _am) public payable { ... }
+    This line defines a public payable function named Collect that takes one parameter _am of type uint, representing the amount of Ether to collect. The payable keyword allows this function to receive Ether.
+
+3. Function Logic:
+    if(_am <= Accounts[msg.sender]) { ... }
+    This conditional statement checks if the amount _am is less than or equal to the balance of the sender's account (Accounts[msg.sender]). If true, it proceeds to the next step.
+
+4. Ether Transfer:
+    if(msg.sender.call.value(_am)()) { ... }
+    This line attempts to transfer _am Wei from the contract to the sender's address using the lowlevel call function. The value(_am)() part specifies the amount of Ether to send. If the transfer is successful (i.e., the call does not throw an exception), the next step is executed.
+
+5. Balance Update:
+    Accounts[msg.sender] = _am;
+    If the Ether transfer is successful, this line deducts the amount _am from the sender's account balance in the Accounts mapping.
+
+Potential Vulnerability:
+ The use of the lowlevel call function in this context is susceptible to reentrancy attacks. If the msg.sender is a contract that has a fallback function which recursively calls Collect, it could repeatedly enter this function and drain the contract's Ether before the balance is updated. This is a classic example of a reentrancy vulnerability.
+
+Recommendation:
+ To mitigate this vulnerability, consider using the transfer function or the send function, which limit the gas stipend and prevent reentrancy. Alternatively, apply the "checkseffectsinteractions" pattern by updating the state before making external calls.

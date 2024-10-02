@@ -1,0 +1,12 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `withdrawETHForKnot` function allows for a reentrancy attack due to the execution of `IOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4 ether);` before setting the `bannedBLSPublicKeys[_blsPublicKeyOfKnot] = associatedSmartWallet;`.
+Execution process: A node runner can call `withdrawETHForKnot` to withdraw funds and then reenter the `stake` function to stake the deposited funds from the vaults, changing the status to `IDataStructures.LifecycleStatus.DEPOSIT_COMPLETE`. This results in the BLS key being banned and the lifecycle status being stuck, preventing users from minting derivatives, burning LP tokens, or rotating tokens.
+Vulnerable code:
+```solidity
+function withdrawETHForKnot(address _recipient, bytes calldata _blsPublicKeyOfKnot) external {
+    ...
+    IOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4 ether);
+    ...
+    bannedBLSPublicKeys[_blsPublicKeyOfKnot] = associatedSmartWallet;
+}
+```

@@ -1,0 +1,33 @@
+This code defines an internal function named hashTokenTransferOrder, which is designed to generate a unique hash for a token transfer order based on specific parameters. This function is marked as pure, meaning it does not read from or modify the state of the blockchain; it only operates on the input parameters and returns a result.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    address spender: The address of the entity that is authorized to spend the tokens.
+    uint256 tokenIdOrAmount: The identifier of the token (in case of ERC721) or the amount of tokens (in case of ERC20).
+    bytes32 data: Additional data associated with the token transfer order.
+    uint256 expiration: The timestamp after which the token transfer order is no longer valid.
+
+2. Initialization:
+    bytes32 schemaHash = EIP712_TOKEN_TRANSFER_ORDER_SCHEMA_HASH;: This variable holds the hash of the schema that defines the structure of the token transfer order. This schema hash is a constant predefined in the contract.
+
+3. Assembly Block:
+    The function uses inline assembly to efficiently encode and hash the input parameters. Inline assembly allows for lowerlevel operations and can be more gasefficient compared to higherlevel Solidity operations.
+
+4. Memory Allocation:
+    let memPtr := mload(64): This line loads the free memory pointer, which points to the next available location in memory where data can be stored. In Ethereum, the free memory pointer is typically stored at memory slot 64.
+
+5. Storing Data in Memory:
+    mstore(memPtr, schemaHash): Stores the schema hash at the starting memory location.
+    mstore(add(memPtr, 32), and(spender, 0xffffffffffffffffffffffffffffffffffffffff)): Stores the spender's address 32 bytes ahead of the starting point. The and operation ensures that the address is correctly formatted as a 20byte Ethereum address.
+    mstore(add(memPtr, 64), tokenIdOrAmount): Stores the token ID or amount 64 bytes ahead.
+    mstore(add(memPtr, 96), data): Stores the data hash 96 bytes ahead.
+    mstore(add(memPtr, 128), expiration): Stores the expiration timestamp 128 bytes ahead.
+
+6. Computing the Hash:
+    result := keccak256(memPtr, 160): Computes the Keccak256 hash of the data stored in memory from memPtr to memPtr + 160 bytes. This hash uniquely identifies the token transfer order based on the provided parameters.
+
+7. Return:
+    return result;: The function returns the computed hash.
+
+This function is crucial for scenarios where cryptographic verification of token transfer orders is needed, such as in decentralized exchanges or other applications requiring secure and verifiable token transfers. The use of inline assembly optimizes the gas cost of these operations, making the function more efficient in terms of execution on the Ethereum network.

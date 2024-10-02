@@ -1,0 +1,18 @@
+[H-01] ERC4626 mint uses wrongamount
+Submitted by cmichel, also found by 0xliumin, CertoraInc, Picodes, and Ruhum
+The docs/video sayERC4626.solis in scope as its part ofTurboSafe
+TheERC4626.mintfunction mintsamountinstead ofshares.
+This will lead to issues when theasset <> sharesare not 1-to-1 as will be the case for most vaults over time.
+Usually, the asset amount is larger than the share amount as vaults receive asset yield.
+Therefore, when minting,sharesshould be less thanamount.
+Users receive a larger share amount here which can be exploited to drain the vault assets.
+functionmint(uint256shares,addressto)publicvirtualreturns(uint256amount) {amount=previewMint(shares);// No need to check for rounding error, previewMint rounds up.// Need to transfer before minting or ERC777s could reenter.asset.safeTransferFrom(msg.sender,address(this),amount);_mint(to,amount);emitDeposit(msg.sender,to,amount,shares);afterDeposit(amount,shares);}
+Proof of Concept
+Assumevault.totalSupply() = 1000,totalAssets = 1500
+callmint(shares=1000). Only need to pay1000asset amount but receive1000shares =>vault.totalSupply() = 2000,totalAssets = 2500.callredeem(shares=1000). Receive(1000 / 2000) * 2500 = 1250amounts. Make a profit of250asset tokens.repeat untilshares <> assetsare 1-to-1
+Recommended Mitigation Steps
+Indeposit:
+function mint(uint256 shares, address to) public virtual returns (uint256 amount) {-    _mint(to, amount);+    _mint(to, shares);}
+Alex the Entreprenerd (judge):
+The warden has identified what is most likely a small oversight, which would have drastic consequences in the internal accounting of the Vault.
+Because of impact, I agree with high severity.The sponsor has mitigated.

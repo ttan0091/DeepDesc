@@ -1,0 +1,25 @@
+This code defines a contract named AuctusTokenSale which contains a public function named finish. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Accessibility:
+    The function finish is marked as public, meaning it can be called from any external contract or externally owned account (EOA).
+
+2. Calculation of Free Ethers:
+    The function starts by calculating freeEthers, which is 40% of the total Ether balance of the contract. This is done using the expression address(this).balance  40 / 100.
+      address(this).balance retrieves the current Ether balance of the contract.
+      Multiplying this balance by 40 / 100 (which is equivalent to 0.4 or 40%) calculates 40% of the contract's balance.
+
+3. Transfer of Vested Ethers:
+    The function then attempts to transfer the calculated vestedEthers (which is not yet calculated at this point in the code, but implied to be the remaining balance after freeEthers are deducted). This is done using the assert(address(this).call.value(vestedEthers)()) statement.
+      address(this).call.value(vestedEthers)() is a lowlevel call that sends Ether to an unspecified address with the amount vestedEthers. This is a potential security risk as it does not specify the recipient and can be subject to reentrancy attacks if not handled properly.
+      assert is used here to ensure that the call does not fail. If the call fails, the transaction will revert, and all state changes will be rolled back.
+
+4. Calculation of Vested Ethers:
+    After attempting to send vestedEthers, the function calculates vestedEthers as the difference between the contract's balance and freeEthers using uint256 vestedEthers = address(this).balance  freeEthers.
+
+Potential Issues and Improvements:
+ Order of Operations: The calculation of vestedEthers should precede the Ether transfer to avoid logical errors and ensure the correct amount is transferred.
+ Recipient of Ether Transfer: The recipient of the Ether transfer is not specified, which is a critical oversight. The function should specify which address receives the Ether.
+ Reentrancy Guard: The use of assert and the lowlevel call without a reentrancy guard makes the contract vulnerable to reentrancy attacks. It is recommended to use a pattern like OpenZeppelin's ReentrancyGuard or ensure that state changes are made before any Ether transfers.
+ Code Logic: The logic seems to imply that vestedEthers should be calculated before being sent, but the current order of operations does not reflect this.
+
+In summary, the finish function in the AuctusTokenSale contract attempts to calculate and transfer Ether based on a percentage of its balance but has logical and security issues that need to be addressed.

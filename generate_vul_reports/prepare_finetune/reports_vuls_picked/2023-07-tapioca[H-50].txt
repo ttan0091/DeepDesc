@@ -1,0 +1,25 @@
+Type of vulnerability: Denial of Service (DoS) due to integer truncation and insufficient balance check
+
+Cause of vulnerability: The calculation of the amount of cETH to redeem based on the exchange rate and the desired amount of ETH to receive results in integer truncation, leading to an underestimation of the actual amount of ETH that will be received. This underestimation causes the contract to attempt to transfer out more ETH than it actually receives, leading to a failed transaction and a denial of service.
+
+Execution process:
+1. The `_withdraw` function calculates the amount of cETH to redeem using the `exchangeRateStored` and the desired amount of ETH to receive.
+2. The calculated amount of cETH is passed to the `redeem` function of the cToken contract.
+3. The `redeem` function internally calculates the actual amount of ETH to be received based on the same exchange rate.
+4. Due to integer truncation, the actual amount of ETH received is less than the desired amount.
+5. The `_withdraw` function checks if the available balance of wrapped native tokens is sufficient to cover the desired amount.
+6. Since the actual amount received is less than the desired amount, the check fails, and the transaction reverts, causing a denial of service.
+
+Vulnerable code:
+```solidity
+function _withdraw(address to, uint256 amount) internal override nonReentrant {
+    uint256 available = _currentBalance();
+    require(available >= amount, "CompoundStrategy: amount not valid");
+    uint256 queued = wrappedNative.balanceOf(address(this));
+    if (amount > queued) {
+        uint256 pricePerShare = cToken.exchangeRateStored();
+        uint256 toWithdraw = (((amount - queued) * (10**18)) / pricePerShare);
+        cToken.redeem(toWithdraw);
+    }
+}
+```

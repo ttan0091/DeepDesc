@@ -1,0 +1,22 @@
+[Execution Flow]:
+This code defines a public function named delegateWithSig, which allows a user to delegate their rights to another address using a signed message. The function accepts six parameters: _to (the address to which rights are delegated), _nonce (a nonce to prevent replay attacks), _exp (the expiration time of the signature), and v, r, s (components of the ECDSA signature). Here’s a detailed explanation of how this function works:
+
+1. Feature Check: The function starts by verifying if delegations on behalf are enabled using the isFeatureEnabled function with the feature flag FEATURE_DELEGATIONS_ON_BEHALF. If delegations are disabled, the function reverts with the message "delegations on behalf are disabled".
+
+2. Domain Separator: It constructs the EIP712 contract domain separator using the keccak256 hash function. This includes the domain type hash, the contract name hashed, the current chain ID, and the contract address. This step ensures that the signature is specific to this contract and chain.
+
+3. Hash Struct: It then constructs the EIP712 hashStruct of the delegation message. This includes the delegation type hash, the delegate address _to, the nonce _nonce, and the expiration time _exp.
+
+4. Digest Calculation: The function calculates the EIP712 digest by concatenating the EIP712 prefix "\x19\x01", the domain separator, and the hashStruct. This digest is used to verify the signature.
+
+5. Signature Recovery: Using the ecrecover function, it recovers the address that signed the message from the digest and the signature components v, r, and s.
+
+6. Validation Checks: 
+    It checks if the recovered signer address is not zero, ensuring a valid signature.
+    It verifies that the provided nonce matches the stored nonce for the signer, preventing replay attacks.
+    It checks that the current block timestamp is less than the expiration time _exp, ensuring the signature is not expired.
+
+7. Nonce Update: If all validations pass, the function increments the nonce for the signer to prevent future replay attacks with the same signature.
+
+8. Delegate Call: Finally, it calls the internal function __delegate with the signer and the delegate address _to to execute the logic required for delegation.
+

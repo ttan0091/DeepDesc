@@ -1,0 +1,27 @@
+This code defines an external function named permit, which is designed to allow token holders to grant approvals to other addresses using offchain signatures. This function is commonly used in ERC20 token contracts to enable metatransactions, where the approval process can be handled without the token owner needing to be online or pay for the transaction gas fees.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting the approval.
+    spender: The address that is being granted permission to spend the owner's tokens.
+    amount: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp until which the permit is valid.
+    v, r, s: Components of the ECDSA signature provided by the owner to authorize this transaction.
+
+2. Deadline Check:
+    The function first checks if the deadline is greater than or equal to the current block timestamp (block.timestamp). If the deadline has passed, the function reverts with the message "Permission expired".
+
+3. Signature Validation:
+    The function then validates the s and v values of the signature to ensure they conform to the standards set in EIP2. Specifically, s must be in the lower half of the secp256k1 curve's order, and v must be either 27 or 28. These checks prevent signature malleability.
+
+4. Digest Calculation:
+    The function calculates a hash (digest) that represents the data being signed. This includes a domain separator (DOMAIN_SEPARATOR()), which helps prevent replay attacks across different contracts and chains, and a hash of the permit details (typehash, owner, spender, amount, nonce, and deadline). The nonce is incremented each time a permit is used to ensure each signature is unique.
+
+5. Signature Recovery:
+    Using the ecrecover function, the contract recovers the address that signed the digest from the provided v, r, and s values. This recovered address is then compared to the owner address to ensure the signature is valid and matches the purported owner.
+
+6. Approval Execution:
+    If all checks pass, the function calls _approve(owner, spender, amount) to update the allowance mapping in the ERC20 token contract, granting the spender permission to spend the specified amount of tokens on behalf of the owner.
+
+This function is crucial for enhancing the usability and efficiency of token transfers, especially in scenarios where gasless transactions are desired, by leveraging offchain signatures and onchain validation.

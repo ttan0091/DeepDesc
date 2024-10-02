@@ -1,0 +1,20 @@
+Type of vulnerability: Reentrancy or Incorrect Accounting
+Cause of vulnerability: Incorrect updating of claimed rewards, leading to repeated claims of the same amount
+Execution process: An LP token holder claims their rewards, and the claimed amount is incorrectly set to the due amount instead of being incremented. This allows the holder to repeatedly claim the same amount until the vault is depleted.
+Vulnerable code: 
+```solidity
+function _distributeETHRewardsToUserForToken(address _user, address _token, uint256 _balance, address _recipient) internal {
+    require(_recipient != address(0), "Zero address");
+    uint256 balance = _balance;
+    if (balance > 0) {
+        // Calculate how much ETH rewards the address is owed / due
+        uint256 due = ((accumulatedETHPerLPShare * balance) / PRECISION) - claimed[_user][_token];
+        if (due > 0) {
+            claimed[_user][_token] = due; // Vulnerable line
+            totalClaimed += due;
+            (bool success, ) = _recipient.call{value: due}("");
+            ...
+        }
+    }
+}
+```

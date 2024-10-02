@@ -1,0 +1,39 @@
+Type of vulnerability: Privilege Escalation via Delegatecall Bypass
+
+Cause of vulnerability: The `GuardCM` contract only restricts `delegatecall` operations when the target is the timelock (represented by the `owner` variable). This oversight allows the Community Multisig (CM) to perform `delegatecall` to any other address, enabling it to execute arbitrary code, including removing the guard from its own storage.
+
+Execution process:
+1. The CM sets up the guard using the `setGuard` function.
+2. The CM attempts an unauthorized call via `delegatecall` to the timelock, which is reverted by the guard.
+3. The CM deploys an exploit contract containing a function to delete the guard storage.
+4. The CM calls the `deleteGuardStorage` function through a `delegatecall` from the CM, removing the guard variable from the CM's storage.
+5. The CM repeats the unauthorized call from step 2, which now succeeds, indicating the guard has been bypassed.
+
+Vulnerable code:
+```solidity
+if(to==owner) {
+    // No delegatecall is allowed
+    if(operation==Enum.Operation.DelegateCall) {
+        revertNoDelegateCall();
+    }
+    // Data needs to have enough bytes at least to fit the selector
+    if(data.length<SELECTOR_DATA_LENGTH) {
+        revertIncorrectDataLength(data.length,SELECTOR_DATA_LENGTH);
+    }
+    // Get the function signature
+    bytes4functionSig=bytes4(data);
+    // Check the schedule or scheduleBatch function authorized parameters
+    // All other functions are not checked for
+    if(functionSig==SCHEDULE||functionSig==SCHEDULE_BATCH) {
+        // Data length is too short: need to have enough bytes for the schedule() function
+        // with one selector extracted from the payload
+        if(data.length<MIN_SCHEDULE_DATA_LENGTH) {
+            revertIncorrectDataLength(data.length,MIN_SCHEDULE_DATA_LENGTH);
+        }
+        _verifySchedule(data,functionSig);
+    }
+} else if(to==multisig) {
+    // No self multisig call is allowed
+    revertNoSelfCall();
+}
+```

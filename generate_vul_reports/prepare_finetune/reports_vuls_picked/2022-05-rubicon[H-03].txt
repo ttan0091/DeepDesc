@@ -1,0 +1,19 @@
+Type of vulnerability: Reentrancy and Flash Loan Attack
+Cause of vulnerability: The calculation of bonus tokens is based on the user's current share in the pool, which can be manipulated by an attacker using a flash loan to temporarily increase their share and then withdraw, claiming a disproportionate amount of the bonus tokens.
+Execution process: An attacker uses a flash loan to deposit a large amount of tokens into the pool, increasing their share significantly. They then withdraw their tokens immediately, triggering the distribution of bonus tokens based on their inflated share. This allows the attacker to claim almost all the bonus tokens, leaving minimal amounts for other users.
+Vulnerable code: 
+```solidity
+function release(IERC20 token, address recipient, uint256 sharesWithdrawn, uint256 initialTotalSupply, uint256 poolFee) external override {
+    require(msg.sender == beneficiary, "Caller is not the Bath Token beneficiary of these rewards");
+    uint256 releasable = vestedAmount(address(token), uint64(block.timestamp)) - released(address(token));
+    if (releasable > 0) {
+        uint256 amount = releasable.mul(sharesWithdrawn).div(initialTotalSupply);
+        uint256 _fee = amount.mul(poolFee).div(10000);
+        ..SNIP..
+        uint256 amountWithdrawn = amount.sub(_fee);
+        token.transfer(recipient, amountWithdrawn);
+        _erc20Released[address(token)] += amount;
+        ..SNIP..
+    }
+}
+```

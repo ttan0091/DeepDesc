@@ -1,0 +1,18 @@
+[H-02]acceptCounterOffer()May Result In Both Orders Being Filled
+Submitted by kirk-baird, also found by csanuragjain, hansfriese, Lambda, and minhquanym
+When a user is attempting to accept a counter offer they call the functionacceptCounterOffer()with both theoriginalOrderto be cancelled and the neworderto fill. It is possible for an attacker (or any other user who happens to callfillOrder()at the same time) to fill theoriginalOrderbeforeacceptCounterOffer()cancels it.
+The impact is that bothoriginalOrderandorderare filled. Themsg.senderofacceptCounterOffer()is twice as leveraged as they intended to be if the required token transfers succeed.
+Proof of Concept
+acceptCounterOffer()callscancel()on the original order, however it will not revert if the order has already been filled.
+functionacceptCounterOffer(Ordermemoryorder,bytescalldatasignature,OrdermemoryoriginalOrder)publicpayablereturns(uint256positionId) {// cancel the original ordercancel(originalOrder);// accept the counter offeruint256[]memoryfloorAssetTokenIds=newuint256[](0);positionId=fillOrder(order,signature,floorAssetTokenIds);}
+cancel()does not revert if an order has already been filled it only prevents futurefillOrder()transactions from succeeding.
+functioncancel(Ordermemoryorder)public{require(msg.sender==order.maker,"Not your order");bytes32orderHash=hashOrder(order);// mark the order as cancelledcancelledOrders[orderHash] =true;emitCancelledOrder(orderHash,order);}
+Therefore any user may front-run theacceptCounterOffer()transaction with afillOrder()transaction that fills the original order. As a result the user ends up filling bothorderandoriginalOrder. ThenacceptCounterOffer()cancels theoriginalOrderwhich is essentially a no-op since it’s been filled and continues to fill the neworderresulting in both orders being filled.
+Recommended Mitigation Steps
+Consider havingcancel()revert if an order has already been filled. This can be done by adding the following linerequire(_ownerOf[uint256(orderHash)] == 0).
+outdoteth (Putty Finance) confirmed and commented:
+Report: It’s possible to fill an order twice by accepting a counter offer for an already filled order.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/2.
+hyh (warden) reviewed mitigation:
+Fixed by requiring that order can’t be in the filled state on cancel. This fully adheres to the original logic, but wasn’t controlled for before.

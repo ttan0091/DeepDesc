@@ -1,0 +1,49 @@
+[H-01] It is possible to create fake ERC1155NameWrappertoken for subdomain, which is not owned byNameWrapper
+Submitted by panprog, also found by Aussie_Battlers, brgltd, cryptphi, peritoflores, and wastewa
+NameWrapper.sol#L820-L821NameWrapper.sol#L524NameWrapper.sol#L572
+Due to re-entrancy possibility inNameWrapper._transferAndBurnFuses(called fromsetSubnodeOwnerandsetSubnodeRecord), it is possible to do some stuff inonERC1155Receivedright after transfer but before new owner and new fuses are set. This makes it possible, for example, to unwrap the subdomain, but owner and fuses will still be set even for unwrapped domain, creating fakeERC1155NameWrappertoken for domain, which is not owned byNameWrapper.
+Fake token creation scenario:
+Account1registers and wrapstest.ethdomainAccount1callsNameWrapper.setSubnodeOwnerforsub.test.ethsubdomain withAccount1as owner (to make NameWrapper owner of subdomain)Contract1smart contract is created, which calls unwrap in itsonERC1155Receivedfunction, and a function to sendsub.test.ethERC1155 NameWrapper token back toAccount1Account1callsNameWrapper.setSubnodeOwnerforsub.test.ethwithContract1as new owner, which unwraps domain back toAccount1but due to re-entrancy, NameWrapper sets fuses and ownership toContract1Account1calls function to send ERC1155 token fromContract1back to self.
+After this sequence of events,sub.test.ethsubdomain is owned byAccount1both inENSregistry and inNameWrapper(with fuses and expiry correctly set to the future date). Lots (but not all) of functions inNameWrapperwill fail to execute for this subdomain, because they expectNameWrapperto have ownership of the domain inENS, but some functions will still work, making it possible to make the impression of good domain.
+At this point, ownership inNameWrapperis “detached” from ownership inENSandAccount1can do all kinds of malcious stuff with its ERC1155 token. For example:
+Sell subdomain to the other user, transferingERC1155to that user and burningPARENT_CANNOT_CONTROLto create impression that he can’t control the domain. After receiving the payment,Account1can wrap the domain again, which burns existing ownership record and replaces with the new one with clear fuses andAccount1ownership, effectively stealing domain back from unsuspecting user, who thought thatERC1155gives him the right to the domain (and didn’t expect that parent can clear fuses whenPARENT_CANNOT_CONTROLis set).Transfer subdomain to some other smart contract, which implementsonERC1155Received, then take it back, fooling smart contract into believing that it has received the domain.
+Proof of Concept
+Copy these to test/wrapper and run:yarn test test/wrapper/NameWrapperReentrancy.js
+https://gist.github.com/panprog/3cd94e3fbb0c52410a4c6609e55b863e
+Recommended Mitigation Steps
+Consider addingnonReentrantmodifiers withReentrancyGuardimplementation fromopenzeppelin. Alternatively just fix this individual re-entrancy issue. There are multiple ways to fix it depending on expected behaviour, for example savingERC1155data and requiring it to match the data after transfer (restrictingonERC1155Receivedto not change any data for the token received):
+function _transferAndBurnFuses(bytes32 node,address newOwner,uint32 fuses,uint64 expiry) internal {(address owner, uint32 saveFuses, uint64 saveExpiry) = getData(uint256(node));_transfer(owner, newOwner, uint256(node), 1, "");uint32 curFuses;uint64 curExpiry;(owner, curFuses, curExpiry) = getData(uint256(node));require(owner == newOwner && saveFuses == curFuses && saveExpiry == curExpiry);_setFuses(node, newOwner, fuses, expiry);}
+Arachnid (ENS) confirmed
+
+[H-02] The expiry of the parent node can be smaller than the one of a child node, violating the guarantee policy
+Submitted by PwnedNoMore
+NameWrapper.sol#L504NameWrapper.sol#L356
+By design, the child node’s expiry can only be extended up to the parent’s current one. Adding these restrictions means that the ENS users only have to look at the name itself’s fuses and expiry (without traversing the hierarchy) to understand what guarantees the users have.
+When a parent node tries tosetSubnodeOwner/setSubnodeRecord, the following code is used to guarantee that the new expiry can only be extended up to the current one.
+function_getDataAndNormaliseExpiry(bytes32parentNode,bytes32node,uint64expiry)internalviewreturns(addressowner,uint32fuses,uint64){uint64oldExpiry;(owner,fuses,oldExpiry) =getData(uint256(node));(, ,uint64maxExpiry) =getData(uint256(parentNode));expiry=_normaliseExpiry(expiry,oldExpiry,maxExpiry);return(owner,fuses,expiry);}
+However, the problem shows when
+The sub-domain (e.g.,sub1.base.eth) has its own sub-sub-domain (e.g.,sub2.sub1.base.eth)The sub-domain is unwrapped later, and thus itsoldExpirybecomes zero.Whenbase.ethcallsNameWrapper.setSubnodeOwner, there is not constraint ofsub1.base.eth’s expiry, sinceoldExpiry == 0. As a result, the new expiry ofsub1.base.ethcan be arbitrary and smaller than the one ofsub2.sub1.base.eth
+The point here is that theoldExpirywill be set as 0 when unwrapping the node even it holds child nodes, relaxing the constraint.
+Specifically, considering the following scenario
+The hacker owns a domain (or a 2LD), e.g.,base.ethThe hacker assigns a sub-domain to himself, e.g.,sub1.base.ethThe expiry should be as large as possibleHacker assigns a sub-sub-domain, e.g.,sub2.sub1.base.ethThe expiry should be as large as possibleThe hacker unwraps his sub-domain, i.e.,sub1.base.ethThe hacker re-wraps his sub-domain viaNameWrapper.setSubnodeOwnerThe expiry can be small than the one of sub2.sub1.base.eth
+The root causeseemsthat we should not zero out the expiry when burning a node if the node holds any subnode.
+Suggested Fix
+Potential fix 1: auto-burnCANNOT_UNWRAPwhich thus letsexpirydecide whether a node can be unwrapped.Potential fix 2: force the parent to haveCANNOT_UNWRAPburnt if they want to set expiries on a child viasetSubnodeOwner/setSubnodeRecord/setChildFuses
+Proof of Concept / Attack Scenario
+For full details, please seeoriginal warden submission.
+Arachnid (ENS) confirmed
+
+[H-03]PARENT_CANNOT_CONTROLcan be bypassed by maliciously unwrapping parent node
+Submitted by PwnedNoMore, also found by panprog, and zzzitron
+NameWrapper.sol#L356NameWrapper.sol#L295ENSRegistry.sol#L74
+By design, for any subdomain, as long as itsPARENT_CANNOT_CONTROLfuse is burnt (and does not expire), its parent should not be able to burn its fuses or change its owner.
+However, this contraint can be bypassed by a parent node maliciously unwrapping itself. As long as the hacker becomes the ENS owner of the parent node, he can leverageENSRegistry::setSubnodeOwnerto re-set himself as the ENS owner of the subdomain, and thus re-invokingNameWrapper.wrapcan rewrite the fuses and wrapper owner of the given subdoamin.
+Considering the following attack scenario:
+Someone owns a domain (or a 2LD), e.g.,poc.ethThe domain owner assigns a sub-domain to the hacker, e.g.,hack.poc.ethThis sub-domain should not burnCANNOT_UNWRAPThis sub-domain can burnPARENT_CANNOT_CONTROLHacker assigns a sub-sub-domain to a victim user, e.g.,victim.hack.poc.ethThe victim user burns arbitrary fuses, includingPARENT_CANNOT_CONTROLThe hacker should not be able to change the owner and the fuses ofvictim.hack.poc.ethideallyHowever, the hacker then unwraps his sub-domain, i.e.,hack.poc.ethThe hacker invokesENSRegistry::setSubnodeOwner(hacker.poc.eth, victim)on the sub-sub-domainHe can reassign himself as the owner of thevictim.hack.poc.ethThe hacker invokesNameWrapper.wrap(victim.hacker.poc.eth)to over-write the fuses and owner of the sub-sub-domain, i.e.,victim.hacker.poc.eth
+The root cause here is that, for any node, when one of its subdomains burnsPARENT_CANNOT_CONTROL, the node itself fails to burnCANNOT_UNWRAP. Theoretically, this should check to the root, which however is very gas-consuming.
+Suggested Fix
+Potential fix 1: auto-burnCANNOT_UNWRAPwhich thus letsexpirydecide whether a node can be unwrapped.Potential fix 2: leave fuses as is when unwrapping and re-wrapping, unless name expires. Meanwhile, check the old fuses even wrapping.
+Proof of Concept / Attack Scenario
+For full details, please seeoriginal warden submission.
+Arachnid (ENS) confirmed
+

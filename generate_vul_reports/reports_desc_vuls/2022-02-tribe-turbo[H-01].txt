@@ -1,0 +1,21 @@
+Type of vulnerability: Incorrect Accounting in ERC4626 Mint Function
+
+Cause of vulnerability: The `mint` function incorrectly mints `amount` instead of `shares`, leading to a mismatch between the number of shares issued and the assets deposited.
+
+Execution process:
+1. A user calls the `mint` function with a specified number of `shares`.
+2. The function calculates the `amount` of assets required based on the `shares` but mints the `amount` instead of the `shares`.
+3. The user receives more shares than the actual assets they deposited, leading to an imbalance in the vault's accounting.
+4. The user can exploit this imbalance by repeatedly minting and redeeming shares to drain the vault assets.
+
+Vulnerable code:
+```solidity
+function mint(uint256 shares, address to) public virtual returns (uint256 amount) {
+    amount = previewMint(shares); // No need to check for rounding error, previewMint rounds up.
+    // Need to transfer before minting or ERC777s could reenter.
+    asset.safeTransferFrom(msg.sender, address(this), amount);
+    _mint(to, amount); // Vulnerable line: should mint shares, not amount
+    emit Deposit(msg.sender, to, amount, shares);
+    afterDeposit(amount, shares);
+}
+```

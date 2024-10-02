@@ -1,0 +1,17 @@
+[H-04] Strategist can fail to withdraw asset token from a private vault
+Submitted byrbserver, also found bym9800,Jeiwan,evan,jesusrod15,Apocalypto, andladboy233
+https://github.com/AstariaXYZ/astaria-gpl/blob/main/src/ERC4626RouterBase.sol#L41-L52https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L70-L73
+Calling theAstariaRouter.withdrawfunction calls the followingERC4626RouterBase.withdrawfunction; however, callingERC4626RouterBase.withdrawfunction for a private vault reverts because theVaultcontract does not have anapprovefunction. Directly calling theVault.withdrawfunction for a private vault can also revert since theVaultcontract does not have a way to set the allowance for itself to transfer the asset token, which can cause many ERC20 tokens’transferFromfunction calls to revert when deducting the transfer amount from the allowance. Hence, after depositing some of the asset token in a private vault, the strategist can fail to withdraw this asset token from this private vault and lose this deposit.
+https://github.com/AstariaXYZ/astaria-gpl/blob/main/src/ERC4626RouterBase.sol#L41-L52
+functionwithdraw(IERC4626vault,addressto,uint256amount,uint256maxSharesOut)publicpayablevirtualoverridereturns(uint256sharesOut) {ERC20(address(vault)).safeApprove(address(vault),amount);if((sharesOut=vault.withdraw(amount,to,msg.sender)) >maxSharesOut) {revertMaxSharesError();}}
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L70-L73
+functionwithdraw(uint256amount)external{require(msg.sender==owner());ERC20(asset()).safeTransferFrom(address(this),msg.sender,amount);}
+Proof of Concept
+Please add the following test insrc\test\AstariaTest.t.sol. This test will pass to demonstrate the described scenario.
+functiontestPrivateVaultStrategistIsUnableToWithdraw()public{uint256amountToLend=50ether;vm.deal(strategistOne,amountToLend);addressprivateVault=_createPrivateVault({strategist:strategistOne,delegate:strategistTwo});vm.startPrank(strategistOne);WETH9.deposit{value:amountToLend}();WETH9.approve(privateVault,amountToLend);// strategistOne deposits 50 ether WETH to privateVaultVault(privateVault).deposit(amountToLend,strategistOne);// calling router's withdraw function for withdrawing assets from privateVault revertsvm.expectRevert(bytes("APPROVE_FAILED"));ASTARIA_ROUTER.withdraw(IERC4626(privateVault),strategistOne,amountToLend,type(uint256).max);// directly withdrawing various asset amounts from privateVault also failsvm.expectRevert(bytes("TRANSFER_FROM_FAILED"));Vault(privateVault).withdraw(amountToLend);vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));Vault(privateVault).withdraw(1);vm.stopPrank();}
+Tools Used
+VSCode
+Recommended Mitigation Steps
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L72can be updated to the following code.
+ERC20(asset()).safeTransfer(msg.sender,amount);
+SantiagoGregory (Astaria) confirmed

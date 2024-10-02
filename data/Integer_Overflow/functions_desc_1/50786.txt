@@ -1,0 +1,63 @@
+This code defines a Solidity library named SafeMath and a contract named BountyHunt. The SafeMath library provides a safe method for subtraction to prevent underflow, and the BountyHunt contract manages a bounty system where users can claim their bounties.
+
+Here’s a detailed explanation of how this code works:
+
+### SafeMath Library
+
+The SafeMath library contains a single function sub which performs safe subtraction on uint256 types.
+
+ Function Signature:
+  solidity
+  function sub(uint256 a, uint256 b) internal pure returns (uint256)
+  
+   internal: This function can only be called from within the current contract or derived contracts.
+   pure: This function does not read from or write to the state.
+   returns (uint256): It returns a uint256 value.
+
+ Function Logic:
+  solidity
+  assert(b <= a);
+  return a  b;
+  
+   assert(b <= a): This ensures that b is less than or equal to a. If b is greater than a, the function will throw an exception, preventing underflow.
+   return a  b;: If the condition is met, it returns the result of a  b.
+
+### BountyHunt Contract
+
+The BountyHunt contract uses the SafeMath library for safe arithmetic operations and manages a bounty system.
+
+ State Variables:
+  solidity
+  using SafeMath for uint;
+  mapping(address => uint) public bountyAmount;
+  uint public totalBountyAmount;
+  
+   using SafeMath for uint;: This directive applies the SafeMath library functions to the uint type.
+   mapping(address => uint) public bountyAmount;: This mapping associates each address with a bounty amount.
+   uint public totalBountyAmount;: This variable keeps track of the total bounty amount in the system.
+
+ Function:
+  solidity
+  function claimBounty() public
+  
+   public: This function can be called from outside the contract.
+
+ Function Logic:
+  solidity
+  uint balance = bountyAmount[msg.sender];
+  
+   uint balance = bountyAmount[msg.sender];: Retrieves the bounty amount for the caller (msg.sender).
+
+  solidity
+  if (msg.sender.call.value(balance)()) {
+    totalBountyAmount = totalBountyAmount.sub(balance);
+    bountyAmount[msg.sender] = 0;
+  }
+  
+   if (msg.sender.call.value(balance)()): Sends the bounty amount to the caller using the call method with the value of balance. This is a lowlevel function call that can execute arbitrary code, including reentrancy attacks.
+   totalBountyAmount = totalBountyAmount.sub(balance);: Subtracts the claimed bounty amount from the total bounty amount using the SafeMath library to prevent underflow.
+   bountyAmount[msg.sender] = 0;: Sets the bounty amount for the caller to zero after it has been claimed.
+
+### Security Consideration
+
+The claimBounty function uses the call method to send Ether, which is susceptible to reentrancy attacks. A more secure approach would be to use transfer or send and update the state before making the Ether transfer. Alternatively, implementing the ChecksEffectsInteractions pattern can mitigate this risk.

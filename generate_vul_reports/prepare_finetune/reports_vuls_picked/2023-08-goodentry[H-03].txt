@@ -1,0 +1,17 @@
+Type of vulnerability: Arithmetic Overflow
+Cause of vulnerability: Insufficient scaling down of `sqrtPriceX96` before performing arithmetic operations, leading to potential overflow.
+Execution process: The function `testOraclePrice` attempts to calculate `priceX8` using `sqrtPriceX96` from a Uniswap v3 pool. The calculation involves scaling down `sqrtPriceX96` by `2 ** 12` and then performing further arithmetic operations. However, this scaling down is not sufficient to prevent overflow, especially when dealing with large values like those from the WBTC/WETH pair.
+Vulnerable code: 
+```solidity
+function testOraclePrice() public {
+    uint160 sqrtPriceX96 = 31520141554881197083247204479961147;
+    // decimals0 is 8
+    uint priceX8 = 10**8;
+    // Overflow if dont scale down the sqrtPrice before div 2*192
+    // @audit - the overflow still possible
+    priceX8 = (priceX8 * uint(sqrtPriceX96 / 2**12) ** 2 * 1e8) / 2**168;
+    // decimals1 is 18
+    priceX8 = priceX8 / 10**18;
+    assertEq(true, true);
+}
+```

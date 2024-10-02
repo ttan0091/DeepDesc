@@ -1,0 +1,16 @@
+[H-10] Sellers may lose NFTs when orders are matched withmatchOrders()
+Submitted by KIntern, also found by csanuragjain, GimelSec, kenzo, and unforgiven
+FunctionmatchOrdersuses custom constraints to make the matching more flexible, allow seller/buyer to specify maximum/minimum number of NFTs they want to sell/buy. This function first does some checks and then execute matching.
+But infunctionareNumItemsValid(), there is a wrong checking will lead to wrong logic inmatchOrders()function.
+Instead of checking ifnumConstructedItems <= sell.constraints[0]or not, functionareNumItemsValid()check ifbuy.constraints[0] <= sell.constraints[0]. It will lead to the scenario thatnumConstructedItems > sell.constraints[0]and make the seller sell more number of nfts than he/she allow.
+Proof of Concept
+Consider the scenario
+Alice create a sell order to sell maximum 2 in her 3 BAYC with ids[1, 2, 3]Bob create a buy order to buy mimimum any 2 BAYC with id in list[1, 2, 3]Match executor callmatchOrders()to match Alice’s order and Bob’s one with parameterconstructs = [1, 2, 3]FunctionmatchOrderswill transfer all NFT inconstructlist (3 NFTs1, 2, 3) from seller to buyer even though seller only want to sell maximum 2 NFTs.
+For more information, please check this PoC.https://gist.github.com/minhquanym/a95c8652de8431c5d1d24aa4076a1878
+Tools Used
+Hardhat, Chai
+Recommended Mitigation Steps
+Replace checkbuy.constraints[0] <= sell.constraints[0]withnumConstructedItems <= sell.constraints[0]
+nneverlander (Infinity) confirmed
+HardlyDifficult (judge) commented:
+Seller’s may specify a max number of NFTs to sell, but in the scenario outlined by the warden that requirement is not enforced - leading to the sale of more NFTs than authorized.Accepting this as a High risk report.

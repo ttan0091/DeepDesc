@@ -1,0 +1,17 @@
+Type of vulnerability: Improper Slippage Handling
+Cause of vulnerability: The `swapEntireBalance` function does not correctly pass the `buy_amt_min` value to the underlying `_swap` function, leading to potential loss of funds due to lower slippage tolerance.
+Execution process: When a user calls `swapEntireBalance` with a specified `buy_amt_min`, the function incorrectly calculates the minimum output value by applying a fee to `buy_amt_min` instead of using the actual value directly. This results in a lower minimum output value being passed to the `_swap` function, potentially causing the user to receive fewer tokens than expected.
+Vulnerable code: 
+```solidity
+function swapEntireBalance(uint256 buy_amt_min, address[] calldata route, uint256 expectedMarketFeeBPS) external returns (uint256) {
+    uint256 maxAmount = ERC20(route[0]).balanceOf(msg.sender);
+    ERC20(route[0]).transferFrom(msg.sender, address(this), maxAmount);
+    return _swap(
+        maxAmount,
+        maxAmount.sub(buy_amt_min.mul(expectedMarketFeeBPS).div(10000)), // Incorrectly calculated min out value
+        route,
+        expectedMarketFeeBPS,
+        msg.sender
+    );
+}
+```

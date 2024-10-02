@@ -1,0 +1,31 @@
+Type of vulnerability: Token-Transfer
+Cause of vulnerability: Caching error in the handling of self-transfers during rebase
+Execution process: A user (Alice) enters rebase and calls `transfer(alice, x)`. The function incorrectly caches the initial state of shares, leading to an incorrect calculation of the final balance after the transfer. This results in the minting of extra tokens that should not be minted, allowing Alice to steal unminted distributed rewards.
+Vulnerable code: 
+```solidity
+if(rebasingStateFrom.isRebasing==1) {
+    uint256 shares = uint256(rebasingStateFrom.nShares);
+    uint256 rebasedBalance = _shares2balance(shares, _rebasingSharePrice, 0, fromBalanceBefore);
+    uint256 mintAmount = rebasedBalance - fromBalanceBefore;
+    if(mintAmount != 0) {
+        ERC20._mint(msg.sender, mintAmount);
+        fromBalanceBefore += mintAmount;
+        decreaseUnmintedRebaseRewards(mintAmount);
+        emit RebaseReward(msg.sender, block.timestamp, mintAmount);
+    }
+}
+if(rebasingStateFrom.isRebasing==1) {
+    uint256 fromBalanceAfter = fromBalanceBefore - amount;
+    uint256 fromSharesAfter = _balance2shares(fromBalanceAfter, _rebasingSharePrice);
+    uint256 sharesSpent = rebasingStateFrom.nShares - fromSharesAfter;
+    sharesDelta -= int256(sharesSpent);
+    rebasingState[msg.sender] = RebasingState({isRebasing: 1, nShares: uint248(fromSharesAfter)});
+}
+uint256 toBalanceAfter = _shares2balance(rebasingStateTo.nShares, _rebasingSharePrice, amount, rawToBalanceAfter);
+uint256 mintAmount = toBalanceAfter - rawToBalanceAfter;
+if(mintAmount != 0) {
+    ERC20._mint(to, mintAmount);
+    decreaseUnmintedRebaseRewards(mintAmount);
+    emit RebaseReward(to, block.timestamp, mintAmount);
+}
+```

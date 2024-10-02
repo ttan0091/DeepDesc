@@ -1,0 +1,25 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Lack of validation for the target bucket's bankruptcy status before updating its deposit time and LP shares.
+Execution process: An attacker can move liquidity from a non-bankrupt bucket to a bankrupt bucket, updating the bankrupt bucket's deposit time, thereby allowing the attacker to redeem LP shares from the bankrupt bucket.
+Vulnerable code: 
+```solidity
+function moveLiquidity(MoveLiquidityParams calldata params_) external override mayInteract(params_.pool, params_.tokenId) nonReentrant {
+    Position storage fromPosition = positions[params_.tokenId][params_.fromIndex];
+    MoveLiquidityLocalVars memory vars;
+    vars.depositTime = fromPosition.depositTime;
+    if (vars.depositTime == 0) revert RemovePositionFailed();
+    IPool(params_.pool).updateInterest();
+    (vars.bucketLP, vars.bucketCollateral, vars.bankruptcyTime, vars.bucketDeposit,) = IPool(params_.pool).bucketInfo(params_.fromIndex);
+    if (vars.depositTime <= vars.bankruptcyTime) revert BucketBankrupt();
+    vars.maxQuote = _lpToQuoteToken(vars.bucketLP, vars.bucketCollateral, vars.bucketDeposit, fromPosition.lps, vars.bucketDeposit, _priceAt(params_.fromIndex));
+    EnumerableSet.UintSet storage positionIndex = positionIndexes[params_.tokenId];
+    if (!positionIndex.remove(params_.fromIndex)) revert RemovePositionFailed();
+    positionIndex.add(params_.toIndex);
+    (vars.lpbAmountFrom, vars.lpbAmountTo,) = IPool(params_.pool).moveQuoteToken(vars.maxQuote, params_.fromIndex, params_.toIndex, params_.expiry);
+    Position storage toPosition = positions[params_.tokenId][params_.toIndex];
+    fromPosition.lps -= vars.lpbAmountFrom;
+    toPosition.lps += vars.lpbAmountTo;
+    toPosition.depositTime = vars.depositTime;
+    emit MoveLiquidity(ownerOf(params_.tokenId), params_.tokenId, params_.fromIndex, params_.toIndex, vars.lpbAmountFrom, vars.lpbAmountTo);
+}
+```

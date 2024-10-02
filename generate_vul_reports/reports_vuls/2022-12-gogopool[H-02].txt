@@ -1,0 +1,17 @@
+[H-02] ProtocolDAO lacks a method to take out GGP
+Submitted bybin2chen, also found byAkshaySrivastav,hansfriese,hansfriese,caventa,shark,RaymondFam,csanuragjain,rvierdiiev, andcozzetti
+contracts/contract/Staking.sol#L379-L383
+ProtocolDAO implementation does not have a method to take out  GGP. So it can’t handle ggp unless it updates ProtocolDAO.
+Proof of Concept
+recordStakingEnd() will pass the rewards of this reward.“If the validator is failing at their duties, their GGP will be slashed and used to compensate the loss to our Liquid Stakers”
+At this point slashGGP() will be executed and the GGP will be transferred to “ProtocolDAO”
+staking.slashGGP():
+functionslashGGP(addressstakerAddr,uint256ggpAmt)publiconlySpecificRegisteredContract("MinipoolManager", msg.sender) {Vaultvault=Vault(getContractAddress("Vault"));decreaseGGPStake(stakerAddr,ggpAmt);vault.transferToken("ProtocolDAO",ggp,ggpAmt);}
+But the current ProtocolDAO implementation does not have a method to take out  GGP. So it can’t handle ggp unless it updates ProtocolDAO
+Recommended Mitigation Steps
+1.transfer GGP to  ClaimProtocolDAOor2.Similar to ClaimProtocolDAO, add spend method to retrieve GGP
+contractProtocolDAOisBase{...+functionspend(+addressrecipientAddress,+uint256amount+    )externalonlyGuardian{+Vaultvault=Vault(getContractAddress("Vault"));+TokenGGPggpToken=TokenGGP(getContractAddress("TokenGGP"));++if(amount==0||amount>vault.balanceOfToken("ProtocolDAO",ggpToken)) {+revertInvalidAmount();+        }++vault.withdrawToken(recipientAddress,ggpToken,amount);++emitGGPTokensSentByDAOProtocol(address(this),recipientAddress,amount);+   }
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The Warden has shown how, due to a lack ofsweepthe default contract for fee handling will be unable to retrieve tokens sent to it.While the issue definitely would have been discovered fairly early in Prod, the in-scope system makes it clear that the funds would have been sent to ProtocolDAO.sol and would have been lost indefinitely.For this reason, I believe the finding to be of High Severity.
+emersoncloud (GoGoPool) commented:
+Acknowledged.Thanks for the report. This is something we’re aware of and are not going to fix at the moment.The funds are transferred to the Vault and the ProtocolDAO contract is upgradeable. Therefore in the future we can upgrade the contract to spend the Vault GGP tokens to return funds to Liquid Stakers.We expect slashing to be a rare event and might have some manual steps involved in the early days of the protocol to do this process if it occurs.

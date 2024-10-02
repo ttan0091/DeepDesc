@@ -1,0 +1,16 @@
+[H-19]withdrawETH()in GiantPoolBase don’t call_distributeETHRewardsToUserForToken()or_onWithdraw()which would make users to lose their remaining rewards
+Submitted byunforgiven, also found by0x4non
+https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/GiantPoolBase.sol#L50-L64https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/GiantMevAndFeesPool.sol#L180-L193
+Function_distributeETHRewardsToUserForToken()is used to distribute remaining reward of user and it’s called in_onWithdraw()ofGiantMevAndFeesPool. but functionwithdrawETH()inGiantPoolBasedon’t call either of them and burn user giant LP token balance so if user withdraw his funds and has some remaining ETH rewards he would lose those rewards because his balance set to zero.
+Proof of Concept
+This iswithdrawETH()code inGiantPoolBase:
+/// @notice Allow a user to chose to burn their LP tokens for ETH only if the requested amount is idle and available from the contract/// @param _amount of LP tokens user is burning in exchange for same amount of ETHfunction withdrawETH(uint256 _amount) external nonReentrant {require(_amount >= MIN_STAKING_AMOUNT, "Invalid amount");require(lpTokenETH.balanceOf(msg.sender) >= _amount, "Invalid balance");require(idleETH >= _amount, "Come back later or withdraw less ETH");idleETH -= _amount;lpTokenETH.burn(msg.sender, _amount);(bool success,) = msg.sender.call{value: _amount}("");require(success, "Failed to transfer ETH");emit LPBurnedForETH(msg.sender, _amount);}
+As you can see it burn userlpTokenETHbalance and don’t call either_distributeETHRewardsToUserForToken()or_onWithdraw(). and in functionclaimRewards()useslpTokenETH.balanceOf(msg.sender)to calculate user rewards so if user balance get to0user won’t get the remaining rewards.
+These are steps that this bug happens:
+user1deposit10ETH into the giant pool andclaimed[user1][lpTokenETH]is20andaccumulatedETHPerLPShareis2.some time passes andaccumulatedETHPerLPShareset to3.user1unclaimed rewards are10 * 3 - 20 = 10ETH.user1withdraw his10ETH by callingwithdrawETH(10)and contract setlpTokenETHbalance ofuser1to0and transfer10ETH to user.now ifuser1callsclaimRewards()he would get0reward as hislpTokenETHbalance is0.
+so users lose their unclaimed rewards by withdrawing their funds.
+Tools Used
+VIM
+Recommended Mitigation Steps
+User’s unclaimed funds should be calculated and transferred before any actions that change user’s balance.
+vince0656 (Stakehouse) confirmed

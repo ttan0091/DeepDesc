@@ -1,0 +1,21 @@
+[H-01]CompositeMultiOraclereturns wrong decimals for prices?
+Submitted by cmichel
+TheCompositeMultiOracle.peek/getfunctions seem to return wrong prices.
+It’s unclear what decimalssource.decimalsrefers to in this case. Does it refer tosource.sourcetoken decimals?
+It chains the price arguments through_peekfunction calls and a single price is computed as:
+(priceOut,updateTimeOut) =IOracle(source.source).peek(base,quote,10**source.decimals);// Get price for one unit// @audit shouldn't this divide by 10 ** IOracle(source.source).decimals() instead?priceOut=priceIn*priceOut/ (10**source.decimals);
+Assume all oracles use 18 decimals (oracle.decimals()returns 18) andsource.decimalsrefers to thetoken decimalsofsource.source.
+Then going fromUSDC -> DAI -> USDT(path = [DAI]) starts with a price of1e18inpeek:
+_peek(USDC, DAI, 1e18): Gets the price of1e6 USDC(as USDC has 6 decimals) in DAI with 18 decimals precision (because all oracle precision is set to 18):priceOut = priceIn * 1e18 / 1e6 = 1e18 * 1e18 / 1e6 = 1e30_peek(DAI, USDT, 1e30): Gets the price of1e18 DAI(DAI has 18 decimals) with 18 decimals precision:priceOut = priceIn * 1e18 / 1e18 = priceIn = 1e30
+It then uses1e30as the price to go fromUSDCtoUSDT:value = price * amount / 1e18 = 1e30 * (1.0 USDC) / 1e18 = 1e30 * 1e6 / 1e18 = 1e18 = 1e12 * 1e6 = 1_000_000_000_000.0 USDT. Inflating the actualUSDTamount.
+The issue is thatpeekassumes that the final price is in 18 decimals in thevalue = price * amount / 1e18division by1e18.
+But_peek(and_get) don’t enforce this.
+Recommend that_peekshould scale the prices to1e18by doing:
+(priceOut,updateTimeOut) =IOracle(source.source).get(base,quote,10**source.decimals);// priceOut will have same decimals as priceIn if we divide by oracle decimalspriceOut=priceIn*priceOut/ (10**IOracle(source.source).decimals());
+It does not need to divide by thesource.sourcetoken precision(source.decimals), but by the oracle precision (IOracle(source.source).decimals()).
+alcueca (Yield) acknowledged:
+It’s confusing to deal with all these decimals, I should at least comment the code better, and try to make it easier to understand.It’s unclear what decimals source.decimals refers to in this case. Does it refer to source.source token decimals?CompositeMultiOracle takes IOracle contracts as sources, sosource.decimalsrefers to the token decimals of the oracle, not of the data source one level below.It does not need to divide by the source.source token precision (source.decimals), but by the oracle precision (IOracle(source.source).decimals()).The source.source token precision would beIChainlinkAggregatorV3(source.source()).decimals(), the source oracle precision issource.decimals(). CompositeMultiOracle cannot make an assumption on any fields present onsource.source, and must  work only with the underlyingsourceIOracles.I’m still not disputing this finding. I need to dig further to make sure the decimals are right when different IOracle sources have different decimals, and I’ve hardcoded a few1e18in there. Those are code smells.
+alcueca (Yield) patched:
+Sent me into a wild goose chase to support IOracle of multiple decimals as sources to CompositeMultiOracle, only to realize that we create all IOracles and we always create them with 18 decimals, converting from the underlying data source if needed.Ended up making CompositeMultiOracle require that underlying oracles have 18 decimals.Done.
+alcueca (Yield) further patched:
+Furtherrefactored all oracles so that decimals are handled properly, and work on taking an amount of base as input, and returning an amount of quote as output. Our oracles don’t have decimals themselves anymore as a state variable, since the return values are in the decimals of quote. This means that CompositeMultiOracle is agnostic with regards to decimals, and doesn’t even need to know about them.

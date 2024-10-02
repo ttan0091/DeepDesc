@@ -1,0 +1,30 @@
+[H-01] Making a payment to the protocol with_dontMintparameter will result in lost fund for user.
+Submitted byyixxas, also found byminhquanymandcccz
+User will have their funds lost if they tries to pay the protocol with_dontMint = False. A payment made with this parameter set should increase thecreditsOf[]balance of user.
+In_processPayment(),creditsOf[_data.beneficiary]is updated at the end if there are leftover funds. However, Ifmetadatais provided and_dontMint == true, it immediately returns.JBTiered721Delegate.sol#L524-L590
+function_processPayment(JBDidPayDatacalldata_data)internaloverride{// Keep a reference to the amount of credits the beneficiary already has.uint256_credits=creditsOf[_data.beneficiary];...if(_data.metadata.length>36&&bytes4(_data.metadata[32:36]) ==type(IJB721Delegate).interfaceId) {...// Don't mint if not desired.if(_dontMint)return;...}...// If there are funds leftover, mint the best available with it.if(_leftoverAmount!=0) {_leftoverAmount=_mintBestAvailableTier(_leftoverAmount,_data.beneficiary,_expectMintFromExtraFunds);if(_leftoverAmount!=0) {// Make sure there are no leftover funds after minting if not expected.if(_dontOverspend)revertOVERSPENDING();// Increment the leftover amount.creditsOf[_data.beneficiary] =_leftoverAmount;}elseif(_credits!=0)creditsOf[_data.beneficiary] =0;}elseif(_credits!=0)creditsOf[_data.beneficiary] =0;}
+Proof of Concept
+I’ve wrote a coded POC to illustrate this. It uses the same Foundry environment used by the project. Simply copy this function toE2E.t.solto verify.
+functiontestPaymentNotAddedToCreditsOf()public{address_user=address(bytes20(keccak256('user')));(JBDeployTiered721DelegateDatamemoryNFTRewardDeployerData,JBLaunchProjectDatamemorylaunchProjectData) =createData();uint256projectId=deployer.launchProjectFor(_projectOwner,NFTRewardDeployerData,launchProjectData);// Get the dataSourceIJBTiered721Delegate_delegate=IJBTiered721Delegate(_jbFundingCycleStore.currentOf(projectId).dataSource());addressNFTRewardDataSource=_jbFundingCycleStore.currentOf(projectId).dataSource();uint256_creditBefore=IJBTiered721Delegate(NFTRewardDataSource).creditsOf(_user);// Project is initiated with 10 different tiers with contributionFee of 10,20,30,40, .... , 100// Make payment to mint 1 NFTuint256_payAmount=10;_jbETHPaymentTerminal.pay{value:_payAmount}(projectId,100,address(0),_user,0,false,'Take my money!',newbytes(0));// Minted 1 NFTassertEq(IERC721(NFTRewardDataSource).balanceOf(_user),1);// Now, we make the payment but supply _dontMint metadatabool_dontMint=true;uint16[]memoryempty;_jbETHPaymentTerminal.pay{value:_payAmount}(projectId,100,address(0),_user,0,false,'Take my money!',//new bytes(0)abi.encode(bytes32(0),type(IJB721Delegate).interfaceId,_dontMint,false,false,empty));// NFT not mintedassertEq(IERC721(NFTRewardDataSource).balanceOf(_user),1);// Check that credits of user is still the same as before even though we have made the paymentassertEq(IJBTiered721Delegate(NFTRewardDataSource).creditsOf(_user),_creditBefore);}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Update thecreditsOf[]in theif(_dontMint)check.
+- if(_dontMint) return;+ if(_dontMint){ creditsOf[_data.beneficiary] += _value; }
+mejango (Juicebox DAO) commented on duplicate issue #157:
+mixed feels._dontMintbasically says “Save me gas at all costs.”. I see the argument for value leaking being bad though. will mull over.
+drgorillamd (Juicebox DAO) commented on duplicate issue #157:
+paying small amounts (under the floor or withdontMint) only to save them to later mint is a bit of a nonsense -> it’s way cheaper to just not pay, save in an eoa then mint within the same tx.I have the feeling the severity is based on seeing_creditas a saving account, while it’s rather something to collect leftovers.Anyway, we changed it, but not sure of high sev on this one, happy to see others’ point of view.
+Picodes (judge) commented:
+@drgorillamd @mejango I have to say that I don’t see why someone would use thedontMintflag in the first place. Wasn’t the original intent to use this flag specifically to modify_creditwithout minting?
+In the meantime I’ll keep the High label for this one, thedontMintfunctionality being flawed and leading to a loss of funds.
+drgorillamd (Juicebox DAO) commented:
+@PicodesnftRewardis just an extension plugged into a Jb project ->dontMintis to avoid forcing users of the project who don’t want a nft reward when contributing, i.e. “classic” use of a Jb project.
+The use case we had in mind was smaller payers, wanting to get the erc20 (or even just donating), without the gas burden of a nft reward (which might, on L1, sometimes be more than the contribution itself).
+Does that make sense?
+Picodes (judge) commented:
+Definitely, thanks for the clarification @drgorillamd.
+Picodes (judge) commented:
+The final decision for this issue was to keep the high severity because of the leak of value and the possibility that some users use the function thinking it will change_credit, despite the fact that it was not the original intent of the code.
+mejango (Juicebox DAO) commented:
+We ended up adding credits even when_dontMintis true!!It was a last minute design decision, initially we marked the issue as “Disagree with severity” and we were planning on keeping the code unchanged since it didnt pose a risk and was working as designed.We ended up changing the design, but the wardens’ feedback was ultimately helpful!

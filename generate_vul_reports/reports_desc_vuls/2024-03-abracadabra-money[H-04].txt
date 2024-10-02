@@ -1,0 +1,15 @@
+Type of vulnerability: Oracle Manipulation
+Cause of vulnerability: The contract uses pool reserves to calculate the price of the pair token, which can be manipulated by an attacker using a flash loan to inflate the reserve values.
+Execution process: An attacker initiates a flash loan to borrow a large amount of tokens, manipulates the reserve values by trading these tokens in the pool, and then repays the flash loan. This manipulation leads to an inflated price calculation.
+Vulnerable code: 
+```solidity
+function latestAnswer() public view override returns (int256) {
+    uint256 baseAnswerNomalized = uint256(baseOracle.latestAnswer()) * (10 ** (WAD - baseOracle.decimals()));
+    uint256 quoteAnswerNormalized = uint256(quoteOracle.latestAnswer()) * (10 ** (WAD - quoteOracle.decimals()));
+    uint256 minAnswer = baseAnswerNomalized < quoteAnswerNormalized ? baseAnswerNomalized : quoteAnswerNormalized;
+    (uint256 baseReserve, uint256 quoteReserve) = _getReserves();
+    baseReserve = baseReserve * (10 ** (WAD - baseDecimals));
+    quoteReserve = quoteReserve * (10 ** (WAD - quoteDecimals));
+    return int256(minAnswer * (baseReserve + quoteReserve) / pair.totalSupply());
+}
+```

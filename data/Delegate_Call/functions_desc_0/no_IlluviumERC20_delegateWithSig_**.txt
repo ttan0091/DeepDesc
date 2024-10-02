@@ -1,0 +1,32 @@
+This code defines a public function named delegateWithSig, which allows a user to delegate their rights to another address using a signed message. This function is designed to work with the EIP712 standard for typed structured data hashing and signing.
+
+Here’s a detailed explanation of how this function works:
+
+1. Feature Check:
+    The function starts by verifying if delegations on behalf are enabled using the isFeatureEnabled function with the feature flag FEATURE_DELEGATIONS_ON_BEHALF. If this feature is disabled, the function will revert with the message "delegations on behalf are disabled".
+
+2. Building the EIP712 Domain Separator:
+    The EIP712 domain separator is constructed using the keccak256 hash function on the encoded data of the domain type hash, the hash of the contract's name, the current chain ID, and the contract's address. This domain separator helps in preventing crossapplication replay attacks.
+
+3. Building the EIP712 HashStruct:
+    The hashStruct for the delegation message is created by hashing the encoded data of the delegation type hash, the target address _to, the nonce _nonce, and the expiration time _exp. This structured data represents the delegation action.
+
+4. Calculating the EIP712 Digest:
+    The EIP712 digest is computed by concatenating the EIP712 prefix "\x19\x01", the domain separator, and the hashStruct. This digest is what should be signed by the user to authorize the delegation.
+
+5. Recovering the Signer's Address:
+    The ecrecover function is used to recover the address of the signer from the signature components v, r, and s using the computed digest. This step identifies who signed the delegation message.
+
+6. Validating the Signature and Message Integrity:
+    Several checks are performed to ensure the integrity and security of the message:
+      The signer's address must not be zero, indicating a valid signature.
+      The provided nonce must match the stored nonce for the signer, ensuring the message is fresh and not a replay.
+      The current timestamp must be before the expiration time _exp, ensuring the signature has not expired.
+
+7. Updating the Nonce:
+    The nonce for the signer is incremented to prevent replay attacks. Each delegation message must use a unique nonce.
+
+8. Executing the Delegation:
+    Finally, the function calls the internal function __delegate with the signer's address and the target address _to. This function is responsible for executing the actual delegation logic.
+
+This function is crucial for secure and structured delegation of rights in a smart contract system, leveraging advanced cryptographic techniques to ensure message integrity and authenticity.

@@ -1,0 +1,20 @@
+Type of vulnerability: Improper Accounting of Protocol Fees
+
+Cause of vulnerability: The `treasuryShare` is unexpectedly reset to 0 in the `_shareMochi()` function, which prevents proper accounting and collection of protocol fees.
+
+Execution process: An attacker can call `distributeMochi()`, which in turn calls `_shareMochi()`, causing the `treasuryShare` to be reset to 0. The attacker can then call `updateReserve()` to allocate part of the wrongly reset `treasuryShare` to `mochiShare` and call `distributeMochi()` again. This process can be repeated, gradually depleting the `treasuryShare` and benefiting the vMochi Vault holders and veCRV Holders at the expense of the protocol.
+
+Vulnerable code: 
+```solidity
+function _shareMochi() internal {
+    IMochi mochi = engine.mochi();
+    uint256 mochiBalance = mochi.balanceOf(address(this));
+    // send Mochi to vMochi Vault
+    mochi.transfer(address(engine.vMochi()), (mochiBalance * vMochiRatio) / 1e18);
+    // send Mochi to veCRV Holders
+    mochi.transfer(crvVoterRewardPool, (mochiBalance * (1e18 - vMochiRatio)) / 1e18);
+    // flush mochiShare
+    mochiShare = 0;
+    treasuryShare = 0;
+}
+```

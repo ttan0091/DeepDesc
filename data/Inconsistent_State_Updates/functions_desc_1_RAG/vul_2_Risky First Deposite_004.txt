@@ -1,0 +1,35 @@
+This code defines an internal function named _mintInternal, which is responsible for minting new tokens in a liquidity pool. The function takes four parameters: to (the address to which the newly minted tokens will be sent), calculateFromBase (a boolean indicating whether the calculation should be based on the base token), fyTokenToBuy (the amount of fyToken to buy), and minTokensMinted (the minimum amount of tokens that must be minted to avoid a revert due to slippage). The function returns three values: baseIn (the amount of base token used), fyTokenIn (the amount of fyToken used), and tokensMinted (the amount of tokens minted).
+
+Here’s a detailed explanation of how this function works:
+
+1. Gather Data:
+    The function starts by gathering data about the current supply of tokens (_totalSupply), and the cached balances of base tokens and fyTokens (baseCached and fyTokenCached).
+    It calculates _realFYTokenCached by subtracting the supply from _fyTokenCached.
+
+2. Calculate Trade:
+    The function then initializes several variables: tokensMinted, baseIn, baseReturned, and fyTokenIn.
+    If the supply is zero, it means the pool is being initialized. The function requires that calculateFromBase is true and fyTokenToBuy is zero, ensuring that the pool is initialized only with base tokens. It calculates baseIn as the difference between the current balance of base tokens in the pool and the cached base token balance, and sets tokensMinted equal to baseIn.
+    If the supply is not zero, the function handles two scenarios:
+      If fyTokenToBuy is greater than zero, it calculates baseToSell using the _buyFYTokenPreview function. This scenario cannot occur if calculateFromBase is true.
+      If calculateFromBase is true, it calculates baseIn as the difference between the current balance of base tokens in the pool and the cached base token balance. It then calculates tokensMinted and fyTokenIn based on the supply and cached balances.
+      If calculateFromBase is false, it calculates fyTokenIn as the difference between the current balance of fyTokens in the pool and _realFYTokenCached. It then calculates tokensMinted and baseIn based on the supply, fyTokenToBuy, and cached balances. If fyTokenToBuy is greater than zero, it also calculates baseReturned.
+
+3. Slippage Check:
+    The function checks if the amount of tokens minted (tokensMinted) is greater than or equal to minTokensMinted. If not, it reverts the transaction to prevent slippage.
+
+4. Update TWAR:
+    The function updates the TimeWeighted Average Rate (TWAR) using the new balances of base tokens and fyTokens.
+
+5. Execute Mint:
+    The function mints the new tokens (tokensMinted) and sends them to the specified address (to).
+
+6. Return Unused Base:
+    If the supply is greater than zero and fyTokenToBuy is greater than zero, the function transfers any unused base tokens back to the specified address (to).
+
+7. Emit Event:
+    The function emits a Liquidity event to log the transaction details, including the amounts of base tokens and fyTokens used and the amount of tokens minted.
+
+8. Return Values:
+    Finally, the function returns the amounts of base tokens used (baseIn), fyTokens used (fyTokenIn), and tokens minted (tokensMinted).
+
+This function is crucial for managing the liquidity in the pool and ensuring that the minting process is handled correctly, taking into account various scenarios such as pool initialization, token purchases, and slippage checks.

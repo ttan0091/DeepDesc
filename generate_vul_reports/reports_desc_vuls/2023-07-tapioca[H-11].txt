@@ -1,0 +1,17 @@
+Type of vulnerability: Unvalidated Input Data
+Cause of vulnerability: Lack of validation for `tapSendData.tapOftAddress` in the `exerciseInternal` function, allowing the attacker to specify an arbitrary address to transfer the underlying ERC20 tokens.
+Execution process: The attacker calls the `exerciseInternal` function with manipulated `tapSendData` where `tapSendData.tapOftAddress` is set to the address of the underlying ERC20 token, and `tapAmount` is set to the balance of the ERC20 tokens in the TOFT contract. This results in the transfer of all the underlying ERC20 tokens to the attacker's address.
+Vulnerable code: 
+```solidity
+function exerciseInternal(address from, uint256 oTAPTokenID, address paymentToken, uint256 tapAmount, address target, ITapiocaOptionsBrokerCrossChain.IExerciseLZSendTapData memory tapSendData, ICommonData.IApproval[] memory approvals) public {
+    if (approvals.length > 0) {
+        _callApproval(approvals);
+    }
+    ITapiocaOptionsBroker(target).exerciseOption(oTAPTokenID, paymentToken, tapAmount);
+    if (tapSendData.withdrawOnAnotherChain) {
+        ISendFrom(tapSendData.tapOftAddress).sendFrom(address(this), tapSendData.lzDstChainId, LzLib.addressToBytes32(from), tapAmount, ISendFrom.LzCallParams({refundAddress: payable(from), zroPaymentAddress: tapSendData.zroPaymentAddress, adapterParams: LzLib.buildDefaultAdapterParams(tapSendData.extraGas)}));
+    } else {
+        IERC20(tapSendData.tapOftAddress).safeTransfer(from, tapAmount);
+    }
+}
+```

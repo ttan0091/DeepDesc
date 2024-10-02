@@ -1,0 +1,30 @@
+Type of analysis: Solidity Code Review
+
+Objective: Understand the vulnerability that allows users to steal Ether from the DAO contract through an action of `burning credit`.
+
+Code to be reviewed: 
+```solidity
+contract SimpleDAO {
+
+    mapping (address => uint) public credit;
+
+    address owner;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function withdraw(uint amount) onlyOwner {
+        if (credit[msg.sender] >= amount) {
+          msg.sender.call.value(amount)();
+          credit[msg.sender] -= amount;
+        }
+    }
+}
+```
+
+Key areas to be assessed:
+1. Ability for DAO to modify `credit`.
+2. Clarification on DAO tokenomics and mechanism to pay back credit.
+3. Validation of `nop9211` design to prevent advanced `calls` functions.

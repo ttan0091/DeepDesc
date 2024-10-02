@@ -1,0 +1,26 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Lack of proper validation to ensure that the `tokenId` being removed belongs to the current position.
+Execution process: An attacker creates a position with a minimal amount of wLp tokens and then calls the `decollateralizeWLp` function with a `tokenId` from another user's position, specifying an amount slightly less than the full balance to bypass the check on line 257. This allows the attacker to drain the wLp tokens and accrued rewards from the victim's position.
+Vulnerable code: 
+```solidity
+function removeCollateralWLpTo(uint _posId, address _wLp, uint _tokenId, uint _amt, address _receiver)
+    external
+    onlyCore
+    returns(uint)
+{
+    PosCollInfo storage posCollInfo = __posCollInfos[_posId];
+    // NOTE: balanceOfLp should be 1:1 with amt
+    uint newWLpAmt = IBaseWrapLp(_wLp).balanceOfLp(_tokenId) - _amt;
+    if (newWLpAmt == 0) {
+        _require(posCollInfo.ids[_wLp].remove(_tokenId), Errors.NOT_CONTAIN);
+        posCollInfo.collCount -= 1;
+        if (posCollInfo.ids[_wLp].length() == 0) {
+            posCollInfo.wLps.remove(_wLp);
+        }
+        isCollateralized[_wLp][_tokenId] = false;
+    }
+    _harvest(_posId, _wLp, _tokenId);
+    IBaseWrapLp(_wLp).unwrap(_tokenId, _amt, _receiver);
+    return _amt;
+}
+```

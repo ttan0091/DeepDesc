@@ -1,0 +1,24 @@
+[H-33]BaseV2MinterDAO reward shares are calculated wrong
+Submitted byABA
+InBaseV2Minter, when calculating the DAO shares out of the weekly emissions, the current implementation wrongly takes into consideration the extrabHERMESgrowth tokens (to the locked); thus, is allocating a larger value than intended. This also has an indirect effect on the increasing protocol inflation ifHERMESneeds to be minted in order to reach the required token amount.
+Issue details
+Token DAO shares (sharevariable) is calculated inBaseV2Minter::updatePeriodas such:
+https://github.com/code-423n4/2023-05-maia/blob/main/src/hermes/minters/BaseV2Minter.sol#L133-L137
+uint256_growth=calculateGrowth(newWeeklyEmission);uint256_required=_growth+newWeeklyEmission;/// @dev share of newWeeklyEmission emissions sent to DAO.uint256share= (_required*daoShare) /base;_required+=share;
+We actually do see that the original developer intention (confirmed by the sponsor) was that the share value to be calculated is relative tonewWeeklyEmission, not to (_required = newWeeklyEmission + _growth).
+/// @dev share of newWeeklyEmission emissions sent to DAO.
+Also, it isdocumented that DAO shares should be calculated as part of weekly emissions:
+Up to 30% of weekly emissions can be allocated to the DAO.
+Proof of Concept
+DAO shares value is not calculated relative tonewWeeklyEmission.
+https://github.com/code-423n4/2023-05-maia/blob/main/src/hermes/minters/BaseV2Minter.sol#L134-L136
+Recommended Mitigation Steps
+Change the implementation to reflect intention.
+diff --git a/src/hermes/minters/BaseV2Minter.sol b/src/hermes/minters/BaseV2Minter.solindex 7d7f013..217a028 100644--- a/src/hermes/minters/BaseV2Minter.sol+++ b/src/hermes/minters/BaseV2Minter.sol@@ -133,7 +133,7 @@ contract BaseV2Minter is Ownable, IBaseV2Minter {uint256 _growth = calculateGrowth(newWeeklyEmission);uint256 _required = _growth + newWeeklyEmission;/// @dev share of newWeeklyEmission emissions sent to DAO.-            uint256 share = (_required * daoShare) / base;+            uint256 share = (newWeeklyEmission * daoShare) / base;_required += share;uint256 _balanceOf = underlying.balanceOf(address(this));if (_balanceOf < _required) {
+0xLightt (Maia) confirmed
+alexxander (warden) commented:
+Even though the share is bigger than what it is supposed to be, the extra funds are given to the DAO. There is no clear High impact here, please consider Medium severity.
+Trust (judge) commented:
+Assuming the bug goes unnoticed for some period of time, which is fair, this would cause inflation and decrease value for holders. Therefore, high is justified.
+0xLightt (Maia) commented:
+Addressedhere.

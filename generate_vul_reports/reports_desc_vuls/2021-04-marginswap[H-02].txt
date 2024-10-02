@@ -1,0 +1,18 @@
+Type of vulnerability: Reentrancy and Logic Error
+Cause of vulnerability: Lack of validation for token pairs and improper handling of token swaps
+Execution process: An attacker calls `MarginRouter.crossSwapExactTokensForTokens` with a fake pair and the same token for both inputs and outputs. The attacker contract manipulates the reserves to yield 0 output, allowing the funds to be sent to the fake contract without any actual transfer occurring. This bypasses the balance check in the `_swap` function.
+Vulnerable code: 
+```solidity
+function _swapExactT4T() {
+    // withdraw happens here
+    Fund(fund()).withdraw(tokens[0], pairs[0], amounts[0]);
+    _swap(amounts, pairs, tokens, fund());
+}
+
+function _swap() {
+    uint256 startingBalance = IERC20(outToken).balanceOf(_to);
+    uint256 endingBalance = IERC20(outToken).balanceOf(_to);
+    // passes as startingBalance == endingBalance + 0
+    require(endingBalance >= startingBalance + amounts[amounts.length - 1], "Defective AMM route; balances don't match");
+}
+```

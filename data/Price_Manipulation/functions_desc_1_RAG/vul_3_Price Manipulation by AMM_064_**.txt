@@ -1,0 +1,31 @@
+This code defines an external payable function named liquidateForLender, which is used to liquidate a lender's position in a lending pool. The function takes four parameters: _lender (the address of the lender to be liquidated), _fromSavingsAccount (a boolean indicating whether the liquidation is initiated from a savings account), _toSavingsAccount (a boolean indicating whether the liquidated funds should be deposited into a savings account), and _receiveLiquidityShare (a boolean indicating whether the liquidated funds should be received as a liquidity share). The function is marked as nonReentrant to prevent reentrancy attacks.
+
+Here’s a detailed explanation of how this function works:
+
+1. Preliminary Check:
+    The function calls _canLenderBeLiquidated(_lender) to check if the lender's position can be liquidated. This internal function likely checks the lender's collateral ratio or other conditions to determine if liquidation is necessary.
+
+2. Retrieve Pool Savings Strategy:
+    The function retrieves the address of the pool savings strategy from poolConstants.poolSavingsStrategy. This strategy is used to manage the conversion between shares and tokens.
+
+3. Update Lender Shares During Liquidation:
+    The function calls _updateLenderSharesDuringLiquidation(_lender) to update the lender's shares and balance during the liquidation process. This function returns two values: _lenderCollateralLPShare (the lender's collateral in LP shares) and _lenderBalance (the lender's balance).
+
+4. Convert LP Shares to Tokens:
+    The function initializes _lenderCollateralTokens with the value of _lenderCollateralLPShare.
+    It then calls IYield(_poolSavingsStrategy).getTokensForShares(_lenderCollateralLPShare) to convert the lender's collateral LP shares to tokens. This conversion is necessary to proceed with the liquidation.
+
+5. Liquidate Lender:
+    The function calls _liquidateForLender(_fromSavingsAccount, _lender, _lenderCollateralTokens) to perform the actual liquidation of the lender's position. This internal function likely handles the transfer of collateral tokens to the liquidator.
+
+6. Withdraw Liquidated Funds:
+    The function calls _withdraw(_toSavingsAccount, _receiveLiquidityShare, poolConstants.collateralAsset, _poolSavingsStrategy, _lenderCollateralTokens) to withdraw the liquidated funds. This function handles the withdrawal of tokens from the pool savings strategy to the recipient (either directly or to a savings account).
+
+7. Burn Lender's Balance and Delete Lender's Data:
+    The function calls _burn(_lender, _lenderBalance) to burn the lender's balance, effectively removing their share from the system.
+    It then deletes the lender's data from the lenders mapping to ensure they are no longer considered in the system.
+
+8. Emit Event:
+    Finally, the function emits an event LenderLiquidated with the sender's address, the lender's address, and the amount received from the liquidation. This event is used to notify external systems or interfaces about the liquidation.
+
+Overall, this function orchestrates the liquidation process for a lender, ensuring that their collateral is converted to tokens, withdrawn, and their balance is burned and data is deleted from the system. The function is designed to handle various scenarios based on the boolean parameters provided.

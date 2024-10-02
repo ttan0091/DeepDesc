@@ -1,0 +1,29 @@
+Type of vulnerability: Inadequate Handling of Liquidity Issues
+
+Cause of vulnerability: The contract does not properly account for partial withdrawals or strategy switches when the underlying yield pool (e.g., Aave) has liquidity issues, leading to incorrect accounting and potential freezing of user funds.
+
+Execution process: When a user attempts to perform a full withdrawal (`withdrawAll`) or switch strategies (`switchStrategy`), the contract attempts to withdraw the full amount from the underlying yield pool. If the yield pool has insufficient liquidity to fulfill the full withdrawal, the contract incorrectly accounts for the partial withdrawal as if it were a full withdrawal, leading to the deletion of the user's accounting entry and the freezing of the remaining funds in the system.
+
+Vulnerable code:
+- `SavingsAccount.withdrawAll` function:
+  ```solidity
+  // https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L286
+  function withdrawAll(address _strategy, address _to) external override nonReentrant returns (uint256 _amount) {
+      ...
+      _amount = _withdraw(_strategy, _to, userBalance);
+      ...
+      delete userInfo[_strategy][msg.sender];
+      ...
+  }
+  ```
+- `SavingsAccount.switchStrategy` function:
+  ```solidity
+  // https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L152
+  function switchStrategy(address _oldStrategy, address _newStrategy, uint256 _amount, address _to) external override nonReentrant returns (uint256 _tokensReceived) {
+      ...
+      _tokensReceived = _withdraw(_oldStrategy, address(this), _amount);
+      ...
+      _deposit(_newStrategy, _tokensReceived, _to);
+      ...
+  }
+  ```

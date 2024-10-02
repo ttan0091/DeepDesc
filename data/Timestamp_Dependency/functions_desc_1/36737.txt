@@ -1,0 +1,36 @@
+This code defines a smart contract named MultiSigWallet, which is designed to manage a multisignature wallet. A multisignature wallet requires multiple approvals (signatures) from its owners to execute transactions, enhancing security by reducing the risk of a single point of failure.
+
+Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping (address => bool) public isOwner;: This mapping keeps track of which addresses are owners of the wallet. If isOwner[someAddress] is true, then someAddress is an owner.
+    uint public required;: This variable stores the number of owner approvals required to execute a transaction.
+    uint public lastTransactionTime;: This variable records the timestamp of the last transaction.
+    uint public recoveryModeTriggerTime;: This variable sets the time duration (in seconds) that must elapse since the last transaction before recovery mode can be activated.
+
+2. Modifiers:
+    modifier onlyOwner(address owner) {: This modifier ensures that only owners can execute certain functions. If the caller is not an owner, the function call reverts.
+     solidity
+     if (!isOwner[owner])
+         revert();
+     _;
+     
+     The _; in the modifier is a placeholder for the function body that uses this modifier.
+
+3. Functions:
+    function enterRecoveryMode() public onlyOwner(msg.sender) {: This function allows an owner to enter recovery mode. It can only be called by an owner due to the onlyOwner modifier.
+     solidity
+     require(block.timestamp  lastTransactionTime >= recoveryModeTriggerTime);
+     required = 1;
+     return;
+     
+      The require statement checks if the current block timestamp minus the lastTransactionTime is greater than or equal to recoveryModeTriggerTime. This ensures that recovery mode can only be entered if a certain period has passed since the last transaction.
+      If the condition is met, required is set to 1, meaning that from this point on, only one owner's approval is required to execute a transaction. This reduces the security but can be useful in situations where the majority of owners are unavailable or unresponsive.
+      The function then returns, indicating that the operation is complete.
+
+Summary of the Contract's Functionality:
+ The MultiSigWallet contract manages a multisignature wallet where transactions require multiple owner approvals.
+ It includes a mechanism to enter a recovery mode under specific conditions, reducing the required approvals to one, which can be crucial in emergency situations.
+ The contract uses modifiers to enforce access control, ensuring that only owners can perform certain actions.
+
+This design enhances the security and flexibility of the wallet, allowing for controlled access and recovery options in case of potential issues.

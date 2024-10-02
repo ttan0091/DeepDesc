@@ -1,0 +1,26 @@
+This code defines a public payable function named swap, which is designed to facilitate token swaps between two different tokens or the same token. The function takes three parameters: fromToken_ (the address of the token to be swapped from), toToken_ (the address of the token to be swapped to), and amountIn_ (the amount of the fromToken_ to be swapped). The function returns a uint256 value representing the amount of toToken_ received after the swap.
+
+Here’s a detailed explanation of how this function works:
+
+1. Validating ETH Value Sent:
+    The function first checks if the msg.value (the amount of Ether sent with the transaction) matches the expected value. If fromToken_ is address(0) (indicating Ether), msg.value should be equal to amountIn_. Otherwise, msg.value should be 0. This check ensures that the correct amount of Ether is sent when swapping from Ether.
+    If the condition is not met, the function reverts with an error message Error.INVALID_AMOUNT.
+
+2. Handling Zero Amount In:
+    If amountIn_ is 0, the function emits a Swapped event with zero values for both the input and output amounts and returns 0. This indicates that no swap occurred due to the zero input amount.
+
+3. Handling Swap Between the Same Token:
+    If fromToken_ is the same as toToken_, the function checks if fromToken_ is address(0) (Ether). If true, it transfers the amountIn_ Ether back to the sender (msg.sender). This is likely a safety mechanism to handle cases where the same token is mistakenly specified for both input and output.
+    The function then emits a Swapped event with the input and output amounts being the same and returns amountIn_.
+
+4. Transferring Tokens to Contract:
+    If fromToken_ is not address(0), indicating an ERC20 token, the function uses the safeTransferFrom method of the ERC20 interface (IERC20) to transfer amountIn_ tokens from the sender (msg.sender) to the contract itself. This step ensures that the contract has custody of the tokens to be swapped.
+
+5. Swapping Tokens via WETH:
+    The function then calls two internal functions: _swapForWeth and _swapWethForToken. These functions handle the conversion of fromToken_ to wrapped Ether (WETH) and then from WETH to toToken_, respectively. The result is stored in amountOut_.
+    The function emits a Swapped event with the input amount (amountIn_) and the output amount (amountOut_).
+
+6. Returning Tokens:
+    Finally, the function calls _returnTokens with toToken_ and amountOut_ to ensure the resulting tokens are transferred back to the sender. The function returns the amountOut_ as the output of the swap.
+
+This function is designed to handle various scenarios including swapping between different tokens, swapping the same token, and handling Ether directly. It ensures that tokens are correctly transferred and swapped, and that the resulting tokens are returned to the sender.

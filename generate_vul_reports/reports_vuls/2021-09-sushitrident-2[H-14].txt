@@ -1,0 +1,18 @@
+[H-14]ConcentratedLiquidityPool:rangeFeeGrowthandsecondsPerLiquiditymath needs to be unchecked
+Submitted by hickuphh3
+Impact
+The fee growth mechanism, and by extension,secondsPerLiquiditymechanism of Uniswap V3 has the ability to underflow. It is therefore a necessity for the math to (ironically) be unsafe / unchecked.
+Proof of Concept
+Assume the following scenario and initial conditions:
+Price at parity (nearestTick is 0)tickSpacing of 10Swaps only increase the price (nearestTick moves up only)feeGrowthGlobalinitializes with 0, increases by 1 for every tick moved for simplicityExisting positions that provide enough liquidity and enable nearestTick to be set to values in the exampleEvery tick initialized in the example is ≤ nearestTick, so that itsfeeGrowthOutside=feeGrowthGlobalWhen nearestTick is at 40, Alice creates a position for uninitialised ticks [-20, 30]. The ticks are initialized, resulting in theirfeeGrowthOutsidevalues to be set to 40.nearestTick moves to 50. Bob creates a position with ticks [20, 30] (tick 20 is uninitialised, 30 was initialized from Alice’s mint). tick 20 will therefore have afeeGrowthOutsideof 50.Let us calculaterangeFeeGrowth(20,30).lowerTick = 20, upperTick = 30feeGrowthBelow = 50 (lowerTick’sfeeGrowthOutside) since lowerTick < currentTickfeeGrowthAbove = 50 - 40 = 10 (feeGrowthGlobal - upperTick’sfeeGrowthOutside) since upperTick < currentTickfeeGrowthInside= feeGrowthGlobal - feeGrowthBelow - feeGrowthAbove= 50 - 50 - 10= -10
+We therefore have negativefeeGrowthInside.
+This behaviour is actually acceptable, because the important thing about this mechanism is the relative values to each other, not the absolute values themselves.
+Recommended Mitigation Steps
+rangeFeeGrowth()andrangeSecondsInside()has to be unchecked. In addition, the subtraction offeeGrowthInsidevalues should also be unchecked in_updatePosition()andConcentratedLiquidityPosition#collect().
+The same also applies for the subtraction ofpool.rangeSecondsInsideandstake.secondsInsideLastinclaimReward()andgetReward()of theConcentratedLiquidityPoolManagercontract.
+sarangparikh22 (Sushi) disputed:
+Can you give more elaborate example.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), I find the example quite elaborate. It shows an specific example in which underflow is desired, by comparing with other platform using similar mechanics. It explains that with your current implementation you can’t have negativefeeGrowthInside, which is a possible and acceptable scenario. Could you please elaborate on what your grounds are for disputing this finding?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) Yes this a valid issue.

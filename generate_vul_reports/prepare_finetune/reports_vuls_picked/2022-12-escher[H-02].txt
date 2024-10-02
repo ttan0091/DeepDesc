@@ -1,0 +1,14 @@
+Type of vulnerability: Integer Underflow
+Cause of vulnerability: The calculation of the current price in the Dutch auction can result in a value greater than the start price, leading to an underflow when subtracted from the start price.
+Execution process: When the elapsed time multiplied by the drop per second exceeds the start price, the subtraction operation in the `getPrice` function will underflow, causing the function to revert. This will subsequently prevent the `buy` function from executing, effectively bricking the contract.
+Vulnerable code: 
+```solidity
+function getPrice() public view returns (uint256) {
+    Sale memory temp = sale;
+    (uint256 start, uint256 end) = (temp.startTime, temp.endTime);
+    if (block.timestamp < start) return type(uint256).max;
+    if (temp.currentId == temp.finalId) return temp.finalPrice;
+    uint256 timeElapsed = end > block.timestamp ? block.timestamp - start : end - start;
+    return temp.startPrice - (temp.dropPerSecond * timeElapsed);
+}
+```

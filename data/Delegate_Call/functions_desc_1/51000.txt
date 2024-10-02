@@ -1,0 +1,41 @@
+This code defines two contracts: Delegate and Delegation. Each contract has specific functionalities and interactions. Here’s a detailed explanation of how these contracts work:
+
+### Contract Delegate
+
+The Delegate contract has the following components:
+
+1. State Variable:
+    address public owner;: This variable stores the address of the contract owner. It is publicly accessible, meaning it can be read by anyone.
+
+2. Function:
+    function test() { owner = msg.sender; }: This function sets the owner variable to the address of the caller (msg.sender). This function is not explicitly marked as public or external, so it is implicitly public and can be called by any address.
+
+### Contract Delegation
+
+The Delegation contract has the following components:
+
+1. State Variable:
+    Delegate delegate;: This variable holds an instance of the Delegate contract.
+
+2. Function:
+    function delegation() { require(delegate.delegatecall(msg.data)); }: This function performs a delegatecall to the Delegate contract with the data provided in msg.data. The delegatecall function is a lowlevel call that executes the code of the target contract (Delegate) in the context of the calling contract (Delegation). This means that the state changes (e.g., setting owner) will affect the state of the Delegation contract, not the Delegate contract.
+
+    require(delegate.delegatecall(msg.data));: This line ensures that the delegatecall is successful. If the call fails (e.g., due to an exception or revert), the transaction will revert, and any state changes made so far will be rolled back.
+
+### Detailed Workflow
+
+1. Deployment:
+    First, the Delegate contract is deployed. This contract contains a state variable owner and a function test that sets owner to msg.sender.
+    Next, the Delegation contract is deployed. This contract contains a state variable delegate that should be initialized with the address of the deployed Delegate contract.
+
+2. Execution:
+    When the delegation function in the Delegation contract is called, it uses delegatecall to execute the code of the Delegate contract.
+    The delegatecall uses the data provided in msg.data to determine which function to call in the Delegate contract. For example, if msg.data contains the signature of the test function, the delegatecall will execute the test function in the context of the Delegation contract.
+    Since delegatecall executes the code in the context of the Delegation contract, any state changes (like setting owner) will affect the Delegation contract's state, not the Delegate contract's state.
+
+### Security Considerations
+
+ Context Matters: The use of delegatecall is powerful but risky. It allows the called contract to modify the state of the calling contract. If the Delegate contract is not carefully designed, it could lead to unexpected behavior or vulnerabilities.
+ Function Visibility: The test function in the Delegate contract is public by default, which means it can be called by anyone. This might not be an issue in this specific context, but it's important to be aware of the visibility of functions.
+
+In summary, the Delegation contract uses delegatecall to execute functions from the Delegate contract in its own context, allowing it to modify its own state based on the logic defined in the Delegate contract. This pattern is useful for modularizing code and reusing logic across different contracts, but it requires careful handling to avoid security pitfalls.

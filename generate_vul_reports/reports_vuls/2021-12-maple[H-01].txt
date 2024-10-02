@@ -1,0 +1,17 @@
+[H-01]makePayment()Lack of access control allows maliciouslenderto retrieve a large portion of the funds earlier, making the borrower suffer fund loss
+Submitted by WatchPug
+MapleLoan.solL86-L93
+functionmakePayment(uint256amount_)externaloverridereturns(uint256principal_,uint256interest_) {// The amount specified is an optional amount to be transfer from the caller, as a convenience for EOAs.require(amount_==uint256(0) ||ERC20Helper.transferFrom(_fundsAsset,msg.sender,address(this),amount_),"ML:MP:TRANSFER_FROM_FAILED");(principal_,interest_) =_makePayment();emitPaymentMade(principal_,interest_);}
+The current implementation allows anyone to callmakePayment()and repay the loan with_drawableFunds.
+This makes it possible for a maliciouslenderto callmakePayment()multiple times right afterfundLoan()and retrieve most of the funds back immediately, while thenborrowermust continue to make payments or lose thecollateral.
+PoC
+Given:
+_collateralRequired= 1 BTC_principalRequested= 12,000 USDC_paymentInterval= 30 day_paymentsRemaining= 12_gracePeriod= 1 dayinterestRate_= 2e17The borrower callspostCollateral()and added1 BTCas_collateralAsset;The lender callsfundLoan()and added12,000 USDCas_fundsAsset;The lender callsmakePayment()11 times, then:_drawableFunds= 96_claimableFunds= 11903_principal= 1553The lender calls_claimFunds()get 11,903 USDC of_fundsAssetback;
+Now, for the borrower1,579 USDCis due, but only96 USDCcan be used. The borrower is now forced to pay the interests for the funds that never be used or lose the collateral.
+Recommendation
+Change to:
+functionmakePayment(uint256amount_)externaloverridereturns(uint256principal_,uint256interest_) {// The amount specified is an optional amount to be transfer from the caller, as a convenience for EOAs.require(amount_==uint256(0) ||ERC20Helper.transferFrom(_fundsAsset,msg.sender,address(this),amount_),"ML:MP:TRANSFER_FROM_FAILED");require(msg.sender==_borrower,"ML:DF:NOT_BORROWER");(principal_,interest_) =_makePayment();emitPaymentMade(principal_,interest_);}
+deluca-mike (Maple) confirmed:
+Good catch. However, we do want accounts other than the borrower to make payments (this is actually functionality that our current borrowers use), so instead of this fix, we may enforce that a payment can only be made some window of time before it is due, to prevent anyone from prematurely paying it down.
+pauliax (judge) commented:
+Great find, with a POC, deserves a severity of high as it may incur in funds lost for the borrower. The sponsor has acknowledged and mitigated the issue.

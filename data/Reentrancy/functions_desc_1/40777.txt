@@ -1,0 +1,16 @@
+This code defines a smart contract named Reentrance, which includes a mapping to store user balances and a function to withdraw balances. Here’s a detailed explanation of how this contract works:
+
+1. Contract Structure and State Variables:
+    The contract Reentrance contains a state variable userBalance, which is a mapping that associates Ethereum addresses with their respective balances. This mapping is used to keep track of how much each user has deposited into the contract.
+
+2. Function withdrawBalance:
+    This function allows users to withdraw their balance from the contract.
+    The function starts by executing a lowlevel call using msg.sender.call.value(userBalance[msg.sender])(). This call sends Ether to msg.sender (the address that initiated the transaction) equal to the amount stored in userBalance[msg.sender].
+    The if statement checks the result of this call. If the call fails (e.g., due to an outofgas error or the recipient contract throwing an exception), the function executes throw, which reverts all state changes made during the transaction and returns any unused gas to the caller.
+    After attempting to send the funds, the function sets userBalance[msg.sender] to 0, effectively resetting the user's balance to zero after the withdrawal.
+
+3. Potential Vulnerability:
+    The contract has a significant security vulnerability known as a "reentrancy attack". The issue arises because the balance is only updated after the call to transfer Ether. An attacker could exploit this by recursively calling withdrawBalance from a contract they control, repeatedly withdrawing funds before the balance is set to zero. This could drain the contract of all its Ether.
+    This vulnerability is a classic example of why it's important to update state variables before making external calls, a principle known as the "checkseffectsinteractions pattern".
+
+In summary, while the Reentrance contract provides a basic functionality for users to withdraw their balances, it is critically flawed due to the potential for reentrancy attacks. Proper handling of state updates and external calls is essential to secure smart contract implementations.

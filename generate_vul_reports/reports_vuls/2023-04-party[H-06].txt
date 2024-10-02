@@ -1,0 +1,35 @@
+[H-06]ETHCrowdfundBase.sol:totalVotingPoweris increased too much in the_finalizefunction
+Submitted byHollaDieWaldfee, also found byhansfriese
+This issue is about how theETHCrowdfundBase._finalizefunctions callsPartyGovernanceNFT.increaseTotalVotingPowerwith an amount that does not reflect the sum of the individual users’ voting power.
+Thereby it will become impossible to reach unanimous votes. In other words and more generally the users’ votes are worth less than they should be as the percentage is calculated against a total amount that is too big.
+In short, this is how the issue is caused:
+The voting power that a user receives is based on the amount they contribute MINUS funding feesThe amount of voting power by whichtotalVotingPoweris increased is based on the total contributions WITHOUT subtracting funding fees
+Proof of Concept
+Let’s first look at the affected code and then at the PoC.
+ThevotingPowerthat a user receives for making a contribution is calculated in theETHCrowdfundBase._processContributionfunction.
+We can see that first the funding fee is subtracted and then with the loweredamount, thevotingPoweris calculated:
+Link
+// Subtract fee from contribution amount if applicable.addresspayablefundingSplitRecipient_=fundingSplitRecipient;uint16fundingSplitBps_=fundingSplitBps;if(fundingSplitRecipient_!=address(0) &&fundingSplitBps_>0) {uint96feeAmount= (amount*fundingSplitBps_) /1e4;amount-=feeAmount;}// Calculate voting power.votingPower= (amount*exchangeRateBps) /1e4;
+Even before that,totalContributionshas been increased by the fullamount(funding fees have not been subtracted yet):
+Link
+uint96newTotalContributions=totalContributions+amount;uint96maxTotalContributions_=maxTotalContributions;if(newTotalContributions>=maxTotalContributions_) {totalContributions=maxTotalContributions_;// Finalize the crowdfund.// This occurs before refunding excess contribution to act as a// reentrancy guard._finalize(maxTotalContributions_);// Refund excess contribution.uint96refundAmount=newTotalContributions-maxTotalContributions;if(refundAmount>0) {amount-=refundAmount;payable(msg.sender).transferEth(refundAmount);}}else{totalContributions=newTotalContributions;}
+(Note that the above code looks more complicated than it is because it accounts for the fact thatmaxTotalContributionsmight be reached. But this is not important for explaining this issue)
+WhenPartyGovernanceNFT.increaseTotalVotingPoweris called it is with thenewVotingPowerthat has been calculated BEFORE funding fees are subtracted:
+Link
+uint96newVotingPower= (totalContributions_*exchangeRateBps) /1e4;party.increaseTotalVotingPower(newVotingPower);// Transfer fee to recipient if applicable.addresspayablefundingSplitRecipient_=fundingSplitRecipient;uint16fundingSplitBps_=fundingSplitBps;if(fundingSplitRecipient_!=address(0) &&fundingSplitBps_>0) {uint96feeAmount= (totalContributions_*fundingSplitBps_) /1e4;totalContributions_-=feeAmount;fundingSplitRecipient_.transferEth(feeAmount);}
+ThereforetotalVotingPoweris increased more than the sum of the voting power that the users have received.
+Let’s look at the PoC:
+functiontest_totalVotingPower_increased_too_much()public{ReraiseETHCrowdfundcrowdfund=_createCrowdfund({initialContribution:0,initialContributor:payable(address(0)),initialDelegate:address(0),minContributions:0,maxContributions:type(uint96).max,disableContributingForExistingCard:false,minTotalContributions:2ether,maxTotalContributions:5ether,duration:7days,fundingSplitBps:1000,fundingSplitRecipient:payable(address(1))});addressmember1=_randomAddress();addressmember2=_randomAddress();vm.deal(member1,1ether);vm.deal(member2,1ether);// Contribute, should be allowed to update delegatevm.startPrank(member1);crowdfund.contribute{ value:1ether}(member1,"");vm.stopPrank();vm.startPrank(member2);crowdfund.contribute{ value:1ether}(member2,"");vm.stopPrank();skip(7days);console.log(party.getGovernanceValues().totalVotingPower);crowdfund.finalize();console.log(party.getGovernanceValues().totalVotingPower);console.log(crowdfund.pendingVotingPower(member1));console.log(crowdfund.pendingVotingPower(member2));}
+See thattotalVotingPoweris increased from0to2e18.
+The voting power of both users is0.9e18(10% fee).
+Thereby both users together receive a voting power of1.8e18which is only 90% of2e18.
+Therefore it is impossible to reach an unanimous vote.
+Tools Used
+VSCode, Foundry
+Recommended Mitigation Steps
+The fix is easy:We must consider the funding fee when increasing thetotalVotingPower.
+Fix:
+diff --git a/contracts/crowdfund/ETHCrowdfundBase.sol b/contracts/crowdfund/ETHCrowdfundBase.solindex 4392655..3c11160 100644--- a/contracts/crowdfund/ETHCrowdfundBase.sol+++ b/contracts/crowdfund/ETHCrowdfundBase.sol@@ -274,10 +274,6 @@ contract ETHCrowdfundBase is Implementation {// Finalize the crowdfund.delete expiry;-        // Update the party's total voting power.-        uint96 newVotingPower = (totalContributions_ * exchangeRateBps) / 1e4;-        party.increaseTotalVotingPower(newVotingPower);-// Transfer fee to recipient if applicable.address payable fundingSplitRecipient_ = fundingSplitRecipient;uint16 fundingSplitBps_ = fundingSplitBps;@@ -287,6 +283,10 @@ contract ETHCrowdfundBase is Implementation {fundingSplitRecipient_.transferEth(feeAmount);}+        // Update the party's total voting power.+        uint96 newVotingPower = (totalContributions_ * exchangeRateBps) / 1e4;+        party.increaseTotalVotingPower(newVotingPower);+// Transfer ETH to the party.payable(address(party)).transferEth(totalContributions_);}
+0xean (judge) increased severity to High and commented:
+I am upgrading severity here to match#27and will look forward to sponsor comments.I think this exposes a way in which there are parameter sets that leads to a loss of funds by not allowing any proposal to be executed.
+0xble (Party) confirmed

@@ -1,0 +1,21 @@
+[Execution Flow]:
+This code defines an internal function named _upgradeToAndCallSecure, which is responsible for securely upgrading the implementation of a contract. The function accepts three parameters: newImplementation (the address of the new implementation), data (a byte array containing data to be passed to the new implementation), and forceCall (a boolean indicating whether to force a call to the new implementation). Here’s a detailed explanation of how this function works:
+
+1. Retrieve Current Implementation:
+    The function starts by retrieving the current implementation address using the _getImplementation() function and stores it in the variable oldImplementation.
+
+2. Initial Upgrade and Setup Call:
+    The function then sets the new implementation using the _setImplementation(newImplementation) function.
+    If the data parameter is not empty or forceCall is true, it performs a delegate call to the new implementation using Address.functionDelegateCall(newImplementation, data). This allows the new implementation to execute any initialization or setup code provided in the data parameter.
+
+3. Rollback Test:
+    The function retrieves a boolean slot from storage using StorageSlot.getBooleanSlot(_ROLLBACK_SLOT) and stores it in the variable rollbackTesting.
+    If the rollback test is not already in progress (i.e., rollbackTesting.value is false), it proceeds with the rollback test:
+      Sets rollbackTesting.value to true to indicate that the rollback test is in progress.
+      Performs a delegate call to the new implementation, invoking the upgradeTo(address) function with the oldImplementation address. This simulates a rollback to the old implementation.
+      Sets rollbackTesting.value back to false to indicate the end of the rollback test.
+      Checks if the rollback was effective by comparing oldImplementation with the current implementation using _getImplementation(). If they are not equal, it means the rollback failed, and the function reverts with the error message "ERC1967Upgrade: upgrade breaks further upgrades".
+
+4. Final Upgrade and Log:
+    If the rollback test passes, the function finally resets to the new implementation using _upgradeTo(newImplementation). This ensures that the new implementation is fully adopted and any necessary logging or state updates are performed.
+

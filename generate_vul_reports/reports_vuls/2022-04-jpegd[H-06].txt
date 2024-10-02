@@ -1,0 +1,13 @@
+[H-06] Setting new controller can breakYVaultLPFarming
+Submitted by cmichel
+yVaultLPFarming.sol#L170yVault.sol#L108
+The accruals inyVaultLPFarmingwill fail ifcurrentBalance < previousBalancein_computeUpdate.
+currentBalance=vault.balanceOfJPEG() +jpeg.balanceOf(address(this));uint256newRewards=currentBalance-previousBalance;
+No funds can be withdrawn anymore as thewithdrawfunctions first trigger an_update.
+ThecurrentBalance < previousBalancecase can, for example, be triggerd by decreasing thevault.balanceOfJPEG()due to callingyVault.setController:
+functionsetController(address_controller)publiconlyOwner{// @audit can reduce balanceofJpeg which breaks other masterchef contractrequire(_controller!=address(0),"INVALID_CONTROLLER");controller=IController(_controller);}functionbalanceOfJPEG()externalviewreturns(uint256) {// @audit new controller could return a smaller balancereturncontroller.balanceOfJPEG(address(token));}
+Recommended Mitigation Steps
+Setting a new controller on a vault must be done very carefully and requires a migration.
+LSDan (judge) commented:
+This is not a duplicate of H-05. Though both of them deal with issues related to balanceOfJPEG, they describe different causes.
+spaghettieth (JPEG’d) acknowledged

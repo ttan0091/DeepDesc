@@ -1,0 +1,15 @@
+[H-23]Synthtokens can get over-minted
+Submitted by WatchPug
+Per the document:
+It also is capable of using liquidity units as collateral for synthetic assets, of which it will always have guaranteed redemption liquidity for.
+However, in the current implementation,Synthtokens are minted based on the calculation result. WhilenativeDepositbe added to the reserve,reserveForeignwill remain unchanged, not deducted nor locked.
+Making it possible forSynthtokens to get over-minted.
+Proof of Concept
+The Vader pool for BTC-USDV is newly created, with nearly 0 liquidity.Alice add liquidity with100,000 USDVand1 BTC;BobmintSynth()with100,000 USDV, got0.25 BTC vSynth;Alice remove all the liquidity received at step 1, got all the200k USDVand1 BTC.
+The0.25 BTC vSynthheld by Bob is now backed by nothing and unable to be redeemed.
+This also makes it possible for a sophisticated attacker to steal funds from the Vader pool.
+The attacker may do the following in one transaction:
+Add liquidity with10 USDVand10,000 BTC(flash loan);CallmintSynth()with10 USDV, repeat for 10 times, got1461 BTC vSynth;Remove liquidity and repay flash loan, keep the1461 BTC vSynth;Wait for other users to add liquidity and when the BTC reserve is sufficient, callburnSynth()to stealUSDVfrom the pool.
+SamSteinGG (Vader) confirmed
+Given that the codebase attempts to implement the Thorchain rust code in a one-to-one fashion, findings that relate to the mathematical accuracy of the codebase will only be accepted in one of the following cases:The code deviates from the Thorchain implementationA test case is created that illustrates the problem
+While intuition is a valid ground for novel implementations, we have re-implemented a battle-tested implementation in another language and as such it is considered secure by design unless proven otherwise.

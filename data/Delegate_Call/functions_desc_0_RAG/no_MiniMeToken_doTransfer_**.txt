@@ -1,0 +1,62 @@
+This code defines an internal function named doTransfer, which is responsible for performing a token transfer from one address to another. Here’s a detailed explanation of how this function works:
+
+1. Initial Check for Zero Amount:
+   solidity
+   if (_amount == 0) {
+       return true;
+   }
+   
+   The function first checks if the transfer amount is zero. If it is, the function immediately returns true without performing any further actions.
+
+2. Block Number Requirement:
+   solidity
+   require(parentSnapShotBlock < block.number);
+   
+   This line ensures that the transfer can only occur if the current block number is greater than the parentSnapShotBlock. This is likely to ensure that the transfer is happening in a valid block context.
+
+3. Address Validation:
+   solidity
+   require((_to != 0) && (_to != address(this)));
+   
+   The function checks that the recipient address (_to) is not the zero address (0x0) and not the address of the token contract itself. This prevents transfers to invalid or selfreferential addresses.
+
+4. Balance Check:
+   solidity
+   var previousBalanceFrom = balanceOfAt(_from, block.number);
+   if (previousBalanceFrom < _amount) {
+       return false;
+   }
+   
+   The function retrieves the balance of the sender (_from) at the current block number using the balanceOfAt function. If the sender's balance is less than the transfer amount, the function returns false, indicating that the transfer cannot be completed due to insufficient funds.
+
+5. Controller Notification:
+   solidity
+   if (isContract(controller)) {
+       require(ITokenController(controller).onTransfer(_from, _to, _amount) == true);
+   }
+   
+   If the controller address is a contract, the function calls the onTransfer method of the ITokenController interface to notify the controller of the transfer. The require statement ensures that the controller approves the transfer.
+
+6. Updating Balances:
+   solidity
+   updateValueAtNow(balances[_from], previousBalanceFrom  _amount);
+   var previousBalanceTo = balanceOfAt(_to, block.number);
+   require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
+   updateValueAtNow(balances[_to], previousBalanceTo + _amount);
+   
+   The function updates the balance of the sender by subtracting the transfer amount. It then retrieves the balance of the recipient (_to) at the current block number and updates it by adding the transfer amount. The require statement checks for overflow to ensure that the addition does not result in an invalid balance.
+
+7. Event Emission:
+   solidity
+   Transfer(_from, _to, _amount);
+   
+   Finally, the function emits a Transfer event to log the transfer on the blockchain.
+
+8. Return Statement:
+   solidity
+   return true;
+   
+   The function returns true to indicate that the transfer was successful.
+
+### Summary
+The doTransfer function performs a token transfer by validating the transfer amount, ensuring the sender has sufficient balance, notifying the controller (if applicable), updating the balances of the sender and recipient, and emitting a transfer event. The function includes several checks to prevent invalid transfers and ensure the integrity of the token balances.

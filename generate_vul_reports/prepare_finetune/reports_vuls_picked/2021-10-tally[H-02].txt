@@ -1,0 +1,16 @@
+Type of vulnerability: Incorrect Balance Calculation
+Cause of vulnerability: The original balance includes the input amount, leading to incorrect delta calculations.
+Execution process: When a user swaps ETH for an ERC20 token, the function incorrectly calculates the ETH and ERC20 deltas by not accounting for the input amount in the original balance. This results in users not receiving the correct refund or arbitrage amount.
+Vulnerable code: 
+```solidity
+uint256 originalETHBalance = address(this).balance;
+// ...
+uint256 ethDelta = address(this).balance.subOrZero(originalETHBalance);
+uint256 erc20Delta;
+if (!signifiesETHOrZero(address(zrxBuyTokenAddress))) {
+    erc20Delta = zrxBuyTokenAddress.balanceOf(address(this)).subOrZero(originalERC20Balance);
+    require(erc20Delta > 0, "Swap::fillZrxQuote: Didn't receive bought token");
+} else {
+    require(ethDelta > 0, "Swap::fillZrxQuote: Didn't receive bought ETH");
+}
+```

@@ -1,0 +1,14 @@
+[H-05] AuctionEschapeHatch.sol#exitEarly updates state of the auction wrongly
+Submitted by 0x0x0x
+AuctionEschapeHatch.sol#exitEarlytakes as inputamountto represent how much of the
+When the user exits an auction with profit, to apply the profit penalty lessmaltQuantityis liquidated compared to how much malt token the liquidated amount corresponds to. The problem isauction.amendAccountParticipation()simply subtracts the malt quantity with penalty and fullamountfrom users auction stats. This causes a major problem, since in_calculateMaltRequiredForExitthose values are used for calculation by calculating maltQuantity as follow:
+uint256 maltQuantity = userMaltPurchased.mul(amount).div(userCommitment);
+The ratio ofuserMaltPurchased / userCommitmentgets higher after each profit taking (since penalty is applied to substractedmaltQuantityfromuserMaltPurchased), by doing so a user can earn more than it should. Since after each profit taking users commitment corresponds to proportionally more malt, the user can even reduce profit penalties by dividingexitEarlycalls in several calls.
+In other words, the ratio ofuserMaltPurchased / userCommitmentgets higher after each profit taking and user can claim more malt with less commitment. Furthermore after alluserMaltPurchasedis claimed the user can haveuserCommitmentleft over, which can be used toclaimArbitrage, when possible.
+Mitigation Step
+Make sure which values are used for what and update values which doesn’t create problems like this. Rethink about how to track values of an auction correctly.
+0xScotch (sponsor) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified an exploit that allows early withdrawers to gain more rewards than expected.
+Anytime “points” and rewards need to be earned over time, it’s ideal to accrue points in order to distribute them (see how Compound or AAVE tokens work)
+Because the warden showed a flow in the accounting logic for the protocol, I agree with high severity.

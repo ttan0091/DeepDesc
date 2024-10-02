@@ -1,0 +1,197 @@
+[H-01] Anyone can set thebaseRatePerYearafter theupdateFrequencyhas passed
+Submitted by 0xDjango, also found by 0x52, Chom, csanuragjain, JMukesh, k, oyc_109, Picodes, Soosh, and WatchPug
+https://github.com/Plex-Engineer/lending-market/blob/755424c1f9ab3f9f0408443e6606f94e4f08a990/contracts/NoteInterest.sol#L118-L129
+TheupdateBaseRate()function is public and lacks access control, so anyone can set the critical variablebaseRatePerYearonce the block delta has surpassed theupdateFrequencyvariable. This will have negative effects on the borrow and supply rates used anywhere else in the protocol.
+The updateFrequency is explained to default to 24 hours per the comments, so this vulnerability will be available every day. Important to note, the admin can fix thebaseRatePerYearby calling the admin-only_setBaseRatePerYear()function. However, calling this function does not set thelastUpdateBlockso users will still be able to change the rate back after the 24 hours waiting period from the previous change.
+Proof of Concept
+function updateBaseRate(uint newBaseRatePerYear) public {// check the current block numberuint blockNumber = block.number;uint deltaBlocks = blockNumber.sub(lastUpdateBlock);if (deltaBlocks > updateFrequency) {// pass in a base rate per yearbaseRatePerYear = newBaseRatePerYear;lastUpdateBlock = blockNumber;emit NewInterestParams(baseRatePerYear);}}
+Recommended Mitigation Steps
+I have trouble understanding the intention of this function. It appears that the rate should only be able to be set by the admin, so the_setBaseRatePerYear()function seems sufficient. Otherwise, add access control for only trusted parties.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to probably an oversight, a core function that has impact in determining the yearly interest rate was left open for anyone to change once every 24 hrs.Because the impact is:Potential bricking of integrating contractsEconomic exploitsAnd anyone can perform itI believe that High Severity is appropriate.Mitigation requires either deleting the function or adding access control.
+
+[H-02] Stealing Wrapped Manifest in WETH.sol
+Submitted by Soosh, also found by 0x52, 0xDjango, cccz, saian, TerrierLover, WatchPug, and zzzitron
+https://github.com/Plex-Engineer/lending-market/blob/755424c1f9ab3f9f0408443e6606f94e4f08a990/contracts/WETH.sol#L85
+Allows anyone to steal all wrapped manifest from the WETH.sol contract. Attacker can also withdraw
+to convert Wrapped Manifest to Manifest.
+Issue in approve(address owner, address spender) external function. This allows an attacker to approve themselves to spend another user’s tokens.
+Attacker can then use transferFrom(address src, address dst, uint wad) function to send tokens to themself.
+Proof of Concept
+See warden’sfull reportfor further details.
+Tools Used
+VScode, hardhat
+Recommended Mitigation Steps
+I believe there is no need for this function. There is another approve(address guy, uint wad) function that uses msg.sender to approve allowance. There should be no need for someone to approve another user’s allowance.
+Remove the approve(address owner, address spender) function.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, for whatever reason, an approve function which allows to pass the “approver” as parameter was present in the WETH contract.This allows anyone, to steal all WETH from any other holder.For that reason, High Severity is appropriate.
+
+[H-03]AccountantDelegate:sweepInterestfunction will destroy the cnote in the contract.
+Submitted by cccz, also found by WatchPug
+When the user borrows note tokens, the AccountantDelegate contract provides note tokens and gets cnote tokens. Later, when the user repays the note tokens, the cnote tokens are destroyed and the note tokens are transferred to the AccountantDelegate contract.
+However, in the sweepInterest function of the AccountantDelegate contract, all cnote tokens in the contract will be transferred to address 0. This will prevent the user from repaying the note tokens, and the sweepInterest function will not calculate the interest correctly later.
+Proof of Concept
+https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/Accountant/AccountantDelegate.sol#L74-L92https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/CToken.sol#L533
+Recommended Mitigation Steps
+function sweepInterest() external override returns(uint) {uint noteBalance = note.balanceOf(address(this));uint CNoteBalance = cnote.balanceOf(address(this));Exp memory expRate = Exp({mantissa: cnote.exchangeRateStored()}); // obtain exchange Rate from cNote Lending Market as a mantissa (scaled by 1e18)uint cNoteConverted = mul_ScalarTruncate(expRate, CNoteBalance); //calculate truncate(cNoteBalance* mantissa{expRate})uint noteDifferential = sub_(note.totalSupply(), noteBalance); //cannot underflow, subtraction first to prevent against overflow, subtraction as integersrequire(cNoteConverted >= noteDifferential, "Note Loaned to LendingMarket must increase in value");uint amtToSweep = sub_(cNoteConverted, noteDifferential);note.transfer(treasury, amtToSweep);-		cnote.transfer(address(0), CNoteBalance);return 0;}
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a programmer mistake, interest bearing Note will be burned.It is unclear why this decision was made, and I believe the sponsor should look intoredeeming thecNoteover destroying it.The sponsor confirmed, and because this finding shows unconditional loss of assets, I agree with High Severity.
+
+[H-04]lending-market/NoteInterest.solWrong implementation ofgetBorrowRate()
+Submitted by WatchPug, also found by 0x1f8b, Chom, and gzeon
+https://github.com/Plex-Engineer/lending-market/blob/b93e2867a64b420ce6ce317f01c7834a7b6b17ca/contracts/NoteInterest.sol#L92-L101
+functiongetBorrowRate(uintcash,uintborrows,uintreserves)publicviewoverridereturns(uint) {// Gets the Note/gUSDC TWAP in a given interval, as a mantissa (scaled by 1e18)// uint twapMantissa = getUnderlyingPrice(note);uintrand=uint(keccak256(abi.encodePacked(msg.sender))) %100;uintir= (100-rand).mul(adjusterCoefficient).add(baseRatePerYear).mul(1e16);uintnewRatePerYear=ir>=0?ir:0;// convert it to base rate per blockuintnewRatePerBlock=newRatePerYear.div(blocksPerYear);returnnewRatePerBlock;}
+The current implementation will return a random rate based on the caller’s address andbaseRatePerYear.
+This makes some lucky addresses pay much lower and some addresses pay much higher rates.
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to most likely a developer oversight, the unimplementedgetBorrowRatereturns a random value which can easily be gamed (and is not recommended for production).Because the contract is in scope, and the functionality is broken, I agree with High Severity.
+
+[H-05]zeroswap/UniswapV2Library.solWrong init code hash inUniswapV2Library.pairFor()will breakUniswapV2Oracle,UniswapV2Router02,SushiRoll
+Submitted by WatchPug
+https://github.com/Plex-Engineer/zeroswap/blob/03507a80322112f4f3c723fc68bed0f138702836/contracts/uniswapv2/libraries/UniswapV2Library.sol#L20-L28
+functionpairFor(addressfactory,addresstokenA,addresstokenB)internalpurereturns(addresspair) {(addresstoken0,addresstoken1) =sortTokens(tokenA,tokenB);pair=address(uint(keccak256(abi.encodePacked(hex'ff',factory,keccak256(abi.encodePacked(token0,token1)),hex'e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303'// init code hash))));}
+Theinit code hashinUniswapV2Library.pairFor()should be updated since the code ofUniswapV2Pairhas been changed. Otherwise, thepairaddress calculated will be wrong, most likely non-existing address.
+There are many other functions and other contracts across the codebase, includingUniswapV2Oracle,UniswapV2Router02, andSushiRoll, that rely on theUniswapV2Library.pairFor()function for the address of the pair, with theUniswapV2Library.pairFor()returning a wrong and non-existing address, these functions and contracts will malfunction.
+Recommended Mitigation Steps
+Update the init code hash fromhex'e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303'to the value ofUniswapV2Factory.pairCodeHash().
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+Amazing catch, because the contract bytecode has been change, the init hash will be different.While the bug seems trivial, it’s impact is a total bricking of all swapping functionality as the Library will cause all Periphery Contracts to call to the wrong addresses.Because of the impact, I agree with High Severity.
+
+[H-06] Accountant can’t be initialized
+Submitted by Ruhum, also found by cccz
+It’s not possible to initialize the accountant because of a mistake in the function’s require statement.
+I rate it as MED since a key part of the protocol wouldn’t be available until the contract is modified and redeployed.
+Proof of Concept
+The issue is the followingrequire()statement:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Accountant/AccountantDelegate.sol#L29
+There, the function checks whether the accountant has received the correct amount of tokens. But, it compares the accountant’s balance with the_initialSupply. That value is always 0. So the require statement will always fail
+When the Note contract is initialized,_initialSupplyis set to 0:
+https://github.com/Plex-Engineer/lending-market/blob/main/deploy/canto/004_deploy_Note.ts#L14https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Note.sol#L9https://github.com/Plex-Engineer/lending-market/blob/main/contracts/ERC20.sol#L32
+After_mint_to_Accountant()mintstype(uint).maxtokens to the accountant:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Note.sol#L18That increases thetotalSupplybut not the_initialSupply:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/ERC20.sol#L242
+The_initialSupplyvalue is only modified by the ERC20 contract’s constructor.
+Recommended Mitigation Steps
+Change the require statement to
+require(note.balanceOf(msg.sender) ==note.totalSupply(),"AccountantDelegate::initiatlize: Accountant has not received payment");
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has shown how, due to an incorrect assumption,AccountantDelegate.initializecannot work, meaning part of the protocol will never work without fixing this issue.While the change should be fairly trivial, the impact is pretty high, for those reasons am going to raise severity to High.
+
+[H-07] Anyone can create Proposal UnigovProposal-Store.sol
+Submitted by Soosh, also found by 0x1f8b, cccz, csanuragjain, hake, p4st13r4, Ruhum, TerrierLover, WatchPug, and zzzitron
+https://github.com/Plex-Engineer/manifest/blob/688e9b4e7835854c22ef44b045d6d226b784b4b8/contracts/Proposal-Store.sol#L46https://github.com/Plex-Engineer/lending-market/blob/b93e2867a64b420ce6ce317f01c7834a7b6b17ca/contracts/Governance/GovernorBravoDelegate.sol#L37
+Proposal Store is used to store proposals that have already passed (https://code4rena.com/contests/2022-06-new-blockchain-contest#unigov-module-615-sloc) ” Upon a proposal’s passing, the proposalHandler either deploys the ProposalStore contract (if it is not already deployed) or appends the proposal into the ProposalStore’s mapping ( uint ⇒ Proposal)”
+But anyone can add proposals to the contract directly via AddProposal() function.
+Unigov proposals can be queued and executed by anyone in GovernorBravoDelegate contracthttps://github.com/Plex-Engineer/lending-market/blob/b93e2867a64b420ce6ce317f01c7834a7b6b17ca/contracts/Governance/GovernorBravoDelegate.sol#L37
+Proof of Concept
+https://github.com/Plex-Engineer/manifest/blob/688e9b4e7835854c22ef44b045d6d226b784b4b8/contracts/Proposal-Store.sol#L46
+Recommended Mitigation Steps
+Authorization checks for AddProposal, only governance module should be able to update.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a lack of checks, anyone can create, queue, and execute a proposal without any particular checks.Because governance normally is limited via:Voting on a proposalAccess control to limit transactionsAnd the finding shows how this is completely ignored;I believe High Severity to be appropriate.
+
+[H-08] Transferring any amount of the underlying token to the CNote contract will make the contract functions unusable
+Submitted by Tutturu, also found by 0x52, hyh, p4st13r4, and WatchPug
+The contract expects the balance of the underlying token to == 0 at all points when calling the contract functions by requiring getCashPrior() == 0, which checks token.balanceOf(address(this)) where token is the underlying asset.
+An attacker can transfer any amount of the underlying asset directly to the contract and make all of the functions requiring getCashPrior() == 0 to revert.
+Proof of Concept
+CNote.sol#L43CNote.sol#L114CNote.sol#198CNote.sol#310
+Attacker gets any balance of Note (amount = 1 token)Attacker transfers the token to CNote which uses Note as an underlying asset, by calling note.transfer(CNoteAddress, amount). The function is available since Note inherits from ERC20Any calls to CNote functions now revert due to getCashPrior() not being equal to 0
+Recommended Mitigation Steps
+Instead of checking the underlying token balance via balanceOf(address(this)) the contract could hold an internal balance of the token, mitigating the impact of tokens being forcefully transferred to the contract.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, via a simple transfer of 1 wei of token, the invariant ofgetCashPrior() == 0can be broken, bricking the functionality.Because of:the simplicity of the exploitThe impact being inability to interact with the contractA protocol invariant is brokenI agree with High Severity.Mitigation would require using delta balances and perhaps re-thinking the need for those intermediary checks.
+
+[H-09] WETH.sol computes the wrongtotalSupply()
+Submitted by p4st13r4, also found by hansfriese, Ruhum, TerrierLover, WatchPug, and zzzitron
+Affected code:
+https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/WETH.sol#L47
+WETH.solis almost copied from the infamous WETH contract that lives in mainnet. This contract is supposed to receive the native currency of the blockchain (for example ETH) and wrap it into a tokenized, ERC-20 form. This contract computes thetotalSupply()using the balance of the contract itself stored in thebalanceOfmapping, when instead it should be using the nativebalancefunction. This way,totalSupply()always returns zero as theWETHcontract itself has no way of callingdepositto itself and increase its own balance
+Proof of Concept
+Alice transfers 100 ETH toWETH.solAlice callsbalanceOf()for her address and it returns 100 WETHAlice callstotalSupply(), expecting to see 100 WETH, but it returns 0
+Tools Used
+Editor
+Recommended Mitigation Steps
+functiontotalSupply()publicviewreturns(uint) {returnaddress(this).balance}
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a programming mistake, the WETH totalSupply will be incorrect.Mitigation seems straightforward, however, because the vulnerability would have causes totalSupply to return 0, and shows a broken functionality for a core contract, I think High Severity to be appropriate
+
+[H-10] Comptroller uses the wrong address for the WETH contract
+Submitted by Ruhum, also found by 0xf15ers, cccz, hake, Soosh, and WatchPug
+The Comptroller contract uses a hardcoded address for the WETH contract which is not the correct one. Because of that, it will be impossible to claim COMP rewards. That results in a loss of funds so I rate it as HIGH.
+Proof of Concept
+The Comptroller’sgetWETHAddress()function:https://github.com/Plex-Engineer/lending-market/blob/755424c1f9ab3f9f0408443e6606f94e4f08a990/contracts/Comptroller.sol#L1469
+It’s a left-over from the original compound repo:https://github.com/compound-finance/compound-protocol/blob/master/contracts/Comptroller.sol#L1469
+It’s used by thegrantCompInternal()function:https://github.com/Plex-Engineer/lending-market/blob/755424c1f9ab3f9f0408443e6606f94e4f08a990/contracts/Comptroller.sol#L1377
+That function is called byclaimComp():https://github.com/Plex-Engineer/lending-market/blob/755424c1f9ab3f9f0408443e6606f94e4f08a990/contracts/Comptroller.sol#L1365
+If there is a contract stored in that address and it doesn’t adhere to the interface (doesn’t have abalanceOf()andtransfer()function), the transaction will revert. If there is no contract, the call will succeed without having any effect. In both cases, the user doesn’t get their COMP rewards.
+Recommended Mitigation Steps
+The WETH contract’s address should be parsed to the Comptroller through the constructor or another function instead of being hardcoded.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how the address for WETH / comp is hardcoded and the address is pointing to Mainnet’s COMP.This misconfiguration will guarantee that any function callinggrantCompInternalas well asclaimCompwill revert.Because the functionality is hampered, I agree with High Severity.
+
+[H-11]lending-market/Note.solWrong implementation of access control
+Submitted by WatchPug, also found by catchup, Lambda, p4st13r4, and Tutturu
+https://github.com/Plex-Engineer/lending-market/blob/b93e2867a64b420ce6ce317f01c7834a7b6b17ca/contracts/Note.sol#L13-L31
+function_mint_to_Accountant(addressaccountantDelegator)external{if(accountant==address(0)) {_setAccountantAddress(msg.sender);}require(msg.sender==accountant,"Note::_mint_to_Accountant: ");_mint(msg.sender,type(uint).max);}functionRetAccountant()publicviewreturns(address) {returnaccountant;}function_setAccountantAddress(addressaccountant_)internal{if(accountant!=address(0)) {require(msg.sender==admin,"Note::_setAccountantAddress: Only admin may call this function");}accountant=accountant_;admin=accountant;}
+_mint_to_Accountant()calls_setAccountantAddress()whenaccountant == address(0), which will always be the case when_mint_to_Accountant()is called for the first time.
+And_setAccountantAddress()only checks ifmsg.sender == adminwhenaccountant != address(0)which will always befalse, therefore the access control is not working.
+L17 will then check ifmsg.sender == accountant, now it will always be the case, because at L29,accountantwas set tomsg.sender.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a flaw in logic, via a front-run, anyone can become theaccountantand mint all the totalSupply to themselves.While I’m not super confident on severity for the front-run as I’d argue the worst case is forcing a re-deploy, the warden has shown a lack of logic in the checks (msg.sender == admin) which breaks it’s invariants.For that reason, I think High Severity to be appropriate.
+
+[H-12] InERC20,TotalSupplyis broken
+Submitted by Picodes, also found by cccz
+https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/ERC20.sol#L33https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/ERC20.sol#L95
+For an obscure reason as it’s not commented,_totalSupplyis not initialized to 0, leading to an inaccurate total supply, which could easily break integrations, computations of market cap, etc.
+Proof of Concept
+If the constructor is called with_initialSupply = 1000, then1000tokens are minted. The total supply will be2000.
+Recommended Mitigation Steps
+Remove_initialSupply.
+tkkwon1998 (Canto) disputed and commented:
+The explanation is not clear. We can’t seem to reproduce this issue as we can’t find a scenario where thetotalSupplyfunction returns an incorrect value.
+Picodes (warden) commented:
+@tkkwon1998 to clarify:Deploy the ERC20 withtotalSupply_ = 1000.ThentotalSupply()returns 1000, which is incorrect.Then if someone mints 1000 tokens, there is 1000 tokens in the market but due to_totalSupply += amount;, totalSupply = 2000 which is still incorrect
+Alex the Entreprenerd (judge) commented:
+I believe the submission could have benefitted by:A coded POCRecognizing a revert due to the findingHowever the finding is ultimately true in that, becausetotalSupplyis a parameter passed in to the contract, and the ERC20 contract will not mint that amount, thetotalSupplywill end up not reflecting the total amounts of tokens minted.For this reason, I believe the finding to be valid and High Severity to be appropriate.I recommend the warden to err on the side of giving too much information to avoid getting their finding invalidated incorrectly.
+Alex the Entreprenerd (judge) commented:
+After further thinking, I still believe the finding is of high severity as the ERC20 standard is also broken. I do believe the submission could have been better developed, however, I think High is in place here.
+
+[H-13] It’s not possible to execute governance proposals through theGovernorBravoDelegatecontract
+Submitted by Ruhum, also found by 0xmint, cccz, csanuragjain, dipp, hake, and zzzitron
+It’s not possible to execute a proposal through the GovernorBravoDelegate contract because theexecutedproperty of it is set totruewhen it’s queued up.
+Since this means that the governance contract is unusable, it might result in locked-up funds if those were transferred to the contract before the issue comes up. Because of that I’d rate it as HIGH.
+Proof of Concept
+executedis set totrue:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Governance/GovernorBravoDelegate.sol#L63
+Here, theexecute()function checks whether the proposal’s state isQueued:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Governance/GovernorBravoDelegate.sol#L87
+But, since theexecuteproperty istrue, thestate()function will returnExecuted:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Governance/GovernorBravoDelegate.sol#L117
+In the original compound repo,executedisfalsewhen the proposal is queued up:https://github.com/compound-finance/compound-protocol/blob/master/contracts/Governance/GovernorBravoDelegate.sol#L111
+Recommended Mitigation Steps
+Just delete the line whereexecutedis set totrue. Since the zero-value isfalseanyway, you’ll save gas as well.
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a coding decision, no transaction can be executed from the Governor Contract.Because the functionality is broken, I agree with High Severity.
+
+[H-14]WETH.allowance()returns wrong result
+Submitted by hansfriese, also found by 0xf15ers
+https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/WETH.sol#L104
+WETH.allowance() returns wrong result.I can’t find other contracts that use this function but WETH.sol is a base contract and it should be fixed properly.
+Proof of Concept
+In this function, the “return” keyword is missing and it will always output 0 in this case.
+Tools Used
+Solidity Visual Developer of VSCode
+Recommended Mitigation Steps
+L104 should be changed like below.
+return _allowance[owner][spender];
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has found a minor developer oversight, which will cause the view functionallowanceto always return 0.Breaking of a core contract such as WETH is a non-starter.Because I’ve already raised severity of #191 for similar reasons, I think High Severity is appropriate in this case.
+

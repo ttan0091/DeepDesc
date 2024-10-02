@@ -1,0 +1,9 @@
+[H-01] buyAndSwap1155WETH() function may cause loss of user assets
+Submitted by cccz
+In the NFTXMarketplaceZap.sol contract, the buyAndSwap1155WETH function uses the WETH provided by the user to exchange VaultToken, but when executing the _buyVaultToken method, msg.value is used instead of maxWethIn. Since msg.value is 0, the call will fail.
+functionbuyAndSwap1155WETH(uint256vaultId,uint256[]memoryidsIn,uint256[]memoryamounts,uint256[]memoryspecificIds,uint256maxWethIn,address[]calldatapath,addressto)publicpayablenonReentrant{require(to!=address(0));require(idsIn.length!=0);IERC20Upgradeable(address(WETH)).transferFrom(msg.sender,address(this),maxWethIn);uint256count;for(uint256i=0;i<idsIn.length;i++) {uint256amount=amounts[i];require(amount>0,"Transferring <1");count+=amount;}INFTXVaultvault=INFTXVault(nftxFactory.vault(vaultId));uint256redeemFees= (vault.targetSwapFee() *specificIds.length) + (vault.randomSwapFee() * (count-specificIds.length));uint256[]memoryswapAmounts=_buyVaultToken(address(vault),redeemFees,msg.value,path);
+In extreme cases, when the user provides both ETH and WETH (the user approves the contract WETH in advance and calls the buyAndSwap1155WETH function instead of the buyAndSwap1155 function by mistake), the _buyVaultToken function will execute successfully, but because the buyAndSwap1155WETH function will not convert ETH to WETH, The user’s ETH will be locked in the contract, causing loss of user assets.
+function_buyVaultToken(addressvault,uint256minTokenOut,uint256maxWethIn,address[]calldatapath)internalreturns(uint256[]memory) {uint256[]memoryamounts=sushiRouter.swapTokensForExactTokens(minTokenOut,maxWethIn,path,address(this),block.timestamp);returnamounts;}
+Recommended Mitigation Steps
+-uint256[]memoryswapAmounts=_buyVaultToken(address(vault),redeemFees,msg.value,path);+uint256[]memoryswapAmounts=_buyVaultToken(address(vault),redeemFees,maxWethIn,path);
+0xKiwi (NFTX) confirmed and resolved

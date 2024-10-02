@@ -1,0 +1,20 @@
+[H-03] Absence of restrictions on the sender of thetwTAP.claimsReward()function could enable attackers to freeze reward tokens within the Tap token contract
+Submitted byKIntern_NA, also found byKIntern_NA,immeas,carrotsmuggler,ronnyx2017, GalloDaSballo (1,2,3),cccz, andladboy233
+https://github.com/Tapioca-DAO/tap-token/blob/20a83b1d2d5577653610a6c3879dff9df4968345/contracts/governance/twTAP.sol#L396-L404
+The functiontwTAP.claimRewards()is utilized to claim the reward distributed to the position identified by_tokenId.
+functionclaimRewards(uint256_tokenId,address_to)externalnonReentrantwhenNotPausedreturns(uint256[]memoryamounts_){_requireClaimPermission(_to,_tokenId);amounts_=_claimRewards(_tokenId,_to);}
+This function can be triggered by anyone, provided that the receiver of the claimed reward_tois either the owner of the position or an address approved by the position’s owner.
+In the functionTapTokenReceiver._claimTwpTapRewardsReceiver(), thetwTAP.claimRewards()function is invoked atline 156to calculate the reward assigned to_tokenIdand claim the reward to this contract before transferring it to the receiver on another chain. To achieve this, the position’s owner must first approve this contract to access the position before executing the function.
+function_claimTwpTapRewardsReceiver(bytesmemory_data)internalvirtualtwTapExists{ClaimTwTapRewardsMsgmemoryclaimTwTapRewardsMsg_=TapTokenCodec.decodeClaimTwTapRewardsMsg(_data);uint256[]memoryclaimedAmount_=twTap.claimRewards(claimTwTapRewardsMsg_.tokenId,address(this));...}
+However, between the call to grant approval to the contract and the execution of the_claimTwpTapRewardsReceiver()function, an attacker can insert a transaction callingtwTAP.claimRewards(_tokenId, TapTokenReceiver). By doing so, the rewards will be claimed to theTapTokenReceivercontract before the_claimTwpTapRewardsReceiver()function is invoked. Consequently, the return value ofclaimedAmount_ = twTap.claimRewards(claimTwTapRewardsMsg_.tokenId, address(this))within the function will be0for all elements, resulting in no rewards being claimed for the receiver. As a result, the reward tokens will become trapped in the contract.
+In the event that the sender utilizes multiple LayerZero composed messages containing two messages:
+Permit message: to approve permission of_tokenIdto theTapTokenReceivercontract.Claim reward message: to trigger the_claimTwpTapRewardsReceiver()function and claim the reward.
+The attacker cannot insert anytwTAP.claimRewards()between these two messages, as they are executed within the same transaction on the destination chain. However, the permit message can be triggered by anyone, not just the contractTapTokenReceiver. The attacker can thus trigger the permit message on the destination chain and subsequently call thetwTAP.claimRewards()function before the_claimTwpTapRewardsReceiver()message is delivered on the destination chain.
+Impact
+The reward tokens will become trapped within theTapTokenReceivercontract.
+Recommended Mitigation Steps
+Consider updating the functiontwTAP.claimRewards()as depicted below to impose restrictions on who can invoke this function:
+functionclaimRewards(uint256_tokenId,address_to)externalnonReentrantwhenNotPausedreturns(uint256[]memoryamounts_){_requireClaimPermission(msg.sender,_tokenId);_requireClaimPermission(_to,_tokenId);amounts_=_claimRewards(_tokenId,_to);}
+0xRektora (Tapioca) confirmed via duplicate Issue #120
+0xRektora (Tapioca) commented:
+Just as reference, the proposed mitigation will not work, because in this contextmsg.sender == _to.

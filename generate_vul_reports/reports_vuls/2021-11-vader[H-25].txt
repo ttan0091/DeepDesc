@@ -1,0 +1,17 @@
+[H-25] Wrong design ofswap()results in unexpected and unfavorable outputs
+Submitted by WatchPug
+The current formula to calculate theamountOutfor a swap is:
+https://github.com/code-423n4/2021-11-vader/blob/429970427b4dc65e37808d7116b9de27e395ce0c/contracts/dex/math/VaderMath.sol#L99-L111
+functioncalculateSwap(uint256amountIn,uint256reserveIn,uint256reserveOut)publicpurereturns(uint256amountOut) {// x * Y * Xuint256numerator=amountIn*reserveIn*reserveOut;// (x + X) ^ 2uint256denominator=pow(amountIn+reserveIn);amountOut=numerator/denominator;}
+We believe the design (the formula) is wrong and it will result in unexpected and unfavorable outputs.
+Specifically, if theamountInis larger than thereserveIn, theamountOutstarts to decrease.
+Proof of Concept
+Given:
+A USDV-BTC Vader pool with the reserves of200,000 USDVand2 BTC.If Alice swap2 BTCfor USDV, will get50000 USDVas output;If Bob swap2.1 BTCfor USDV, will only get49970.25 USDVas output;If Carol swap2.2 BTCfor USDV, will only get49886.62 USDVas output.
+For the same pool reserves, paying more for less output token is unexpected and unfavorable.
+SamSteinGG (Vader) disputed:
+This is the intended design of the Thorchain CLP model. Can the warden provide a tangible attack vector in the form of a test?
+alcueca (judge) commented:
+It is true that the effect will be surprising to the user, and the issue is acknowledged by the sponsor.
+SamSteinGG (Vader) commented:
+@alcueca We do not acknowledge the issue. This is the intended design of the CLP model and the amount supplied for a trade is meant to be safeguarded off-chain. It is an inherent trait of the model.

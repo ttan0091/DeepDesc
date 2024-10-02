@@ -1,0 +1,19 @@
+[H-03] Groupbuy:_verifyUnsuccessfulStateand_verifySuccessfulStateboth can return true when block.timestamp == pool.terminationPeriod
+Submitted byLambda
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L455
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L478
+Impact
+The functions_verifyUnsuccessfulStateand_verifySuccessfulStateshould always have a differing behavior with regards to reversion, i.e. when one does not revert, the other should revert. In one condition, this is not true. Namely, when we havepool.success == falseandblock.timestamp == pool.terminationPeriod, this check within_verifyUnsuccessfulStateisfalse:
+if(pool.success||block.timestamp>pool.terminationPeriod)revertInvalidState();
+Similarly, this check within_verifySuccessfulStateis alsofalse:
+if(!pool.success&&block.timestamp<pool.terminationPeriod)revertInvalidState();
+Because this breaks a fundamental invariant of the contract, there are probably multiple ways to exploit it.
+One way an attacker can exploit is by callingclaim(to get his contribution back completely), bidding again with a higher value than his previous contributions (to get his contributions back again).
+Proof Of Concept
+Let’s assume we are at timestamppool.terminationPeriod. Attacker Charlie has performed the lowest bid with quantity 10 and price 1 ETH. He callsclaimto get his 10 ETH back. Now, he callscontributewith a quantity of 10 and a price of 2 ETH. Because this bid is higher than his previous one (which was the lowest one), hispendingBalancesis set to 10 ETH (for the deleted entries) and hisuserContributionsis set to 20 ETH (for this new contribution). He can now callclaimagain to get back his 20 ETH inuserContributions, but also the 10 ETH inpendingBalances. Like that, he has stolen 10 ETH (and could use this attack pattern to drain the whole contract).
+Recommended Mitigation Steps
+Change<in_verifySuccessfulStateto<=.
+HickupHH3 (judge) commented:
+Given that block timestamp period for ETH mainnet is now a constant 12s, the probability of a block timestamp being equal toterminationPeriodis 1/12 (~8.3%), which is non-trivial.
+stevennevins (Tessera) confirmed and mitigated:
+https://github.com/fractional-company/modular-fractional/pull/203Status:Mitigation confirmed bygzeon,IllIllI, andLambda.

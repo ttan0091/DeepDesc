@@ -1,0 +1,20 @@
+Type of vulnerability: Range Constraint Violation
+Cause of vulnerability: The code fails to range constrain the result of the subtraction, allowing `subtraction_result_unchecked` to contain limbs that are not representable by a 32-bit unsigned integer.
+Execution process: A malicious validator can generate and submit a proof with incorrect behavior of the `div` instruction, manipulating the calculated price during the execution of an on-chain DEX and potentially stealing assets.
+Vulnerable code: 
+```rust
+// do remainder - divisor
+let (subtraction_result_unchecked, remainder_is_less_than_divisor) = allocate_subtraction_result_unchecked(cs, &remainder_unchecked, src1_view);
+// relation is a + b == c + of * 2^N,
+// but we compute d - e + 2^N * borrow = f
+// so we need to shuffle
+let addition_relation = AddSubRelation {
+    a: *src1_view,
+    b: subtraction_result_unchecked,
+    c: remainder_unchecked,
+    of: remainder_is_less_than_divisor,
+};
+// unless divisor is 0 (that we handle separately),
+// we require that remainder is < divisor
+remainder_is_less_than_divisor.conditionally_enforce_true(cs, divisor_is_non_zero);
+```

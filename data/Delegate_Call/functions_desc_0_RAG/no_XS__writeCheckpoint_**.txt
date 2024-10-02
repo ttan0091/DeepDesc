@@ -1,0 +1,39 @@
+This code defines an internal function named _writeCheckpoint, which is used to update the voting checkpoints for a given voter. The function takes four parameters: the address of the voter, the current number of checkpoints for the voter, the previous number of votes, and the new number of votes.
+
+Here’s a detailed explanation of how this function works:
+
+1. Block Number Calculation:
+    The function starts by calculating the current block number using safe32(block.number, "FXS::_writeCheckpoint: block number exceeds 32 bits"). This ensures that the block number is within the 32bit range, throwing an error if it exceeds this limit.
+
+2. Checkpoint Update Logic:
+    The function then checks if there are existing checkpoints (nCheckpoints > 0) and if the most recent checkpoint's block number matches the current block number (checkpoints[voter][nCheckpoints  1].fromBlock == blockNumber).
+    If both conditions are met, it updates the votes of the most recent checkpoint to the new votes (checkpoints[voter][nCheckpoints  1].votes = newVotes).
+    If the conditions are not met, it creates a new checkpoint with the current block number and the new votes (checkpoints[voter][nCheckpoints] = Checkpoint(blockNumber, newVotes)) and increments the number of checkpoints for the voter (numCheckpoints[voter] = nCheckpoints + 1).
+
+3. Event Emission:
+    Finally, the function emits an event VoterVotesChanged with the voter's address, the old number of votes, and the new number of votes. This event is used to notify external systems or interfaces about the change in the voter's votes.
+
+### Detailed Breakdown of the Code:
+
+ Function Parameters:
+   address voter: The address of the voter whose checkpoints are being updated.
+   uint32 nCheckpoints: The current number of checkpoints for the voter.
+   uint96 oldVotes: The previous number of votes for the voter.
+   uint96 newVotes: The new number of votes for the voter.
+
+ Block Number Calculation:
+   uint32 blockNumber = safe32(block.number, "FXS::_writeCheckpoint: block number exceeds 32 bits"): This line ensures that the block number is within the 32bit range. If the block number exceeds this range, it throws an error with the specified message.
+
+ Checkpoint Update Logic:
+   if (nCheckpoints > 0 && checkpoints[voter][nCheckpoints  1].fromBlock == blockNumber): This condition checks if there are existing checkpoints and if the most recent checkpoint's block number matches the current block number.
+     If true, it updates the votes of the most recent checkpoint: checkpoints[voter][nCheckpoints  1].votes = newVotes.
+     If false, it creates a new checkpoint: checkpoints[voter][nCheckpoints] = Checkpoint(blockNumber, newVotes) and increments the number of checkpoints: numCheckpoints[voter] = nCheckpoints + 1.
+
+ Event Emission:
+   emit VoterVotesChanged(voter, oldVotes, newVotes): This line emits an event to notify external systems or interfaces about the change in the voter's votes.
+
+### Potential Vulnerabilities:
+
+Based on the reference vulnerability report provided, the key vulnerability to consider is "Privilege Escalation" caused by inadequate state checks before execution. However, the _writeCheckpoint function does not appear to have any direct statealtering logic that could lead to privilege escalation. It primarily updates internal state related to voting checkpoints and emits an event, which is a standard and expected behavior for such functions.
+
+In summary, the _writeCheckpoint function is designed to maintain a history of voting checkpoints for each voter, ensuring that changes in votes are recorded accurately and efficiently.

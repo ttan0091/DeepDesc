@@ -1,0 +1,15 @@
+Type of vulnerability: Single Sided Exposure and Caching Issue
+Cause of vulnerability: The BalancerStrategy uses a cached value to determine its balance in the pool, which can be manipulated through single-sided exposure and pool imbalances.
+Execution process: An attacker can manipulate the pool's internal balances by performing a swap, causing the Strategy to discount its tokens. This manipulation can be done before and after calling `updateCache`, leading to inflated values being cached and used by the YieldBox.
+Vulnerable code: 
+```solidity
+function _deposited(uint256 amount) internal override nonReentrant {
+    uint256 queued = wrappedNative.balanceOf(address(this));
+    if (queued > depositThreshold) {
+        _vaultDeposit(queued);
+        emit AmountDeposited(queued);
+    }
+    emit AmountQueued(amount);
+    updateCache(); /// @audit this is updated too late (TODO PROOF)
+}
+```

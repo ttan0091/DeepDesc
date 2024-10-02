@@ -1,0 +1,16 @@
+Type of vulnerability: Majority Attack Bypass
+Cause of vulnerability: The Zora auction can be forced to fail due to a non-ERC721Receiver implementation by the attacker, allowing the auction to be bypassed and the NFT to be listed on Opensea for a negligible price.
+Execution process: An attacker bids a high amount on the NFT during the Zora auction, ensuring they are the winning bidder. The attacker's contract does not implement ERC721Receiver, causing the safeTransferFrom to fail and the auction to be canceled. This results in `_settleZoraAuction()` returning false, allowing the NFT to be listed on Opensea for a negligible price, which the attacker then purchases.
+Vulnerable code: 
+```solidity
+try ZORA.endAuction(auctionId) {
+    // Check whether auction cancelled due to a failed transfer during
+    // settlement by seeing if we now possess the NFT.
+    if (token.safeOwnerOf(tokenId) == address(this)) {
+        emit ZoraAuctionFailed(auctionId);
+        return false;
+    }
+} catch (bytes memory errData) {
+    // Handle exception
+}
+```

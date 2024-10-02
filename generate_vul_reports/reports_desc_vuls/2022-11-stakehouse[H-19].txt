@@ -1,0 +1,21 @@
+Type of vulnerability: Reward Distribution Logic Error
+Cause of vulnerability: The `withdrawETH` function in `GiantPoolBase` does not call `_distributeETHRewardsToUserForToken` or `_onWithdraw`, which results in users losing their remaining rewards when they withdraw their funds.
+Execution process: 
+1. User deposits ETH into the giant pool and receives LP tokens.
+2. Over time, the accumulated ETH rewards per LP share increase.
+3. User has unclaimed rewards calculated based on the difference between the current accumulated ETH per LP share and their initial claim.
+4. User calls `withdrawETH` to withdraw their ETH, which burns their LP tokens and sets their balance to zero.
+5. User attempts to claim rewards but receives zero because their LP token balance is now zero.
+Vulnerable code:
+```solidity
+function withdrawETH(uint256 _amount) external nonReentrant {
+    require(_amount >= MIN_STAKING_AMOUNT, "Invalid amount");
+    require(lpTokenETH.balanceOf(msg.sender) >= _amount, "Invalid balance");
+    require(idleETH >= _amount, "Come back later or withdraw less ETH");
+    idleETH -= _amount;
+    lpTokenETH.burn(msg.sender, _amount);
+    (bool success,) = msg.sender.call{value: _amount}("");
+    require(success, "Failed to transfer ETH");
+    emit LPBurnedForETH(msg.sender, _amount);
+}
+```

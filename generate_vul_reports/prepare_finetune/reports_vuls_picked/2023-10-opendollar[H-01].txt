@@ -1,0 +1,14 @@
+Type of vulnerability: Incorrect Calculation and Logic Error
+Cause of vulnerability: Misuse of `ONE_HUNDRED_WAD` instead of `WAD` in calculations and conditional checks
+Execution process: When `_params.surplusTransferPercentage` is set to 100%, the condition at line 213 incorrectly evaluates to `TRUE`, leading to the creation of a surplus auction with an inflated `_amountToSell`. This results in a surplus auction with a sell amount 100 times greater than intended, and the full `surplusAmount` is also transferred to `extraSurplusReceiver`, causing double accounting.
+Vulnerable code:
+```solidity
+if (_params.surplusTransferPercentage < ONE_HUNDRED_WAD) {
+    _id = surplusAuctionHouse.startAuction({
+        _amountToSell: _params.surplusAmount.wmul(ONE_HUNDRED_WAD - _params.surplusTransferPercentage),
+        _initialBid: 0
+    });
+    lastSurplusTime = block.timestamp;
+    emit AuctionSurplus(_id, 0, _params.surplusAmount.wmul(ONE_HUNDRED_WAD - _params.surplusTransferPercentage));
+}
+```

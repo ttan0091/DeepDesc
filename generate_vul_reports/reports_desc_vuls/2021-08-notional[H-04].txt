@@ -1,0 +1,18 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: The `sender` parameter in the `notionalCallback` function can be manipulated by an attacker, allowing unauthorized access.
+Execution process: An attacker can call the `notionalCallback` function with `sender = this`, bypassing the `require` check that ensures the function is called by the authorized contract. This can lead to unauthorized token transfers and potential griefing attacks.
+Vulnerable code: 
+```solidity
+function notionalCallback(address sender, address account, bytes calldata callbackData) external returns (uint256) {
+    // @audit sender can be passed in by the attacker
+    require(sender == address(this), "Unauthorized callback");
+    // An attacker can call the function passing in an arbitrary account whose tokens are then transferred to the contract.
+    // @audit using a malicious contract, this can be any token
+    address underlyingToken = CTokenInterface(cTokenBorrow).underlying();
+    bool success = IERC20(underlyingToken).transferFrom(account, address(this), cTokenRepayAmount);
+    require(success, "Transfer of repayment failed");
+    // Use the amount transferred to repay the borrow
+    // @audit using a malicious contract, this can be a no-op
+    uint code = CErc20Interface(cTokenBorrow).repayBorrowBehalf(account, cTokenRepayAmount);
+}
+```

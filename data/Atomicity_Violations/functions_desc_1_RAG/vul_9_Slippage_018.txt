@@ -1,0 +1,45 @@
+This code defines an external view function named calculateOutGivenIn, which calculates the output amount of a token given an input amount and a path of token addresses. The function is designed to handle both direct swaps between two tokens and swaps that involve an intermediate token.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    uint256 amountIn: The input amount of the first token in the path.
+    address[] calldata path: An array of token addresses representing the path of the swap.
+
+2. Function Logic:
+    The function first checks the length of the path array.
+      If the length is 2, it means a direct swap between two tokens.
+      If the length is 3, it means a swap involving an intermediate token.
+
+3. Direct Swap (path.length == 2):
+    The function retrieves the native asset address from the factory contract.
+    It then fetches the pool for the given pair of tokens using the factory.getPool method.
+    The function retrieves the reserves of the native and foreign tokens in the pool using the pool.getReserves method.
+    Depending on whether the first token in the path is the native asset or not, it calls the VaderMath.calculateSwap function with the appropriate reserves to calculate the output amount.
+
+4. Swap with Intermediate Token (path.length == 3):
+    The function fetches two pools: one for the first pair of tokens and another for the second pair of tokens.
+    It retrieves the reserves for both pools.
+    The function first calculates the intermediate output amount using the VaderMath.calculateSwap function for the first pool.
+    It then uses this intermediate output amount as the input for the second pool and calculates the final output amount using the VaderMath.calculateSwap function again.
+
+5. Return Value:
+    The function returns the final output amount of the token swap.
+
+### Detailed Steps for Direct Swap:
+ Step 1: Retrieve the native asset address from the factory contract.
+ Step 2: Fetch the pool for the token pair using factory.getPool(path[0], path[1]).
+ Step 3: Get the reserves of the native and foreign tokens in the pool using pool.getReserves().
+ Step 4: Determine if the first token in the path is the native asset.
+   If path[0] == nativeAsset, calculate the output amount using VaderMath.calculateSwap(amountIn, nativeReserve, foreignReserve).
+   Otherwise, calculate the output amount using VaderMath.calculateSwap(amountIn, foreignReserve, nativeReserve).
+
+### Detailed Steps for Swap with Intermediate Token:
+ Step 1: Fetch the first pool for the token pair using factory.getPool(path[0], path[1]).
+ Step 2: Fetch the second pool for the token pair using factory.getPool(path[1], path[2]).
+ Step 3: Get the reserves for both pools using pool.getReserves().
+ Step 4: Calculate the intermediate output amount using VaderMath.calculateSwap(amountIn, nativeReserve1, foreignReserve1).
+ Step 5: Use the intermediate output amount as the input for the second pool and calculate the final output amount using VaderMath.calculateSwap(intermediateOutput, foreignReserve0, nativeReserve0).
+
+### Summary:
+ The calculateOutGivenIn function efficiently handles both direct and multihop token swaps by leveraging the VaderMath.calculateSwap function to compute the output amounts based on the input amount and token reserves. This function is crucial for providing users with accurate swap calculations before executing transactions on the Vader protocol.

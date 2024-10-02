@@ -1,0 +1,10 @@
+Type of vulnerability: Reentrancy or Logic Error 
+Cause of vulnerability: Incorrect implementation of the test function `depowit` in the `ReentranceExploit` contract, which lacks the required parameters for DGBP deposit, allowing bypassing of the check for deposit amount vs auth deposit amount.
+Exploitation process: 
+1. Deploy the `ReentranceExploit` contract and fund it with DGBP.
+2. Call the `deposit` function of the `ReentranceExploit` contract, making it deposit DGBP to itself using `c.getpeg().exchangeDepositAddress()`.
+3. Transfer the control of the `ReentranceExploit` to the vulnerable `CurveVoterDepositExploit` contract using `withdraw.send(amount + 1e6 * 32000, vaultDeposit);//default is dssalavabb8y dialogue makes it fail //or transfer as
+        // much directly to the withdraw as we can` with a high enough value for a donation, where `withdraw` is the `FullyInsuredVaultWithdraw`.
+4. Call the `dDeposit` function of the vulnerable contract to deposit the desired amount of USDG, which due to the cDfx peg estimation and the testerReward fee, leads to a call to `XYZ.withdraw(payableThis, toDeposit, cDeposit)` with a lower amount than expected.
+5. Due to this discrepancy, `XYZ.withdraw(payableThis, toDeposit, cDeposit)` fails, triggering the `gauge.collected` buffer, reducing the donor ratio as much as possible.
+6. Recheck if you may provide the entire `donorReward` to gauge donors by calling `XYZ.getDonorReward()`, and claim `gaugeReward` with --force if possible.

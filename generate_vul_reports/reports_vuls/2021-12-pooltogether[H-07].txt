@@ -1,0 +1,14 @@
+[H-07] Contract does not work with fee-on transfer tokens
+Submitted by pmerkleplant, also found by GiveMeTestEther, WatchPug, and defsec
+Impact
+There exist ERC20 tokens that charge a fee for every transfer.
+This kind of token does not work correctly with theTwabRewardscontract as the
+rewards calculation for an user is based onpromotion.tokensPerEpoch(see line320).
+However, the actual amount of tokens the contract holds could be less thanpromotion.tokensPerEpoch * promotion.numberOfEpochsleading to not claimable
+rewards for users claiming later than others.
+Recommended Mitigation Steps
+To disable fee-on transfer tokens for the contract, add the following code increatePromotionaround line 11:
+uint256oldBalance=_token.balanceOf(address(this));_token.safeTransferFrom(msg.sender,address(this),_tokensPerEpoch*_numberOfEpochs);uint256newBalance=_token.balanceOf(address(this));require(oldBalance+_tokenPerEpoch*_numberOfEpochs==newBalance);
+PierrickGT (PoolTogether) confirmed
+LSDan (judge) commented:
+This issue results in a direct loss of funds and can happen easily.3 — High (H): vulns have a risk of 3 and are considered “High” severity when assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

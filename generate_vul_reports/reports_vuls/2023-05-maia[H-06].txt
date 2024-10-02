@@ -1,0 +1,24 @@
+[H-06]withdrawProtocolFees()Possible malicious or accidental withdrawal of all rewards
+Submitted bybin2chen, also found bylukejohnand tsvetanovv (1,2)
+The functionclaimReward()will take all of the rewards if theamountRequestedit’s passed in is 0, which may result in the user’s rewards being lost.
+Proof of Concept
+InBoostAggregator.withdrawProtocolFees(), the owner can take theprotocolRewards.
+The code is as follows:
+functionwithdrawProtocolFees(addressto)externalonlyOwner{uniswapV3Staker.claimReward(to,protocolRewards);@>deleteprotocolRewards;}
+From the above code, we can see thatuniswapV3Stakeris called to fetch and then clearsprotocolRewards.
+Let’s look at the implementation ofuniswapV3Staker.claimReward():
+contractUniswapV3StakerisIUniswapV3Staker,Multicallable{....functionclaimReward(addressto,uint256amountRequested)externalreturns(uint256reward) {reward=rewards[msg.sender];@>if(amountRequested!=0&&amountRequested<reward) {reward=amountRequested;rewards[msg.sender] -=reward;}else{rewards[msg.sender] =0;}if(reward>0)hermes.safeTransfer(to,reward);emitRewardClaimed(to,reward);}
+The current implementation is if theamountRequested==0passed, it means that allrewards[msg.sender]of thismsg.senderare taken.
+This leads to the following problems:
+If a maliciousownercallswithdrawProtocolFees()twice in a row, it will take all of therewardsin theBoostAggregator.Also, you probably didn’t realize thatwithdrawProtocolFees()was called whenprotocolRewards==0.
+As a result, the rewards that belong to users inBoostAggregatorare lost.
+Recommended Mitigation Steps
+ModifyclaimReward()to removeamountRequested != 0:
+contractUniswapV3StakerisIUniswapV3Staker,Multicallable{....functionclaimReward(addressto,uint256amountRequested)externalreturns(uint256reward) {reward=rewards[msg.sender];-if(amountRequested!=0&&amountRequested<reward) {+if(amountRequested<reward) {reward=amountRequested;rewards[msg.sender] -=reward;}else{rewards[msg.sender] =0;}if(reward>0)hermes.safeTransfer(to,reward);emitRewardClaimed(to,reward);}
+Assessed type
+Context
+0xLightt (Maia) confirmed
+0xLightt (Maia) commented:
+We prefer to leave the originalUniswapV3Stakerclaim logic intact and have theBoostAggregatornot allow the owner or stakers to claim 0 rewards.
+0xLightt (Maia) commented:
+Addressedhere.

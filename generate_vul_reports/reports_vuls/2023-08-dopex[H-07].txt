@@ -1,0 +1,35 @@
+[H-07] Incorrect precision assumed from RdpxPriceOracle creates multiple issues related to value inflation/deflation
+Submitted byLokiThe5th, also found byminhtrng,QiuhaoLi, Udsen (1,2), 0xvj (1,2),josephdara,kutugu,Evo,0xTiwa,crunch,circlelooper,0xPsuedoPandit,Jiamin, gjaldon (1,2,3,4),Juntao,umarkhatab_465, hals (1,2),eeshenggoh,0xnev,T1MOH, andniki
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/amo/UniV2LiquidityAmo.sol#L372
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/amo/UniV2LiquidityAmo.sol#L381
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/perp-vault/PerpetualAtlanticVault.sol#L539
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/core/RdpxV2Core.sol#L1160
+TheRdpxEthPriceOracle, available in the audit repohere, provides theRdpxV2Core, theUniV2LiquidityAmoand thePerpetualAtlanticVaultcontracts the necessary values forrdpxrelated price calculations.
+The issue is that these contracts expect the returned values to be in1e8precision (as stated in the natspechere,hereandhere). But the returned precisionis actually1e18.
+This difference creates multiple issues throughout the below contracts:
+ContractFunctionEffectrdpxV2Core.solgetRdpxPrice()Returns an1e18value when1e8expectedcalculateBondCost()Deflates therdpxRequiredcalculateAmounts()Inflates therdpxRequiredInWeth_transfer()InflatesrdpxAmountInWethand may cause possible underflowUniV2LiquidityAmogetLpPriceInEth()Overestimates the lp valueReLp.solreLP()Inflates min token amountsPerpetualAtlanticVault.solgetUnderlyingPrice()Returns1e18instead of1e8calculatePremium()Inflates the premium calculation
+Proof of Concept
+TheRdpxEthPriceOracle.solfile can be foundhere
+It exposes the following functions used in the audit:
+getLpPriceInEth()getRdpxPriceInEth()
+These two functions provide the current price denominated inETH, with a precision in1e18, as confirmed by their respective natspec comments:
+/// @dev Returns the price of LP in ETH in 1e18 decimalsfunction getLpPriceInEth() external view override returns (uint) {.../// @notice Returns the price of rDPX in ETH/// @return price price of rDPX in ETH in 1e18 decimalsfunction getRdpxPriceInEth() external view override returns (uint price) {
+But, in the contracts from the audit repo, the business logic (and even the natspec) assumes the returned precision will be1e8. See below:
+In theRdpxV2Corecontract the assumption that the price returned from the oracle is clearly noted in thenatspecof thegetRdpxPrice()function:
+/*** @notice Returns the price of rDPX against ETH* @dev    Price is in 1e8 Precision* @return rdpxPriceInEth rDPX price in ETH**/function getRdpxPrice() public view returns (uint256) {returnIRdpxEthOracle(pricingOracleAddresses.rdpxPriceOracle).getRdpxPriceInEth();}
+InUniV2LiquidityAmothe assumption is notedhere:
+/*** @notice Returns the price of a rDPX/ETH Lp token against the alpha token* @dev    Price is in 1e8 Precision* @return uint256 LP price**/function getLpPrice() public view returns (uint256) {
+And it has business logic implication here:
+function getLpTokenBalanceInWeth() external view returns (uint256) {return (lpTokenBalance * getLpPrice()) / 1e8;}
+InPerpetualAtlanticVaultit is notedhere:
+/*** @notice Returns the price of the underlying in ETH in 1e8 precision* @return uint256 the current underlying price**/function getUnderlyingPrice() external view returns (uint256);
+And the business logic implications in this contract are primarily found in thecalculatePremiumfunction, where the premium is divided by1e8:
+function calculatePremium(uint256 _strike,uint256 _amount,uint256 timeToExpiry,uint256 _price) public view returns (uint256 premium) {premium = ((IOptionPricing(addresses.optionPricing).getOptionPrice(_strike,_price > 0 ? _price : getUnderlyingPrice(),getVolatility(_strike),timeToExpiry) * _amount) / 1e8);}
+From the audit files it’s clear that the assumption was that the returned price would be in1e8, but this is Dopex’s ownRdpxPriceOracle, so was likely a simple oversight which slipped through testing as aMockRdpxEthPriceOraclewas implemented to simplify testing, which mocked the values from the oracle, but only to a1e8precision.
+Recommended Mitigation Steps
+For price feeds whereWETHwill be token B, it is convention (although not a standard, as far as the reviewer is aware), that the precision returned will be1e18. Seehere.
+As the sponsor indicated that the team might move to Chainlink oracles, it is suggested to modify theRdpxV2Core,PerpetualAtlanticVault,UniV2Liquidityand theReLpcontracts to work with the returned1e18precision, assuming that the keep the token pair as rdpx/WETH.
+psytama (Dopex) confirmed and commented:
+The issue is in the oracle contract which returns 1e18.
+Alex the Entreprenerd (Judge) commented:
+Seems like the Warden grouped a bunch of consequences down to the root cause of the oracle precision.I’ll need to determine how to group / ungroup findings as there seem to be multple impacts but a single root cause.

@@ -1,0 +1,91 @@
+[H-01] Prevent execution with invalid signatures
+Submitted by gpersoon
+Impact
+Suppose one of the suppliedaddrs\[i]to the constructor ofIdentity.solhappens to be 0 ( by accident).
+In that case:privileges\[0] = 1
+Now suppose you callexecute()with an invalid signature, thenrecoverAddrImplwill return a value of 0 and thus signer=0.
+If you then check ”privileges\[signer] !=0”  this will be true and anyone can perform any transaction.
+This is clearly an unwanted situation.
+Proof of Concept
+Identity.sol#L23L30Identity.sol#L97L98
+Recommended Mitigation Steps
+In the constructor ofIdentity.sol, add in the for loop the following:
+require(addrs\[i] !=0,"Zero not allowed");
+Ivshti (Ambire) confirmed:
+Ivshti (Ambire) patched:
+resolved inhttps://github.com/AmbireTech/adex-protocol-eth/commit/08d050676773fcdf7ec1c4eb53d51820b7e42534
+GalloDaSballo (judge) commented:
+This seems to be the risk of havingerecoverreturning zero, any invalid signature ends up being usable from any address to execute arbitrary logic.Mitigation can be achieved by either reverting when about to return address(0), which the sponsor has used for mitigationThe other mitigation is to ensure that an account with address(0) cannot have privileges set to 1I believe mitigation from sponsor to be sufficient, however I’d recommend adding a check against having address(0) in the constructor for Identity.sol just to be sure
+Ivshti (Ambire) commented:
+@GalloDeSballo an extra check is superfluous IMO, not only cause the revert on 0 in SIgnatureValidatorV2 guarantees that this is fixed, but also because it has to be in three places: constructor, setAddrPrivilege and the account creation system injs/IdentityProxyDeploywhich rolls out bytecode thatsstoresprivileges directly
+[H-02]QuickAccManager.sol#cancel()WronghashTxmakes it impossible to cancel a scheduled transaction
+Submitted by WatchPug, also found by gpersoon
+InQuickAccManager.sol#cancel(), thehashTxto identify the transaction to be canceled is wrong. The last parameter is missing.
+As a result, users will be unable to cancel a scheduled transaction.
+QuickAccManager.sol#L91L91
+functioncancel(Identityidentity,QuickAccountcalldataacc,uintnonce,bytescalldatasig, Identity.Transaction[]calldatatxns)external{bytes32accHash=keccak256(abi.encode(acc));require(identity.privileges(address(this)) ==accHash,'WRONG_ACC_OR_NO_PRIV');bytes32hash=keccak256(abi.encode(CANCEL_PREFIX,address(this),block.chainid,accHash,nonce,txns,false));addresssigner=SignatureValidator.recoverAddr(hash,sig);require(signer==acc.one||signer==acc.two,'INVALID_SIGNATURE');// @NOTE: should we allow cancelling even when it's matured? probably not, otherwise there's a minor grief// opportunity: someone wants to cancel post-maturity, and you front them with execScheduledbytes32hashTx=keccak256(abi.encode(address(this),block.chainid,accHash,nonce,txns));require(scheduled[hashTx] !=0&&block.timestamp<scheduled[hashTx],'TOO_LATE');deletescheduled[hashTx];emitLogCancelled(hashTx,accHash,signer,block.timestamp);}
+Recommendation
+Change to:
+bytes32hashTx=keccak256(abi.encode(address(this),block.chainid,accHash,nonce,txns,false));
+Ivshti (Ambire) confirmed and resolved:
+Great find, resolved inhttps://github.com/AmbireTech/adex-protocol-eth/commit/5c5e6f0cb47e83793dafc08630577b93500c86ab
+GalloDaSballo (judge) commented:
+The warden has found that the methodcancelwas calculating the wronghashTx, this hash, used to verify which transaction to cancel, making it impossible to cancel a transaction.The sponsor has mitigated in a  subsequent pr
+[H-03] Signature replay attacks for different identities (nonce on wrong party)
+Submitted by cmichel, also found by WatchPug
+A singleQuickAccountcan serve as the “privilege” for multiple identities, see the comment inQuickAccManager.sol:
+NOTE: a single accHash can control multiple identities, as long as those identities set it’s hash in privileges[address(this)]. this is by design
+If there exist two different identities thatboth share the same QuickAccount(identity1.privileges(address(this)) == identity2.privileges(address(this)) == accHash) the following attack is possible inQuickAccManager.send:
+Upon observing a validsendon the first identity, the same transactions can be replayed on the second identity by an attacker callingsendwith the same arguments and just changing theidentityto the second identity.
+This is because theidentityis not part of thehash. Including thenonce ofthe identity in the hash is not enough.
+Two fresh identities will both take on nonces on zero and lead to the same hash.
+Impact
+Transactions on one identity can be replayed on another one if it uses the sameQuickAccount.
+For example, a transaction paying a contractor can be replayed by the contract on the second identity earning the payment twice.
+Recommended Mitigation Steps
+Nonces should not be indexed by the identity but by theaccHash. This is because nonces are used to stop replay attacks and thus need to be on thesigner(QuickAccountin this case), not on the target contract to call.Theidentityaddressitself needs to be part ofhashas otherwise thesendcan be frontrun and executed by anyone on the other identity by switching out theidentityparameter.
+Other occurrences
+This issue of using the wrong nonce (on theidentitywhich means the nonces repeat per identity) and not includingidentityaddress leads to other attacks throughout theQuickAccManager:
+cancel: attacker can use the same signature to cancel the same transactions on the second identityexecScheduled: can frontrun this call and execute it on the second identity instead. This will make the original transaction fail asscheduled[hash]is deleted.sendTransfer: same transfers can be replayed on second identitysendTxns: same transactions can be replayed on second identity
+Ivshti (Ambire) confirmed:
+duplicate of #24, but it’s better documented
+Ivshti (Ambire) patched:
+mitigation step 1 is not going to be done, since there’s already plenty of upper level code relying on indexing by identity, and it doesn’t really hurt if the replay attack is mitigatedplus, it makes it harder to look up the nonce value, as we have to compute the accHash in the client-side codethe replay attack has been fixed herehttps://github.com/AmbireTech/adex-protocol-eth/commit/f70ca38f368da30c9881d1ee5554fd0161c94486
+GalloDaSballo (judge) commented:
+The warden identified a Signature Replay attack, allowing to re-use a signature throughout the system.Requiring the identity to be part of the signatures mitigates the vulnerabilityThe sponsor has mitigated in a subsequent PR
+[H-04]QuickAccManagerSmart Contract signature verification can be exploited
+Submitted by cmichel
+Several different signature modes can be used andIdentity.executeforwards thesignatureparameter to theSignatureValidatorlibrary.
+The returnedsigneris then used for theprivilegescheck:
+addresssigner=SignatureValidator.recoverAddrImpl(hash,signature,true);// signer will be QuickAccountContractrequire(privileges[signer] !=bytes32(0),'INSUFFICIENT_PRIVILEGE');
+It’s possible to create a smart contract mode signature (SignatureMode.SmartWallet) for arbitrary transactions as theQuickAccManager.isValidSignatureuses an attacker-controlledididentity contract for the privileges check.
+An attacker can just create an attacker contract returning the desired values and the smart-wallet signature appears to be valid:
+// @audit id is attacker-controlled(addresspayableid,uinttimelock,bytesmemorysig1,bytesmemorysig2) =abi.decode(signature, (address,uint,bytes,bytes));// @audit this may not be used for authorization, attacker can return desired valueif(Identity(id).privileges(address(this)) ==accHash) {// bytes4(keccak256("isValidSignature(bytes32,bytes)")return0x1626ba7e;}else{return0xffffffff;}
+POC
+Assume anIdentitycontract is set up with aQuickAccManageras theprivilegesaccount, i.e.privileges[accHash] != 0.
+We can construct aSignatureMode.SmartWalletsignature for anarbitraryhash:
+CallIdentity.execute(txns, spoofedSignature)wherespoofedSignature = abi.encode(attackerContract, timelock=0, sig1=0, sig2=0, address(quickAccountManager), SignatureMode.SmartWallet)This will callrecoverAddrImpl(txnsHash, spoofedSignature, true), decode the bytesat the endofspoofedSignatureand determinemode = SignatureMode.SmartWalletandwallet = quickAccountManager. It will cut off these arguments and callquickAccountManager.isValidSignature(txnsHash, (attackerContract, 0, 0, 0))TheQuickAccManagerwill decode the signature, constructaccHashwhich is the hash of all zeroes (due to failed signatures returning 0). It will then callattacker.privileges(address(this))and the attacker contract can return theaccHashthat matches an account hash of failed signatures, i.e.,keccak256(abi.encode(QuickAccount(0,0,0))). The comparison is satisfied and it returns the success value.The checks inIdentity.executepass and the transactionstxnsare executed.
+Impact
+AnyIdentitycontract usingQuickAccManagercan be exploited.
+Funds can then be stolen from the wallet.
+Recommendation
+The issue is thatQuickAccManagerblindly trusts the values insignature.
+It might be enough to remove theidfrom thesignatureand usemsg.senderas the identity instead:Identity(msg.sender).privileges(address(this)) == accHash.
+This seems to work with the currentIdentityimplementation but might not work if this is extended and theisValidSignatureis called from another contract and wants to verify a signature on a different identity.
+In that case, theIdentity/SignatureValidatormay not blindly forward the attacker-supplied signature and instead needs to re-encode the parameters with trusted values before callingQuickAccManager.
+Ivshti (Ambire) confirmed and patched:
+great find! Mitigated inhttps://github.com/AmbireTech/adex-protocol-eth/commit/17c073d037ded76d56d6145faa92c1959fd47226but still figuring out whether this is the best way to do it
+GalloDaSballo (judge) commented:
+May need to sit on this one for another day before I can fully commentFundamentally by calling Identity.execute with mostly 0 data, you are able to call back toQuickAccManager. isValidSignaturewhich, due to the implementation ofecrecoverat the time, will return valid checks for address(0), allowing to bypass all the logic and returning true for the signature, allowing for the execution of arbitrary code.Again, need to sit on this oneBut wouldn’t you also be able to set a malicious smartContractWallet as theIERC1271Wallet, hence you can sidestep the entire logic, as your malicious contract wallet can be programmed to always return true on any input value?
+Ivshti (Ambire) commented:
+@GalloDaSballo (judge) this doesn’t have to do withaddress(0)Using smart wallets for signatures by itself is not a problem - since they authorize as themselves.The fundamental root of this issue is that ERC 1271 was designed with the assumption that 1 contract = 1 wallet. And as such,isValidSignatureonly returnstrue/false. This makes sense, as essentially we’re asking the wallet “is this a valid signature from you”, and then the wallet decides how to actually validate this it depending on it’s own behavior and permissions.However, the QuickAccManager is a singleton contract - one single QuickAccManager represents multiple users. As such, combining it with ERC 1271 is a logical misunderstanding, as we can’t really ask it “is this a valid sig for X identity” through the ERC 1271 interface. So instead, we encode the identity that we’re signing as in the sig itself, but then a malicious user could call a top-level identity with a sig that validates in the singletonQuickAccManager, but meant to validate with a differerent identity.Because what we pass toisValidSignatureis opaque data (the smart wallet may be any contract with any logic, not just ourQuickAccManager) we can’t just peak into the sig and see if it’s meant to validate with the caller identity.Excellent finding IMOThe current mitigation is hacky, and essentially leads to anisValidSignatureimplementation that is unusable (and doesn’t make sense) off-chain, but we prefer it to introducing a new sig type especially for QuickAccManager.
+GalloDaSballo (judge) commented:
+@Ivshti (Ambire) To clarify:
+Would addingprivileges[QuickAccountManager] = bytes32(uint(1))enable the exploit?
+Ivshti (Ambire) commented:
+@GalloDaSballo (judge) yes, it would. Any authorized quickAcc would enable the exploit
+GalloDaSballo (judge) commented:
+I’m starting to get thisTheidsent toisValidSignatureis an untrusted, unverified address
+The contract at that address can be programmed to have a functionprivilegeswhich would return anybytes32value to matchaccHashThis effectively allows to run arbitrary transactions.A way to mitigate would be to have a way to ensure the calledidis trusted
+A registry of trusted ids may be effectiveThe mitigation the sponsor has chosen does solve for only using trusted Identities as in the case of a malicious Identity, the Identity would just validate it’s own transaction, not putting other Identities funds at risk.An alternative solution would be to change theIdentityFactoryto use the OpenZeppelin Clones Library (or similar) to ensure that the correct Logic is deployed (by deploying a minimal-proxy pointing to the trusted implementation).
+This would require a fair tech-lift and would limit the type of deployments that the IdentityFactory can perform.The exploit was severe and the sponsor has mitigated by checking themsg.senderagainst theidprovided in the signature

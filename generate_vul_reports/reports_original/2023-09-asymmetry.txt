@@ -1,0 +1,207 @@
+[H-01] Intrinsic arbitrage from price discrepancy
+Submitted byd3e4
+The up to 2 % price discrepancy from Chainlink creates an intrinsic arbitrage. Especially, it makes withdrawals worth more than deposits in the sense that one can immediately withdraw more than just deposited.
+Proof of Concept
+Whendepositing ETH into AfEth, the ETH is split according toratioand sold for safEth and vAfEth. The received share of afEth is then determined by the value in ETH of the resulting amounts of safEth and vAfEth. Note that there are two prices involved here: the true price at which ETH is traded for safEth and vAfEth (insellCvx()andbuyCvx()), and the estimated value in ETH that safEth and vAfEth is considered to have (ISafEth.approxPrice()andVotiumStrategy.price()). These are not necessarily the same.
+If the ratio by which the deposited ETH is split is not the same as the ratio of the true values of the underlying assets, this implies that a deposit implicitly makes a trade between safEth and vAfEth according to the estimated price which may thus differ from the true price obtained when withdrawing. This presents an arbitrage opportunity.
+Note that if all prices were the same it would not matter if safEth is “traded” for vAfEth within a deposit as the trade then makes no change in the total value deposited.
+The conditions for this issue is thus thatVotiumStrategy.price()is different from the price obtained bysellCvx()andbuyCvx(), and that the deposit ratio is not the same as the withdrawal ratio.
+VotiumStrategy.price()in particular isbased on a Chainlink oraclewith a2 % deviation threshold, which means that the true price is allowed to deviate up to 2 %, within 24 hours, from the reported price.ISafEth.approxPrice()may perhaps be similarly inaccurate (I have not looked into this).
+The ratio can skew in this way for two reasons. One is when theratiois different from the ratio of the underlying balances, such as whenratiois changed. Deposits are made according toratiobut withdrawals are made proportionally from the extant balances. In this case the implicit trade between safEth and vAfEth can happen in either direction, either beneficial or detrimental to the depositor (if there is a price discrepancy).
+The other is caused by the price discrepancy itself when depositing. In this case it is always beneficial to the depositor (and detrimental to the holders).
+Example 1a - reconverging ratio, vAfEth is actually more expensiveSuppose the contract holds 100 safEth and 0 vAfEth, but that theratiohas now been changed to 0. Further suppose that the contract thinks all prices are 1, but that 100 ETH actually trades for 102 vAfEth.
+Then depositing 100 ETH will convert it to 102 vAfEth, which will be valued as 102 ETH. This mints 102 afEth.
+The balances are now 100 safEth and 102 vAfEth and the total supply is 202 afEth.
+Withdrawing 102 afEth converts 102/202 of the underlying, i.e. 50.495 safEth and 51.505 vAfEth, into 50.495 + 51.505/1.02 = 100.99 ETH.
+Example 1b - reconverging ratio, vAfEth is actually cheaperSuppose the contract holds 100 safEth and 0 vAfEth, but that theratiohas now been changed to 0. Further suppose that the contract thinks all prices are 1, but that 100 ETH actually trades for 98 vAfEth.
+Then depositing 100 ETH will convert it to 98 vAfEth, which will be valued as 98 ETH. This mints 98 afEth.
+The balances are now 100 safEth and 98 vAfEth and the total supply is 198 afEth.
+Withdrawing 98 afEth converts 98/198 of the underlying, i.e. 49.495 safEth and 48.505 vAfEth, into 49.495 + 48.505/0.98 = 98.99 ETH.
+Example 2a - stable ratio, vAfEth is actually more expensiveSuppose the contract holds 50 safEth and 50 vAfEth and that theratiois 0.5. Further suppose that the contract thinks all prices are 1 but that 50 ETH actually trades for 51 vAfEth.
+Then depositing 100 ETH will convert 50 ETH to 50 safEth and 50 ETH to 51 vAfEth, which will be valued as 101 ETH. This mints 101 afEth.
+The balances are now 100 safEth and 101 vAfEth and the total supply is 201 afEth.
+Withdrawing 101 afEth converts 101/201 of the underlying, i.e. 50.249 safEth and 50.751 vAfEth, into 50.249 + 50.751/1.02 = 100.005 ETH.
+Example 2b - stable ratio, vAfEth is actually cheaperSuppose the contract holds 50 safEth and 50 vAfEth and that theratiois 0.5. Further suppose that the contract thinks all prices are 1 but that 50 ETH actually trades for 49 vAfEth.
+Then depositing 100 ETH will convert 50 ETH to 50 safEth and 50 ETH to 49 vAfEth, which will be valued as 99 ETH. This mints 99 afEth.
+The balances are now 100 safEth and 99 vAfEth and the total supply is 199 afEth.
+Withdrawing 99 afEth converts 99/199 of the underlying, i.e. 49.749 safEth and 49.251 vAfEth, into 49.749 + 49.251/0.98 = 100.005 ETH.
+Thus one can make a profit by depositing and immediately withdrawing. Immediate withdrawals are possible at the moment locks expire (and before they have been relocked), but it may be enough to just immediately request a withdrawal if the true price is the same (or better) when eventually withdrawn.
+The price discrepancy will appear whenever there are price fluctuations of up to 2 % within 24 hours, which seems quite likely.
+Regarding the case where the underlying is reconverging after a change ofratioit is worth noting that convergence is quite slow. Several times the entire balances must be traded before the new ratio is approached.
+Recommended Mitigation Steps
+We want a  to not diminish the value of previous deposits. That is, withdrawing $w$ shares should return at least as much if withdrawn after a deposit which mints $m$ shares as if withdrawn before.
+Note that letting a share represent each underlying in equal proportions is the only way to guarantee fairness and fungibility, so we must leave the withdrawal calculation as it is.
+Let $d_s$ and $d_v$ be the ether amounts deposited in SafEth and VotiumStrategy, respectively. Let $B_s$ and $B_v$ be the respective balances in AfEth and $T$ the total supply of afEth. Let $P_s(x)$ be the amount of safEth obtained by selling $x$ ether for safEth, and $P_s^{-1}(y)$ the amount of ether obtained by selling safEth for ether (note the abuse of notation and that $P_s^{-1}(P_s(x)) \leq x$ because of fees, spread, slippage etc.), and similarly $P_v$ and $P_v^{-1}$ for vAfEth.
+Withdrawing $w$ now should return at most what it would return after a deposit of $d_s + d_v$, i.e.
+P_s^{-1}(\frac{w}{T}B_s) + P_v^{-1}(\frac{w}{T}B_v) \leqP_s^{-1}(\frac{w}{T+m}(B_s + P_s(d_s))) + P_v^{-1}(\frac{w}{T+m}(B_v + P_v(d_v)))
+For small deposits and withdrawals the price functions are approximately linear and we can write e.g. $P_s(d_s)$ as $P_s d_s$, i.e. $P_s$ is just a price point, and we get
+\frac{1}{T}(P_s^{-1}B_s + P_v^{-1}B_v) \leq\frac{1}{T+m}(P_s^{-1}(B_s + P_s d_s) + P_v^{-1}(B_v + P_v d_v))$
+Solving for $m$ we get
+m \leq \frac{P_s^{-1}P_s d_s + P_v^{-1}P_v d_v}{P_s^{-1}B_s + P_v^{-1}B_v}T
+The difference from the current implementation is that instead of the true prices $P_s^{-1}$ and $P_v^{-1}$, the oracle prices, which we will denote $\hat{P}^{-1}_s$ and $\hat{P}^{-1}_v$, are used instead, i.e.
+m = \frac{\hat{P}^{-1}_s P_s d_s + \hat{P}^{-1}_v P_v d_v}{\hat{P}^{-1}_s B_s + \hat{P}^{-1}_v B_v}T
+Since we know the true prices up to within certain bounds, we can minimise $m$, as a function of $P_s^{-1}$ and $P_v^{-1}$, within these bounds.
+The gradient of $m(P_s^{-1}, P_v^{-1})$ is
+\frac{P_s d_s B_v - P_v d_v B_s}{(P^{-1}_s B_s + P^{-1}_v B_v)^2}(P^{-1}_v, -P^{-1}_s)
+so if $P_s d_s B_v - P_v d_v B_s > 0$ we pick the lower right corner (maximal $P_s^{-1}$, minimal $P_v^{-1}$), and if $P_s d_s B_v - P_v d_v B_s < 0$ we pick the upper left corner (minimal $P_s^{-1}$, maximal $P_v^{-1}$).
+In the case of equality we can use any (non-zero) prices.
+We minimise within the bounds, but we of course want the bounds to be as tight as possible, so that this minimum is as high as possible.
+The oracle prices provide us with good bounds, namely $P_s^{-1} \in [0.98 \cdot \hat{P}^{-1}_s, 1.02 \cdot \hat{P}^{-1}_s]$ and $P_v^{-1} \in [0.98 \cdot \hat{P}^{-1}_v, 1.02 \cdot \hat{P}^{-1}_v]$.
+There are a few ways to further improve the bounds. During the deposit we learn $P_s$ and $P_v$, from which we can infer $P_s^{-1} \leq 1/P_s$ and $P_v^{-1} \leq 1/P_v$ (equality in the case of no exchange losses). If we know that there is some minimum percentage lost (e.g. exchange fees, slippage, spread) we can refine these to $P_s^{-1} \leq k_s/P_s$ and $P_v^{-1} \leq k_v/P_v$, where $k_s, k_v < 1$ is some factor adjusting for these losses (e.g. $k_s = 0.99$ if there is at least (another) 1 % lost when selling for ether).
+If the trading losses are significant it may be necessary to take these into account even for the bounds from the oracle prices, such that both upper and lower bounds are slightly reduced.
+elmutt (Asymmetry) confirmed
+adriro (Warden) commented:
+@0xleastwood - I’m really sorry to do this at this stage, but did you have the chance to go through these scenarios? Seems there are lot of suppositions, some of which the same warden is confusingly invalidating in other discussions.I think examples 1a and 1b have invalid assumptions (“the contract holds 100 safEth and 0 vAfEth, but that the ratio has now been changed to 0”). In 2a and 2b, what is “the contract thinks all prices are..“? How is the contract thinking prices?It seems this has nothing to do with the stated impact. The chainlink response is used to price vAfEth, but the core here is a discrepancy of the ratio with the underlying assets (which again confusingly the author is trying to invalidate in other issues). Furthermore the deposit/withdraw cycle can’t be executed without exposure to the underlying assets due to the locking mechanism.
+0xleastwood (Judge) commented:
+@adriro - I’ll look into these, I do believe it is possible to deposit and withdraw atomically as long as there is an unlocked amount of tokens in the votium strategy contract. That would be the extent at which a withdrawal could be made “instantly”.I do agree that example 1a and 1b are somewhat infeasible because the protocol team has already stated that such a ratio would not exist in the first place. However, there is validity in the other examples.
+Asymmetry commented:
+After days of research we decided that this was acceptable. See the comments inissue 62for more information.
+Status: Unmitigated. Full details in reports from adriro (1,2) andd3e4, and also included in theMitigation Reviewsection below.
+
+[H-02] Zero amount withdrawals of SafEth or Votium will brick the withdraw process
+Submitted byadriro, also found byd3e4andrvierdiiev
+Withdrawals of amount zero from both SafEth and VotiumStrategy have issues downstream that will cause the transaction to revert, potentially bricking withdrawals from being executed.
+Impact
+Withdrawals in AfEth undergo a process to account for any potential delay when withdrawing locked tokens in the VotiumStrategy. When a withdrawal is requested, the implementation calculates the owed amounts for each token and queues the withdrawal. SafEth tokens will be reserved in the contract, and VotiumStrategy will also queue the withdrawal of CVX tokens.
+When the time arrives, the user can callwithdraw()to execute the withdrawal. This function will unstake from SafEth and withdraw from VotiumStrategy.
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/AfEth.sol#L252-L253
+252:ISafEth(SAF_ETH_ADDRESS).unstake(withdrawInfo.safEthWithdrawAmount,0);253:AbstractStrategy(vEthAddress).withdraw(withdrawInfo.vEthWithdrawId);
+Let’s first consider the SafEth case. The currentunstake()implementation in SafEth will revert if the unstaked amount is zero:
+https://etherscan.io/address/0x591c4abf20f61a8b0ee06a5a2d2d2337241fe970#code#F1#L124
+119:functionunstake(120:uint256_safEthAmount,121:uint256_minOut122:     )externalnonReentrant{123:if(pauseUnstaking)revertUnstakingPausedError();124:if(_safEthAmount==0)revertAmountTooLow();125:if(_safEthAmount>balanceOf(msg.sender))revertInsufficientBalance();
+As we can see in line 124, if_safEthAmountis zero the function will revert, and the transaction towithdraw()will revert too due to the bubbled error. This means that any withdrawal that ends up with a zero amount for SafEth will be bricked.
+The VotiumStrategy case has a similar issue. The implementation ofwithdraw()will callsellCvx()to swap the owed amount of CVX for ETH. This is executed using a Curve pool, as we can see in the following snippet of code:
+250:functionsellCvx(251:uint256_cvxAmountIn252:     )internalreturns(uint256ethAmountOut) {253:addressCVX_ETH_CRV_POOL_ADDRESS=0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4;254:// cvx -> eth255:uint256ethBalanceBefore=address(this).balance;256:IERC20(CVX_ADDRESS).approve(CVX_ETH_CRV_POOL_ADDRESS,_cvxAmountIn);257:258:ICrvEthPool(CVX_ETH_CRV_POOL_ADDRESS).exchange_underlying(259:1,260:0,261:_cvxAmountIn,262:0// this is handled at the afEth level263:         );264:ethAmountOut=address(this).balance-ethBalanceBefore;265:     }
+If we drill down in the Curve implementation, we can see that it validates that the input amount is greater than zero:
+https://etherscan.io/address/0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4#code#L714
+709: def _exchange(sender: address, mvalue: uint256, i: uint256, j: uint256, dx: uint256, min_dy: uint256, use_eth: bool) -> uint256:710:     assert not self.is_killed  # dev: the pool is killed711:     assert i != j  # dev: coin index out of range712:     assert i < N_COINS  # dev: coin index out of range713:     assert j < N_COINS  # dev: coin index out of range714:     assert dx > 0  # dev: do not exchange 0 coins
+Again, this means that any withdrawal that ends up with a zero amount of vAfEth tokens (or the associated amount of CVX tokens) will be bricked when trying to execute the swap.
+This can happen for different reasons. For example the currentratiomay be0or1e18, meaning the split goes entirely to SafEth or to VotiumStrategy. Another reason could be rounding, for small quantities the proportion may round down values to zero.
+The critical issue is that both withdrawals are executed simultaneously. A zero amount shouldn’t matter, but both happen at the time, and one may affect the other. If the SafEth amount is zero, it will brick the withdrawal for a potentially non-zero vAfEth amount. Similarly, if the vAfEth amount is zero, it will brick the withdrawal for a potentially non-zero SafEth amount
+Proof of Concept
+To simplify the case, let’s say the current ratio is zero, meaning all goes to VotiumStrategy.
+A user callsrequestWithdraw(). Since currently the SafEth ratio is zero, the contract doesn’t hold a position in SafEth. This means thatsafEthWithdrawAmount = 0, and the position is entirely in vAfEth (votiumWithdrawAmount > 0).Time passes and the user can finally withdraw.The user callswithdraw(). The implementation will try to callSafEth::unstake(0), which will cause an error, reverting the whole transaction.The user will never be able to callwithdraw(). Even if the ratios are changed, the calculated amount will be already stored in thewithdrawIdInfomapping. The withdrawal will be bricked, causing the loss of the vAfEth tokens.
+Recommendation
+For SafEth, avoid callingSafEth::unstake()if the calculated amount is zero:
++ if (withdrawInfo.safEthWithdrawAmount > 0) {ISafEth(SAF_ETH_ADDRESS).unstake(withdrawInfo.safEthWithdrawAmount, 0);+ }
+For VotiumStrategy, prevent requesting the withdrawal ifvotiumWithdrawAmountis zero, while also keeping track of this to also avoid executing the withdrawal whenAfEth::withdraw()is called.
+It is also recommended to add a guard inVotiumStrategy::withdraw()to avoid callingsellCvx()whencvxWithdrawAmount = 0.
+-  uint256 ethReceived = sellCvx(cvxWithdrawAmount);+  uint256 ethReceived = cvxWithdrawAmount > 0 ? sellCvx(cvxWithdrawAmount) : 0;
+elmutt (Asymmetry) confirmed
+0xleastwood (Judge) commented:
+It’s unclear under what circumstances,withdrawRatiowill be zero. As it appears,votiumWithdrawAmountis calculated as(withdrawRatio * votiumBalance) / 1e18and similarly,safEthWithdrawAmountis calculated as(withdrawRatio * safEthBalance) / 1e18. So it seems the withdraw ratio is applied in the same manner to both of these amounts?The main case where this causes issues is whenvotiumBalanceis non-zero andsafEthBalanceis zero or vice-versa. I’m curious as to when this might happen @elmutt ?
+elmutt (Asymmetry) commented:
+withdrawRatio represents the ratio of the amount being withdrawn to the total supply. So if a user owns 1% of afEth and withdraws their entire balance they will be set to receive 1% of each of the underlying assets (safEth & votiumStrategy) based on their current prices.It should never be zero unless user is withdrawing the the last afEth from the system but we plan to solve this with an initial seed deposit
+0xleastwood (Judge) commented:
+Okay good to know, I think I understand what you mean now. Issue appears valid and I think high severity is justified because the last staker would be unable to execute their withdrawal.However, can you explain whywithdrawRatiowould be zero upon the last withdrawal? It is calculated as(_amount * 1e18) / (totalSupply() - afEthBalance)where the denominator is equal to the_amount. Hence, this is equal to1e18. So it attempts to withdraw all votium and safEth tokens from the contract.A better thing to understand would be, when would either of this token balances be non-zero? And your mitigation is to seed the contract with some tokens initially so the token balance is always positive?
+elmutt (Asymmetry) commented:
+I think we actually have a bug here. We shouldnt be subtracting afEthBalance.Previously we subtracted it because the afEth contract held the users afEth before finally burning it on withdraw(). Now we just burn it on requestWithdraw() so we shouldn’t be subtracting anymore.Does that make sense?
+0xleastwood (Judge) commented:
+Agreed, that makes sense. No need to trackafEthBalanceanymore. There might be other areas where this is being done incorrectly too.
+Asymmetry mitigated:
+Don’t withdraw zero from SafEth or Votium.
+Status: Mitigation confirmed. Full details in reports fromm_Rassskaandadriro.
+
+[H-03] AfEth deposits could use price data from an invalid Chainlink response
+Submitted byadriro, also found byd3e4,MiloTruck, andrvierdiiev
+The current price implementation for the VotiumStrategy token uses a potentially invalid Chainlink response. This price is then used to calculate the price of AfEth and, subsequently, the amount of tokens to mint while depositing.
+Impact
+The price of VotiumStrategy tokens are determined by taking the amount of deposited CVX in the strategy, and multiplied by the current price of CVX in terms of ETH. This price is fetched using Chainlink in theethPerCvx()function:
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/strategies/votium/VotiumStrategyCore.sol#L156-L186
+156:functionethPerCvx(bool_validate)publicviewreturns(uint256) {157:ChainlinkResponsememorycl;158:trychainlinkCvxEthFeed.latestRoundData()returns(159:uint80roundId,160:int256answer,161:uint256/* startedAt */,162:uint256updatedAt,163:uint80/* answeredInRound */164:         ) {165:cl.success=true;166:cl.roundId=roundId;167:cl.answer=answer;168:cl.updatedAt=updatedAt;169:         }catch{170:cl.success=false;171:         }172:// verify chainlink response173:if(174:             (!_validate||175:                 (cl.success==true&&176:cl.roundId!=0&&177:cl.answer>=0&&178:cl.updatedAt!=0&&179:cl.updatedAt<=block.timestamp&&180:block.timestamp-cl.updatedAt<=25hours))181:         ) {182:returnuint256(cl.answer);183:         }else{184:revertChainlinkFailed();185:         }186:     }
+As we can see from the previous snippet of code, if the_validateflag is off, thenno validationis done, it can even return an uninitialized response from a failed call given the usage of thetry/catchstructure. This means that it can invalid price, stale price, or even zero when the call fails.
+The VotiumStrategyprice()function callsethPerCvx(false), which means it carries forward any invalid CVX/ETH price.
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/strategies/votium/VotiumStrategy.sol#L31-L33
+31:functionprice()externalviewoverridereturns(uint256) {32:return(cvxPerVotium() *ethPerCvx(false)) /1e18;33:     }
+The price of VotiumStrategy is then used in the AfEth contract to calculate its price and determine the amount of tokens to mint indeposit()
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/AfEth.sol#L133-L169
+133:functionprice()publicviewreturns(uint256) {134:if(totalSupply() ==0)return1e18;135:AbstractStrategyvEthStrategy=AbstractStrategy(vEthAddress);136:uint256safEthValueInEth= (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *137:safEthBalanceMinusPending()) /1e18;138:uint256vEthValueInEth= (vEthStrategy.price() *139:vEthStrategy.balanceOf(address(this))) /1e18;140:return((vEthValueInEth+safEthValueInEth) *1e18) /totalSupply();141:     }148:functiondeposit(uint256_minout)externalpayablevirtual{149:if(pauseDeposit)revertPaused();150:uint256amount=msg.value;151:uint256priceBeforeDeposit=price();152:uint256totalValue;153:154:AbstractStrategyvStrategy=AbstractStrategy(vEthAddress);155:156:uint256sValue= (amount*ratio) /1e18;157:uint256sMinted=sValue>0158:             ?ISafEth(SAF_ETH_ADDRESS).stake{value:sValue}(0)159:             :0;160:uint256vValue= (amount* (1e18-ratio)) /1e18;161:uint256vMinted=vValue>0?vStrategy.deposit{value:vValue}() :0;162:totalValue+=163:             (sMinted*ISafEth(SAF_ETH_ADDRESS).approxPrice(true)) +164:             (vMinted*vStrategy.price());165:if(totalValue==0)revertFailedToDeposit();166:uint256amountToMint=totalValue/priceBeforeDeposit;167:if(amountToMint<_minout)revertBelowMinOut();168:_mint(msg.sender,amountToMint);169:     }
+The VotiumStrategy price is first used in line 138 to calculate its TVL (vEthValueInEth). Any invalid price here will also mean an invalid price for AfEth.
+Then both the AfEth price (line 151) and again the VotiumStrategy price (line 164) are used indeposit()to calculate the number of minted tokens. Depending on the direction of the wrong price, this means that the user will be minted more or less tokens than it should.
+Proof of Concept
+Let’s suppose the Chainlink feed is stale and the current price of CVX/ETH has increased since then.
+A user callsdeposit()to create a new position in AfEth.The function calculates the current price (priceBeforeDeposit) in order to know how many tokens should be minted.Theprice()implementation will calculate the Votium strategy TVL usingethPerCvx(false), which will successfully return the stale price.The price of AfEth will then be calculated using the old data, which will result in a lower value than the actual “real” price.The user is minted tokens based on the incorrectly calculatedpriceBeforeDeposit, since this price is lower than the expected “real” price the user will be minted more tokens than expected.
+Recommendation
+Change theethPerCvx()argument totrueto make sure prices coming from Chainlink are correctly validated.
+function price() external view override returns (uint256) {-     return (cvxPerVotium() * ethPerCvx(false)) / 1e18;+     return (cvxPerVotium() * ethPerCvx(true)) / 1e18;}
+elmutt (Asymmetry) confirmed:
+0xleastwood (Judge) commented:
+Should we not be prioritising liveness here over validating chainlink results?It seems important to avoid using stale price data which can be readily arbitraged. Severity seems correct.
+Asymmetry mitigated:
+Validate Chainlink price data.
+Status: Mitigation confirmed. Full details in reports fromm_Rassska,d3e4, andadriro.
+
+[H-04]price()inAfEth.soldoesn’t take afEth held for pending withdrawals into account
+Submitted byMiloTruck, also found by d3e4 (1,2),adriro, andrvierdiiev
+InAfEth.sol, theprice()function returns the current price of afEth:
+AfEth.sol#L133-L141
+functionprice()publicviewreturns(uint256) {if(totalSupply() ==0)return1e18;AbstractStrategyvEthStrategy=AbstractStrategy(vEthAddress);uint256safEthValueInEth= (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *safEthBalanceMinusPending()) /1e18;uint256vEthValueInEth= (vEthStrategy.price() *vEthStrategy.balanceOf(address(this))) /1e18;return((vEthValueInEth+safEthValueInEth) *1e18) /totalSupply();}
+As seen from above, the price of afEth is calculated by the TVL of both safEth and vAfEth divided bytotalSupply(). However, this calculation does not take into account afEth that is transferred to the contract whenrequestWithdraw()is called:
+AfEth.sol#L183-L187
+uint256afEthBalance=balanceOf(address(this));uint256withdrawRatio= (_amount*1e18) /(totalSupply() -afEthBalance);_transfer(msg.sender,address(this),_amount);
+When a user callsrequestWithdraw()to initiate a withdrawal, his afEth is transferred to theAfEthcontract as shown above. Afterwards, an amount ofvAfEth proportional to his withdrawal amount is burned, andpendingSafEthWithdrawsis increased.
+Whenprice()is called afterwards,safEthBalanceMinusPending()andvEthStrategy.balanceOf(address(this))will be decreased. However, since the user’s afEth is only transferred and not burnt,totalSupply()remains the same. This causes the value returned byprice()to be lower than what it should be, sincetotalSupply()is larger than the actual circulating supply of afEth.
+This is an issue asdeposit()relies onprice()to determine how much afEth to mint to a depositor:
+AfEth.sol#L166-L168
+uint256amountToMint=totalValue/priceBeforeDeposit;if(amountToMint<_minout)revertBelowMinOut();_mint(msg.sender,amountToMint);
+Where:
+totalValueis the ETH value of the caller’s deposit.priceBeforeDepositis the cached value ofprice().
+If anyone has initiated a withdrawal usingrequestWithdraw()but hasn’t calledwithdraw()to withdraw his funds,price()will be lower than what it should be. Subsequently, whendeposit()is called, the depositor will receive more afEth than he should sincepriceBeforeDepositis smaller.
+Furthermore, a first depositor can callrequestWithdraw()with all his afEth immediately after staking to makeprice()return 0, thereby permanently DOSing all future deposits asdeposit()will always revert with a division by zero error.
+Impact
+When there are pending withdrawals,price()will return a value smaller than its actual value. This causes depositors to receive more afEth than intended when callingdeposit(), resulting in a loss of funds for previous depositors.
+Additionally, a first depositor can abuse this to forcedeposit()to always revert, permanently bricking the protocol forever.
+Proof of Concept
+Assume that the protocol is newly deployed and Alice is the only depositor.
+This means that Alice’s afEth balance equals tototalSupply().
+Alice callsrequestWithdraw()with_amountas all her afEth:
+Since_amount == totalSupply(),withdrawRatiois1e18(100%).Therefore, all of the protocol’s vAfEth is burnt andpendingSafEthWithdrawsis increased to the protocol’s safEth balance.Alice’s afEth is transferred to the protocol.
+Bob callsdeposit()to deposit some ETH into the protocol:
+Whenprice()is called:SincependingSafEthWithdrawsis equal to the protocol’s safEth balance,safEthBalanceMinusPending()is 0, thereforesafEthValueInEthis also 0.SincevEthStrategy.balanceOf(address(this))(the protocol’s vAfEth balance) is 0,vEthValueInEthis also 0.totalSupply()is non-zero.Therefore,price()returns 0 as:
+((vEthValueInEth + safEthValueInEth) * 1e18) / totalSupply() = ((0 + 0) * 1e18) / x = 0
+AspriceBeforeDepositis 0,this linereverts with a division by zero error.
+As demonstrated above,deposit()will always revert as long as Alice does not callwithdraw()to burn her afEth, thereby bricking the protocol’s core functionality.
+Recommended Mitigation
+Inprice(), consider subtracting the amount of afEth held in the contract fromtotalSupply():
+AfEth.sol#L133-L141
+function price() public view returns (uint256) {-       if (totalSupply() == 0) return 1e18;+       uint256 circulatingSupply = totalSupply() - balanceOf(address(this));+       if (circulatingSupply == 0) return 1e18;AbstractStrategy vEthStrategy = AbstractStrategy(vEthAddress);uint256 safEthValueInEth = (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *safEthBalanceMinusPending()) / 1e18;uint256 vEthValueInEth = (vEthStrategy.price() *vEthStrategy.balanceOf(address(this))) / 1e18;-       return ((vEthValueInEth + safEthValueInEth) * 1e18) / totalSupply();+       return ((vEthValueInEth + safEthValueInEth) * 1e18) / circulatingSupply;}
+elmutt (Asymmetry) confirmed and commented:
+@toshiSat - I think we can solve this by burning the tokens in requestWithdraw.
+Asymmetry mitigated:
+For this one we made afEth just burn on requestWithdraw.
+Status: Mitigation confirmed. Full details in reports fromm_Rassska,d3e4, andadriro.
+
+[H-05] Functions in theVotiumStrategycontract are susceptible to sandwich attacks
+Submitted byMiloTruck, also found byMiloTruck,d3e4, adriro (1,2),m_Rassska, andrvierdiiev
+InVotiumStrategyCore.sol, thebuyCvx()andsellCvx()functions callexchange_underlying()of Curve’s ETH / CVX pool to buy and sell CVX respectively:
+VotiumStrategyCore.sol#L233-L240
+ICrvEthPool(CVX_ETH_CRV_POOL_ADDRESS).exchange_underlying{value:_ethAmountIn}(0,1,_ethAmountIn,0// this is handled at the afEth level);
+VotiumStrategyCore.sol#L258-L263
+ICrvEthPool(CVX_ETH_CRV_POOL_ADDRESS).exchange_underlying(1,0,_cvxAmountIn,0// this is handled at the afEth level);
+As seen from above,exchange_underlying()is called with its_min_dyparameter as 0, which means the minimum amount of CVX or ETH to receive from the swap is effectively 0.
+This isn’t an issue when users interact with theAfEthcontract, as itsdeposit()andwithdraw()functions include a_minOutparameter which protects against slippage.
+However, users that interact with theVotiumStrategycontract directly will not be protected from slippage when they call any of the following functions:
+deposit(), which callsbuyCvx()depositRewards(), which callsbuyCvx()withdraw(), which callssellCvx()
+Should users call any of the functions listed above directly, they will be susceptible to sandwich attacks by attackers, which would reduce the amount of CVX or ETH received from the swap with curve’s pool.
+Impact
+Due to a lack of slippage protection inbuyCvx()andsellCvx(), users that interact with theVotiumStrategycontract will be susceptible to sandwich attacks. This results in a loss of funds for them as they will receive less CVX or ETH for the same amount of funds.
+Proof of Concept
+Consider the following scenario:
+Bob calls theVotiumStrategycontract’sdeposit()function directly to deposit ETH.Alice sees his transaction in the mempool and front-runs his transaction. She swaps a large amount of ETH into the Curve pool and gets CVX in return.Now, Bob’s transaction is executed:buyCvx()attempts to swap Bob’s ETH deposit for CVX.However, since the pool currently has a lot more ETH than CVX, Bob only gets a small amount of CVX in return.Alice back-runs Bob’s transaction and swaps the CVX she gained for ETH in the pool, which would result in a profit for her.
+In this scenario, Alice has sandwiched Bob’sdeposit()transaction for a profit, causing Bob to receive less CVX for his deposited ETH.
+Recommended Mitigation
+Consider adding a_minOutparameter to eitherbuyCvx()andsellCvx(), or the following functions:
+deposit()depositRewards()withdraw()
+This allows the caller to specify a minimum amount they expect from the swap, which would protect them from slippage.
+elmutt (Asymmetry) confirmed and commented:
+@toshiSat - I think we should just lock this down so afEth can only use votium strategy.
+0xleastwood (Judge) commented:
+Marking this as primary issue and best report because it addresses all edge cases where slippage should be checked.
+elmutt (Asymmetry) commented:
+In order fully solve it and issues marked as duplicates x(#24,#61,#15) we also need to pass _minout to afEth.applyRewards() :
+0xleastwood (Judge) commented:
+@elmutt - Agree with you on this.
+Asymmetry mitigated:
+For this one we locked down the depositRewards function and added a minout to the reward functions.
+Status: Mitigation confirmed. Full details in reports fromd3e4andadriro.
+

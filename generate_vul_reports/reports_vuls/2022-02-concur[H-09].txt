@@ -1,0 +1,20 @@
+[H-09] deposit inConvexStakingWrapperwill most certainly revert
+Submitted by wuwe1, also found by WatchPug
+ConvexStakingWrapper.sol#L94-L99
+addressmainPool=IRewardStaking(convexBooster).poolInfo(_pid).crvRewards;if(rewards[_pid].length==0) {pids[IRewardStaking(convexBooster).poolInfo(_pid).lptoken] =_pid;convexPool[_pid] =mainPool;
+convexPool[_pid]is set toIRewardStaking(convexBooster).poolInfo(_pid).crvRewards;
+crvRewardsis aBaseRewardPoollike this one:https://etherscan.io/address/0x8B55351ea358e5Eda371575B031ee24F462d503e#code.
+BaseRewardPooldoes not implementpoolInfo
+ConvexStakingWrapper.sol#L238
+IRewardStaking(convexPool[_pid]).poolInfo(_pid).lptoken
+Above line callspoolInfoofcrvRewardswhich causes revert.
+Recommended Mitigation Steps
+According to Booster’s code
+https://etherscan.io/address/0xF403C135812408BFbE8713b5A23a04b3D48AAE31#code
+//deposit lp tokens and stakefunctiondeposit(uint256_pid,uint256_amount,bool_stake)publicreturns(bool){require(!isShutdown,"shutdown");PoolInfostoragepool=poolInfo[_pid];require(pool.shutdown==false,"pool is closed");//send to proxy to stakeaddresslptoken=pool.lptoken;IERC20(lptoken).safeTransferFrom(msg.sender,staker,_amount);
+convexBoosterrequirespoolInfo[_pid].lptoken.
+change L238 to
+IRewardStaking(convexBooster).poolInfo(_pid).lptoken
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how an improper assumption about the pool contract can cause reverts.While the risk of loss of funds is non-existent because all calls will revert, I believe the core functionality of the code is broken. For that reason, I think High Severity to be the proper severity.

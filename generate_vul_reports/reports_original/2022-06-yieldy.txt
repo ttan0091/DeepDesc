@@ -1,0 +1,72 @@
+[H-01] No withdrawal possible for ETH TOKE pool
+Submitted by Lambda
+Thewithdrawfunction of the ETH Tokemak pool has an additional parameterasEth. This can be seen in the TokemakGithub repositoryor also when looking at the deployed code of theETH pool. Compare that to e.g. theUSDC pool, which does not have this parameter.
+This means that the call towithdrawwill when the staking token is ETH / WETH and no withdrawals would be possible.
+Proof of Concept
+A newStakingcontract with ETH / WETH as the staking token is deployed. Deposits in Tokemak work fine, so users stake their tokens. However, because of the previously described issue, no withdrawal is possible, leaving the funds locked.
+Recommended Mitigation Steps
+Handle the case where the underlying asset is WETH / ETH separately and pass this boolean in that case.
+toshiSat (Yieldy) confirmed and resolved
+
+[H-02]Staking.sol#stake()DoS by staking 1 wei for the recipient whenwarmUpPeriod > 0
+Submitted by WatchPug, also found by BowTiedWardens, cccz, minhquanym, parashar, pashov, shung, and zzzitron
+if(warmUpPeriod==0) {IYieldy(YIELDY_TOKEN).mint(_recipient,_amount);}else{// create a claim and mint tokens so a user can claim them once warm up has passedwarmUpInfo[_recipient] =Claim({amount:info.amount+_amount,credits:info.credits+IYieldy(YIELDY_TOKEN).creditsForTokenBalance(_amount),expiry:epoch.number+warmUpPeriod});IYieldy(YIELDY_TOKEN).mint(address(this),_amount);}
+Staking.sol#stake()is a public function and you can specify an arbitrary address as the_recipient.
+WhenwarmUpPeriod > 0, with as little as 1 wei ofYIELDY_TOKEN, the_recipient’swarmUpInfowill be push back tilepoch.number + warmUpPeriod.
+Recommended Mitigation Steps
+Consider changing to not allow deposit to another address whenwarmUpPeriod > 0.
+Dravee (warden) commented:
+Should be high right? Funds are locked.
+Seehttps://github.com/code-423n4/2022-06-yieldy-findings/issues/245#issuecomment-1167616593
+moose-code (judge) increased severity to High and commented:
+Agree this should be high. The cost of the attack is negligible and could cause basic perpetual grievance on all users with one simple script.
+toshiSat (Yieldy) confirmed
+
+[H-03] Denial of Service by wrongBatchRequests.removeAddresslogic
+Submitted by 0x1f8b, also found by rfa, berndartmueller, BowTiedWardens, csanuragjain, Lambda, neumo, and StErMi
+Note: issues #283,115,82,89,61, and241were originally broken out as a separate medium issue. Approximately 1 week after judging and awarding were finalized, the judging team re-assessed that these should have all been grouped under H-03. Accordingly, the 6 warden names have been added as submitters above.
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L93
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L57
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L37
+Impact
+TheBatchRequests.removeAddresslogic is wrong and it will produce a denial of service.
+Proof of Concept
+Removing the element from the array is done using thedeletestatement, but this is not the proper way to remove an entry from an array, it will just set that position toaddress(0).
+Append dummy data:
+addAddress('0x0000000000000000000000000000000000000001')addAddress('0x0000000000000000000000000000000000000002')addAddress('0x0000000000000000000000000000000000000003')getAddresses()=>address[]: 0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002,0x0000000000000000000000000000000000000003
+Remove address:
+removeAddress(0x0000000000000000000000000000000000000002)(or0x0000000000000000000000000000000000000003)getAddresses()=>address[]: 0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000,0x0000000000000000000000000000000000000003
+Service is denied because it will try to callcanBatchContractstoaddress(0).
+Recommended Mitigation Steps
+To remove an entry in an array you have to usepopand move the last element to the removed entry position.
+0xean (Yieldy) confirmed and resolved
+JasoonS (judge) commented:
+Agree this is high, if the team (owner) didn’t know this they could cause some issues for sure.
+
+[H-04] Yield ofLiquidityReservecan be stolen
+Submitted by Picodes
+https://github.com/code-423n4/2022-06-yieldy/blob/524f3b83522125fb7d4677fa7a7e5ba5a2c0fe67/src/contracts/LiquidityReserve.sol#L126
+https://github.com/code-423n4/2022-06-yieldy/blob/524f3b83522125fb7d4677fa7a7e5ba5a2c0fe67/src/contracts/LiquidityReserve.sol#L176
+https://github.com/code-423n4/2022-06-yieldy/blob/524f3b83522125fb7d4677fa7a7e5ba5a2c0fe67/src/contracts/LiquidityReserve.sol#L206
+Impact
+Using sandwich attacks and JIT (Just-in-time liquidity), the yield ofLiquidityReservecould be extracted for liquidity providers.
+Proof of Concept
+The yield ofLiquidityReserveis distributed when a user callsinstantUnstakeReserve()inStaking. Then, ininstantUnstake,totalLockedValueincreases with the fee paid by the user withdrawing. The fee is shared between all liquidity providers as they all see the value of their shares increase.
+Therefore, an attacker could do the following sandwich attack when spotting a call toinstantUnstakeReserve().
+In a first tx before the user call, borrow a lot ofstakingTokenandaddLiquidityThe user call toinstantUnstakeReserve()leading to a fee of sayx\In a second tx after the user call,removeLiquidityand repay the loan, taking a large proportion of the user fee
+The problem here is that you can instantly add and remove liquidity without penalty, and that the yield is instantly distributed.
+Recommended Mitigation Steps
+To mitigate this, you can
+store the earned fees and distribute them across multiple blocks to make sure the attack wouldn’t be worth itadd a small fee when removing liquidity, which would make the attack unprofitableprevent users from withdrawing before X blocks or add a locking mechanism
+0xean (Yieldy) disagreed with severity and commented:
+This is not unique to the protocol and is a vulnerability in almost all of the LP designs that are prevalent today. There is no loss of user funds here either.Would downgrade to Low or QA.
+Picodes (warden) commented:
+In standard cases of JIT, for example in a DEX, the attacker takes a risk as the liquidity he adds is used during the swap, and this liquidity is useful for the protocol as leads to a better price for the user, which is not the case here
+0xean (Yieldy) commented:
+@Picodes - that is fair but the liquidity is still useful and I still don’t see how this qualifies as high severity.  Eventually it would mean that the liquidity reserve would need less liquidity parked in it if JITers always where hitting it.
+Picodes (warden) commented:
+To me it’s high because: (correct me if I am missing things)JIT is not useful here at all for the protocol, the liquidity they bring is not useful as does not get locked. It’s totally risk free, and as you said it’s a commun attack so it’s likely that someone uses itIt leads to a loss of LP funds:
+Assume there is 100k unlocked in the pool, and someoneinstantUnstake100k, it’ll lock all the LP liquidity. But if someone JITs this, the fees will go to the attacker and not the LP which provided the service by accepting to have its liquidity locked.From a protocol point of view, LPing becomes unattractive as all the fees are stolen, breaking the product design
+moose-code (judge) commented:
+Agree going to leave this as high. Any whale that does a large unstake will be susceptible to having more of the fee’s eroded to a predatory sandwich attack which provides no value to the system.
+

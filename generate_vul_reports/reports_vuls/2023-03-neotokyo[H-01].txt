@@ -1,0 +1,24 @@
+[H-01] Updating a pool’s total points doesn’t affect existing stake positions for rewards calculation
+Submitted byadriro, also found bykutugu,joestakey,Madalad,rbserver,minhquanym,minhquanym,auditor0517,sinarette,ast3ros,ABA,Haipls,J4de, andDug
+Staking rewards are calculated based on the user’s share of total points in the corresponding asset pool, this is the sum of the points associated to the staker’s positions divided by the total points from all positions in the pool. We can see this calculation in thegetPoolRewardfunction:
+NeoTokyoStaker.sol#L1386-L1393
+// Return final shares.unchecked{uint256share=points*_PRECISION/pool.totalPoints*totalReward;uint256daoShare=share*pool.daoTax/ (100*_DIVISOR);share/=_PRECISION;daoShare/=_PRECISION;return((share-daoShare),daoShare);}
+However, note thatpool.totalPointsis the current value of the pool’s total point at the time the functiongetPoolRewardis called. It isn’t related to the time the user staked their position, or isn’t affected in any way by other stake/unstake actions from potentially other users.
+This means that any action that modifies the pool’s total points (stake or unstake) won’t affect current staking positions, as previously opened staking positions won’t accrue their rewards correctly. For stake actions, it will cause rewards from existing staking positions to be reduced, as their calculation of the shares now divided by a higherpool.totalPointsvalue. From unstake actions, it will cause rewards from existing staking positions to be incorrectly increased, as the calculation of the shares is now divided by a lowerpool.totalPointsvalue. See section “Proof of Concept” for a more detailed walkthrough.
+In a similar way, this could also be used by a griefer to intentionally harm another user. As thegetRewardfunction present in theBYTES2contract is permissionless (anyone can call this on behalf of an arbitrary account), a bad actor can call this when the pool’s total points is high, which will have the effect of reducing the user rewards.
+Proof of Concept
+Let’s assume the pool is empty. Alice stakes att1an asset worth 100 points and Bob stakes att2another asset worth 100 points. In order to simplify the examples, let’s also consider that all periods fall in the same window, thus having a constant reward rate.
+Alice claims after Bob stakes
+In this scenario, Alice claims her rewards int3after Bob stakes. She will get less rewards from the[t1, t2]period, as the calculation will consider the entire period[t1, t3]and calculate the shares using 200 points. Here the correct way would be to calculate the period[t1, t2]using 100 total points, and the period[t2, t3]using 100 total points.
+Alice stakes att1and gets 100 points. Total points is 100.Bob stakes att2and gets 100 points. Total points is 200.Alice claims rewards att3. She will get less rewards since the calculation will be done using 200 points.
+Alice and Bob stake at same time
+Here,t1 == t2and Bob and Alice stake at the same time. Alice unstakes att3and Bob claims rewards att4. In this case, Bob will get more rewards, as the calculation will consider the entire period[t1, t4]and calculate the shares using 100 points. Here the correct way would be to calculate the period[t1, t3]using 200 total points, and the period[t3, t4]using 100 total points.
+Alice and Bob stake att1 == t2and each one gets 100 points. Total points is 200.Alice unstakes att3. Total points is 100.Bob claims rewards att4. He will get more rewards since the calculation will be done using 100 points.
+Griefer intentionally claims rewards of Alice
+As described in the previous section, a bad actor can intentionally claim the rewards of another user at a time the pool has a high value for total points, since this call as this is a permissionless action.
+Alice stakes att1and gets 100 points. Total points is 100.Bob stakes att2and gets 100 points. Total points is 200.Bad actor claims rewards of Alice att3. She will get less rewards since the calculation will be done using 200 points.
+Recommendation
+Rewards calculation should track reward rate according to modifications in the pool’s total points caused by stake or unstake actions.
+My recommendation for a performant solution would be to followthis staking exampleorthe full Staking contract from Synthetix. The principal idea here is that every action that affects rewards triggers theupdateRewardmodifier, which updates therewardPerTokenStoredvariable that tracks the reward amount per staked token. A similar idea could be adapted to track the reward per point for the current contract. Stake and unstake actions should update this variable before modifying the pool’s total points.
+TimTinkers (Neo Tokyo) confirmed and commented:
+Excellent catch, good write-up.

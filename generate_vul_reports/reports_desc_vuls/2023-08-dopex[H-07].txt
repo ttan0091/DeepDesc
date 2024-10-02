@@ -1,0 +1,28 @@
+Type of vulnerability: Incorrect Precision Assumption
+
+Cause of vulnerability: The contracts assume the returned price values from the `RdpxEthPriceOracle` are in 1e8 precision, but the actual returned precision is 1e18.
+
+Execution process: The incorrect precision assumption leads to incorrect calculations in various functions across multiple contracts, resulting in value inflation or deflation. For example:
+- In `RdpxV2Core.sol`, the `calculateBondCost()` function deflates the `rdpxRequired` because it expects a lower precision.
+- In `UniV2LiquidityAmo.sol`, the `getLpPriceInEth()` function overestimates the LP value due to the higher precision.
+- In `PerpetualAtlanticVault.sol`, the `calculatePremium()` function inflates the premium calculation because it divides by 1e8 instead of 1e18.
+
+Vulnerable code:
+- `RdpxV2Core.sol`:
+  ```solidity
+  function getRdpxPrice() public view returns (uint256) {
+      return IRdpxEthOracle(pricingOracleAddresses.rdpxPriceOracle).getRdpxPriceInEth();
+  }
+  ```
+- `UniV2LiquidityAmo.sol`:
+  ```solidity
+  function getLpPrice() public view returns (uint256) {
+      // Business logic assuming 1e8 precision
+  }
+  ```
+- `PerpetualAtlanticVault.sol`:
+  ```solidity
+  function calculatePremium(uint256 _strike, uint256 _amount, uint256 timeToExpiry, uint256 _price) public view returns (uint256 premium) {
+      premium = ((IOptionPricing(addresses.optionPricing).getOptionPrice(_strike, _price > 0 ? _price : getUnderlyingPrice(), getVolatility(_strike), timeToExpiry) * _amount) / 1e8);
+  }
+  ```

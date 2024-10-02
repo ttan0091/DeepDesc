@@ -1,0 +1,58 @@
+[H-01] SpeedBumpPriceGate: Excess ether did not return to the user
+Submitted by cccz, also found by 0x52, 0xYamiDancho, csanuragjain, GimelSec, gzeon, hickuphh3, horsefacts, hyh, IllIllI, kenzo, leastwood, PPrieditis, reassor, unforgiven, WatchPug, and danb
+ThepassThruGatefunction of theSpeedBumpPriceGatecontract is used to charge NFT purchase fees.
+Since the price of NFT will change due to the previous purchase, users are likely to send more ether than the actual purchase price in order to ensure that they can purchase NFT. However, the passThruGate function did not return the excess ether, which would cause asset loss to the user.
+Consider the following scenario:
+An NFT is sold for 0.15 ethUser A believes that the value of the NFT is acceptable within 0.3 eth, considering that someone may buy the NFT before him, so user A transfers 0.3 eth to buy the NFTWhen user A’s transaction is executed, the price of the NFT is 0.15 eth, but since the contract does not return excess eth, user A actually spends 0.3 eth.
+Proof of Concept
+https://github.com/code-423n4/2022-05-factorydao/blob/e22a562c01c533b8765229387894cc0cb9bed116/contracts/SpeedBumpPriceGate.sol#L65-L82
+Recommended Mitigation Steps
+-   function passThruGate(uint index, address) override external payable {+  function passThruGate(uint index, address payer) override external payable {uint price = getCost(index);require(msg.value >= price, 'Please send more ETH');// bump up the priceGate storage gate = gates[index];// multiply by the price increase factorgate.lastPrice = (price * gate.priceIncreaseFactor) / gate.priceIncreaseDenominator;// move up the referencegate.lastPurchaseBlock = block.number;// pass thru the etherif (msg.value > 0) {// use .call so we can send to contracts, for example gnosis safe, re-entrance is not a threat here-           (bool sent, bytes memory data) = gate.beneficiary.call{value: msg.value}("");+          (bool sent, bytes memory data) = gate.beneficiary.call{value: price}("");require(sent, 'ETH transfer failed');}+      if (msg.value - price > 0){+         (bool sent, bytes memory data) = payer.call{value: msg.value - price}("");+          require(sent, 'ETH transfer failed');}}
+illuzen (FactoryDAO) confirmed, but disagreed with severity
+illuzen (FactoryDAO) resolved:
+https://github.com/code-423n4/2022-05-factorydao/pull/4
+Justin Goro (judge) commented:
+Maintaining severity as user funds are lost.
+
+[H-02] DoS: Blacklisted user may preventwithdrawExcessRewards()
+Submitted by AuditsAreUS
+https://github.com/code-423n4/2022-05-factorydao/blob/db415804c06143d8af6880bc4cda7222e5463c0e/contracts/PermissionlessBasicPoolFactory.sol#L242-L256
+https://github.com/code-423n4/2022-05-factorydao/blob/db415804c06143d8af6880bc4cda7222e5463c0e/contracts/PermissionlessBasicPoolFactory.sol#L224-L234
+Impact
+If one user becomes blacklisted or otherwise cannot be transferred funds in any of the rewards tokens or the deposit token then they will not be able to callwithdraw()for that token.
+The impact of one user not being able to callwithdraw()is that the owner will now never be able to callwithdrawExcessRewards()and therefore lock not only the users rewards and deposit but also and excess rewards attributed to the owner.
+Thus, one malicious user may deliberately get them selves blacklisted to prevent the owner from claiming the final rewards. Since the attacker may do this with negligible balance in theirdeposit()this attack is very cheap.
+Proof of Concept
+It is possible forIERC20(pool.rewardTokens[i]).transfer(receipt.owner, transferAmount);to fail for numerous reasons. Such as if a user has been blacklisted (in certain ERC20 tokens) or if a token is paused or there is an attack and the token is stuck.
+This will preventwithdraw()from being called.
+for(uinti=0;i<rewards.length;i++) {pool.rewardsWeiClaimed[i] +=rewards[i];pool.rewardFunding[i] -=rewards[i];uinttax= (pool.taxPerCapita*rewards[i]) /1000;uinttransferAmount=rewards[i] -tax;taxes[poolId][i] +=tax;success=success&&IERC20(pool.rewardTokens[i]).transfer(receipt.owner,transferAmount);}success=success&&IERC20(pool.depositToken).transfer(receipt.owner,receipt.amountDepositedWei);require(success,'Token transfer failed');
+Since line 245 ofwithdrawExcessRewards()requires thatrequire(pool.totalDepositsWei == 0, 'Cannot withdraw until all deposits are withdrawn');, if one single user is unable to withdraw then it is impossible for the owner to claim the excess rewards and they are forever stuck in the contract.
+Recommended Mitigation Steps
+Consider allowingwithdrawExcessRewards()to be called after a set period of time after the pool end if most users have withdrawn or some similar criteria.
+illuzen (FactoryDAO) confirmed, disagreed with severity and commented:
+Kind of a duplicate, but I like this angle better. However, malicious token contracts are explicitly considered in the contract as an acceptable risk. Will probably just wrap transfers in a try catch
+illuzen (FactoryDAO) resolved:
+https://github.com/code-423n4/2022-05-factorydao/pull/2
+Justin Goro (judge) commented:
+Maintaining severity as deposit tokens at risk.
+
+[H-03] MerkleVesting withdrawal does not verify that tokens were transferred successfully
+Submitted by kenzo, also found by IllIllI
+Across the codebase, the protocol is usually checking that ERC20 transfers have succeeded by checking their return value.
+This check is missing in MerkleVesting’swithdrawfunction.
+Impact
+If for some reason the ERC20 transfer is temporarily failing, the user would totally lose his allocation and funds.
+All the state variables would already have been updated at this stage, so he can’t callwithdrawagain.
+There is no way to withdraw these locked tokens.
+Proof of Concept
+At the last point ofwithdraw, the functionis sendingthe funds to the user, and does not check the return value - whether it has succeeded:
+IERC20(tree.tokenAddress).transfer(destination, currentWithdrawal);
+Note that this is (nicely and rightfully) done after all the state variables have been updated.
+As the return value of the external call is not checked, if it has failed, the contract wouldn’t know about it, and the function will finish “successfully”.
+Recommended Mitigation Steps
+As done throughout the rest of the protocol, add a check that verifies that the transfer has succeeded.
+illuzen (FactoryDAO) acknowledged, disagreed with severity and commented:
+Debatable, since requiring successful transfer means we can’t do non-standard tokens like USDT. Also, tokens could be malicious and simply lie about the success.
+Justin Goro (judge) commented:
+Regarding the non standard tokens that don’t return bools, the common approach to performing a low level call with(bool success, _)  = address(token).call(//etcallows for transfers to be validated for USDT.Severity will stand because this function represents user funds.
+

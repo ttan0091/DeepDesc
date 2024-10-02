@@ -1,0 +1,47 @@
+This code defines a public pure function named calcRecollateralizeFRAXInner, which calculates the amount of FRAX tokens that can be recollateralized based on the provided collateral amount and other global parameters. The function returns two values: the amount of collateral needed to recollateralize the FRAX tokens and the value of the collateral in terms of FRAX.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    collateral_amount: The amount of collateral being used for recollateralization.
+    col_price: The price of the collateral in some reference currency (e.g., USD), scaled by 1e6.
+    global_collat_value: The total value of all collateral currently backing the FRAX tokens.
+    frax_total_supply: The total supply of FRAX tokens.
+    global_collateral_ratio: The target collateral ratio for the FRAX system, scaled by 1e6.
+
+2. Calculating the Value of the Collateral Attempted:
+   solidity
+   uint256 collat_value_attempted = collateral_amount.mul(col_price).div(1e6);
+   
+   This line calculates the value of the collateral being attempted to be used for recollateralization. It multiplies the collateral_amount by the col_price and then divides by 1e6 to adjust for the scaling of the price.
+
+3. Calculating the Effective Collateral Ratio:
+   solidity
+   uint256 effective_collateral_ratio = global_collat_value.mul(1e6).div(frax_total_supply);
+   
+   This line calculates the current effective collateral ratio of the system. It multiplies the global_collat_value by 1e6 and then divides by the frax_total_supply to get the ratio in terms of 1e6.
+
+4. Calculating the Maximum Possible Recollateralization:
+   solidity
+   uint256 recollat_possible = (global_collateral_ratio.mul(frax_total_supply).sub(frax_total_supply.mul(effective_collateral_ratio))).div(1e6);
+   
+   This line calculates the maximum value of collateral that can be used for recollateralization. It first calculates the difference between the target collateral value (global_collateral_ratio  frax_total_supply) and the current collateral value (frax_total_supply  effective_collateral_ratio), then divides by 1e6 to adjust for scaling.
+
+5. Determining the Amount to Recollateralize:
+   solidity
+   uint256 amount_to_recollat;
+   if(collat_value_attempted <= recollat_possible){
+       amount_to_recollat = collat_value_attempted;
+   } else {
+       amount_to_recollat = recollat_possible;
+   }
+   
+   This block determines the actual amount of collateral value that will be used for recollateralization. If the attempted collateral value is less than or equal to the maximum possible recollateralization value, it uses the attempted value. Otherwise, it uses the maximum possible value.
+
+6. Returning the Results:
+   solidity
+   return (amount_to_recollat.mul(1e6).div(col_price), amount_to_recollat);
+   
+   Finally, the function returns two values: the amount of collateral needed to recollateralize the FRAX tokens (calculated by dividing the amount_to_recollat by the col_price and scaling by 1e6) and the value of the collateral in terms of FRAX (amount_to_recollat).
+
+This function is crucial for maintaining the stability and collateralization of the FRAX token system by allowing for the dynamic adjustment of collateral based on market conditions and system parameters.

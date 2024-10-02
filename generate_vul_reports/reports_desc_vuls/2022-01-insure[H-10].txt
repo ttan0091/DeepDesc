@@ -1,0 +1,19 @@
+Type of vulnerability: Authorization Bypass / Privilege Escalation
+
+Cause of vulnerability: Lack of sufficient constraints on the `borrowValue` function, allowing a compromised or malicious admin of the Registry or Factory to misuse the `onlyMarket` modifier.
+
+Execution process: A malicious or compromised admin can list a malicious contract in the registry, then call the `borrowValue` function on the Vault contract, transferring funds to an arbitrary address.
+
+Vulnerable code: 
+```solidity
+modifier onlyMarket() {
+    require(IRegistry(registry).isListed(msg.sender), "ERROR_ONLY_MARKET");
+    _;
+}
+
+function borrowValue(uint256 _amount, address _to) external onlyMarket override {
+    debts[msg.sender] += _amount;
+    totalDebt += _amount;
+    IERC20(token).safeTransfer(_to, _amount);
+}
+```

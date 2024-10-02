@@ -1,0 +1,26 @@
+Type of vulnerability: Incorrect Time Parameter Usage
+Cause of vulnerability: Using block number instead of time for epoch calculation in gauge weight determination
+Execution process: The function `update_market` calculates the epoch based on the block number and uses this epoch to fetch the market weight from `gaugeController.gauge_relative_weight_write`. However, `gaugeController` expects the epoch in terms of time, leading to an incorrect epoch calculation and consequently, incorrect weight and reward allocation.
+Vulnerable code: 
+```solidity
+function update_market(address _market) public {
+    require(lendingMarketWhitelist[_market], "Market not whitelisted");
+    MarketInfo storage market = marketInfo[_market];
+    if (block.number > market.lastRewardBlock) {
+        uint256 marketSupply = lendingMarketTotalBalance[_market];
+        if (marketSupply > 0) {
+            uint256 i = market.lastRewardBlock;
+            while (i < block.number) {
+                uint256 epoch = (i / BLOCK_EPOCH) * BLOCK_EPOCH;
+                uint256 nextEpoch = i + BLOCK_EPOCH;
+                uint256 blockDelta = Math.min(nextEpoch, block.number) - i;
+                uint256 cantoReward = (blockDelta * cantoPerBlock[epoch] * gaugeController.gauge_relative_weight_write(_market, epoch)) / 1e18;
+                market.accCantoPerShare += uint128((cantoReward * 1e18) / marketSupply);
+                market.secRewardsPerShare += uint128((blockDelta * 1e18) / marketSupply);
+                i += blockDelta;
+            }
+        }
+        market.lastRewardBlock = uint64(block.number);
+    }
+}
+```

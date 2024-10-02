@@ -1,0 +1,37 @@
+This code defines a public function named delegateBySig, which allows a user to delegate voting rights to another address using a signed message. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    delegatee: The address to which voting rights will be delegated.
+    nonce: A unique number associated with the signatory's account, used to prevent replay attacks.
+    expiry: The timestamp until which the signature is valid.
+    v, r, s: Components of the ECDSA signature.
+
+2. Domain Separator Calculation:
+    bytes32 domainSeparator = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name)), getChainId(), address(this)));
+      This line calculates the domain separator using the DOMAIN_TYPEHASH, the hash of the contract's name, the chain ID, and the contract's address. The domain separator is used to prevent crossapplication replay attacks.
+
+3. Struct Hash Calculation:
+    bytes32 structHash = keccak256(abi.encode(DELEGATION_TYPEHASH, delegatee, nonce, expiry));
+      This line calculates the hash of the delegation struct, which includes the delegatee address, nonce, and expiry timestamp. This hash is used to verify the integrity of the delegation request.
+
+4. Digest Calculation:
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+      This line calculates the final digest by concatenating the EIP191 prefix (\x19\x01), the domain separator, and the struct hash. This digest is used to recover the signatory's address from the signature.
+
+5. Signature Recovery:
+    address signatory = ecrecover(digest, v, r, s);
+      This line uses the ecrecover function to recover the address of the signatory from the digest and the signature components (v, r, s). The ecrecover function is a builtin Ethereum function that recovers the address from an ECDSA signature.
+
+6. Validation Checks:
+    require(signatory != address(0), "Comp::delegateBySig: invalid signature");
+      This line ensures that the recovered signatory address is not the zero address, which would indicate an invalid signature.
+    require(nonce == nonces[signatory]++, "Comp::delegateBySig: invalid nonce");
+      This line checks that the provided nonce matches the current nonce of the signatory and then increments the nonce to prevent replay attacks.
+    require(now <= expiry, "Comp::delegateBySig: signature expired");
+      This line ensures that the current timestamp is less than or equal to the expiry timestamp, verifying that the signature is still valid.
+
+7. Delegation Execution:
+    return _delegate(signatory, delegatee);
+      This line calls the internal _delegate function, which actually performs the delegation of voting rights from the signatory to the delegatee.
+
+In summary, the delegateBySig function allows a user to delegate their voting rights to another address by providing a signed message. The function verifies the signature, checks the nonce and expiry, and then executes the delegation. This mechanism ensures secure and verifiable delegation of voting rights.

@@ -1,0 +1,17 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: The ability to stake a minimal amount (1 wei) for another user when the `warmUpPeriod` is greater than 0, which extends the `expiry` time for the recipient, effectively locking their funds.
+Execution process: An attacker can call the `stake()` function with a minimal amount (1 wei) for an arbitrary address as the `_recipient` when `warmUpPeriod > 0`. This action extends the `expiry` time in the `warmUpInfo` for the `_recipient`, preventing them from accessing their funds until the new `expiry` time is reached.
+Vulnerable code: 
+```solidity
+if(warmUpPeriod==0) {
+    IYieldy(YIELDY_TOKEN).mint(_recipient,_amount);
+} else {
+    // create a claim and mint tokens so a user can claim them once warm up has passed
+    warmUpInfo[_recipient] = Claim({
+        amount: info.amount + _amount,
+        credits: info.credits + IYieldy(YIELDY_TOKEN).creditsForTokenBalance(_amount),
+        expiry: epoch.number + warmUpPeriod
+    });
+    IYieldy(YIELDY_TOKEN).mint(address(this), _amount);
+}
+```

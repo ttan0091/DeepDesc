@@ -1,0 +1,22 @@
+[H-09]RootBridgeAgent->CheckParamsLib#checkParamsdoes not check that_dParams.tokenis underlying of_dParams.hToken
+Submitted byEmmanuel, also found byxuwinnie
+A malicious user would make a deposit specifying ahTokenof a high value (say hEther), and adepositTokenof relatively lower value (say USDC). For that user,RootBridgeAgentwould increment theirhTokenbalance by the amount ofdepositTokensthey sent.
+Proof of Concept
+Here is thecheckParamsfunction:
+functioncheckParams(address_localPortAddress,DepositParamsmemory_dParams,uint24_fromChain)internalviewreturns(bool){if((_dParams.amount<_dParams.deposit)//Deposit can't be greater than amount.|| (_dParams.amount>0&& !IPort(_localPortAddress).isLocalToken(_dParams.hToken,_fromChain))//Check local exists.|| (_dParams.deposit>0&& !IPort(_localPortAddress).isUnderlyingToken(_dParams.token,_fromChain))//Check underlying exists.) {returnfalse;}returntrue;}
+The function performs 3 checks:
+The_dParams.amountmust be less than or equal to_dParams.deposit.If_dParams.amount > 0,_dParams.hTokenmust be a validlocalToken.If_dParams.deposit > 0,_dParams.tokenmust be a valid underlying token.
+The problem is that the check only requiresgetLocalTokenFromUnder[_dParams.token]!=address(0), but does not check thatgetLocalTokenFromUnder[_dParams.token]==_dParams.hToken:
+functionisUnderlyingToken(address_underlyingToken,uint24_fromChain)externalviewreturns(bool) {returngetLocalTokenFromUnder[_underlyingToken][_fromChain] !=address(0);}
+ThecheckParamsfunction is used in theRootBridgeAgent#bridgeInfunction. This allows a user to callBranchBridgeAgent#callOutAndBridgewith ahTokenandtokenthat are not related.
+ATTACK SCENARIO
+The current price of Ether is 1800USDC.RootBridgeAgentis deployed on Arbitrum.BranchBridgeAgentfor the Ethereum mainnet has two local tokens recorded inRootBridgeAgent:hEther (whose underlying is Ether).hUSDC (whose underlying is USDC).Alice callsBranchBridgeAgent#callOutAndBridgeon Ethereum with the following asDepositInput(_dParams):hToken (address of local hEther).token (address of USDC).amount (0).deposit (10).toChain(42161).BranchPort#bridgeOuttransfers 10 USDC from the user toBranchPort, and theanyCallcall is made toRootBridgeAgent.RootBridgeAgent#bridgeInis called, which callsCheckParamsLib.checkParams.checkParamsverifies that_dParams.amount(0)is less than or equal to_dParams.deposit(10).Verifies that_dParams.hToken(hEther) is a validlocalToken.Verifies that_dParams.token(USDC) is a valid underlying token (i.e. its local token is non zero).RootBridgeAgent#bridgeIncallsRootPort#bridgeToRootwhich mints 10 global hEther to the userif (_deposit > 0) mint(_recipient, _hToken, _deposit, _fromChainId);.With just 10 USDC, the user has been able to get 10 ether (18000USDC) worth of funds on the root chain.
+Execution flow:BranchBridgeAgent#callOutAndBridge->BranchBridgeAgent#_callOutAndBridge->BranchBridgeAgent#_depositAndCall->BranchBridgeAgent#_performCall->RootBridgeAgent#anyExecute->RootBridgeAgentExecutor#executeWithDeposit->RootBridgeAgentExecutor#_bridgeIn->RootBridgeAgent#bridgeIn.
+Recommended Mitigation Steps
+Currently, the protocol only checks to see if the token is recognized byrootportas an underlying token by checking that the registered local token for_dParams.tokenis a non zero address.
+Instead of that, it would be more effective to check that the registered local token for_dParams.tokenis equal to_dParams.hToken. Some sanity checks may also be done onDepositInput(_dParams)inBranchBridgeAgent. Although, this is not necessary.
+Assessed type
+Invalid Validation
+0xBugsy (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

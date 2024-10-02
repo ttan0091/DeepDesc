@@ -1,0 +1,26 @@
+Type of vulnerability: Accounting Miscalculation
+
+Cause of vulnerability: The `claimDelegateReward()` function does not account for the claimed reward towards treasury granting, leading to an overestimation of available funds in the treasury.
+
+Execution process:
+1. A distribution period reserves 3% of the treasury for granting, split into 90% for proposals and 10% for voters.
+2. Voters claim their rewards after the period ends, but these claimed rewards are not deducted from the treasury's available funds.
+3. When the treasury updates its balance for the next period, it incorrectly adds back any unspent funds from the previous period, including the 10% reserved for voters, even though these funds have been claimed.
+
+Vulnerable code:
+```solidity
+function _updateTreasury(uint24 distributionId_) private {
+    bytes32 fundedSlateHash = _distributions[distributionId_].fundedSlateHash;
+    uint256 fundsAvailable = _distributions[distributionId_].fundsAvailable;
+    uint256[] memory fundingProposalIds = _fundedProposalSlates[fundedSlateHash];
+    uint256 totalTokensRequested;
+    uint256 numFundedProposals = fundingProposalIds.length;
+    for (uint i = 0; i < numFundedProposals; ) {
+        Proposal memory proposal = _standardFundingProposals[fundingProposalIds[i]];
+        totalTokensRequested += proposal.tokensRequested;
+        unchecked { ++i; }
+    }
+    // readd non distributed tokens to the treasury
+    treasury += (fundsAvailable - totalTokensRequested);
+}
+```

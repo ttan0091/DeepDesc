@@ -1,0 +1,21 @@
+[H-05] MEV: Operator can bribe miner and steal honest operator’s bond amount if gas price went high
+Submitted by Trust
+HolographOperator.sol#L354
+Operators in Holograph do their job by calling executeJob() with the bridged in bytes from source chain.If the primary job operator did not execute the job during his allocated block slot, he is punished by taking a single bond amount and transfer it to the operator doing it instead.The docs and code state that if there was a gas spike in the operator’s slot, he shall not be punished. The way a gas spike is checked is with this code in executeJob:
+require(gasPrice >= tx.gasprice, "HOLOGRAPH: gas spike detected");
+However, there is still a way for operator to claim primary operator’s bond amount although gas price is high. Attacker can submit a flashbots bundle including the executeJob() transaction, and one additional “bribe” transaction. The bribe transaction will transfer some incentive amount to coinbase address (miner), while the executeJob is submitted with a low gasprice. Miner will accept this bundle as it is overall rewarding enough for them, and attacker will receive the base bond amount from victim operator. This threat is not theoretical because every block we see MEV bots squeezing value from such opportunities.
+info about coinbasetransferinfo about bundleselection
+Impact
+Dishonest operator can take honest operator’s bond amount although gas price is above acceptable limits.
+Tools Used
+Manual audit, flashbot docs
+Recommended Mitigation Steps
+Do not use current tx.gasprice amount to infer gas price in a previous block.Probably best to use gas price oracle.
+gzeon (judge) commented:
+Note that this is not possible with 1559 due to block base fee, but might be possible in some other chain.
+alexanderattar (Holograph) disputed and commented:
+EIP-1559 does not allow for tx gas less than block base fee
+Trust (warden) commented:
+Dispute: it is incorrect to assume bridge request sender did not add a priority fee, making it possible to bribe withtx.gasprice < gasPrice.Also, cannot assume all chains in the multichain implement EIP1559.
+ACC01ADE (Holograph) commented:
+The EIP-1559 for all EVM chains assumption is the gotcha here. I don’t really see a solution for this at the moment. 🤔

@@ -1,0 +1,17 @@
+[H-03] Users wouldn’t refund from the lost ETH crowdfunds due to the lack of ETH
+Submitted byhansfriese, also found by0x52andevan
+After the ETH crowdfunds are lost, contributors wouldn’t refund their funds because the crowdfunds contract doesn’t have enough ETH balance.
+Proof of Concept
+The core flaw is_calculateRefundAmount()might return more refund amount than the original contribution amount.
+function_calculateRefundAmount(uint96votingPower)internalviewreturns(uint96amount) {amount= (votingPower*1e4) /exchangeRateBps;// Add back fee to contribution amount if applicable.addresspayablefundingSplitRecipient_=fundingSplitRecipient;uint16fundingSplitBps_=fundingSplitBps;if(fundingSplitRecipient_!=address(0) &&fundingSplitBps_>0) {amount= (amount*1e4) / (1e4-fundingSplitBps_);//@audit might be greater than original contribution}}
+When users contribute to the ETH crowdfunds, it subtracts the fee from the contribution amount.
+File:2023-04-party\contracts\crowdfund\ETHCrowdfundBase.sol226:uint16fundingSplitBps_=fundingSplitBps;227:if(fundingSplitRecipient_!=address(0) &&fundingSplitBps_>0) {228:uint96feeAmount= (amount*fundingSplitBps_) /1e4;229:amount-=feeAmount;230:         }
+During the calculation, it calculatesfeeAmountfirst which is rounded down and subtracts from the contribution amount. It means the final amount after subtracting the fee would be rounded up.
+So when we calculate the original amount using_calculateRefundAmount(), we might get a greater value.
+This shows the detailed example and POC.
+Let’s assumefundingSplitBps = 1e3(10%), exchangeRateBps = 1e4.A user contributed1e18 - 1wei of ETH. After subtracting the fee, the voting power was1e18 - 1 - (1e18 - 1) / 10 = 9 * 1e17Let’s assume there are no other contributors and the crowdfund was lost.When the user callsrefund(), the refund amount will be9 * 1e17 * 1e4 / 9000 = 1e18in_calculateRefundAmount()So it will try to transfer 1e18 wei of ETH from the crowdfund contract that contains 1e18 - 1 wei only. As a result, the transfer will revert and the user can’t refund his funds.
+functiontest_refund_reverts()public{InitialETHCrowdfundcrowdfund=_createCrowdfund({initialContribution:0,initialContributor:payable(address(0)),initialDelegate:address(0),minContributions:0,maxContributions:type(uint96).max,disableContributingForExistingCard:false,minTotalContributions:3ether,maxTotalContributions:5ether,duration:7days,fundingSplitBps:1000,//10% feefundingSplitRecipient:payable(_randomAddress())//recipient exists});Partyparty=crowdfund.party();uint256ethAmount=1ether-1;//contribute amountaddressmember=_randomAddress();vm.deal(member,ethAmount);// Contributevm.prank(member);crowdfund.contribute{ value:ethAmount}(member,"");assertEq(address(member).balance,0);assertEq(address(crowdfund).balance,ethAmount);//crowdfund's balance = 1 ether - 1skip(7days);assertTrue(crowdfund.getCrowdfundLifecycle() ==ETHCrowdfundBase.CrowdfundLifecycle.Lost);// Claim refundvm.prank(member);uint256tokenId=1;crowdfund.refund(tokenId);//reverts as it tried to withdraw 1 ether}
+Recommended Mitigation Steps
+When we subtract the fee in_processContribution(), we should calculate the final amount using1e4 - fundingSplitBpsdirectly. Then there will be 2 rounds down in_processContribution()and_calculateRefundAmountand the refund amount won’t be greater than the original amount.
+if(fundingSplitRecipient_!=address(0) &&fundingSplitBps_>0) {amount= (amount* (1e4-fundingSplitBps_)) /1e4;}
+0xble (Party) confirmed

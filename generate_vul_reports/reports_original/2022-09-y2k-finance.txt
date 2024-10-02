@@ -1,0 +1,231 @@
+[H-01] Incorrect handling ofpricefeed.decimals()
+Submitted by carrotsmuggler, also found by 0x52, 0xDecorativePineapple, 0xPanas, auditor0517, Bahurum, durianSausage, hyh, Jeiwan, ladboy233, Lambda, pauliax, PwnPatrol, R2, Respx, scaraven, teawaterwire, and zzzitron
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/oracles/PegOracle.sol#L46-L83
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Controller.sol#L299-L300
+Impact
+Wrong math for handling pricefeed decimals. This code will only work for pricefeeds of 8 decimals, any others give wrong/incorrect data. The maths used can be shown in three lines:
+nowPrice= (price1*10000) /price2;nowPrice=nowPrice*int256(10**(18-priceFeed1.decimals()));returnnowPrice/1000000;
+Line1: adds 4 decimals
+Line2: adds (18 - d) decimals, (where d = pricefeed.decimals())
+Line3:  removes 6 decimals
+Total: adds (16 - d) decimals
+when d=8, the contract correctly returns an 8 decimal number. However, when d = 6, the function will return a 10 decimal number. This is further raised by (18-d = 12) decimals when checking for depeg event, leading to a 22 decimal number which is 4 orders of magnitude incorrect.
+if d=18, (like usd-eth pricefeeds) contract fails / returns 0.
+All chainlink contracts which give price in eth, operate with 18 decimals. So this can cripple the system if added later.
+Proof of Concept
+Running the test  AssertTest.t.sol:testPegOracleMarketCreation and changing the line on
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/test/AssertTest.t.sol#L30
+to
+PegOraclepegOracle3=newPegOracle(0xB1552C5e96B312d0Bf8b554186F846C40614a540,//usd-eth contract addressbtcEthOracle);
+gives this output
+oracle3price1: 1085903802394919427oracle3price2: 13753840915281064000oracle3price1 / oracle3price2: 0
+returning an oracle value of 0. Simulating with a mock price feed of 6 decimals gives results 4 orders of magnitude off.
+Tools Used
+Foundry, VS-Code
+Recommended Mitigation Steps
+Since only the price ratio is calculated, there is no point in increasing the decimal by (18-d) in the second line. Proposed solution:
+nowPrice= (price1*10000) /price2;nowPrice=nowPrice*int256(10**(priceFeed1.decimals())) *100;returnnowPrice/1000000;
+This returns results in d decimals, no matter the value of d.
+MiguelBits (Y2K Finance) confirmed
+
+[H-02] End epoch cannot be triggered preventing winners to withdraw
+Submitted by eierina
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Controller.sol#L198
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Controller.sol#L246
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Controller.sol#L261
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Controller.sol#L277-L286
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203
+Impact
+At the end of an epoch, thetriggerEndEpoch(…)is called to trigger ‘epoch end without depeg event’, making risk users the winners and entitling them towithdraw(risk + hedge) from the vault.
+In the case of the Arbitrum sequencer going down or restarting, there is agrace period of one hourbefore thegetLatestPrice()returns to execute without reverting. This means that thetriggerEndEpoch(…)cannot complete during this time, because it calls thegetLatestPrice().
+Making this high-priority because unless thetriggerEndEpoch(…)completes:
+winners cannotwithdrawalthought the epoch is over;during this time the strike price might be reached causing a depeg event at all effects turning the table for the winners;thegetLatestPrice()is not functional to the completion of thetriggerEndEpoch(…), nor to thewithdraw, but only informative used to initialize the event object emittedat the very end of the triggerEndEpoch function.
+First two points each constitute independent justification, third point reinforces the first 2 points.
+Proof of Concept
+triggerEndEpoch reverts if arbiter down or restarted less than eq GRACEPERIODTIME ago (1hr)
+File:Controller.sol:L246
+Revert if getLatestPrice reverts.
+functiontriggerEndEpoch(uint256marketIndex,uint256epochEnd)public{< ...omitted... >emitDepegInsurance(keccak256(abi.encodePacked(marketIndex,insrVault.idEpochBegin(epochEnd),epochEnd)),tvl,false,epochEnd,block.timestamp,getLatestPrice(insrVault.tokenInsured())// @audit getLatestPrice reverts while sequencer unavailable or during grace period);}
+File:Controller.sol:L277-L286
+Revert if sequencer down or grace period after restart not over.
+functiongetLatestPrice(address_token)publicviewreturns(int256nowPrice){< ...omitted... >boolisSequencerUp=answer==0;if(!isSequencerUp) {revertSequencerDown();}// Make sure the grace period has passed after the sequencer is back up.uint256timeSinceUp=block.timestamp-startedAt;if(timeSinceUp<=GRACE_PERIOD_TIME) {// @audit 1 hourrevertGracePeriodNotOver();}< ...omitted... >}
+withdraw fails if triggerEndEpoch did not execute successfully
+File:Vault.sol:L203
+Can execute if block.timestamp > epochEnd, but fails if trigger did not execute. Winners cannot withdraw.
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)// @audit same as require((block.timestamp > id) || idDepegged[id]), hence independent from triggers.marketExists(id)returns(uint256shares){< ...omitted... >uint256entitledShares=beforeWithdraw(id,shares);// @audit ratio is idClaimTVL[id]/ifFinalTVL[id], hence zero unless triggers executed< ...omitted... >emitWithdraw(msg.sender,receiver,owner,id,assets,entitledShares);asset.transfer(receiver,entitledShares);returnentitledShares;}
+Recommended Mitigation Steps
+The latest price is retrieved at the very end of thetriggerEndEpoch(…)for the only purpose of initializing the DepegInsurance event.
+Since it is used for informational purpose (logging / offchain logging) and not for functional purpose to thetriggerEndEpoch(…)execution, it can be relaxed.
+Depending on how the event is used, whengetLatestPrice()is called for informative/logging purpose only, there could be few alternatives:
+log a 0 when SequencerDown or GRACEPERIODTIME not passedlog a 0 when SequencerDown and ignore GRACEPERIODTIME
+Once events are logged off-chain, some post processing may be used to correct/update the values with accurate data.
+3xHarry (Y2K Finance) commented:
+Great catch!
+MiguelBits (Y2K Finance) confirmed and commented:
+Fixed this by changing triggerEndEpoch,AggregatorV3Interface priceFeed = AggregatorV3Interface(vaultFactory.tokenToOracle(insrVault.tokenInsured()));(,int256 price,,,) = priceFeed.latestRoundData();emit DepegInsurance(keccak256(abi.encodePacked(marketIndex,insrVault.idEpochBegin(epochEnd),epochEnd)),tvl,true,epochEnd,block.timestamp,price);
+HickupHH3 (judge) commented:
+Agree with the points raised by the warden, especially on howgetLatestPrice()is merely for informational purposes in the event emission.
+
+[H-03] A design flaw in the case of using 2 oracles (aka PegOracle)
+Submitted by PwnPatrol
+A design flaw in the case of using 2 oracles (aka PegOracle).
+Proof of Concept
+Chainlink provides price feeds denominated either in ETH or USD. But some assets don’t have canonical value accessed on-chain. An example would be BTC and it’s many on-chain forms like renBTC, hitBTC, WBTC, aBTC etc… For example in the case of a market on renBTC depegging from BTC value, probably a pair like renBTC/WBTC would be used (leveraging PegOracle). But even if renBTC perfectly maintains it’s value to BTC, the depeg event can be triggered when WBTC significantly depreciates or appreciates against BTC value. This depeg event will be theoretically unsound since renBTC behaved as expected. The flaw comes from PegOracle because it treats both assets symmetrically.
+This is also true for ETH pairs like stETH/aETH etc.. or stablecoin pairs like FRAX/MIM etc..
+Of course, it should never be used like this because Chainlink provides price feeds with respect to true ETH and USD values but we have found that test files include PegOracle for stablecoin pairs.
+Recommended Mitigation Steps
+Support markets only for assets that have access to an oracle with price against canonical value x/ETH or x/USD.
+MiguelBits (Y2K Finance) disputed
+HickupHH3 (judge) commented:
+From what I understand, the warden is arguing that if the underlying asset is itself a pegged asset, then it wouldn’t be a very good measure against the “canonical price”.Eg.MIM(pegged) ->USDC(underlying), and USDC de-pegs, even though MIM is close to$1, the protocol would recognise this as a de-peg event.I agree with the issue, but disagree with the severity. The choice of the underlying token is quite obviously important; I think the sponsor can attest to this.@3xHarry thoughts? Perhaps low severity is more appropriate because it isn’t a technical vulnerability per-se, more of the choice of underlying to be used.
+HickupHH3 (judge) commented:
+Keeping high severity even though there are a couple of prerequisites:the protocol uses a poor underlying token (Eg. USDT that has de-pegged to$0.97before)underlying token de-pegs substantially to inaccurately trigger (or not trigger) a de-peg eventI classify this as indirect loss of assets from a valid attack path that does not have hand-wavy hypotheticals3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+
+[H-04] Users who deposit in one vault can lose all deposits and receive nothing when counterparty vault has no deposits
+Submitted by rbserver, also found by 0x52, carrotsmuggler, Ch_301, imare, Jeiwan, ladboy233, Lambda, Tointer, unforgiven, and wagmi
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Controller.sol#L148-L192
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L350-L352
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L203-L234
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L378-L426
+Impact
+For a market, if users only deposit in the hedge vault or only deposit in the risk vault but not in both, then these users will lose their deposits and receive nothing when they call the followingwithdrawfunction after the depeg event occurs.
+If the vault that has deposits is called Vault A, and the counterparty vault that has no deposit is called Vault B, then:
+As shown by thetriggerDepegfunction below, when executinginsrVault.sendTokens(epochEnd, address(riskVault))andriskVault.sendTokens(epochEnd, address(insrVault)), the deposits of Vault A are transferred to Vault B but nothing is transferred to Vault A since Vault B has no deposit;WhentriggerDepegexecutesinsrVault.setClaimTVL(epochEnd, riskVault.idFinalTVL(epochEnd))andriskVault.setClaimTVL(epochEnd, insrVault.idFinalTVL(epochEnd)), Vault B’sidClaimTVL[id]is set to Vault A’sidFinalTVL(epochEnd))but Vault A’sidClaimTVL[id]is set to 0 because Vault B’sidFinalTVL(epochEnd)is 0.
+Because of these, calling thebeforeWithdrawfunction below will return a 0entitledAmount, and callingwithdrawthen transfers that 0 amount to the user who has deposited. As a result, these users’ deposits are transferred to the counterparty vault, and they receive nothing at all.
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Controller.sol#L148-L192
+functiontriggerDepeg(uint256marketIndex,uint256epochEnd)publicisDisaster(marketIndex,epochEnd){address[]memoryvaultsAddress=vaultFactory.getVaults(marketIndex);VaultinsrVault=Vault(vaultsAddress[0]);VaultriskVault=Vault(vaultsAddress[1]);//require this function cannot be called twice in the same epoch for the same vaultif(insrVault.idFinalTVL(epochEnd) !=0)revertNotZeroTVL();if(riskVault.idFinalTVL(epochEnd) !=0)revertNotZeroTVL();insrVault.endEpoch(epochEnd,true);riskVault.endEpoch(epochEnd,true);insrVault.setClaimTVL(epochEnd,riskVault.idFinalTVL(epochEnd));riskVault.setClaimTVL(epochEnd,insrVault.idFinalTVL(epochEnd));insrVault.sendTokens(epochEnd,address(riskVault));riskVault.sendTokens(epochEnd,address(insrVault));VaultTVLmemorytvl=VaultTVL(riskVault.idClaimTVL(epochEnd),insrVault.idClaimTVL(epochEnd),riskVault.idFinalTVL(epochEnd),insrVault.idFinalTVL(epochEnd));emitDepegInsurance(keccak256(abi.encodePacked(marketIndex,insrVault.idEpochBegin(epochEnd),epochEnd)),tvl,true,epochEnd,block.timestamp,getLatestPrice(insrVault.tokenInsured()));}
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L350-L352
+functionsetClaimTVL(uint256id,uint256claimTVL)publiconlyController{idClaimTVL[id] =claimTVL;}
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L203-L234
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)marketExists(id)returns(uint256shares){if(msg.sender!=owner&&isApprovedForAll(owner,receiver) ==false)revertOwnerDidNotAuthorize(msg.sender,owner);shares=previewWithdraw(id,assets);// No need to check for rounding error, previewWithdraw rounds up.uint256entitledShares=beforeWithdraw(id,shares);_burn(owner,id,shares);//Taking fee from the amountuint256feeValue=calculateWithdrawalFeeValue(entitledShares,id);entitledShares=entitledShares-feeValue;asset.transfer(treasury,feeValue);emitWithdraw(msg.sender,receiver,owner,id,assets,entitledShares);asset.transfer(receiver,entitledShares);returnentitledShares;}
+https://github.com/code-423n4/2022-09-y2k-finance/blob/main/src/Vault.sol#L378-L426
+functionbeforeWithdraw(uint256id,uint256amount)publicviewreturns(uint256entitledAmount){// in case the risk wins aka no depeg event// risk users can withdraw the hedge (that is paid by the hedge buyers) and risk; withdraw = (risk + hedge)// hedge pay for each hedge seller = ( risk / tvl before the hedge payouts ) * tvl in hedge pool// in case there is a depeg event, the risk users can only withdraw the hedgeif(keccak256(abi.encodePacked(symbol)) ==keccak256(abi.encodePacked("rY2K"))) {if(!idDepegged[id]) {//depeg event did not happen/*entitledAmount =(amount / idFinalTVL[id]) *idClaimTVL[id] +amount;*/entitledAmount=amount.divWadDown(idFinalTVL[id]).mulDivDown(idClaimTVL[id],1ether) +amount;}else{//depeg event did happenentitledAmount=amount.divWadDown(idFinalTVL[id]).mulDivDown(idClaimTVL[id],1ether);}}// in case the hedge wins aka depegging// hedge users pay the hedge to risk users anyway,// hedge guy can withdraw risk (that is transfered from the risk pool),// withdraw = % tvl that hedge buyer owns// otherwise hedge users cannot withdraw any Ethelse{entitledAmount=amount.divWadDown(idFinalTVL[id]).mulDivDown(idClaimTVL[id],1ether);}returnentitledAmount;}
+Proof of Concept
+Please append the following tests intest\AssertTest.t.sol. These tests will pass to demonstrate the described scenarios.
+functiontestWithdrawFromRiskAfterDepegWhenThereIsNoCounterparty()public{vm.deal(chad,AMOUNT*CHAD_MULTIPLIER);vm.startPrank(admin);FakeOraclefakeOracle=newFakeOracle(oracleFRAX,STRIKE_PRICE_FAKE_ORACLE);vaultFactory.createNewMarket(FEE,tokenFRAX,DEPEG_AAA,beginEpoch,endEpoch,address(fakeOracle),"y2kFRAX_99*");vm.stopPrank();addresshedge=vaultFactory.getVaults(1)[0];addressrisk=vaultFactory.getVaults(1)[1];VaultvHedge=Vault(hedge);VaultvRisk=Vault(risk);// chad deposits in risk vault, and no one deposits in hedge vaultvm.startPrank(chad);ERC20(WETH).approve(risk,AMOUNT*CHAD_MULTIPLIER);vRisk.depositETH{value:AMOUNT*CHAD_MULTIPLIER}(endEpoch,chad);assertTrue(vRisk.balanceOf(chad,endEpoch) == (AMOUNT*CHAD_MULTIPLIER));vm.stopPrank();vm.warp(beginEpoch+10days);// depeg occurscontroller.triggerDepeg(SINGLE_MARKET_INDEX,endEpoch);vm.startPrank(chad);// chad withdraws from risk vaultuint256assets=vRisk.balanceOf(chad,endEpoch);vRisk.withdraw(endEpoch,assets,chad,chad);assertTrue(vRisk.balanceOf(chad,endEpoch) ==NULL_BALANCE);uint256entitledShares=vRisk.beforeWithdraw(endEpoch,assets);assertTrue(entitledShares-vRisk.calculateWithdrawalFeeValue(entitledShares,endEpoch) ==ERC20(WETH).balanceOf(chad));// chad receives nothingassertEq(entitledShares,0);assertEq(ERC20(WETH).balanceOf(chad),0);vm.stopPrank();}
+functiontestWithdrawFromHedgeAfterDepegWhenThereIsNoCounterparty()public{vm.deal(alice,AMOUNT);vm.startPrank(admin);FakeOraclefakeOracle=newFakeOracle(oracleFRAX,STRIKE_PRICE_FAKE_ORACLE);vaultFactory.createNewMarket(FEE,tokenFRAX,DEPEG_AAA,beginEpoch,endEpoch,address(fakeOracle),"y2kFRAX_99*");vm.stopPrank();addresshedge=vaultFactory.getVaults(1)[0];addressrisk=vaultFactory.getVaults(1)[1];VaultvHedge=Vault(hedge);VaultvRisk=Vault(risk);// alice deposits in hedge vault, and no one deposits in risk vaultvm.startPrank(alice);ERC20(WETH).approve(hedge,AMOUNT);vHedge.depositETH{value:AMOUNT}(endEpoch,alice);assertTrue(vHedge.balanceOf(alice,endEpoch) == (AMOUNT));vm.stopPrank();vm.warp(beginEpoch+10days);// depeg occurscontroller.triggerDepeg(SINGLE_MARKET_INDEX,endEpoch);vm.startPrank(alice);// alice withdraws from hedge vaultuint256assets=vHedge.balanceOf(alice,endEpoch);vHedge.withdraw(endEpoch,assets,alice,alice);assertTrue(vHedge.balanceOf(alice,endEpoch) ==NULL_BALANCE);uint256entitledShares=vHedge.beforeWithdraw(endEpoch,assets);assertTrue(entitledShares-vHedge.calculateWithdrawalFeeValue(entitledShares,endEpoch) ==ERC20(WETH).balanceOf(alice));// alice receives nothingassertEq(entitledShares,0);assertEq(ERC20(WETH).balanceOf(alice),0);vm.stopPrank();}
+Tools Used
+VSCode
+Recommended Mitigation Steps
+When users only deposit in one vault, and no one deposits in the counterparty vault, the insurance practice of hedging and risking actually does not exist. In this situation, after the epoch is started, the users, who have deposited, should be allowed to withdraw their full deposit amounts.
+3xHarry (Y2K Finance) confirmed
+
+[H-05] LOSS OF PRECISION RESULTING IN WRONG VALUE FOR PRICE RATIO
+Submitted by 0xDecorativePineapple, also found by 0xPanas and Lambda
+The project implements a price oracle in order to get the relative price between the pegged asset and the price of the original asset (example: stETH to ETH). If the ratio (the pegged asset divided by the original asset) is 1 the Token is pegged, otherwise is depegged.
+Below is a code snippet from thePegOracle.solfunction.
+if (price1 > price2) {nowPrice = (price2 * 10000) / price1;} else {nowPrice = (price1 * 10000) / price2;}int256 decimals10 = int256(10**(18 - priceFeed1.decimals()));nowPrice = nowPrice * decimals10;return (roundID1,nowPrice / 1000000,startedAt1,timeStamp1,answeredInRound1);}
+To fetch the ratio at any time, thePegOracle.solperforms some calculations; first the relative price is multiplied by 1e4 and then it returns the above calculation divided by 1e6.
+TheController.solfile makes an external call to thePegOracle.soloracle to get the relative price. After, the value returned, it is multiplied by10**(18-(priceFeed.decimals())and the result represents the relative price between the two assets.
+The result is converted to 18 decimal points in order to be compared with the Strike Price passed by the admin onVaultFactory.sol.
+Due to the fact that the first multiplication is first divided by1e6(PegOracle.sol#L78)( and then re-multiplied byuint256 decimals = 10**(18-(priceFeed.decimals()));(Controller.sol#L299-L300)  it leads to loss of precision. This behavior will make the relative price between the assets incorrect.
+Proof of Concept
+Below is a test that illustrates the above issue for various oracle pairs. The calculated ratio is compared against a modified version of an example of different price denominator, provided byChainlink.
+// SPDX-License-Identifier: MITpragma solidity 0.8.15;import "forge-std/Test.sol";import "../lib/AggregatorV3Interface.sol";//run with: forge test --fork-url https://arb1.arbitrum.io/rpc -vvcontract PegOracle {/***@dev  for example: oracle1 would be stETH / USD, while oracle2 would be ETH / USD oracle***/address public oracle1;address public oracle2;uint8 public decimals;AggregatorV3Interface internal priceFeed1;AggregatorV3Interface internal priceFeed2;/** @notice Contract constructor* @param _oracle1 First oracle address* @param _oracle2 Second oracle address*/constructor(address _oracle1, address _oracle2) {require(_oracle1 != address(0), "oracle1 cannot be the zero address");require(_oracle2 != address(0), "oracle2 cannot be the zero address");require(_oracle1 != _oracle2, "Cannot be same Oracle");priceFeed1 = AggregatorV3Interface(_oracle1);priceFeed2 = AggregatorV3Interface(_oracle2);require((priceFeed1.decimals() == priceFeed2.decimals()),"Decimals must be the same");oracle1 = _oracle1;oracle2 = _oracle2;decimals = priceFeed1.decimals();}/** @notice Returns oracle-fed data from the latest round* @return roundID Current round id* @return nowPrice Current price* @return startedAt Starting timestamp* @return timeStamp Current timestamp* @return answeredInRound Round id for which answer was computed*/function latestRoundData()publicviewreturns (uint80 roundID,int256 nowPrice,uint256 startedAt,uint256 timeStamp,uint80 answeredInRound){(uint80 roundID1,int256 price1,uint256 startedAt1,uint256 timeStamp1,uint80 answeredInRound1) = priceFeed1.latestRoundData();int256 price2 = getOracle2_Price();if (price1 > price2) {nowPrice = (price2 * 10000) / price1;} else {nowPrice = (price1 * 10000) / price2;}int256 decimals10 = int256(10**(18 - priceFeed1.decimals()));nowPrice = nowPrice * decimals10;return (roundID1,nowPrice / 1000000, //1000000,startedAt1,timeStamp1,answeredInRound1);}/* solhint-disbable-next-line func-name-mixedcase *//** @notice Lookup first oracle price* @return price Current first oracle price*/function getOracle1_Price() public view returns (int256 price) {(uint80 roundID1,int256 price1,,uint256 timeStamp1,uint80 answeredInRound1) = priceFeed1.latestRoundData();require(price1 > 0, "Chainlink price <= 0");require(answeredInRound1 >= roundID1,"RoundID from Oracle is outdated!");require(timeStamp1 != 0, "Timestamp == 0 !");return price1;}/* solhint-disbable-next-line func-name-mixedcase *//** @notice Lookup second oracle price* @return price Current second oracle price*/function getOracle2_Price() public view returns (int256 price) {(uint80 roundID2,int256 price2,,uint256 timeStamp2,uint80 answeredInRound2) = priceFeed2.latestRoundData();require(price2 > 0, "Chainlink price <= 0");require(answeredInRound2 >= roundID2,"RoundID from Oracle is outdated!");require(timeStamp2 != 0, "Timestamp == 0 !");return price2;}function latestRoundData2()publicviewreturns (uint80 roundID,int256 nowPrice,uint256 startedAt,uint256 timeStamp,uint80 answeredInRound){(uint80 roundID1,int256 price1,uint256 startedAt1,uint256 timeStamp1,uint80 answeredInRound1) = priceFeed1.latestRoundData();price1 = scalePriceTo18(price1, priceFeed1.decimals());int256 price2 = scalePriceTo18(getOracle2_Price(), priceFeed1.decimals());return (roundID1,price1  * 1e18 / price2,startedAt1,timeStamp1,answeredInRound1);}function scalePriceTo18(int256 _price, uint8 _priceDecimals)internalpurereturns (int256){if (_priceDecimals < 18) {return _price * int256(10 ** uint256(18 - _priceDecimals));} else if (_priceDecimals > 18) {return _price * int256(10 ** uint256(_priceDecimals - 18));}return _price;}}contract TestOracles is Test {address WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;address tokenFRAX = 0x17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F;address tokenMIM = 0xFEa7a6a0B346362BF88A9e4A88416B77a57D6c2A;address tokenFEI = 0x4A717522566C7A09FD2774cceDC5A8c43C5F9FD2;address tokenUSDC = 0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8;address tokenDAI = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1;address tokenSTETH = 0xEfa0dB536d2c8089685630fafe88CF7805966FC3;address oracleFRAX = 0x0809E3d38d1B4214958faf06D8b1B1a2b73f2ab8;address oracleMIM = 0x87121F6c9A9F6E90E59591E4Cf4804873f54A95b;address oracleFEI = 0x7c4720086E6feb755dab542c46DE4f728E88304d;address oracleUSDC = 0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3;address oracleDAI = 0xc5C8E77B397E531B8EC06BFb0048328B30E9eCfB;address oracleSTETH = 0x07C5b924399cc23c24a95c8743DE4006a32b7f2a;address oracleETH = 0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612;address btcEthOracle = 0xc5a90A6d7e4Af242dA238FFe279e9f2BA0c64B2e;PegOracle pegOracle = new PegOracle(oracleSTETH, oracleETH);PegOracle pegOracle2 = new PegOracle(oracleFRAX, oracleFEI);PegOracle pegOracle3 = new PegOracle(oracleDAI, oracleFEI);function setUp() public {}function convertBasedOnContractsLogic(int256 price, uint8 oracleDecimals) public returns(int256 newPrice){uint256 decimals = 10**(18- oracleDecimals );int256 newPrice = price * int256(decimals);return newPrice;}function testOraclePrices() public {(, int256 var1 ,,,) = pegOracle.latestRoundData();emit log_int(convertBasedOnContractsLogic(var1, pegOracle.decimals()));(, int256 var2 ,,,) = pegOracle.latestRoundData2();emit log_int(var2);(, int256 var3 ,,,) = pegOracle2.latestRoundData();emit log_int(convertBasedOnContractsLogic(var3, pegOracle2.decimals()));(, int256 var4 ,,,) = pegOracle2.latestRoundData2();emit log_int(var4);(, int256 var5 ,,,) = pegOracle3.latestRoundData();emit log_int(convertBasedOnContractsLogic(var5, pegOracle3.decimals()));(, int256 var6 ,,,) = pegOracle3.latestRoundData2();emit log_int(var6);}}
+Here is the output after running the with:forge test --fork-url https://arb1.arbitrum.io/rpc -vv:
+990500000000000000
+990544616614592905
+996300000000000000
+1003669952945847834
+996000000000000000
+1003940775578783463
+Recommended Mitigation Steps
+Since the 2 assets are required to having the same amount of decimals a formula that transforms the relative price to 1e18 could be:x * 1e18 / y.
+An example that Chainlink implements, that includes ascalePricefunction, in order to find a different price denominator could be foundhere.
+MiguelBits (Y2K Finance) acknowledged
+HickupHH3 (judge) commented:
+Agree with the issue; the precision loss may be the decisive factor between whether a depeg is ruled to have happened. Since the core functionality and user funds are at stake, the high severity is appropriate here.
+
+[H-06] Griefing attack on the Vaults is possible, withdrawing the winning side stakes
+Submitted by hyh, also found by 0x4non, 0xNazgul, Haruxe, joestakey, KIntern_NA, pauliax, peritoflores, PwnPatrol, Respx, rotcivegaf, scaraven, and Tointer
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+Vulnerability details
+Anyonecan withdraw toreceiveronce thereceiverisisApprovedForAll(owner, receiver). The funds will be sent toreceiver, but it will happen whenever an arbitrarymsg.senderwants. The only precondition is the presence of any approvals.
+This can be easily used to sabotage the system as a whole. Say there are two depositors in the hedge Vault, Bob and David, both trust each other and approved each other. Mike the attacker observing the coming end of epoch where no depeg happened, calls thewithdraw()for both Bob and David in the last block of the epoch. Mike gained nothing, while both Bob and David lost the payoff that was guaranteed for them at this point.
+Setting the severity to be high as this can be routinely used to sabotage the Y2K users, both risk and hedge, depriving them from the payouts whenever they happen to be on the winning side. Usual attackers here can be the users from another side, risk users attacking hedge vault, and vice versa.
+Proof of Concept
+isApprovedForAll()in withdrawal functions checks thereceiverto be approved, not the caller.
+SemiFungibleVault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externalvirtualreturns(uint256shares) {require(msg.sender==owner||isApprovedForAll(owner,receiver),"Only owner can withdraw, or owner has approved receiver for all");
+Vault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)marketExists(id)returns(uint256shares){if(msg.sender!=owner&&isApprovedForAll(owner,receiver) ==false)revertOwnerDidNotAuthorize(msg.sender,owner);
+This way anyone at any time can run withdraw from the Vaults whenever owner has some address approved.
+Recommended Mitigation Steps
+Consider changing the approval requirement to be for the caller, not receiver:
+SemiFungibleVault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externalvirtualreturns(uint256shares) {require(-msg.sender==owner||isApprovedForAll(owner,receiver),+msg.sender==owner||isApprovedForAll(owner,msg.sender),"Only owner can withdraw, or owner has approved receiver for all");
+Vault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)marketExists(id)returns(uint256shares){if(msg.sender!=owner&&-isApprovedForAll(owner,receiver) ==false)+isApprovedForAll(owner,msg.sender) ==false)revertOwnerDidNotAuthorize(msg.sender,owner);
+MiguelBits (Y2K Finance) confirmed and commented:
+Implementing this.
+HickupHH3 (judge) commented:
+Agree with the warden’s finding, and the impact of “depriving them (y2k users) from the payouts whenever they happen to be on the winning side”.
+
+[H-07] Risk users are required to payout if the price of the pegged asset goes higher than underlying
+Submitted by 0x52, also found by 0xDecorativePineapple, hyh, Jeiwan, Lambda, and PwnPatrol
+Insurance is to protect the user in case the pegged asset drops significantly below the underlying but risk users are required to payout if the pegged asset is worth more than the underlying.
+Proof of Concept
+if (price1 > price2) {nowPrice = (price2 * 10000) / price1;} else {nowPrice = (price1 * 10000) / price2;}
+The above lines calculates the ratio using the lower of the two prices, which means that in the scenario, the pegged asset is worth more than the underlying, a depeg event will be triggered. This is problematic for two reasons. The first is that many pegged assets are designed to maintain at least the value of the underlying. They put very strong incentives to keep the asset from going below the peg but usually use much looser policies to bring the asset down to the peg, since an upward break from the peg is usually considered benign. The second is that when a pegged asset moves above the underlying, the users who are holding the asset are benefiting from the appreciation of the asset; therefore the insurance is not needed.
+Because of these two reasons, it is my opinion that sellers would demand a higher premium from buyers as a result of the extra risk introduced by the possibility of having to pay out during an upward depeg. It is also my opinion that these higher premiums would push users seeking insurance to other cheaper products that don’t include this risk.
+Recommended Mitigation Steps
+The ratio returned should always the ratio of the pegged asset to the underlying (i.e. pegged/underlying).
+MiguelBits (Y2K Finance) marked as duplicate and commented:
+Duplicate of26.
+HickupHH3 (judge) commented:
+Not a duplicate.Pegged tokens go both ways: either valued more or less than the asset it’s pegging to (underlying token).The warden is arguing that when the pegged token is worth more than the underlying (eg. worth >$1for a stablecoin), the users are still eligible for a payout, which he argues shouldnt be the case.I agree with the warden; from experience, most projects see it as a positive if their algo stablecoin is worth more than the underlying, and so, wouldn’t do nothing about it. In fact, they’d probably use it as a shilling point to attract more users to mint more of these tokens to help bring the price down. This scenario should not be covered by the insurers.
+
+[H-08] Vault.sol is not EIP-4626 compliant
+Submitted by 0x52, also found by Bahurum, Jeiwan, Lambda, PwnPatrol, and thebensams
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/Vault.sol#L244-L252
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/SemiFungibleVault.sol#L205-L213
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/SemiFungibleVault.sol#L237-L239
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/SemiFungibleVault.sol#L244-L246
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/SemiFungibleVault.sol#L251-L258
+https://github.com/code-423n4/2022-09-y2k-finance/blob/ac3e86f07bc2f1f51148d2265cc897e8b494adf7/src/SemiFungibleVault.sol#L263-L270
+Impact
+Other protocols that integrate with Y2K may wrongly assume that the functions are EIP-4626 compliant. Thus, it might cause integration problems in the future that can lead to wide range of issues for both parties.
+Proof of Concept
+All official EIP-4626 requirements can be found on it’sofficial page. Non-compliant functions are listed below along with the reason they are not compliant:
+The following functions are missing but should be present:
+mint(uint256, address) returns (uint256)redeem(uint256, address, address) returns (uint256)
+The following functions are non-compliant because they don’t account for withdraw and deposit locking:
+maxDepositmaxMintmaxWithdrawmaxRedeem
+All of the above functions should return 0 when their respective functions are disabled (i.e. maxDeposit should return 0 when deposits are disabled)
+previewDeposit is not compliant because it must account for fees which it does not
+totalAssets is not compliant because it does not always return the underlying managed by the vault because it fails to include the assets paid out during a depeg or the end of the epoch.
+Recommended Mitigation Steps
+All functions listed above should be modified to meet the specifications of EIP-4626.
+MiguelBits (Y2K Finance) confirmed
+HickupHH3 (judge) commented:
+The premise is valid because it’s stated in the README:Y2K leverages ERC4626 Vault standard for this protocol, this contract is a fork of that standard, although we replaced all uses of ERC20 to ERC1155.As per the ruling in aprevious contest regarding EIP4626.Judging this and all duplicate regarding EIP4626 implementation as High Risk.
+EIP4626 is aimed to create a consistent and robust implementation patterns for Tokenized Vaults. A slight deviation from 4626 would broke composability and potentially lead to loss of funds. It is counterproductive to implement EIP4626 but does not conform to it fully.The missing functions are the most problematic; one expects themint()andredeem()to be present, but they’re absent instead.Disagree on themax*()functions issues;SemiFungibleVaultis not pausable, functions can’t be disabled / paused. Perhaps the inheriting contracts should override these functions, but the way I see it, they can be arbitrarily set in the template.Agree on subsequent points mentioned.
+
+[H-09] Depeg event can happen at incorrect price
+Submitted by csanuragjain, also found by bin2chen, datapunk, Lambda, R2, rbserver, and unforgiven
+Depeg event can still happen when the price of a pegged asset is equal to the strike price of a Vault which is incorrect.
+This docs clearly mentions:
+“When the price of a pegged asset is below the strike price of a Vault, a Keeper(could be anyone) will trigger the depeg event and both Vaults(hedge and risk) will swap their total assets with the other party.” -https://code4rena.com/contests/2022-09-y2k-finance-contest
+Proof of Concept
+Assume strike price of vault is 1 and current price of pegged asset is also 1User callstriggerDepegfunction which calls isDisaster modifier to check the depeg eligibilityNow lets seeisDisastermodifier
+modifier isDisaster(uint256 marketIndex, uint256 epochEnd) {address[] memory vaultsAddress = vaultFactory.getVaults(marketIndex);if(vaultsAddress.length != VAULTS_LENGTH)revert MarketDoesNotExist(marketIndex);address vaultAddress = vaultsAddress[0];Vault vault = Vault(vaultAddress);if(vault.idExists(epochEnd) == false)revert EpochNotExist();if(vault.strikePrice() < getLatestPrice(vault.tokenInsured()))revert PriceNotAtStrikePrice(getLatestPrice(vault.tokenInsured()));if(vault.idEpochBegin(epochEnd) > block.timestamp)revert EpochNotStarted();if(block.timestamp > epochEnd)revert EpochExpired();_;}
+Assume block.timestamp is at correct timestamp (between idEpochBegin and epochEnd), so none of revert execute. Lets look into the interesting one at
+if(vault.strikePrice() < getLatestPrice(vault.tokenInsured()))revert PriceNotAtStrikePrice(getLatestPrice(vault.tokenInsured()));
+Since in our case price of vault=price of pegged asset so if condition does not execute and finally isDisaster completes without any revert meaning go ahead of depegBut this is incorrect since price is still not below strike price and is just equal
+Recommended Mitigation Steps
+Change the isDisaster modifier to revert when price of a pegged asset is equal to the strike price of a Vault
+if(vault.strikePrice() <= getLatestPrice(vault.tokenInsured()))revert PriceNotAtStrikePrice(getLatestPrice(vault.tokenInsured()));
+MiguelBits (Y2K Finance) disputed and commented:
+After discussion, the docs clearly state only below the strike PriceThis docs clearly mentions:"When the price of a pegged asset is below the strike price of a Vault, a Keeper(could be anyone) will trigger the depeg event and both Vaults(hedge and risk) will swap their total assets with the other party." - https://code4rena.com/contests/2022-09-y2k-finance-contest
+csanuragjain (warden) commented:
+@MiguelBits Exactly when it is below the strike price but in this case depeg is happening when price is equal and not below. Can you please suggest?
+MiguelBits (Y2K Finance) confirmed and commented:
+Oh I see what you mean, need to correct it!
+HickupHH3 (judge) commented:
+Ah, a matter of when the equality sign matters a lot. Critically, in this case. Agree with warden that it should be<=and not<only.
+

@@ -1,0 +1,33 @@
+[H-01] Wrong accounting logic when syncRewards() is called within beforeWithdraw makes withdrawals impossible
+Submitted by Lambda, also found by bin2chen and Critical
+sfrxETH.beforeWithdrawfirst calls thebeforeWithdrawofxERC4626, which decrementsstoredTotalAssetsby the given amount. If the timestamp is greater than therewardsCycleEnd,syncRewardsis called. However, the problem is that the assets have not been transferred out yet, meaningasset.balanceOf(address(this))still has the old value. On the other hand,storedTotalAssetswas already updated. Therefore, the following calculation will be inflated by the amount for which the withdrawal was requested:
+uint256 nextRewards = asset.balanceOf(address(this)) - storedTotalAssets_ - lastRewardAmount_;
+This has severe consequences:
+During the following reward period,lastRewardAmountis too high, which means that too many rewards are paid out to users who want to withdraw. A user could exploit this to steal the assets of other users.WhensyncRewards()is called the next time, it is possible that thenextRewardscalculation underflows becauselastRewardAmount > asset.balanceOf(address(this)). This is very bad becausesyncRewards()will be called in every withdrawal (after therewardsCycleEnd) and none of them will succeed because of the underflow. Depositing more also does not help here, it just increasesasset.balanceOf(address(this))andstoredTotalAssetsby the same amount, which does not eliminate the underflow.
+Note that this bug does not require a malicious user or a targeted attack to surface. It can (and probably will) happen in practice just by normal user interactions with the vault (which is for instance shown in the PoC).
+Proof Of Concept
+Consider the following test:
+function testTotalAssetsAfterWithdraw() public {uint128 deposit = 1 ether;uint128 withdraw = 1 ether;// Mint frxETH to this testing contract from nothing, for testingmintTo(address(this), deposit);// Generate some sfrxETH to this testing contract using frxETHfrxETHtoken.approve(address(sfrxETHtoken), deposit);sfrxETHtoken.deposit(deposit, address(this));require(sfrxETHtoken.totalAssets() == deposit);vm.warp(block.timestamp + 1000);// Withdraw frxETH (from sfrxETH) to this testing contractsfrxETHtoken.withdraw(withdraw, address(this), address(this));vm.warp(block.timestamp + 1000);sfrxETHtoken.syncRewards();require(sfrxETHtoken.totalAssets() == deposit - withdraw);}
+This is a normal user interaction where a user deposits into the vault, and makes a withdrawal some time later. However, at this point thesyncRewards()within thebeforeWithdrawis executed. Because of that, the documented accounting mistake happens and the next call (in fact every call that will be done in the future) tosyncRewards()reverts with an underflow.
+Recommended Mitigation Steps
+CallsyncRewards()before decrementingstoredTotalAssets, i.e.:
+function beforeWithdraw(uint256 assets, uint256 shares) internal override {if (block.timestamp >= rewardsCycleEnd) { syncRewards(); }super.beforeWithdraw(assets, shares); // call xERC4626's beforeWithdraw AFTER}
+Then,asset.balanceOf(address(this))andstoredTotalAssetsare still in sync withinsyncRewards().
+FortisFortuna (Frax) commented:
+Does this only occur if all users try to withdraw at the exact same time? If so, this is a known bug by us and the risk would be low in a real-life deployment scenario. We can also let the users know about the ramping of the rewards.
+FortisFortuna (Frax) marked as duplicate
+Lambda (warden) commented:
+I do not think that this is a duplicate of#311. #311 (and the other issues that are linked there) describe a recoverable issue where the withdrawal for the last user fails (which was listed as a known issue of xERC4626) until the cycle ends.The issue here that is described here and demonstrated in the PoC is a non-recoverable sfrxETH-specific issue (because sfrxETH potentially callssyncRewards()in thebeforeWithdrawfunction) where withdrawals even fail after the cycle has ended. It also does not require all users to withdraw at the same time.
+FortisFortuna (Frax) commented:
+@Lambda What about24?
+Lambda (warden) commented:
+@FortisFortuna Good catch did not see that, yes24addresses the same issue
+FortisFortuna (Frax) confirmed and commented:
+@Lambda I will mark yours as primary because it is better documented.
+corddry (Frax) commented:
+Here’s the proposed fix, which instead moves the syncRewards call to a modifier, so that it actually occurs _before the _withdraw__ instead of in beforeWithdraw. It also adds it to the other 4626 withdraw/redeem functions. Would appreciate feedback if you have anyhttps://github.com/FraxFinance/frxETH-public/pull/2/commits/1ec457c7f5faed618971fb29b9bcc6d54453b093
+Lambda (warden) commented:
+The modifier is currently missing formintandredeem, is that on purpose? Otherwise, it looks good to me
+corddry (Frax) commented:
+Whoops— nice catch,
+added herehttps://github.com/FraxFinance/frxETH-public/commit/996d528b46d1b2a0ac2e5b8f6d2138ccab8e03f5

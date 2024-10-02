@@ -1,0 +1,11 @@
+[H-05]zeroswap/UniswapV2Library.solWrong init code hash inUniswapV2Library.pairFor()will breakUniswapV2Oracle,UniswapV2Router02,SushiRoll
+Submitted by WatchPug
+https://github.com/Plex-Engineer/zeroswap/blob/03507a80322112f4f3c723fc68bed0f138702836/contracts/uniswapv2/libraries/UniswapV2Library.sol#L20-L28
+functionpairFor(addressfactory,addresstokenA,addresstokenB)internalpurereturns(addresspair) {(addresstoken0,addresstoken1) =sortTokens(tokenA,tokenB);pair=address(uint(keccak256(abi.encodePacked(hex'ff',factory,keccak256(abi.encodePacked(token0,token1)),hex'e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303'// init code hash))));}
+Theinit code hashinUniswapV2Library.pairFor()should be updated since the code ofUniswapV2Pairhas been changed. Otherwise, thepairaddress calculated will be wrong, most likely non-existing address.
+There are many other functions and other contracts across the codebase, includingUniswapV2Oracle,UniswapV2Router02, andSushiRoll, that rely on theUniswapV2Library.pairFor()function for the address of the pair, with theUniswapV2Library.pairFor()returning a wrong and non-existing address, these functions and contracts will malfunction.
+Recommended Mitigation Steps
+Update the init code hash fromhex'e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303'to the value ofUniswapV2Factory.pairCodeHash().
+tkkwon1998 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+Amazing catch, because the contract bytecode has been change, the init hash will be different.While the bug seems trivial, it’s impact is a total bricking of all swapping functionality as the Library will cause all Periphery Contracts to call to the wrong addresses.Because of the impact, I agree with High Severity.

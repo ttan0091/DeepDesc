@@ -1,0 +1,20 @@
+[H-05] ArbitraryCallsProposal.sol and ListOnOpenseaProposal.sol safeguards can be bypassed by cancelling in-progress proposal allowing the majority to steal NFT
+Submitted by 0x52
+Note: PartyDAO acknowledges that “canceling an InProgress proposal (mid-step) can leave the governance party in a vulnerable or undesirable state because there is no cleanup logic run during a cancel” in the “Known Issues / Topics” section of the contest readme. I still believe that this vulnerability needs to be mitigated as it can directly lead to loss of user funds.
+Impact
+Majority vote can abuse cancel functionality to steal an NFT owned by the party.
+Proof of Concept
+ArbitraryCallsProposal.sol implements the following safeguards for arbitrary proposals that are not unanimous:
+Prevents the ownership of any NFT changing during the call. It does this by checking the the ownership of all NFTs before and after the call.Prevents calls that would change the approval status of any NFT. This is done by disallowing the “approve” and “setApprovalForAll” function selectors.
+Additionally ListOnOpenseaProposal.sol implements the following safeguards:
+NFTs are first listed for auction on Zora so that if they are listed for a very low price then the auction will keep them from being purchased at such a low price.At the end of the auction the approval is revoked when\_cleanUpListingis called.
+These safeguards are ultimately ineffective though. The majority could use the following steps to steal the NFT:
+Create ListOnOpenseaProposal with high sell price and short cancel delayVote to approve proposal with majority voteExecute first step of proposal, listing NFT on Zora auction for high priceWait for Zora auction to end since the auction price is so high that no one will buy itExecute next step, listing the NFT on Opensea. During this step the contract grants approval of the NFT to the Opensea contractWait for cancelDelay to expireCall PartyGovernance.sol#cancel. This will immediately terminate the Opensea bypassing\_cleanUpListingand keeping the approval to the Opensea contract.Create ArbitraryCallsProposal.sol that lists the NFT on Opensea for virtually nothing. Since only approval selectors have been blacklisted and the NFT does not change ownership, the proposal does not need to be unanimous to execute.Approve proposal and execute.Buy NFT.
+Recommended Mitigation Steps
+When a proposal is canceled, it should call a proposal specific function that makes sure everything is cleaned up. NFTs delisted, approvals revoked, etc.
+merklejerk (PartyDAO) confirmed and commented:
+We will block calls toopensea.validate()in Arbitrary call proposals.
+HardlyDifficult (judge) commented:
+Agree with High risk - in this scenario a majority owner could steal the asset from others in the party.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/139

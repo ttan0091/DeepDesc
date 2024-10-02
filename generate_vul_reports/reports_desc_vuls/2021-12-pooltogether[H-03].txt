@@ -1,0 +1,20 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Lack of validation to ensure that the epoch ID is within the range of the reward epochs.
+Execution process: An attacker can call the `claimRewards` function with epoch IDs beyond the `numberOfEpochs` specified in the promotion, allowing them to claim rewards for non-existent epochs as long as there are enough tokens in the contract.
+Vulnerable code: 
+```solidity
+function claimRewards(uint256 _promotionId, uint256 _epochId) public returns (uint256) {
+    Promotion memory _promotion = _getPromotion(_promotionId);
+    address _user = address(0);
+    uint256 _rewardsAmount;
+    uint256 _userClaimedEpochs = _claimedEpochs[_promotionId][_user];
+    for (uint256 index = 0; index < 1; index++) {
+        require(!_isClaimedEpoch(_userClaimedEpochs, _epochId), "TwabRewards/rewards-already-claimed");
+        _rewardsAmount += _calculateRewardAmount(_promotion, _epochId);
+        _userClaimedEpochs = _updateClaimedEpoch(_userClaimedEpochs, _epochId);
+    }
+    _claimedEpochs[_promotionId][_user] = _userClaimedEpochs;
+    console.log("Claiming for epoch", _epochId, _rewardsAmount);
+    return _rewardsAmount;
+}
+```

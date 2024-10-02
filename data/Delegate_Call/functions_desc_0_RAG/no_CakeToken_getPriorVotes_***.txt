@@ -1,0 +1,35 @@
+This code defines an external view function named getPriorVotes, which is used to retrieve the number of votes an account had at a specific block number. The function is designed to be readonly and does not modify the state of the blockchain.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    The function getPriorVotes takes two parameters: account (an address) and blockNumber (a uint representing a block number).
+    It is declared as external and view, meaning it can be called from outside the contract and does not modify the state.
+
+2. Precondition Check:
+    The function starts with a require statement to ensure that the requested blockNumber is less than the current block number (block.number). If not, it throws an error with the message "CAKE::getPriorVotes: not yet determined".
+
+3. Checkpoints Initialization:
+    It retrieves the number of checkpoints (nCheckpoints) for the given account from the numCheckpoints mapping.
+    If there are no checkpoints (nCheckpoints == 0), the function returns 0 immediately.
+
+4. Recent Balance Check:
+    If there are checkpoints, the function first checks the most recent checkpoint (nCheckpoints  1). If the fromBlock of this checkpoint is less than or equal to the requested blockNumber, it returns the votes from this checkpoint.
+
+5. Implicit Zero Balance Check:
+    If the most recent checkpoint does not satisfy the condition, the function checks if the first checkpoint (checkpoints[account][0]) has a fromBlock greater than the requested blockNumber. If so, it returns 0, indicating that the account had no votes at the requested block number.
+
+6. Binary Search for Exact Block Number:
+    If neither of the above conditions is met, the function performs a binary search to find the exact checkpoint corresponding to the requested blockNumber.
+    It initializes two variables, lower and upper, to represent the bounds of the search range.
+    The binary search loop continues while upper is greater than lower.
+    Inside the loop, it calculates the center index (center) using a formula that ensures ceiling division and avoids overflow.
+    It retrieves the checkpoint at the center index and compares its fromBlock with the requested blockNumber.
+    If the fromBlock matches the requested blockNumber, it returns the votes from this checkpoint.
+    If the fromBlock is less than the requested blockNumber, it updates the lower bound to center.
+    If the fromBlock is greater than the requested blockNumber, it updates the upper bound to center  1.
+
+7. Final Return:
+    Once the loop exits, it returns the votes from the checkpoint at the lower index, which is the closest checkpoint with a fromBlock less than or equal to the requested blockNumber.
+
+This function efficiently retrieves the historical voting power of an account at a specific block number by leveraging checkpoints and a binary search algorithm, ensuring both accuracy and performance.

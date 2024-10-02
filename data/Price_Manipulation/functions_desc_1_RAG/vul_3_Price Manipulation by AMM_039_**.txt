@@ -1,0 +1,27 @@
+This code defines a public view function named getExpectedReturnGivenIn, which calculates the expected return amount for a given input amount of tokens in a stable swap pool. The function takes two parameters: amount, which is the input amount of tokens, and yieldShareIn, a boolean indicating whether the input token is a yield share or a principal share. The function returns a single uint256 value representing the expected output amount.
+
+Here’s a detailed explanation of how this function works:
+
+1. Retrieve Pool Tokens and Amplification Parameter:
+    The function starts by calling getVault().getPoolTokens(getPoolId()) to retrieve the balances of the tokens in the pool. This function returns a tuple containing the total supply of pool tokens, an array of token balances, and the last update timestamp.
+    It then calls _getAmplificationParameter() to get the current amplification parameter (currentAmp) and its status. The amplification parameter is crucial for stable swap calculations as it affects the pricing curve.
+
+2. Determine Token Types:
+    Based on the yieldShareIn boolean, the function determines which token is the input (tokenIn) and which is the output (tokenOut). If yieldShareIn is true, tokenIn is the yield share and tokenOut is the principal share, and vice versa.
+    It then determines the indices of these tokens in the pool (indexIn and indexOut) by comparing their addresses with _token0.
+
+3. Adjust for Swap Fee and Token Rates:
+    The input amount is adjusted to account for the swap fee using _subtractSwapFeeAmount(amount).
+    The balances of the tokens are adjusted by multiplying them with the stored token rates and a precision factor (_TEMPUS_SHARE_PRECISION).
+
+4. Calculate RateAdjusted Swap Amount:
+    The input amount is further adjusted by multiplying it with the stored price per full share of the input token (tokenIn.getPricePerFullShareStored()) and then dividing by the precision factor to get rateAdjustedSwapAmount.
+
+5. Compute Output Amount:
+    The function uses StableMath._calcOutGivenIn to calculate the output amount (amountOut) based on the current amplification parameter, adjusted balances, and the indices of the input and output tokens.
+    The output amount is then adjusted by multiplying it with the precision factor and dividing by the stored price per full share of the output token (tokenOut.getPricePerFullShareStored()).
+
+6. Return the Result:
+    Finally, the function returns the computed amountOut, which represents the expected return amount for the given input amount.
+
+This function is crucial for users who want to know the expected return before making a swap in the stable swap pool, helping them make informed decisions. The function ensures that all calculations consider the current state of the pool, including token balances, amplification parameters, and token prices.

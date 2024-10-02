@@ -1,0 +1,15 @@
+Type of vulnerability: State Confusion Attack
+Cause of vulnerability: Misuse of `lowestQuote` to determine the state of the auction, allowing an attacker to manipulate the state to their advantage.
+Execution process: An attacker creates an auction, bids on it, manipulates the `finalize` function to set `lowestQuote` to `type(uint128).max`, and then cancels the auction and bid to retrieve their tokens, effectively stealing additional tokens from the contract.
+Vulnerable code: 
+```solidity
+// Transfer the left over baseToken
+if (data.totalBaseAmount != data.filledBase) {
+    uint128 unsoldBase = data.totalBaseAmount - data.filledBase;
+    a.params.totalBaseAmount = data.filledBase;
+    SafeTransferLib.safeTransfer(ERC20(a.params.baseToken), a.data.seller, unsoldBase);
+}
+// Calculate quote amount based on clearing price
+uint256 filledQuote = FixedPointMathLib.mulDivDown(clearingQuote, data.filledBase, clearingBase);
+SafeTransferLib.safeTransfer(ERC20(a.params.quoteToken), a.data.seller, filledQuote);
+```

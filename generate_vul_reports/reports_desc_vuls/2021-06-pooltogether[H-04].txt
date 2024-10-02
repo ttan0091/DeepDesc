@@ -1,0 +1,19 @@
+Type of vulnerability: Timelock Bypass
+Cause of vulnerability: Incorrect handling of timelock reset logic
+Execution process:
+1. User calls `withdrawWithTimelockFrom(user, amount=userBalance)` to initiate a withdrawal with a timelock, setting `_unlockTimestamps[user]` to `blockTime + lockDuration`.
+2. User calls `withdrawWithTimelockFrom(user, amount=0)` to reset the timelock duration to 0, making `unlockTimestamp = blockTime`.
+3. The condition `timestamp <= _currentTime()` is true, allowing the user to withdraw the full balance immediately.
+Vulnerable code:
+```solidity
+function withdrawWithTimelockFrom(address user, uint256 amount) {
+    _mintTimelock(user, amount);
+    _unlockTimestamps[user] = block.timestamp + lockDuration;
+    if (amount == 0) {
+        _unlockTimestamps[user] = block.timestamp;
+    }
+    if (_unlockTimestamps[user] <= block.timestamp) {
+        _sweepTimelockBalance(user);
+    }
+}
+```

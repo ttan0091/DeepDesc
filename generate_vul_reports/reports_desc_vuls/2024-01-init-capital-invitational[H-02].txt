@@ -1,0 +1,21 @@
+Type of vulnerability: Arbitrary Token Update
+Cause of vulnerability: Lack of validation on the `tokenOut` parameter during the `updateOrder` function call, allowing the order creator to change `tokenOut` to any token.
+Execution process: The order creator can update the `tokenOut` to a high-value token just before the executor attempts to execute the `fillOrder`, exploiting the executor's approval for managing the new high-value token.
+Vulnerable code: 
+```solidity
+function updateOrder(uint _posId, uint _orderId, uint _triggerPrice_e36, address _tokenOut, uint _limitPrice_e36, uint _collAmt) external {
+    _require(_collAmt != 0, Errors.ZERO_VALUE);
+    Order storage order = __orders[_orderId];
+    _require(order.status == OrderStatus.Active, Errors.INVALID_INPUT);
+    uint initPosId = initPosIds[msg.sender][_posId];
+    _require(initPosId != 0, Errors.POSITION_NOT_FOUND);
+    MarginPos memory marginPos = __marginPositions[initPosId];
+    uint collAmt = IPosManager(POS_MANAGER).getCollAmt(initPosId, marginPos.collPool);
+    _require(_collAmt <= collAmt, Errors.INPUT_TOO_HIGH);
+    order.triggerPrice_e36 = _triggerPrice_e36;
+    order.limitPrice_e36 = _limitPrice_e36;
+    order.collAmt = _collAmt;
+    order.tokenOut = _tokenOut;
+    emit UpdateOrder(initPosId, _orderId, _tokenOut, _triggerPrice_e36, _limitPrice_e36, _collAmt);
+}
+```

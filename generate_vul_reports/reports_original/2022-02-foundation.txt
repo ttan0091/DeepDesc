@@ -1,0 +1,71 @@
+[H-01] NFT owner can create multiple auctions
+Submitted by 0xliumin, also found by leastwood
+NFTMarketReserveAuction.sol#L325-L349NFTMarketReserveAuction.sol#L596-L599
+NFT owner can permanently lock funds of bidders.
+Proof of Concept
+Alice (the attacker) callscreateReserveAuction, and creates one like normal. let this be auction id 1.
+Alice callscreateReserveAuctionagain, before any user has placed a bid (this is easy to guarantee with a deployed attacker contract). We’d expect that Alice wouldn’t be able to create another auction, but she can, because_transferToEscrowdoesn’t revert if there’s an existing auction. let this be Auction id 2.
+SincenftContractToTokenIdToAuctionId[nftContract][tokenId]will contain auction id 2, all bidders will see that auction as the one to bid on (unless they inspect contract events or data manually).
+Alice can now cancel auction id 1, then cancel auction id 2, locking up the funds of the last bidder on auction id 2 forever.
+Recommended Mitigation Steps
+Prevent NFT owners from creating multiple auctions.
+NickCuso (Foundation) confirmed and commented:
+This is a great find!The impact of this bug is:Bidder’s funds are stuck in escrow in an unrecoverable way without an upgrade, and even with an upgrade it would have been non-trivial to offer a migration path to recover the funds (but it would have been possible to recover correctly).It allows sellers to stop the clock and/or back out of an auction. Normally once a bid is received we do not allow the seller to cancel the auction. With this bug, they could have created a new auction and then cancel that in order to back out of the deal entirely. This violates trust with collectors.We have fixed this problem by adding the following code tocreateReserveAuction:// This check must be after _transferToEscrow in case auto-settle was requiredif(nftContractToTokenIdToAuctionId[nftContract][tokenId] !=0) {revertNFTMarketReserveAuction_Already_Listed(nftContractToTokenIdToAuctionId[nftContract][tokenId]);}
+
+[H-02] Creators can steal sale revenue from owners’ sales
+Submitted by IllIllI
+NFTMarketCreators.sol#L158-L160NFTMarketCreators.sol#L196-L198NFTMarketCreators.sol#L97-L99
+According to theREADME.md:
+All sales in the Foundation market will pay the creator 10% royalties on secondary sales. This is not specific to NFTs minted on Foundation, it should work for any NFT. If royalty information was not defined when the NFT was originally deployed, it may be added using the Royalty Registry which will be respected by our market contract.
+Using the Royalty Registry an owner can decide to change the royalty information right before the sale is complete, affecting who gets what.
+Impact
+By updating the registry to include the seller as one of the royalty recipients, the creator can steal the sale price minus fees. This is because if code finds that the seller is a royalty recipient the royalties are all passed to the creator regardless of whether the owner is the seller or not.
+Proof of Concept
+// 4th priority: getRoyalties overrideif(recipients.length==0&&nftContract.supportsERC165Interface(type(IGetRoyalties).interfaceId)) {tryIGetRoyalties(nftContract).getRoyalties{ gas:READ_ONLY_GAS_LIMIT}(tokenId)returns(addresspayable[]memory_recipients,uint256[]memoryrecipientBasisPoints) {if(_recipients.length>0&&_recipients.length==recipientBasisPoints.length) {boolhasRecipient;for(uint256i=0;i<_recipients.length; ++i) {if(_recipients[i] !=address(0)) {hasRecipient=true;if(_recipients[i] ==seller) {return(_recipients,recipientBasisPoints,true);
+https://github.com/code-423n4/2022-02-concur/blob/72b5216bfeaa7c52983060ebfc56e72e0aa8e3b0/contracts/MasterChef.sol#L127-L154
+Whentrueis returned as the final return value above, the following code leavesownerRevas zero becauseisCreatoristrue.
+uint256ownerRev){boolisCreator;(creatorRecipients,creatorShares,isCreator) =_getCreatorPaymentInfo(nftContract,tokenId,seller);// Calculate the Foundation feeuint256fee;if(isCreator&& !_nftContractToTokenIdToFirstSaleCompleted[nftContract][tokenId]) {fee=PRIMARY_FOUNDATION_FEE_BASIS_POINTS;}else{fee=SECONDARY_FOUNDATION_FEE_BASIS_POINTS;}foundationFee= (price*fee) /BASIS_POINTS;if(creatorRecipients.length>0) {if(isCreator) {// When sold by the creator, all revenue is split if applicable.creatorRev=price-foundationFee;}else{// Rounding favors the owner first, then creator, and foundation last.creatorRev= (price*CREATOR_ROYALTY_BASIS_POINTS) /BASIS_POINTS;ownerRevTo=seller;ownerRev=price-foundationFee-creatorRev;}}else{// No royalty recipients found.ownerRevTo=seller;ownerRev=price-foundationFee;}}
+In addition, if the index of the seller in_recipientsis greater thanMAX_ROYALTY_RECIPIENTS_INDEX, then the seller is omitted from the calculation and gets zero (_sendValueWithFallbackWithdraw()doesn’t complain when it sends zero).
+uint256maxCreatorIndex=creatorRecipients.length-1;if(maxCreatorIndex>MAX_ROYALTY_RECIPIENTS_INDEX) {maxCreatorIndex=MAX_ROYALTY_RECIPIENTS_INDEX;}
+https://github.com/code-423n4/2022-02-foundation/blob/4d8c8931baffae31c7506872bf1100e1598f2754/contracts/mixins/NFTMarketFees.sol#L76-L79
+This issue does a lot of damage because the creator can choose whether and when to apply it on a sale-by-sale basis. Two other similar, but separate, exploits are available for the other blocks in_getCreatorPaymentInfo()that return arrays but they either require a malicious NFT implementation or can only specify a static seller for which this will affect things. In all cases, not only may the seller get zero dollars for the sale, but they’ll potentially owe a lot of taxes based on the ‘sale’ price. The attacker may or may not be the creator - creators can be bribed with kickbacks.
+Recommended Mitigation Steps
+Always calculate owner/seller revenue separately from royalty revenue.
+NickCuso (Foundation) confirmed and commented:
+This is a great discovery and a creative way for creators to abuse the system, stealing funds from a secondary sale. Thank you for reporting this.It’s a difficult one for us to address. We want to ensure that NFTs minted on our platform as a split continue to split revenue from the initial sale. We were usingisCreatorfrom_getCreatorPaymentInfoas our way of determining if all the revenue from a sale should go to the royalty recipients, which is a split contract for the use case we are concerned about here.The royalty override makes it easy for a creator to choose to abuse this feature at any time. So that was our primary focus for this fix.This is the change we have made in_getFees:boolisCreator=false;// lookup for tokenCreatortryITokenCreator(nftContract).tokenCreator{ gas:READ_ONLY_GAS_LIMIT}(tokenId)returns(addresspayable_creator) {isCreator=_creator==seller;}catch// solhint-disable-next-line no-empty-blocks{// Fall through}(creatorRecipients,creatorShares) =_getCreatorPaymentInfo(nftContract,tokenId);Since the royalty override is only considered in_getCreatorPaymentInfowe are no longer vulnerable to someone adding logic after the NFT has been released to try and rug pull the current owner(s).It is still possible for someone to try and abuse this logic, but to do so they must have built into the NFT contract itself a way to lie about who thetokenCreatoris before the time of a sale. If we were to detect this happening, we would moderate that collection from the Foundation website. Additionally we will think about a longer term solution here so that this type of attack is strictly not possible with our market contract.
+
+[H-03] An offer made after auction end can be stolen by an auction winner
+Submitted by hyh, also found by leastwood, shenwilly, and WatchPug
+An Offer which is made for an NFT when auction has ended, but its winner hasn’t received the NFT yet, can be stolen by this winner as_transferFromEscrowbeing called by_acceptOfferwill transfer the NFT to the winner, finalising the auction, while no transfer to the user who made the offer will happen.
+This way the auction winner will obtain both the NFT and the offer amount after the fees at no additional cost, at the expense of the user who made the offer.
+Proof of Concept
+When an auction has ended, there is a possibility to make the offers for an auctioned NFT as:
+makeOfferchecks_isInActiveAuction:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketOffer.sol#L200
+_isInActiveAuctionreturns false whenauctionIdToAuction[auctionId].endTime < block.timestamp, somakeOfferabove can proceed:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketReserveAuction.sol#L666-L669
+Then, the auction winner can callacceptOffer -> _acceptOffer(orsetBuyPrice -> _autoAcceptOffer -> _acceptOffer).
+_acceptOfferwill try to transfer directly, and then calls_transferFromEscrow:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketOffer.sol#L262-L271
+If the auction has ended, but a winner hasn’t picked up the NFT yet, the direct transfer will fail, proceeding with_transferFromEscrowin the FNDNFTMarket defined order:
+function _transferFromEscrow(address nftContract,uint256 tokenId,address recipient,address seller) internal override(NFTMarketCore, NFTMarketReserveAuction, NFTMarketBuyPrice, NFTMarketOffer) {super._transferFromEscrow(nftContract, tokenId, recipient, seller);}
+NFTMarketOffer._transferFromEscrow will call super asnftContractToIdToOfferwas already deleted:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketOffer.sol#L296-L302
+NFTMarketBuyPrice._transferFromEscrow will call super as there is no buy price set:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketBuyPrice.sol#L283-L293
+Finally, NFTMarketReserveAuction._transferFromEscrow will send the NFT to the winner via_finalizeReserveAuction, not to the user who made the offer:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketReserveAuction.sol#L556-L560
+Therecipientuser who made the offer is not present in this logic, the NFT is being transferred to theauction.bidder, and the originalacceptOfferwill go through successfully.
+Recommended Mitigation Steps
+An attempt to set a buy price from auction winner will lead to auction finalisation, so_buycannot be called with a not yet finalised auction, this way the NFTMarketReserveAuction._transferFromEscrow L550-L560 logic is called from the NFTMarketOffer._acceptOffer only:
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketOffer.sol#L270
+is the only user of
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketReserveAuction.sol#L550-L560
+This way the fix is to update L556-L560 for the described case as:
+Now:
+// Finalization will revert if the auction has not yet ended._finalizeReserveAuction(auctionId, false);// Finalize includes the transfer, so we are done here.return;
+To be, we leave the NFT in the escrow and let L564 super call to transfer it to the recipient:
+// Finalization will revert if the auction has not yet ended._finalizeReserveAuction(auctionId, true);
+NickCuso (Foundation) confirmed and commented:
+Yes! This was a great find and a major issue with our implementation. I’m very happy that it was flagged by a few different people, it helps raise our confidence that several wardens really dove into the code.It was a big miss on our part that this was not thoroughly tested. Our tests for this scenario confirmed the events and payouts, but did not validate the ownership in the end!The proposed fix is perfect and exactly what we have implemented. This follows the patterns we established well, and actually simplifies the logic here so that things are easier to reason about.
+

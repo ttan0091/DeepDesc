@@ -1,0 +1,15 @@
+[H-02] Anyone can steal CryptoPunk during the deposit flow to WPunkGateway
+Submitted by0x52, also found byDravee,c7e7eff,xiaoming90,KingNFT,Big0XDev, andcccz
+https://github.com/code-423n4/2022-11-paraspace/blob/c6820a279c64a299a783955749fdc977de8f0449/paraspace-core/contracts/ui/WPunkGateway.sol#L77-L95https://github.com/code-423n4/2022-11-paraspace/blob/c6820a279c64a299a783955749fdc977de8f0449/paraspace-core/contracts/ui/WPunkGateway.sol#L129-L155https://github.com/code-423n4/2022-11-paraspace/blob/c6820a279c64a299a783955749fdc977de8f0449/paraspace-core/contracts/ui/WPunkGateway.sol#L167-L193
+All CryptoPunk deposits can be stolen.
+Proof of Concept
+CryptoPunks were created before the ERC721 standard. A consequence of this is that they do not possess thetransferFrommethod. To approximate this a user canofferPunkForSaleToAddressfor a price of 0 to effectively approve the contract totransferFrom.
+WPunkGateway.sol#L77-L95
+function supplyPunk(DataTypes.ERC721SupplyParams[] calldata punkIndexes,address onBehalfOf,uint16 referralCode) external nonReentrant {for (uint256 i = 0; i < punkIndexes.length; i++) {Punk.buyPunk(punkIndexes[i].tokenId);Punk.transferPunk(proxy, punkIndexes[i].tokenId);// gatewayProxy is the sender of this function, not the original gatewayWPunk.mint(punkIndexes[i].tokenId);}Pool.supplyERC721(address(WPunk),punkIndexes,onBehalfOf,referralCode);}
+The current implementation ofWPunkGateway#supplyPunkallows anyone to execute and determine where the nTokens are minted to. To complete the flow supply flow a user would need toofferPunkForSaleToAddressfor a price of 0 toWPunkGateway. After they have done this, anyone can call the function to deposit the punk and mint the nTokens to themselves, effectively stealing it.
+Example:User AownstokenIDof 1. They want to deposit it so they callofferPunkForSaleToAddresswith an amount of 0, effectively approving theWPunkGatewayto transfer their CryptoPunk.User Bmonitors the transactions and immediately callssupplyPunkwith themselves asonBehalfOf. This completes the transfer of the CryptoPunk and deposits it into the pool but mints thenTokenstoUser B, allowing them to effectively steal the CryptoPunk.
+The same fundamental issue exists withacceptBidWithCreditandbatchAcceptBidWithCredit.
+Recommended Mitigation Steps
+Query the punkIndexToAddress to find the owner and only allow owner to deposit:
+for (uint256 i = 0; i < punkIndexes.length; i++) {+       address owner = Punk.punkIndexToAddress(punkIndexes[i].tokenId);+       require(owner == msg.sender);Punk.buyPunk(punkIndexes[i].tokenId);Punk.transferPunk(proxy, punkIndexes[i].tokenId);// gatewayProxy is the sender of this function, not the original gatewayWPunk.mint(punkIndexes[i].tokenId);}
+yubo-ruan (Paraspace) confirmed

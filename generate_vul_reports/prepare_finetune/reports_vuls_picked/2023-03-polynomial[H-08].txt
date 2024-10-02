@@ -1,0 +1,15 @@
+Type of vulnerability: Incorrect Calculation of `usedFunds`
+Cause of vulnerability: The functions `openLong()`, `closeLong()`, `openShort()`, and `closeShort()` do not deduct `hedgingFees` from `usedFunds` to offset the `hedgingFees` that was added due to `_hedge()`.
+Execution process: When a trader executes a trade using `openLong()`, `closeLong()`, `openShort()`, or `closeShort()`, the `_hedge()` function increases `usedFunds` by the margin required, including `hedgingFees`. However, these `hedgingFees` are actually provided by the trader and not the `LiquidityPool`. Therefore, `usedFunds` should be reduced by `hedgingFees` to offset the addition in `_hedge()`.
+Vulnerable code: 
+```solidity
+uint256 fees = orderFee(int256(amount));
+totalCost = tradeCost + fees;
+SUSD.safeTransferFrom(user, address(this), totalCost);
+uint256 hedgingFees = _hedge(int256(amount), false);
+uint256 feesCollected = fees - hedgingFees;
+uint256 externalFee = feesCollected.mulWadDown(devFee);
+SUSD.safeTransfer(feeReceipient, externalFee);
+usedFunds -= int256(tradeCost);
+totalFunds += feesCollected - externalFee;
+```

@@ -1,0 +1,71 @@
+The code provided consists of a Solidity library SafeMath and a contract EtherStore. Below is a detailed explanation of how each part works:
+
+### Library SafeMath
+
+This library defines a single function sub which is used to safely subtract two unsigned integers (uint256).
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+Explanation:
+ Function sub: This function takes two uint256 parameters a and b.
+ Internal and Pure: The function is marked as internal meaning it can only be called from within the library or contracts that inherit from it. It is also marked as pure because it does not read from or modify the state.
+ Assertion: The function uses assert(b <= a) to ensure that b is less than or equal to a. If b is greater than a, the function will throw an exception, which is a way to prevent underflow in the subtraction operation.
+ Return Value: If the assertion passes, the function returns the result of a  b.
+
+### Contract EtherStore
+
+This contract manages balances and allows users to withdraw funds with certain limitations.
+
+solidity
+contract EtherStore {
+    using SafeMath for uint;
+    uint256 public withdrawalLimit = 1 ether;
+    mapping(address => uint256) public balances;
+
+    function withdrawFunds (uint256 _weiToWithdraw) public {
+        require(balances[msg.sender] >= _weiToWithdraw);
+        require(_weiToWithdraw <= withdrawalLimit);
+        require(msg.sender.call.value(_weiToWithdraw)());
+        balances[msg.sender] = balances[msg.sender].sub(_weiToWithdraw);
+    }
+}
+
+
+Explanation:
+ Using SafeMath: The contract uses the SafeMath library for all uint operations to prevent overflow and underflow.
+ State Variables:
+   withdrawalLimit: A public state variable set to 1 ether, representing the maximum amount a user can withdraw at once.
+   balances: A public mapping that associates each address with a balance of wei.
+ Function withdrawFunds:
+   Parameters: The function takes a single parameter _weiToWithdraw of type uint256, representing the amount of wei the user wants to withdraw.
+   Requirements:
+     require(balances[msg.sender] >= _weiToWithdraw): Ensures the user has enough balance to withdraw the requested amount.
+     require(_weiToWithdraw <= withdrawalLimit): Ensures the requested withdrawal amount does not exceed the withdrawal limit.
+     require(msg.sender.call.value(_weiToWithdraw)()): Sends the requested amount of wei to the caller using the lowlevel call function. This is vulnerable to reentrancy attacks.
+   Balance Update: After sending the funds, the function updates the user's balance by subtracting the withdrawn amount using balances[msg.sender].sub(_weiToWithdraw).
+
+### Vulnerability Note
+
+The withdrawFunds function uses the lowlevel call function to send ether, which is vulnerable to reentrancy attacks. An attacker could exploit this by recursively calling withdrawFunds before the balance is updated, potentially draining the contract's funds. This vulnerability is similar to the DAO attack in 2016.
+
+### Recommendations
+
+To mitigate the reentrancy vulnerability, consider using the transfer function or implementing the "checkseffectsinteractions" pattern. Here is an updated version of the withdrawFunds function:
+
+solidity
+function withdrawFunds(uint256 _weiToWithdraw) public {
+    require(balances[msg.sender] >= _weiToWithdraw);
+    require(_weiToWithdraw <= withdrawalLimit);
+    balances[msg.sender] = balances[msg.sender].sub(_weiToWithdraw);
+    msg.sender.transfer(_weiToWithdraw);
+}
+
+
+This version updates the balance before transferring the funds, which prevents reentrancy attacks.

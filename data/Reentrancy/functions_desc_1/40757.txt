@@ -1,0 +1,38 @@
+This code defines a Solidity smart contract named Reentrance. The contract maintains a mapping named userBalance that associates Ethereum addresses with their respective balances.
+
+Here’s a detailed explanation of how this contract works:
+
+1. Mapping Definition:
+    mapping (address => uint) userBalance;
+    This line declares a state variable userBalance which is a mapping that associates Ethereum addresses (of users) with unsigned integer values (representing their balances).
+
+2. Function Definition:
+    function withdrawBalance()
+    This is a public function named withdrawBalance that allows users to withdraw their balance from the contract.
+
+3. Function Logic:
+    if(!(msg.sender.call.value(userBalance[msg.sender])())){ throw; }
+    This line is the core of the function. It attempts to send the user's balance to the user's address using the call function, which is a lowlevel function in Solidity that can send Ether along with the call. The value modifier specifies the amount of Ether to send, which is taken from userBalance[msg.sender].
+    The if condition checks if the call was unsuccessful (i.e., the call returns false). If the call fails, the function throws an exception using throw, which reverts all state changes made during the function call and returns the unused gas.
+
+4. Balance Reset:
+    userBalance[msg.sender] = 0;
+    After attempting to send the Ether, this line sets the user's balance to zero.
+
+Potential Vulnerability:
+ The function withdrawBalance is vulnerable to a reentrancy attack. The issue lies in the order of operations: the contract sends Ether to the user before resetting the user's balance to zero. If the user's contract (or a contract the user controls) implements a fallback function that recursively calls withdrawBalance again before the first call completes, it can repeatedly withdraw Ether from the contract, leading to a drain of funds.
+
+Recommendation:
+ To prevent reentrancy attacks, it is recommended to update the user's balance to zero before sending Ether. This ensures that subsequent calls to withdrawBalance by the same user will not find any balance to withdraw. This pattern is often referred to as the "checkseffectsinteractions" pattern.
+
+Here is a revised version of the function to mitigate the reentrancy vulnerability:
+
+solidity
+function withdrawBalance() public {
+    uint amount = userBalance[msg.sender];
+    userBalance[msg.sender] = 0;
+    if(!(msg.sender.call.value(amount)())) { throw; }
+}
+
+
+In this revised version, the user's balance is set to zero before the Ether is sent, which prevents the reentrancy attack.

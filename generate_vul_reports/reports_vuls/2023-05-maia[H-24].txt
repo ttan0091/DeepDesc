@@ -1,0 +1,18 @@
+[H-24] A malicious user can set any contract as a localhTokenfor an underlying token since there is no access control for_addLocalToken
+Submitted byxuwinnie
+A malicious user can deliberately set an irrelevant (or even poisonous) localhTokenfor an underlying token, as anyone can directly access_addLocalTokenat the root chain without callingaddLocalTokenat the branch chain first.
+Proof of Concept
+function addLocalToken(address _underlyingAddress) external payable virtual {//Get Token Infostring memory name = ERC20(_underlyingAddress).name();string memory symbol = ERC20(_underlyingAddress).symbol();//Create TokenERC20hToken newToken = ITokenFactory(hTokenFactoryAddress).createToken(name, symbol);//Encode Databytes memory data = abi.encode(_underlyingAddress, newToken, name, symbol);//Pack FuncIdbytes memory packedData = abi.encodePacked(bytes1(0x02), data);//Send Cross-Chain request (System Response/Request)IBridgeAgent(localBridgeAgentAddress).performCallOut{value: msg.value}(msg.sender, packedData, 0, 0);}
+The intended method to add a new local token for an underlying is by calling the functionaddLocalTokenat the branch chain. However, it appears that the last line of code,IBridgeAgent(localBridgeAgentAddress).performCallOut{value: msg.value}(msg.sender, packedData, 0, 0);usesperformCallOutinstead ofperformSystemCallOut. This means that users can directlycallOutat the branch bridge agent with_params = abi.encodePacked(bytes1(0x02), abi.encode(_underlyingAddress, anyContract, name, symbol))to invoke_addLocalTokenat the root chain without callingaddLocalTokenfirst. As a result, they may set an arbitrary contract as the local token. It’s worth noting that the impact is irreversible, as there is no mechanism to modify or delete local tokens, meaning that the underlying token can never be properly bridged in the future.
+The branch hToken is called by functionbridgeInwhenredeemDepositorclearToken:
+function bridgeIn(address _recipient, address _localAddress, uint256 _amount)externalvirtualrequiresBridgeAgent{ERC20hTokenBranch(_localAddress).mint(_recipient, _amount);}
+Below are several potential exploitation methods:
+If a regular ERC20 contract with admin minting permissions is set, the exploiter can mint an unlimited amount of local tokens for themselves. By bridging them, they can receive an arbitrary amount of global tokens at the root chain.If an unrelated contract with an emptymintfunction is set, the underlying asset would be unable to be bridged in from the root chain, and users who attempt to do so could lose their assets.If a malicious contract is set, gas grieving is possible.This contract may serve as an intermediary for re-entrancy (I haven’t found a concrete way so far, but there is a potential risk).
+Recommended Mitigation Steps
+UseperformSystemCallOutandexecuteSystemRequestto send Cross-Chain requests for adding a local token.
+Assessed type
+Access Control
+0xBugsy (Maia) confirmed and commented:
+In fact, theperformSystemCalloutshould be used there and notperformCallout, since this demands passing execution through the router first.
+0xLightt (Maia) commented:
+Addressedhere.

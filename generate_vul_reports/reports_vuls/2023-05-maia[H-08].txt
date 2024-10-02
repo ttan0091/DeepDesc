@@ -1,0 +1,18 @@
+[H-08] Due to inadequate checks, an adversary can callBranchBridgeAgent#retrieveDepositwith an invalid_depositNonce, which would lead to a loss of other users’ deposits.
+Submitted byEmmanuel, also found byxuwinnie
+An attacker will cause the user’s funds to be collected and locked on Branch chain without it being recorded on the root chain.
+Proof of Concept
+Anyone can callBranchBridgeAgent#retrieveDepositwith an invalid_depositNonce:
+functionretrieveDeposit(uint32_depositNonce)externalpayablelockrequiresFallbackGas{//Encode Data for cross-chain call.bytesmemorypackedData=abi.encodePacked(bytes1(0x08),_depositNonce,msg.value.toUint128(),uint128(0));//Update State and Perform Call_sendRetrieveOrRetry(packedData);}
+For example, if globaldepositNonceis “x”, an attacker can callretrieveDeposit(x+y).RootBridgeAgent#anyExecutewill be called and theexecutionHistoryfor thedepositNoncethat the attacker specified would be updated to true.
+functionanyExecute(bytescalldatadata){.../// DEPOSIT FLAG: 8 (retrieveDeposit)elseif(flag==0x08) {//Get nonceuint32nonce=uint32(bytes4(data[1:5]));//Check if tx has already been executedif(!executionHistory[fromChainId][uint32(bytes4(data[1:5]))]) {//Toggle Nonce as executedexecutionHistory[fromChainId][nonce] =true;//Retry failed fallback(success,result) = (false,"");}else{_forceRevert();//Return true to avoid triggering anyFallback in case of `_forceRevert()` failurereturn(true,"already executed tx");}}...}
+This means, that when a user makes a deposit on theBranchBridgeAgentand their deposit gets assigned adepositNonce, which the attacker previously calledretrieveDepositfor, their tokens would be collected on theBranchBridgeAgent, but would not succeed onRootBridgeAgent. This is becauseexecutionHistoryfor thatdepositNoncehas already been maliciously set to true.
+Attack Scenario
+The current globaldepositNonceis 50.An attacker callsretrieveDeposit(60), which would updateexecutionHistoryofdepositNonce(60) to true on the Root chain.When a user tries to call any of the functions (saycallOutAndBridge) and gets assigneddepositNonceof 60, it won’t be executed on root chain becauseexecutionHistoryfordepositNonce(60) is already set to true.A user won’t also be able to claim their tokens becauseanyFallbackwas not triggered. So they have lost their deposit.
+Recommended Mitigation Steps
+A very simple and effective solution is to ensure that in theBranchBridgeAgent#retrieveDepoitfunction,msg.sender==getDeposit[_depositNonce].owneris called just like it was done inBranchBridgeAgent#retryDeposit.
+Assessed type
+Invalid Validation
+0xBugsy (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

@@ -1,0 +1,40 @@
+Type of vulnerability: Uneven Distribution of Performance Fee
+
+Cause of vulnerability: The performance fee is deducted from the premium collected but not factored into the token price computation, leading to an uneven distribution of the fee among users.
+
+Execution process: A user can evade the performance fee and gain an advantage over other users by triggering a withdrawal before the performance fee is deducted, resulting in other users bearing the full charge of the fee.
+
+Vulnerable code: 
+```solidity
+function _resetTrade() internal {
+    positionData.positionId = 0;
+    (uint256 totalMargin,) = PERP_MARKET.remainingMargin(address(this));
+    PERP_MARKET.transferMargin(-int256(totalMargin));
+    usedFunds -= totalMargin;
+    uint256 fees = positionData.premiumCollected.mulWadDown(performanceFee);
+    if (fees > 0) SUSD.safeTransfer(feeReceipient, fees);
+    totalFunds += positionData.premiumCollected - fees;
+    totalFunds -= usedFunds;
+    positionData.premiumCollected = 0;
+    positionData.totalMargin = 0;
+    usedFunds = 0;
+}
+
+function getTokenPrice() public view returns (uint256) {
+    if (totalFunds == 0) {
+        return 1e18;
+    }
+    uint256 totalSupply = getTotalSupply();
+    if (positionData.positionId == 0) {
+        return totalFunds.divWadDown(totalSupply);
+    }
+    uint256 totalMargin;
+    (uint256 markPrice, bool isInvalid) = EXCHANGE.getMarkPrice();
+    require(!isInvalid);
+    (totalMargin, isInvalid) = PERP_MARKET.remainingMargin(address(this));
+    require(!isInvalid);
+    uint256 totalValue = totalFunds + positionData.premiumCollected + totalMargin + positionData.totalCollateral;
+    totalValue -= (usedFunds + markPrice.mulWadDown(positionData.shortAmount));
+    return totalValue.divWadDown(totalSupply);
+}
+```

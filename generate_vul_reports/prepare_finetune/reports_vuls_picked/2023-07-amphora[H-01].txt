@@ -1,0 +1,20 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `_withdraw` function does not follow the Checks-Effects-Interactions (CEI) pattern, updating the state (burning tokens) after the token transfer.
+Execution process: An attacker can call the `withdraw` function, which triggers the `_withdraw` function. The `_withdraw` function transfers tokens to the attacker before burning them. The attacker's contract can then re-enter the `withdraw` function via its fallback function, repeating the process and draining all tokens from the contract.
+Vulnerable code: 
+```solidity
+function withdraw(uint256 _susdAmount) external override {
+    _withdraw(_susdAmount, _msgSender());
+}
+
+function _withdraw(uint256 _susdAmount, address _target) internal paysInterest whenNotPaused {
+    if (reserveAmount == 0) revert USDA_EmptyReserve();
+    if (_susdAmount == 0) revert USDA_ZeroAmount();
+    if (_susdAmount > this.balanceOf(_msgSender())) revert USDA_InsufficientFunds();
+    // Account for the susd withdrawn
+    reserveAmount -= _susdAmount;
+    sUSD.transfer(_target, _susdAmount);
+    _burn(_msgSender(), _susdAmount);
+    emit Withdraw(_target, _susdAmount);
+}
+```

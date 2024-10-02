@@ -1,0 +1,29 @@
+[H-06] Griefing attack on the Vaults is possible, withdrawing the winning side stakes
+Submitted by hyh, also found by 0x4non, 0xNazgul, Haruxe, joestakey, KIntern_NA, pauliax, peritoflores, PwnPatrol, Respx, rotcivegaf, scaraven, and Tointer
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+Vulnerability details
+Anyonecan withdraw toreceiveronce thereceiverisisApprovedForAll(owner, receiver). The funds will be sent toreceiver, but it will happen whenever an arbitrarymsg.senderwants. The only precondition is the presence of any approvals.
+This can be easily used to sabotage the system as a whole. Say there are two depositors in the hedge Vault, Bob and David, both trust each other and approved each other. Mike the attacker observing the coming end of epoch where no depeg happened, calls thewithdraw()for both Bob and David in the last block of the epoch. Mike gained nothing, while both Bob and David lost the payoff that was guaranteed for them at this point.
+Setting the severity to be high as this can be routinely used to sabotage the Y2K users, both risk and hedge, depriving them from the payouts whenever they happen to be on the winning side. Usual attackers here can be the users from another side, risk users attacking hedge vault, and vice versa.
+Proof of Concept
+isApprovedForAll()in withdrawal functions checks thereceiverto be approved, not the caller.
+SemiFungibleVault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externalvirtualreturns(uint256shares) {require(msg.sender==owner||isApprovedForAll(owner,receiver),"Only owner can withdraw, or owner has approved receiver for all");
+Vault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)marketExists(id)returns(uint256shares){if(msg.sender!=owner&&isApprovedForAll(owner,receiver) ==false)revertOwnerDidNotAuthorize(msg.sender,owner);
+This way anyone at any time can run withdraw from the Vaults whenever owner has some address approved.
+Recommended Mitigation Steps
+Consider changing the approval requirement to be for the caller, not receiver:
+SemiFungibleVault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/SemiFungibleVault.sol#L110-L119
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externalvirtualreturns(uint256shares) {require(-msg.sender==owner||isApprovedForAll(owner,receiver),+msg.sender==owner||isApprovedForAll(owner,msg.sender),"Only owner can withdraw, or owner has approved receiver for all");
+Vault’s withdraw:
+https://github.com/code-423n4/2022-09-y2k-finance/blob/2175c044af98509261e4147edeb48e1036773771/src/Vault.sol#L203-L218
+functionwithdraw(uint256id,uint256assets,addressreceiver,addressowner)externaloverrideepochHasEnded(id)marketExists(id)returns(uint256shares){if(msg.sender!=owner&&-isApprovedForAll(owner,receiver) ==false)+isApprovedForAll(owner,msg.sender) ==false)revertOwnerDidNotAuthorize(msg.sender,owner);
+MiguelBits (Y2K Finance) confirmed and commented:
+Implementing this.
+HickupHH3 (judge) commented:
+Agree with the warden’s finding, and the impact of “depriving them (y2k users) from the payouts whenever they happen to be on the winning side”.

@@ -1,0 +1,22 @@
+Type of vulnerability: Incorrect Exchange Rate Update
+
+Cause of vulnerability: The `unstake` function computes the shares to be removed using the old exchange rate before updating the exchange rate, leading to an incorrect calculation of shares to be removed.
+
+Execution process: 
+1. User calls `unstake(1000)` with an amount of 1000 tokens.
+2. The function computes `validatorSharesRemove` using the old exchange rate: `validatorSharesRemove = tokensToShares(amount, v.exchangeRate)`.
+3. The function then updates the exchange rate if the validator is not disabled.
+4. The user loses rewards because the shares are burned based on the old exchange rate, which is lower than the updated rate.
+
+Vulnerable code:
+```solidity
+// @audit shares are computed here with old rate
+uint128 validatorSharesRemove = tokensToShares(amount, v.exchangeRate);
+require(validatorSharesRemove > 0, "Unstake amount is too small");
+if (v.disabledEpoch == 0) {
+    // @audit rates are updated here
+    updateGlobalExchangeRate();
+    updateValidator(v);
+    // ...
+}
+```

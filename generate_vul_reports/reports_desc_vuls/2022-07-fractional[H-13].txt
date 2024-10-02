@@ -1,0 +1,17 @@
+Type of vulnerability: Reentrancy Attack
+Cause of vulnerability: Lack of proper Checks, Effects, Interactions (CEI) pattern implementation
+Execution process: An attacker creates a custom FERC1155 token (evil_token), sets up a vault with it, and deposits ether. When calling the `commit` function, the custom token reenters the `commit` function multiple times, draining ether from the migration module to the buyout module.
+Vulnerable code: 
+```solidity
+// modules/Migration.sol::commit
+// proposal.isCommited and started are set after the out going calls (i.e. start, setApprovalFor)
+// Mitigation idea: set the values before the out going calls
+206 if(currentPrice>proposal.targetPrice) {
+207     // Sets token approval to the buyout contract
+208     IFERC1155(token).setApprovalFor(address(buyout),id,true);
+209     // Starts the buyout process
+210     IBuyout(buyout).start{value:proposal.totalEth}(_vault);
+211     proposal.isCommited=true;
+212     started=true;
+213 }
+```

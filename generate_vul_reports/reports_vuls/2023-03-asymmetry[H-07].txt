@@ -1,0 +1,39 @@
+[H-07]Reth.sol: Withdrawals are unreliable and depend on excessRocketDepositPoolbalance which can brick the whole protocol
+Submitted byHollaDieWaldfee, also found byMiloTruck,d3e4,HHK,0Kage,0xRobocop,0x52,adriro,igingu,Cryptor,carrotsmuggler, andToonVH
+The Asymmetry protocol promises that a user can callSafETH.unstakeat all times. What I mean by that is that a user should be able at all times to burn hisSafETHtokens and receiveETHin return. This requires that the derivatives held by the protocol can at all times be withdrawn (i.e. converted toETH).
+Also therebalanceToWeightsfunctionality requires that the derivatives can be withdrawn at all times. If a derivative cannot be withdrawn then therebalanceToWeightsfunction cannot be executed which means that the protocol cannot be adjusted to use different derivatives.
+For theWstEthandSfrxEthderivatives this is achieved by swapping the derivative in a Curve pool forETH. The liquidity in the respective Curve pool ensures that withdrawals can be processed at all times.
+TheRethderivative works differently.
+Withdrawals are made by calling theRocketTokenRETH.burnfunction:
+Link
+functionwithdraw(uint256amount)externalonlyOwner{// @audit this is how rETH is converted to ETHRocketTokenRETHInterface(rethAddress()).burn(amount);// solhint-disable-next-line(boolsent, ) =address(msg.sender).call{value:address(this).balance}("");require(sent,"Failed to send Ether");}
+The issue with this is that theRocketTokenRETH.burnfunction only allows forexcess balanceto be withdrawn. I.e. ETH that has been deposited by stakers but that is not yet staked on the Ethereum beacon chain. So Rocketpool allows users to burnrETHand withdrawETHas long as the excess balance is sufficient.
+The issue is obvious now: If there is no excess balance because enough users burnrETHor the Minipool capacity increases, the Asymmetry protocol is bascially unable to operate.
+Withdrawals are then impossible which bricksSafEth.unstakeandSafEth.rebalanceToWeights.
+Proof of Concept
+I show in this section how the current withdrawal flow for theRethderivative is dependend on there beingexcess balancein the RocketDepositPool.
+The current withdrawal flow callsRocketTokenRETH.burnwhich executes this code:
+Link
+functionburn(uint256_rethAmount)overrideexternal{// Check rETH amountrequire(_rethAmount>0,"Invalid token burn amount");require(balanceOf(msg.sender) >=_rethAmount,"Insufficient rETH balance");// Get ETH amountuint256ethAmount=getEthValue(_rethAmount);// Get & check ETH balanceuint256ethBalance=getTotalCollateral();require(ethBalance>=ethAmount,"Insufficient ETH balance for exchange");// Update balance & supply_burn(msg.sender,_rethAmount);// Withdraw ETH from deposit pool if requiredwithdrawDepositCollateral(ethAmount);// Transfer ETH to sendermsg.sender.transfer(ethAmount);// Emit tokens burned eventemitTokensBurned(msg.sender,_rethAmount,ethAmount,block.timestamp);}
+This executeswithdrawDepositCollateral(ethAmount):
+Link
+functionwithdrawDepositCollateral(uint256_ethRequired)private{// Check rETH contract balanceuint256ethBalance=address(this).balance;if(ethBalance>=_ethRequired) {return; }// WithdrawRocketDepositPoolInterfacerocketDepositPool=RocketDepositPoolInterface(getContractAddress("rocketDepositPool"));rocketDepositPool.withdrawExcessBalance(_ethRequired.sub(ethBalance));}
+This then callsrocketDepositPool.withdrawExcessBalance(_ethRequired.sub(ethBalance))to get theETHfrom theexcess balance:
+Link
+functionwithdrawExcessBalance(uint256_amount)overrideexternalonlyThisLatestContractonlyLatestContract("rocketTokenRETH", msg.sender) {// Load contractsRocketTokenRETHInterfacerocketTokenRETH=RocketTokenRETHInterface(getContractAddress("rocketTokenRETH"));RocketVaultInterfacerocketVault=RocketVaultInterface(getContractAddress("rocketVault"));// Check amountrequire(_amount<=getExcessBalance(),"Insufficient excess balance for withdrawal");// Withdraw ETH from vaultrocketVault.withdrawEther(_amount);// Transfer to rETH contractrocketTokenRETH.depositExcess{value:_amount}();// Emit excess withdrawn eventemitExcessWithdrawn(msg.sender,_amount,block.timestamp);}
+And this function reverts if theexcess balanceis insufficient which you can see in therequire(_amount <= getExcessBalance(), "Insufficient excess balance for withdrawal");check.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+The solution for this issue is to have an alternative withdrawal mechanism in case theexcess balancein the RocketDepositPool is insufficient to handle the withdrawal.
+The alternative withdrawal mechanism is to sell therETHtokens via the Uniswap pool.
+You can use theRocketDepositPool.getExcessBalanceto check if there is sufficient excessETHto withdraw from Rocketpool or if the withdrawal must be made via Uniswap.
+The pseudocode of the new withdraw flow looks like this:
+function withdraw(uint256 amount) external onlyOwner {if (rocketDepositPool excess balance is sufficient) {RocketTokenRETHInterface(rethAddress()).burn(amount);// solhint-disable-next-line(bool sent, ) = address(msg.sender).call{value: address(this).balance}("");require(sent, "Failed to send Ether");} else {// swap rETH for ETH via Uniswap pool}}
+I also wrote the code for the changes that I suggest:
+diff --git a/contracts/SafEth/derivatives/Reth.sol b/contracts/SafEth/derivatives/Reth.solindex b6e0694..b699d5c 100644--- a/contracts/SafEth/derivatives/Reth.sol+++ b/contracts/SafEth/derivatives/Reth.sol@@ -105,11 +105,24 @@ contract Reth is IDerivative, Initializable, OwnableUpgradeable {@notice - Convert derivative into ETH*/function withdraw(uint256 amount) external onlyOwner {-        RocketTokenRETHInterface(rethAddress()).burn(amount);-        // solhint-disable-next-line-        (bool sent, ) = address(msg.sender).call{value: address(this).balance}(-            ""-        );+        if (canWithdrawFromRocketPool(amount)) {+            RocketTokenRETHInterface(rethAddress()).burn(amount);+            // solhint-disable-next-line+        } else {++            uint256 minOut = ((((poolPrice() * amount) / 10 ** 18) *+                ((10 ** 18 - maxSlippage))) / 10 ** 18);++            IWETH(W_ETH_ADDRESS).deposit{value: msg.value}();+            swapExactInputSingleHop(+                rethAddress(),+                W_ETH_ADDRESS,+                500,+                amount,+                minOut+            );+        }+        (bool sent, ) = address(msg.sender).call{value: address(this).balance}("");require(sent, "Failed to send Ether");}@@ -149,6 +162,21 @@ contract Reth is IDerivative, Initializable, OwnableUpgradeable {_amount >= rocketDAOProtocolSettingsDeposit.getMinimumDeposit();}+    function canWithdrawFromRocketPool(uint256 _amount) private view returns (bool) {+        address rocketDepositPoolAddress = RocketStorageInterface(+            ROCKET_STORAGE_ADDRESS+        ).getAddress(+                keccak256(+                    abi.encodePacked("contract.address", "rocketDepositPool")+                )+            );+        RocketDepositPoolInterface rocketDepositPool = RocketDepositPoolInterface(+                rocketDepositPoolAddress+            );+        uint256 _ethAmount = RocketTokenRETHInterface(rethAddress()).getEthValue(_amount);+        return rocketDepositPool.getExcessBalance() >= _ethAmount;+    }+
+toshiSat (Asymmetry) confirmed, but disagreed with severity and commented:
+The deposit pool is mostly always full, but the warden does have a point and we should allow for multiple options.
+Asymmetry mitigated:
+Check if withdraw from deposit contract possible.
+Status:Sub-optimally mitigated. Full details in reports fromd3e4,adriro, and0x52.

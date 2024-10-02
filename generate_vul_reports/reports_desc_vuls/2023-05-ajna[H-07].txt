@@ -1,0 +1,39 @@
+Type of vulnerability: Reentrancy and Logic Error
+Cause of vulnerability: Mismatch in balance updates between the PositionManager and the Pool contracts due to insufficient allowance checks.
+Execution process: A user sets a minimal allowance for the PositionManager, invokes the memorializePositions function, and repeats this process until the Pool's state shows their balance as zero, thereby inflating their position value.
+Vulnerable code: 
+```solidity
+function memorializePositions(MemorializePositionsParams calldata params_) external override {
+    EnumerableSet.UintSet storage positionIndex = positionIndexes[params_.tokenId];
+    IPool pool = IPool(poolKey[params_.tokenId]);
+    address owner = ownerOf(params_.tokenId);
+    uint256 indexesLength = params_.indexes.length;
+    uint256 index;
+    for (uint256 i = 0; i < indexesLength; ) {
+        index = params_.indexes[i];
+        // record bucket index at which a position has added liquidity
+        // slither-disable-next-line unused-return
+        positionIndex.add(index);
+        (uint256 lpBalance, uint256 depositTime) = pool.lenderInfo(index, owner);
+        Position memory position = positions[params_.tokenId][index];
+        // check for previous deposits
+        if (position.depositTime != 0) {
+            // check that bucket didn't go bankrupt after prior memorialization
+            if (_bucketBankruptAfterDeposit(pool, index, position.depositTime)) {
+                // if bucket did go bankrupt, zero out the LP tracked by position manager
+                position.lps = 0;
+            }
+        }
+        // update token position LP
+        position.lps += lpBalance;
+        // set token's position deposit time to the original lender's deposit time
+        position.depositTime = depositTime;
+        // save position in storage
+        positions[params_.tokenId][index] = position;
+        unchecked { ++i; }
+    }
+    // update pool LP accounting and transfer ownership of LP to PositionManager contract
+    pool.transferLP(owner, address(this), params_.indexes);
+    emit MemorializePosition(owner, params_.tokenId, params_.indexes);
+}
+```

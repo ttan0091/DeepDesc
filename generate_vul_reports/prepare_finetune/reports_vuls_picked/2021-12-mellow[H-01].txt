@@ -1,0 +1,28 @@
+Type of vulnerability: Precision Loss Leading to Insufficient Balance
+Cause of vulnerability: Precision loss in the calculation of `yTokenAmount` due to integer division, resulting in `yToken.withdraw()` withdrawing less tokens than intended.
+Execution process: 
+1. A user calls `LpIssuer.withdraw()` with a specified token amount.
+2. `YearnVault.pull()` is invoked with the token amounts.
+3. `yTokenAmount` is calculated using integer division, leading to precision loss.
+4. `yToken.withdraw()` is called with the potentially truncated `yTokenAmount`.
+5. The actual withdrawn amount is less than the intended amount, causing `IERC20(_vaultTokens[i]).safeTransfer(to, actualTokenAmounts[i])` to revert due to insufficient balance.
+Vulnerable code: 
+```solidity
+for(uint256 i = 0; i < _yTokens.length; i++) {
+    if(tokenAmounts[i] == 0) {
+        continue;
+    }
+    IYearnVault yToken = IYearnVault(_yTokens[i]);
+    uint256 yTokenAmount = ((tokenAmounts[i] * (10**yToken.decimals())) / yToken.pricePerShare());
+    uint256 balance = yToken.balanceOf(address(this));
+    if(yTokenAmount > balance) {
+        yTokenAmount = balance;
+    }
+    if(yTokenAmount == 0) {
+        continue;
+    }
+    yToken.withdraw(yTokenAmount, to, maxLoss);
+    (tokenAmounts[i], address(this));
+}
+actualTokenAmounts = tokenAmounts;
+```

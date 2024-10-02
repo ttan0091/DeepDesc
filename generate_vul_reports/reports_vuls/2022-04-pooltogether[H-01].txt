@@ -1,0 +1,17 @@
+[H-01] A malicious early user/attacker can manipulate the vault’spricePerShareto take an unfair share of future users’ deposits
+Submitted by WatchPug, also found by 0xDjango, berndartmueller, CertoraInc, gzeon, kebabsec, leastwood, Tadashi, and unforgiven
+This is a well-known attack vector for new contracts that utilize pricePerShare for accounting.
+AaveV3YieldSource.sol#L352-L374
+/***@noticeCalculates the number of shares that should be minted or burnt when a user deposit or withdraw.*@param_tokensAmount of asset tokens*@returnNumber of shares.*/function_tokenToShares(uint256_tokens)internalviewreturns(uint256) {uint256_supply=totalSupply();// shares = (tokens * totalShares) / yieldSourceATokenTotalSupplyreturn_supply==0?_tokens:_tokens.mul(_supply).div(aToken.balanceOf(address(this)));}/***@noticeCalculates the number of asset tokens a user has in the yield source.*@param_sharesAmount of shares*@returnNumber of asset tokens.*/function_sharesToToken(uint256_shares)internalviewreturns(uint256) {uint256_supply=totalSupply();// tokens = (shares * yieldSourceATokenTotalSupply) / totalSharesreturn_supply==0?_shares:_shares.mul(aToken.balanceOf(address(this))).div(_supply);}
+A malicious early user cansupplyTokenTo()with1 weiof_underlyingAssetAddresstoken as the first depositor of theAaveV3YieldSource.sol, and get1 weiof shares token.
+Then the attacker can send10000e18 - 1ofaTokenand inflate the price per share from 1.0000 to an extreme value of 1.0000e22 ( from(1 + 10000e18 - 1) / 1) .
+As a result, the future user who deposits19999e18will only receive1 wei(from19999e18 * 1 / 10000e18) of shares token.
+They will immediately lose9999e18or half of their deposits if theyredeemToken()right after thesupplyTokenTo().
+AaveV3YieldSource.sol#L251-L256
+functionredeemToken(uint256_redeemAmount)externaloverridenonReentrantreturns(uint256) {address_underlyingAssetAddress=_tokenAddress();IERC20_assetToken=IERC20(_underlyingAssetAddress);uint256_shares=_tokenToShares(_redeemAmount);_burn(msg.sender,_shares);...
+Furthermore, after the PPS has been inflated to an extremely high value (10000e18), the attacker can also redeem tokens up to9999e18for free, (burn0shares) due to the precision loss.
+Recommended Mitigation Steps
+Consider requiring a minimal amount of share tokens to be minted for the first minter, and send a port of the initial mints as a reserve to the DAO address so that the pricePerShare can be more resistant to manipulation.
+Also, consder addingrequire(_shares > 0, "AaveV3YS/shares-gt-zero");before_burn(msg.sender, _shares);.
+PierrickGT (PoolTogether) confirmed and commented:
+PR:https://github.com/pooltogether/aave-v3-yield-source/pull/15

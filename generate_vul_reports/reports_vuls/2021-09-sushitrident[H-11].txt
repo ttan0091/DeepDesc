@@ -1,0 +1,16 @@
+[H-11]ConstantProductPool.burnSingleswap amount computations should use balance
+Submitted by cmichel
+TheConstantProductPool.burnSinglefunction is basically aburnfollowed by aswapand must therefore act the same way as calling these two functions sequentially.
+The token amounts to redeem (amount0,amount1) are computed on thebalance(not the reserve).
+However, the swap amount is then computed on thereservesand not the balance.
+Theburnfunction would have updated thereserveto the balances and thereforebalanceshould be used here:
+amount1+=_getAmountOut(amount0,_reserve0-amount0,_reserve1-amount1);
+⚠️ The same issue occurs in theHybridPool.burnSingle.
+Impact
+For a burn, usually thereserveshould equal thebalance, however if any new tokens are sent to the contract andbalance > reserve, this function will return slightly less swap amounts.
+Recommended Mitigation Steps
+Call_getAmountOutwith the balances instead of the reserves:_getAmountOut(amount0, balance0 - amount0, balance1 - amount1)
+maxsam4 (Sushi) confirmed:
+Please bump this to High sev. This bug can actually lead to loss of funds from the pool. The author found the right issue but failed to analyze the full impact. Regardless, I think they deserve “High” for pointing this out.
+alcueca (judge) commented:
+This is what we come to C4 for

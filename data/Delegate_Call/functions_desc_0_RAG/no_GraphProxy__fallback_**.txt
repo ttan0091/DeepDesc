@@ -1,0 +1,55 @@
+This code defines an internal function named _fallback, which is designed to handle fallback calls in a proxy contract. The function ensures that the call is not coming from the admin of the contract and then forwards the call to the implementation contract using the delegatecall mechanism. Here’s a detailed explanation of how this function works:
+
+1. Access Control Check:
+   solidity
+   require(msg.sender != _getAdmin(), "Cannot fallback to proxy target");
+   
+   This line checks if the caller of the function is not the admin of the contract. If the caller is the admin, the function will revert with the message "Cannot fallback to proxy target". This is to prevent the admin from accidentally or maliciously calling the fallback function, which could lead to unexpected behavior.
+
+2. Assembly Block:
+   The function then enters an assembly block, which contains lowlevel EVM operations to handle the forwarding of the call to the implementation contract.
+
+    (a) Get Free Memory Pointer:
+     solidity
+     let ptr := mload(0x40)
+     
+     This line retrieves the free memory pointer, which points to the next available location in memory where data can be stored. This pointer is typically stored at memory address 0x40.
+
+    (b) Get Address of the Implementation:
+     solidity
+     let impl := and(sload(IMPLEMENTATION_SLOT), 0xffffffffffffffffffffffffffffffffffffffff)
+     
+     This line loads the address of the implementation contract from the storage slot IMPLEMENTATION_SLOT. The and operation ensures that only the lower 20 bytes (the address) are kept, discarding any additional data that might be in the storage slot.
+
+    (1) Copy Incoming Call Data:
+     solidity
+     calldatacopy(ptr, 0, calldatasize())
+     
+     This line copies the entire calldata (the input data of the function call) into memory, starting at the location pointed to by ptr. The calldatasize() function returns the size of the calldata.
+
+    (2) Forward Call to Logic Contract:
+     solidity
+     let result := delegatecall(gas(), impl, ptr, calldatasize(), 0, 0)
+     
+     This line uses the delegatecall opcode to forward the call to the implementation contract. The delegatecall opcode executes the called contract's code in the context of the calling contract, meaning that the state changes will affect the calling contract's state. The gas() function returns the amount of gas available for the call, and the result of the call is stored in the result variable.
+
+    (3) Retrieve Return Data:
+     solidity
+     let size := returndatasize()
+     returndatacopy(ptr, 0, size)
+     
+     These lines retrieve the size of the return data and copy the return data into memory, starting at the location pointed to by ptr.
+
+    (4) Forward Return Data Back to Caller:
+     solidity
+     switch result
+     case 0 {
+         revert(ptr, size)
+     }
+     default {
+         return(ptr, size)
+     }
+     
+     This block checks the result of the delegatecall. If the result is 0, indicating that the call failed, the function will revert, sending the return data back to the caller. If the result is not 0, indicating that the call succeeded, the function will return the return data to the caller.
+
+In summary, the _fallback function ensures that only nonadmin callers can forward calls to the implementation contract using delegatecall, and it handles the forwarding and return of data efficiently using lowlevel EVM operations. This mechanism is crucial for proxy contracts to delegate function calls to the logic contract while maintaining the state of the proxy contract.

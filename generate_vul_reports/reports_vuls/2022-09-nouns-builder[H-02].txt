@@ -1,0 +1,26 @@
+[H-02] ERC721Votes’s delegation disables NFT transfers and burning
+Submitted by hyh
+If Alice the NFT owner first delegates her votes to herself, second delegates to anyone else with delegate() or delegateBySig() then all her NFT ids will become stuck: their transfers and burning will be disabled.
+The issue is _afterTokenTransfer() callback running the _moveDelegateVotes() with an owner instead of her delegate. As Alice’s votes in the checkpoint is zero after she delegated them, the subtraction _moveDelegateVotes() tries to perform during the move of the votes will be reverted.
+As ERC721Votes is parent to Token and delegate is a kind of common and frequent operation, the impact is governance token moves being frozen in a variety of use cases, which interferes with governance voting process and can be critical for the project.
+Proof of Concept
+Suppose Alice delegated all her votes to herself and then decided to delegate them to someone else with either delegate() or delegateBySig() calling _delegate():
+https://github.com/code-423n4/2022-09-nouns-builder/blob/7e9fddbbacdd7d7812e912a369cfd862ee67dc03/src/lib/token/ERC721Votes.sol#L179-L190
+function_delegate(address_from,address_to)internal{// Get the previous delegateaddressprevDelegate=delegation[_from];// Store the new delegatedelegation[_from] =_to;emitDelegateChanged(_from,prevDelegate,_to);// Transfer voting weight from the previous delegate to the new delegate_moveDelegateVotes(prevDelegate,_to,balanceOf(_from));}
+_moveDelegateVotes() will set her votes to0as_from == AliceandprevTotalVotes = _amount = balanceOf(Alice)(as _afterTokenTransfer() incremented Alice’s vote balance on each mint to her):
+https://github.com/code-423n4/2022-09-nouns-builder/blob/7e9fddbbacdd7d7812e912a369cfd862ee67dc03/src/lib/token/ERC721Votes.sol#L196-L217
+function_moveDelegateVotes(address_from,address_to,uint256_amount)internal{unchecked{// If voting weight is being transferred:if(_from!=_to&&_amount>0) {// If this isn't a token mint:if(_from!=address(0)) {// Get the sender's number of checkpointsuint256nCheckpoints=numCheckpoints[_from]++;// Used to store the sender's previous voting weightuint256prevTotalVotes;// If this isn't the sender's first checkpoint: Get their previous voting weightif(nCheckpoints!=0)prevTotalVotes=checkpoints[_from][nCheckpoints-1].votes;// Update their voting weight_writeCheckpoint(_from,nCheckpoints,prevTotalVotes,prevTotalVotes-_amount);}
+After that her votes in the checkpoint become zero. She will not be able to transfer the NFT as_afterTokenTransferwill revert on_moveDelegateVotes’s attempt to move1vote fromAliceto_to, whilecheckpoints[Alice][nCheckpoints - 1].votesis0:
+https://github.com/code-423n4/2022-09-nouns-builder/blob/7e9fddbbacdd7d7812e912a369cfd862ee67dc03/src/lib/token/ERC721Votes.sol#L262-L268
+function_afterTokenTransfer(address_from,address_to,uint256_tokenId)internaloverride{// Transfer 1 vote from the sender to the recipient_moveDelegateVotes(_from,_to,1);
+Recommended Mitigation Steps
+The root issue is _afterTokenTransfer() dealing with Alice instead of Alice’s delegate.
+Consider including delegates() call as a fix:
+https://github.com/code-423n4/2022-09-nouns-builder/blob/7e9fddbbacdd7d7812e912a369cfd862ee67dc03/src/lib/token/ERC721Votes.sol#L262-L268
+function_afterTokenTransfer(address_from,address_to,uint256_tokenId)internaloverride{// Transfer 1 vote from the sender to the recipient-_moveDelegateVotes(_from,_to,1);+_moveDelegateVotes(delegates(_from),delegates(_to),1);
+Asdelegates(address(0)) == address(0)the burning/minting flow will persist:
+https://github.com/code-423n4/2022-09-nouns-builder/blob/7e9fddbbacdd7d7812e912a369cfd862ee67dc03/src/lib/token/ERC721Votes.sol#L124-L129
+/// @notice The delegate for an account/// @param _account The account addressfunctiondelegates(address_account)externalviewreturns(address) {addresscurrent=delegation[_account];returncurrent==address(0) ?_account:current;}
+tbtstl (Nouns Builder) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, due to the overlapping system handling delegation and balances, it is possible for a user to brick their owntransferabilityof their tokens.This POC shows that any delegation will cause the issues as when dealing with a transfer, their currently zero-vote-balance will further be deducted instead of the delegated votes they have.Because the finding shows a broken invariant, in that any delegation will brick transfers, as the invariants offered by ERC721Votes have been broken; I believe High Severity to be appropriate.

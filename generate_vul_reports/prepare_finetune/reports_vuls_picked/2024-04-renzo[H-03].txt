@@ -1,0 +1,21 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `nonReentrant` modifier applied to both `completeQueuedWithdrawal` and `receive` functions prevents the necessary reentrancy call from `EigenPod` when `receiveAsTokens == true`.
+Execution process: When `completeQueuedWithdrawal` is called with `receiveAsTokens == true`, it triggers a call to `receive` function in the same contract, which is blocked by the `nonReentrant` modifier, causing the ETH withdrawal to fail.
+Vulnerable code: 
+```solidity
+function completeQueuedWithdrawal(
+    IDelegationManager.Withdrawal calldata withdrawal,
+    IERC20[] calldata tokens,
+    uint256 middlewareTimesIndex
+) external nonReentrant onlyNativeEthRestakeAdmin {
+    uint256 gasBefore = gasleft();
+    if (tokens.length != withdrawal.strategies.length) revert MismatchedArrayLengths();
+    delegationManager.completeQueuedWithdrawal(withdrawal, tokens, middlewareTimesIndex, true);
+}
+
+receive() external payable nonReentrant {
+    if (msg.sender == address(eigenPod)) {
+        restakeManager.depositQueue().forwardFullWithdrawalETH{ value: msg.value }();
+    }
+}
+```

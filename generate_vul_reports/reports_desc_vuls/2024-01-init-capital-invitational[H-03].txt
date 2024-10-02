@@ -1,0 +1,23 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: Dependency on `limitPrice_e36` for calculating `amtOut`, allowing order creators to manipulate this value before the order execution.
+Execution process: An order creator can update `limitPrice_e36` just before the `fillOrder` execution, increasing the `amtOut` value to steal assets from the executor.
+Vulnerable code: 
+```solidity
+function _calculateFillOrderInfo(Order memory _order, MarginPos memory _marginPos, address _collToken) internal returns (uint amtOut, uint repayShares, uint repayAmt) {
+    (repayShares, repayAmt) = _calculateRepaySize(_order, _marginPos);
+    uint collTokenAmt = ILendingPool(_marginPos.collPool).toAmtCurrent(_order.collAmt);
+    if (_collToken == _order.tokenOut) {
+        if (_marginPos.isLongBaseAsset) {
+            amtOut = collTokenAmt - repayAmt * ONE_E36 / _order.limitPrice_e36;
+        } else {
+            amtOut = collTokenAmt - (repayAmt * _order.limitPrice_e36 / ONE_E36);
+        }
+    } else {
+        if (_marginPos.isLongBaseAsset) {
+            amtOut = (collTokenAmt * _order.limitPrice_e36).ceilDiv(ONE_E36) - repayAmt;
+        } else {
+            amtOut = (collTokenAmt * ONE_E36).ceilDiv(_order.limitPrice_e36) - repayAmt;
+        }
+    }
+}
+```

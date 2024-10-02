@@ -1,0 +1,20 @@
+Type of vulnerability: Incorrect Price Scaling
+Cause of vulnerability: The price of the cNOTE token is incorrectly scaled down to 1 wei instead of 10^18 wei.
+Execution process: When the `getUnderlyingPrice` function is called for the cNOTE token and the sender is the Comptroller, the function returns 1 wei instead of the correct scaling factor of 10^18 wei.
+Vulnerable code: 
+```solidity
+function getUnderlyingPrice(CToken ctoken) external override view returns(uint price) {
+    IBaseV1Pair pair;
+    uint8 stable;
+    bool stablePair;
+    address underlying;
+    if (compareStrings(ctoken.symbol(), "cCANTO")) {
+        stable = 0;
+        underlying = address(wcanto);
+    }
+    //set price statically to 1 when the Comptroller is retrieving Price
+    else if (compareStrings(ctoken.symbol(), "cNOTE") && msg.sender == Comptroller) {
+        return 1; // Note price is fixed to 1
+    }
+}
+```

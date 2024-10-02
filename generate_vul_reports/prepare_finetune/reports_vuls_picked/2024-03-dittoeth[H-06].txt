@@ -1,0 +1,31 @@
+Type of vulnerability: Loss of Funds due to Inconsistent State Handling
+
+Cause of vulnerability: The vulnerability arises from the inconsistent handling of short records (SRs) during the redemption proposal and dispute process. Specifically, if an SR is closed (e.g., due to liquidation, exiting, or transfer) between the creation of a wrong redemption proposal and the dispute of that proposal, the collateral associated with the closed SR is added to the closed SR and cannot be recovered.
+
+Execution process:
+1. A user creates a redemption proposal with the `proposeRedemption` function, providing a list of SRs with the lowest collateral ratios (CRs) in ascending order.
+2. Another user disputes the proposal with the `disputeRedemption` function, claiming that an SR with a lower CR was not included in the proposal.
+3. Between the creation of the wrong proposal and the dispute, an SR involved in the proposal is closed.
+4. The collateral associated with the closed SR is added to the closed SR and becomes irrecoverable.
+
+Vulnerable code:
+- `proposeRedemption` function in `RedemptionFacet.sol`:
+  ```solidity
+  function proposeRedemption(address asset, MTypes.ProposalInput[] memory proposalInputs, uint256 amount, uint256 maxRedemptionFee) external {
+      // Implementation details
+  }
+  ```
+- `disputeRedemption` function in `RedemptionFacet.sol`:
+  ```solidity
+  function disputeRedemption(address asset, address redeemer, uint256 incorrectIndex, address disputeShorter, uint256 disputeShortId) external {
+      // Implementation details
+  }
+  ```
+- `ShortRecord` struct in `AppStorage.sol`:
+  ```solidity
+  struct ShortRecord {
+      // Struct fields
+      uint88 collateral;
+      SR status;
+  }
+  ```

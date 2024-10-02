@@ -1,0 +1,33 @@
+This code defines an internal function named _debitFrom, which is designed to handle the debiting of tokens from a specified address to another chain. The function is marked with override to indicate that it overrides a function from a base contract, and whenNotPaused to ensure it can only be executed when the contract is not paused.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address _from: The address from which tokens are being debited.
+    uint16 _dstChainId: The destination chain ID where the tokens are being sent.
+    bytes32 _toAddress: The address on the destination chain where the tokens will be received.
+    uint256 _amount: The amount of tokens to be debited.
+
+2. Calling Super Function:
+    The function first calls super._debitFrom, which is likely a function from a base contract that handles the basic debiting logic. This function returns the amount of tokens actually debited, which is stored in the variable amount.
+
+3. Whitelist Check:
+    If the _from address is in the whitelist, the function immediately returns the debited amount. This suggests that addresses in the whitelist are exempt from certain checks or limitations.
+
+4. Timestamp and Token Amount Calculation:
+    The function retrieves the last sent timestamp for the destination chain from chainIdToLastSentTimestamp[_dstChainId].
+    It also gets the current timestamp using block.timestamp.
+    It checks if the current day (based on timestamps divided by 1 day) is different from the day of the last sent timestamp. If it is, it sets sentTokenAmount to the debited amount. Otherwise, it adds the debited amount to the previously sent token amount for that chain.
+
+5. Outbound Cap Check:
+    The function retrieves the outbound cap for the destination chain from chainIdToOutboundCap[_dstChainId].
+    It then checks if the sentTokenAmount exceeds this cap. If it does, the function reverts with an ExceedOutboundCap error, providing the cap and the attempted amount.
+
+6. Updating State Variables:
+    If the cap is not exceeded, the function updates chainIdToSentTokenAmount[_dstChainId] with the new sentTokenAmount.
+    It also updates chainIdToLastSentTimestamp[_dstChainId] with the current timestamp.
+
+7. Return Value:
+    Finally, the function returns the debited amount.
+
+This function ensures that token transfers to other chains are within specified caps and are tracked daily to prevent abuse or excessive transfers. The use of whitelisting allows certain addresses to bypass these checks, likely for administrative or privileged accounts.

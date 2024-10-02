@@ -1,0 +1,14 @@
+[H-27] Attacker can pass duplicated reward token addresses to steal the reward of contracttwTAP.sol
+Submitted byKIntern_NA, also found bybin2chenandglcanvas
+The attacker can exploit the contracttwTAP.solto steal rewards.
+Proof of Concept
+The functiontwTAP.claimAndSendRewards() -> twTAP._claimRewardsOn()is intended for users who utilize the cross-chain message ofBaseTOFT.solto claim a specific set of reward tokens.
+function_claimRewardsOn(uint256_tokenId,address_to,IERC20[]memory_rewardTokens)internal{uint256[]memoryamounts=claimable(_tokenId);unchecked{uint256len=_rewardTokens.length;for(uint256i=0;i<len; ) {uint256claimableIndex=rewardTokenIndex[_rewardTokens[i]];uint256amount=amounts[i];if(amount>0) {// Math is safe: `amount` calculated safely in `claimable()`claimed[_tokenId][claimableIndex] +=amount;rewardTokens[claimableIndex].safeTransfer(_to,amount);}++i;}}}
+The internal function iterates through the list of reward tokens specified by the user after calculating the claimable amount for each token in the STORAGE arraytwTAP.rewardTokens[]. Unfortunately, there is no check if the_rewardTokenscontain duplicated reward tokens, and the functionclaimable(_tokenId)is not called after each iteration, which allows the attacker to manipulate the function call using the same reward address repeatedly.
+For example,
+STORAGE arrayrewardTokens[] = [usdc, usdt]The function_claimRewardsOn()is called with_rewardTokens[] = [usdt, usdt]. In each iteration, theclaimableIndexwill berewardTokenIndex[usdc] = 0, which transfers the usdt two times to the attacker.
+Recommended Mitigation Steps
+One solution to mitigate this issue is to require the MEMORY array_rewardTokensto be sorted in ascending order.
+function_claimRewardsOn(uint256_tokenId,address_to,IERC20[]memory_rewardTokens)internal{uint256[]memoryamounts=claimable(_tokenId);unchecked{uint256len=_rewardTokens.length;for(uint256i=0;i<len; ) {// CHANGE HEREif(i!=0) {require(_rewardTokens[i] >_rewardTokens[i-1]);}uint256claimableIndex=rewardTokenIndex[_rewardTokens[i]];uint256amount=amounts[i];if(amount>0) {// Math is safe: `amount` calculated safely in `claimable()`claimed[_tokenId][claimableIndex] +=amount;rewardTokens[claimableIndex].safeTransfer(_to,amount);}++i;}}}
+By ensuring that the reward tokens are sorted in ascending order, we can prevent the exploit where the attacker claims the same reward token multiple times and effectively mitigate the vulnerability.
+0xRektora (Tapioca) confirmed via duplicate issue 1304

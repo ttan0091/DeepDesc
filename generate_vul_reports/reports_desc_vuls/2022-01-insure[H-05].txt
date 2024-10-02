@@ -1,0 +1,15 @@
+Type of vulnerability: Backdoor/Admin Privilege Abuse
+Cause of vulnerability: Incorrect logic in the `withdrawRedundant` function allows the owner (admin) to transfer out all tokens under certain conditions.
+Execution process: The admin calls `withdrawRedundant` with the vault's token address and an attacker's address. The function incorrectly transfers all tokens to the attacker if the balance inequality condition is false.
+Vulnerable code: 
+```solidity
+function withdrawRedundant(address _token, address _to) external override onlyOwner {
+    if (_token == address(token) && balance < IERC20(token).balanceOf(address(this))) {
+        uint256 _redundant = IERC20(token).balanceOf(address(this)) - balance;
+        IERC20(token).safeTransfer(_to, _redundant);
+    } else if (IERC20(_token).balanceOf(address(this)) > 0) {
+        // @audit they can rug users. let's say balance == IERC20(token).balanceOf(address(this)) => first if false => transfers out everything
+        IERC20(_token).safeTransfer(_to, IERC20(_token).balanceOf(address(this)));
+    }
+}
+```

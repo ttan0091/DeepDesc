@@ -1,0 +1,32 @@
+Type of vulnerability: Incorrect Bond Burning
+Cause of vulnerability: The history of the final verified transition is not taken into account, leading to bonds being wrongfully slashed.
+Execution process: A prover proves a transition, which is then contested and potentially overwritten by another proof. If the original transition is ultimately proven correct, the prover's bond is still burned, even though the transition was correct.
+Vulnerable code: 
+```solidity
+_ts.validityBond = _tier.validityBond;
+_ts.contestBond = 1;
+_ts.contester = address(0);
+_ts.prover = msg.sender;
+_ts.tier = _proof.tier;
+```
+and
+```solidity
+if (isTopTier) {
+    // A special return value from the top tier prover can signal this
+    // contract to return all liveness bond.
+    bool returnLivenessBond = blk.livenessBond > 0 && _proof.data.length == 32 && bytes32(_proof.data) == RETURN_LIVENESS_BOND;
+    if (returnLivenessBond) {
+        tko.transfer(blk.assignedProver, blk.livenessBond);
+        blk.livenessBond = 0;
+    }
+}
+```
+and
+```solidity
+uint256 bondToReturn = uint256(ts.validityBond) + blk.livenessBond;
+if (ts.prover != blk.assignedProver) {
+    bondToReturn -= blk.livenessBond >> 1;
+}
+IERC20 tko = IERC20(_resolver.resolve("taiko_token", false));
+tko.transfer(ts.prover, bondToReturn);
+```

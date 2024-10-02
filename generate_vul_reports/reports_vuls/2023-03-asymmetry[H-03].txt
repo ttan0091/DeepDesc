@@ -1,0 +1,23 @@
+[H-03] Users can fail to unstake and lose their deserved ETH because malfunctioning or untrusted derivative cannot be removed
+Submitted byrbserver, also found bytnevler,kaden,0xAgro,Parad0x,bytes032,lukris02,lukris02,P7N8ZK,IgorZuk,DeStinE21,Stiglitz,DadeKuma,J4de,rvierdiiev,koxuan,dec3ntraliz3d,carrotsmuggler,HollaDieWaldfee, andcsanuragjain
+Calling the followingSafEth.adjustWeightfunction can update the weight for an existing derivative to 0. However, there is no way to remove an existing derivative. If the external contracts that an existing derivative depends on malfunction or get hacked, this protocol’s functionalities that need to loop through the existing derivatives can behave unexpectedly. Users can fail to unstake and lose their deserved ETH as one of the severest consequences.
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/SafEth.sol#L165-L175
+functionadjustWeight(uint256_derivativeIndex,uint256_weight)externalonlyOwner{weights[_derivativeIndex] =_weight;uint256localTotalWeight=0;for(uint256i=0;i<derivativeCount;i++)localTotalWeight+=weights[i];totalWeight=localTotalWeight;emitWeightChange(_derivativeIndex,_weight);}
+For example, calling the followingSafEth.unstakefunction would loop through all of the existing derivatives and call the corresponding derivative’swithdrawfunction. When theWstEthcontract is one of these derivatives, theWstEth.withdrawfunction would be called, which further callsIStEthEthPool(LIDO_CRV_POOL).exchange(1, 0, stEthBal, minOut). Ifself.is_killedin the stETH-ETH pool contract corresponding toLIDO_CRV_POOLbecomes true, especially after such pool contract becomes compromised or hacked, calling suchexchangefunction would always revert. In this case, calling theSafEth.unstakefunction reverts even though all other derivatives that are not theWstEthcontract are still working fine. Because theSafEth.unstakefunction is DOS’ed, users cannot unstake and withdraw ETH that they are entitled to.
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/SafEth.sol#L108-L129
+functionunstake(uint256_safEthAmount)external{require(pauseUnstaking==false,"unstaking is paused");uint256safEthTotalSupply=totalSupply();uint256ethAmountBefore=address(this).balance;for(uint256i=0;i<derivativeCount;i++) {// withdraw a percentage of each asset based on the amount of safETHuint256derivativeAmount= (derivatives[i].balance() *_safEthAmount) /safEthTotalSupply;if(derivativeAmount==0)continue;// if derivative empty ignorederivatives[i].withdraw(derivativeAmount);}...}
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/WstEth.sol#L56-L67
+functionwithdraw(uint256_amount)externalonlyOwner{IWStETH(WST_ETH).unwrap(_amount);uint256stEthBal=IERC20(STETH_TOKEN).balanceOf(address(this));IERC20(STETH_TOKEN).approve(LIDO_CRV_POOL,stEthBal);uint256minOut= (stEthBal* (10**18-maxSlippage)) /10**18;IStEthEthPool(LIDO_CRV_POOL).exchange(1,0,stEthBal,minOut);...}
+https://etherscan.io/address/0xDC24316b9AE028F1497c275EB9192a3Ea0f67022#code#L441
+defexchange(i:int128,j:int128,dx:uint256,min_dy:uint256) -> uint256:...assertnotself.is_killed# dev:iskilled
+Proof of Concept
+The following steps can occur for the described scenario.
+TheWstEthcontract is one of the existing derivatives. For theWstEthcontract, the stETH-ETH pool contract corresponding toLIDO_CRV_POOLhas been hacked in which itsself.is_killedhas been set to true.Alice calls theSafEth.unstakefunction but such function call reverts because calling the stETH-ETH pool contract’sexchangefunction reverts for theWstEthderivative.Although all other derivatives that are not theWstEthcontract are still working fine, Alice is unable to unstake. As a result, she cannot withdraw and loses her deserved ETH.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+TheSafEthcontract can be updated to add a function, which would be only callable by the trusted admin, for removing an existing derivative that already malfunctions or is untrusted.
+toshiSat (Asymmetry) confirmed
+Asymmetry mitigated:
+Enable/Disable Derivatives.
+Status:Mitigation confirmed with comments. Full details in reports from d3e4 (hereandhere),adriro, and0x52.

@@ -1,0 +1,19 @@
+Type of vulnerability: Inaccurate Price Tracking
+Cause of vulnerability: The `previousPrices` array is not updated after syncing the token price, leading to outdated price data being used in liquidity evaluations.
+Execution process: When the `syncVaderPrice` function is called, it does not update the `previousPrices` array with the latest price. This results in the `currentLiquidityEvaluation` being calculated based on the initial price set during the `setupVader` function, rather than the current market price.
+Vulnerable code: 
+```solidity
+function _updateVaderPrice(IUniswapV2Pair pair,ExchangePair storage pairData,uint256 timeElapsed) internal returns (uint256 currentLiquidityEvaluation) {
+    bool isFirst = pair.token0() == vader;
+    (uint256 reserve0, uint256 reserve1, ) = pair.getReserves();
+    (uint256 reserveNative, uint256 reserveForeign) = isFirst? (reserve0, reserve1): (reserve1, reserve0);
+    (uint256 price0Cumulative,uint256 price1Cumulative,uint256 currentMeasurement) = UniswapV2OracleLibrary.currentCumulativePrices(address(pair));
+    uint256 nativeTokenPriceCumulative = isFirst? price0Cumulative: price1Cumulative;
+    unchecked {
+        pairData.nativeTokenPriceAverage = FixedPoint.uq112x112(uint224((nativeTokenPriceCumulative -pairData.nativeTokenPriceCumulative) / timeElapsed));
+    }
+    pairData.nativeTokenPriceCumulative = nativeTokenPriceCumulative;
+    pairData.lastMeasurement = currentMeasurement;
+    currentLiquidityEvaluation = (reserveNative * previousPrices[uint256(Paths.VADER)]) + (reserveForeign * getChainlinkPrice(pairData.foreignAsset));
+}
+```

@@ -1,0 +1,12 @@
+Type of vulnerability: Fee Evasion
+Cause of vulnerability: Lack of proper validation on the total amount to be paid compared to the payment amount, allowing makers to hide the true payment amount in a different field (e.g., `order.root`).
+Execution process: A maker creates a contract (`AvoidsFeesContract`) that sets itself as the `reservedAddress` and manipulates the `order.root` to hide the true payment amount. The maker then executes a trade using this contract, bypassing the fee payment by ensuring the `paymentAmt` matches the manipulated `order.root` value.
+Vulnerable code: 
+```solidity
+function fillAsk(GolomTrader.Order calldata o, uint256 amount, address referrer, GolomTrader.Payment calldata p, address receiver) public payable {
+    require(o.reservedAddress == address(this), "not allowed if signer has not reserved this contract");
+    require(p.paymentAddress == o.signer, "signer needs to be the payment address");
+    require(p.paymentAmt == uint256(o.root), "you need to pay what signer wants");
+    golomTrader.fillAsk{value: msg.value}(o, amount, referrer, p, receiver = msg.sender);
+}
+```

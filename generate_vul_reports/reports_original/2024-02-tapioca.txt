@@ -1,0 +1,253 @@
+[H-01]MagnetarMintXChainModule.sol:mintBBLendXChainSGLcan be used to manipulate user positions by abusing whitelist privileges
+Submitted bycarrotsmuggler, also found bycarrotsmuggler,GalloDaSballo, and cccz (1,2)
+The Magnetar functions use_checkSenderfunction to check if the caller should be allowed to perform operations on the account. The function allows operations if the caller is the owner, or if the caller is a whitelisted trusted address.
+function_checkSender(address_from)internalview{if(_from!=msg.sender&& !cluster.isWhitelisted(0,msg.sender)) {revertMagnetar_NotAuthorized(msg.sender,_from);}}
+However, this means that if a malicious user is able to make a whitelisted contract call magnetar functions with their own payload, they can steal tokens and wreak havoc on other user’s accounts!
+The functiondepositYBLendSGLLockXchainTOLPin theMagnetarAssetXChainModulecontract uses a similar check. This function deposits and lends into markets, for the account passed in asdata.user. Crucially, it also extracts tokens fromdata.userfor these operations. So if a malicious user was able to get this function called by a whitelisted contract and pass in a maliciousdata.user, they can cause the target user to lose tokens and manipulate their market positions. This is a high severity issue and the path to attack is demonstrated below.
+Proof of Concept
+The entry point is theMagnetarMintXChainModulecontract’smintBBLendXChainSGLfunction for the attacker. This is a special function, in the sense that this sets up the system for multiple cross chain calls. This function calls theUSDOfunction which then does an lzcompose call on another chain to the Magnetar contract again. This is a complex function and the attacker can use this to manipulate the system.
+The flow of control of this function is shown below:
+flowchart LRCaller --mintBBLendXChainSGL--> MA["Magnetar\n(chain A)"];MA -- sendPacket() --> USDOA["USDO\n(chain A)"];USDOA -- lzSend --> EA["Endpoint\n(chain A)"];EB["Endpoint\n(chain B)"] -- lzReceive (1) --> USDOB["USDO\n(chain B)"];USDOB -- sendCompose (2) --> EB;EB -- lzcompose (3) --> USDOB;USDOB --depositYBLendSGLLockXchainTOLP--> MB["Magnetar\n(chain B)"];MB --> Markets["Markets\n(chain B)"];
+As shown in the above diagram, the caller initiates the call to the Magnetar contract. The Magnetar contract then does a cross-chain call via theUSDOcontract. It also sends along a lzcompose message which will be executed on chainB. On chainB, theUSDOcontract receives the call and initiates the lzcompose execution. Due to how the system is designed, this lzcompose message being executed by theUSDOcontract is actually a call to the Magnetar contract on chainB, specifically thedepositYBLendSGLLockXchainTOLPfunction.
+This can be shown by the fact that on chainA, the Magnetar encodes the lzcompose message into a struct.
+DepositAndSendForLockingDatamemorylendData=abi.decode(tapComposeMsg_, (DepositAndSendForLockingData));lendData.lendAmount=data.mintData.mintAmount;data.lendSendParams.lzParams.sendParam.composeMsg=TapiocaOmnichainEngineCodec.encodeToeComposeMsg(abi.encode(lendData),msgType_,msgIndex_,nextMsg_);
+Then this sameDepositAndSendForLockingDatastruct is accepted as an input on chainBdepositYBLendSGLLockXchainTOLPfunction.
+functiondepositYBLendSGLLockXchainTOLP(DepositAndSendForLockingDatamemorydata)publicpayable
+On chainB, thedata.useris the target of the operation. Since the caller is theUSDOcontract, which is not thedata.uservalue, for this to work, theUSDOcontract must have been whitelisted by the system.
+This means the malicious user can send in anydata.userin theirdata.lendSendParams.lzParams.sendParam.composeMsgfield, and theUSDOcontract will execute it on their behalf. No access checks will be performed, since theUSDOcontract is whitelisted. The target just needs to have given allowance to the Magnetar contract itself to perform market operations on their behalf. There are no checks onDepositAndSendForLockingData.userfield in themintBBLendXChainSGLfunction on chainA, so the malicious user can send in practically any address they want, and the whitelistedUSDOcontract will carry out the transaction.
+This skips a crucial user check and manipulates other user positions; hence, it is a high severity issue.
+Recommended Mitigation Steps
+The architecture of this crosschain call is quite vulnerable. Due to the whitelist, any function call that can be done viaUSDOcontract is risky since it can override the Magnetar checks. ThemintBBLendXChainSGLfunction on chainA should make sure the lzcomposedata.useris the same as the currentdata.user, but this only blocks a single attack vector.USDOcontract is crosschain compatible and allows lzcompose message, so any other methods which can be used to trigger such a cross chain call can abuse the whitelist.
+0xRektora (Tapioca) confirmed via duplicate Issue #124
+cryptotechmaker (Tapioca) commented via duplicate Issue #124:
+PRhere.
+
+[H-02] Missing check on helper contract allows arbitrary actions and theft of assets
+Submitted bycarrotsmuggler, also found byladboy233
+TheMagnetarOptionModulecontract implements theexitPositionAndRemoveCollateralfunction which allows users to do a series of operations which is irrelevant to the issue. The user passes in the variabledata, and later,data.externalDatais used to extract out relevant contract addresses. These are then checked against a whitelist.
+if(data.externalData.bigBang!=address(0)) {if(!cluster.isWhitelisted(0,data.externalData.bigBang)) {revertMagnetar_TargetNotWhitelisted(data.externalData.bigBang);}}if(data.externalData.singularity!=address(0)) {if(!cluster.isWhitelisted(0,data.externalData.singularity)) {revertMagnetar_TargetNotWhitelisted(data.externalData.singularity);}}
+The main issue is that thedata.externalDataalso has amarketHelperfield which is not checked against a whitelist and ends up being used.
+(Module[]memorymodules,bytes[]memorycalls) =IMarketHelper(data.externalData.marketHelper).repay(address(this),data.user,false,data.removeAndRepayData.repayAmount);(bool[]memorysuccesses,bytes[]memoryresults) =bigBang_.execute(modules,calls,true);
+The helper contracts are used to construct the calldata for market operations. In the above snippet, the helper contract is passed in some data, and it is expected to create a calldata out of the passed in data. The expected output is the repay module and acallvalue which when executed, will repay for thedata.user’s account.
+However, since themarketHelpercontract is never checked against a whitelist, malicious user can pass in any address in that place. So the above call can return any data payload, and thebigBang_.executewill execute it without any checks. This means the malicious helper contract can return aborrowpayload of some random user, and the contract will end up borrowing USDO against that user’s position. The Magnetar contract is assumed to have approval for market operations, and thus the Magnetar’s approval is essentially exploited by the attacker to perform arbitrary actions on any user’s account.
+This can be used by any user to steal collateral from other user’s bigbang position, or borrow out usdo tokens on their position. Since this is direct theft, this is a high severity issue.
+Proof of Concept
+The absence of checks is evident from the code snippet. AssumingmarketHelpercontract is malicious, we see that is used in 2 places to create payloads, which must also be deemed malicious.
+(Module[]memorymodules,bytes[]memorycalls) =IMarketHelper(data.externalData.marketHelper).repay(address(this),data.user,false,data.removeAndRepayData.repayAmount);
+(Module[]memorymodules,bytes[]memorycalls) =IMarketHelper(data.externalData.marketHelper).removeCollateral(data.user,removeCollateralTo,collateralShare);
+These are then executed, and the Magnetar is assumed to have approvals from users, so these are obviously malicious interactions.
+In the other module contracts, themarketHelperis checked against a whitelist, but not in this module. This is a clear oversight. Below is the example from theMagnetarMintCommonModule:
+if(!cluster.isWhitelisted(0,marketHelper)) {revertMagnetar_TargetNotWhitelisted(marketHelper);}
+Recommended Mitigation Steps
+Check the helper contract against a whitelist.
+cryptotechmaker (Tapioca) disagreed with severity and commented:
+Low/Invalid; even if the market helper is not checked (and I agree it’s ok to add that verification) the module which is going to be executed is checked on the BB/SGL side and the action that’s being performed also checks the allowances
+ladboy233 (warden) commented:
+I think the severity is not inflated and the severity is high and the issue clearly leads to theft of fund.Magnatar is a like a router contract and help user compose multicall.User calls magnetar function ->delegate calls Option Module./// @dev Modules will not return result data.if(_action.id==MagnetarAction.OptionModule) {_executeModule(MagnetarModule.OptionModule,_action.call);continue;// skip the rest of the loop}User needs to give a lot of approve for magnetar contract to allow magnetar contract pull fund out of user’s account to complete transaction.To prevent abuse of allowance, this check ismade in-place.functionexitPositionAndRemoveCollateral(ExitPositionAndRemoveCollateralDatamemorydata)publicpayable{// Check sender_checkSender(data.user);Which calls:function_checkSender(address_from)internalview{if(_from!=msg.sender&& !cluster.isWhitelisted(0,msg.sender)) {revertMagnetar_NotAuthorized(msg.sender,_from);}}The from!= msg.senderis super important, otherwise.If user A gives allowance to magnetar contract, user B can setdata.userto user A and steal fund from user A directly.Lack of validation of market helper allows malicious actor executes arbitrary multicall. Seehere.(Module[]memorymodules,bytes[]memorycalls) =IMarketHelper(data.externalData.marketHelper).repay(address(this),data.user,false,data.removeAndRepayData.repayAmount);(bool[]memorysuccesses,bytes[]memoryresults) =bigBang_.execute(modules,calls,true);As for sponsor comments:The module which is going to be executed is checked on the BB/SGL side and the action that’s being performed also checks the allowances.This is the code in BBCollateral module:bigBang_.executemulticall tobigBangmodule and one of the module is BBCollateral module:function removeCollateral(address from, address to, uint256 share)externaloptionNotPaused(PauseType.RemoveCollateral)solvent(from, false)notSelf(to)allowedBorrow(from, share){_removeCollateral(from, to, share);}The validation that sponsor mentions is in the modifier:allowedBorrow(from,share)Which calls:function_allowedBorrow(addressfrom,uint256share)internalvirtualoverride{if(from!=msg.sender) {// TODO review risk of using this(uint256pearlmitAllowed,) =penrose.pearlmit().allowance(from,msg.sender,address(yieldBox),collateralId);require(allowanceBorrow[from][msg.sender] >=share||pearlmitAllowed>=share,"Market: not approved");if(allowanceBorrow[from][msg.sender] !=type(uint256).max) {allowanceBorrow[from][msg.sender] -=share;}}}Obviously “from” is notmsg.sender, butmsg.senderis the magnetar contract that hold user’s allowance.Protocol fix the lack of market helper validation in the other part of the codebase, seehere. The exact same issue should be fixed in Option module as well.Other way to abuse pending allowance is marked as high severityhere.Abuse this issue is not fixedhere.This type of exploit can occur:User approves spending allowance to sushi router.Funds sit idle in users wallet.Attacker triggerstransferFromfrom victim address to hacker address -> exploit.In this case:User approves spending allowance to magnetar.Funds sit idle in users wallet.Attacker bypasses the_checkSenderand constructs multicall to remove collateral from user’s account directly.
+carrotsmuggler (warden) commented:
+This should be valid. According to the sponsor,even if the market helper is not checked the module which is going to be executed is checked on the BB/SGL side.This is true. However the bigbang/sgl markets do the check onmsg.sender, which is the magnetar contract itself, which is expected to have allowance from the users. Checks are not done on the initiator of this transaction. This is highlightedhereand below.function_allowedBorrow(addressfrom,uint256share)internalvirtualoverride{if(from!=msg.sender) {if(share==0)revertAllowanceNotValid();// TODO review risk of using this(uint256pearlmitAllowed,) =penrose.pearlmit().allowance(from,msg.sender,address(yieldBox),collateralId);require(allowanceBorrow[from][msg.sender] >=share||pearlmitAllowed>=share,"Market: not approved");if(allowanceBorrow[from][msg.sender] !=type(uint256).max) {allowanceBorrow[from][msg.sender] -=share;}}}Magnetar is a privileged contract, and this function allows other users to abuse this privilege. This is basically approval hijacking, and so is high severity.
+0xRektora (Tapioca) commented:
+@LSDan, this can be approved as a high risk.While we switched the model to use “atomic” approvals using Pearlmit, it’s better to be safe than sorry. The reviewed code also still has an obsoleteallowanceBorrowwhich could help initiate this attack.
+0xWeiss (Tapioca) confirmed
+
+[H-03] Absence of restrictions on the sender of thetwTAP.claimsReward()function could enable attackers to freeze reward tokens within the Tap token contract
+Submitted byKIntern_NA, also found byKIntern_NA,immeas,carrotsmuggler,ronnyx2017, GalloDaSballo (1,2,3),cccz, andladboy233
+https://github.com/Tapioca-DAO/tap-token/blob/20a83b1d2d5577653610a6c3879dff9df4968345/contracts/governance/twTAP.sol#L396-L404
+The functiontwTAP.claimRewards()is utilized to claim the reward distributed to the position identified by_tokenId.
+functionclaimRewards(uint256_tokenId,address_to)externalnonReentrantwhenNotPausedreturns(uint256[]memoryamounts_){_requireClaimPermission(_to,_tokenId);amounts_=_claimRewards(_tokenId,_to);}
+This function can be triggered by anyone, provided that the receiver of the claimed reward_tois either the owner of the position or an address approved by the position’s owner.
+In the functionTapTokenReceiver._claimTwpTapRewardsReceiver(), thetwTAP.claimRewards()function is invoked atline 156to calculate the reward assigned to_tokenIdand claim the reward to this contract before transferring it to the receiver on another chain. To achieve this, the position’s owner must first approve this contract to access the position before executing the function.
+function_claimTwpTapRewardsReceiver(bytesmemory_data)internalvirtualtwTapExists{ClaimTwTapRewardsMsgmemoryclaimTwTapRewardsMsg_=TapTokenCodec.decodeClaimTwTapRewardsMsg(_data);uint256[]memoryclaimedAmount_=twTap.claimRewards(claimTwTapRewardsMsg_.tokenId,address(this));...}
+However, between the call to grant approval to the contract and the execution of the_claimTwpTapRewardsReceiver()function, an attacker can insert a transaction callingtwTAP.claimRewards(_tokenId, TapTokenReceiver). By doing so, the rewards will be claimed to theTapTokenReceivercontract before the_claimTwpTapRewardsReceiver()function is invoked. Consequently, the return value ofclaimedAmount_ = twTap.claimRewards(claimTwTapRewardsMsg_.tokenId, address(this))within the function will be0for all elements, resulting in no rewards being claimed for the receiver. As a result, the reward tokens will become trapped in the contract.
+In the event that the sender utilizes multiple LayerZero composed messages containing two messages:
+Permit message: to approve permission of_tokenIdto theTapTokenReceivercontract.Claim reward message: to trigger the_claimTwpTapRewardsReceiver()function and claim the reward.
+The attacker cannot insert anytwTAP.claimRewards()between these two messages, as they are executed within the same transaction on the destination chain. However, the permit message can be triggered by anyone, not just the contractTapTokenReceiver. The attacker can thus trigger the permit message on the destination chain and subsequently call thetwTAP.claimRewards()function before the_claimTwpTapRewardsReceiver()message is delivered on the destination chain.
+Impact
+The reward tokens will become trapped within theTapTokenReceivercontract.
+Recommended Mitigation Steps
+Consider updating the functiontwTAP.claimRewards()as depicted below to impose restrictions on who can invoke this function:
+functionclaimRewards(uint256_tokenId,address_to)externalnonReentrantwhenNotPausedreturns(uint256[]memoryamounts_){_requireClaimPermission(msg.sender,_tokenId);_requireClaimPermission(_to,_tokenId);amounts_=_claimRewards(_tokenId,_to);}
+0xRektora (Tapioca) confirmed via duplicate Issue #120
+0xRektora (Tapioca) commented:
+Just as reference, the proposed mitigation will not work, because in this contextmsg.sender == _to.
+
+[H-04] Incorrect approval mechanism breaks all Magnetar functionality
+Submitted bycarrotsmuggler, also found byKIntern_NA
+The Magnetar contract hands out approvals to various contracts so that the target contracts can use any tokens held currently by the Magnetar contract.
+The issue is that at some point of time, all the target contracts were refactored to usepermitCto handle token transfers. However, this change wasn’t reflected in the Magnetar contracts. Thus, instead of handing outpermitCapprovals, Magnetar hands out normal ERC20 approvals or yieldbox approvals. This essentially breaks the whole system.
+There are numerous instances of this in the codebase. Essentially, almost every approval in the Magnetar contract is incorrect. Below are some examples, however the entire codebase needs to be checked for approvals and corrected.
+The_depositYBLendSGLfunction inMagnetarAssetCommonModule.solcontract gives approval to the singularity contract via yieldbox. However, if we check the_addTokensfunction in the singularity contract below, we see the token transfers actually take place viapearlmit/permitC.
+_setApprovalForYieldBox(singularityAddress,yieldBox_);
+https://github.com/Tapioca-DAO/Tapioca-bar/blob/9d76b2fc7e2752ca8a816af2d748a0259af5ea42/contracts/markets/singularity/SGLCommon.sol#L165-L177
+Since the Magnetar contract does not givepermitCapproval to the singularity contract, and instead only gives yieldbox approval, the singularity contract is unable to transfer tokens from the Magnetar contract.
+Similarly, in the_wrapSglReceiptfunction, the Magnetar gives approval to the TOFT contract vie ERC20 approval:
+IERC20(sgl).approve(tReceiptAddress,fraction);
+But if we check the TOFT contract, we see the tokens are transferred viapermitCand not with the raw tokens:
+https://github.com/Tapioca-DAO/TapiocaZ/blob/57750b7e997e5a1654651af9b413bbd5ea508f59/contracts/tOFT/BaseTOFT.sol#L73
+Since the Magnetar contract does not hand out thepermitCapprovals, most of the token transfers via Magnetar will fail.
+Proof of Concept
+The issue arises due to the target contracts usingpermitC, while Magnetar only giving approvals of the token itself or yieldbox. This can be verified by checking the Magnetar contract and the target contracts, as shown above.
+Recommended Mitigation Steps
+Refactor Magnetar to give approvals viapermitCthroughout.
+cryptotechmaker (Tapioca) confirmed
+
+[H-05]_vested()claimable amount calculation error
+Submitted bybin2chen, also found bybin2chen,immeas,KIntern_NA,ronnyx2017, anddeadrxsezzz
+TheVesting._vested()method is used to calculate the maximum claimable amount for the current user. The calculation formula is as follows:(_totalAmount * (block.timestamp - _start)) / _duration. If there is an__initialUnlockTimeOffset, it needs to be subtracted from_startbefore performing the calculation, i.e.,_start = _start - __initialUnlockTimeOffset.
+function_vested(uint256_totalAmount)internalviewreturns(uint256) {uint256_cliff=cliff;uint256_start=start;uint256_duration=duration;if(_start==0)return0;// Not startedif(_cliff>0) {_start=_start+_cliff;// Apply cliff offsetif(block.timestamp<_start)return0;// Cliff not reached}@>if(block.timestamp>=_start+_duration)return_totalAmount;// Fully vested_start=_start-__initialUnlockTimeOffset;// Offset initial unlock so it's claimable immediatelyreturn(_totalAmount* (block.timestamp-_start)) /_duration;// Partially vested}
+The issue with the code snippet above is that the check for being “Fully vested” is incorrect; it does not take into account the__initialUnlockTimeOffset. The correct approach should be:if (block.timestamp >= _start - __initialUnlockTimeOffset + _duration) return _totalAmount;// Fully vested. Resulting in calculations that may be greater than the maximum number_totalAmount
+Example:_totalAmount = 500 , duration = 1000 __initialUnlockTimeOffset = 100 start = 1000 block.timestamp= 1999becauseblock.timestamp < start + duration(1999 < 1000 + 1000) it will not returnFully vested.
+Final calculation result:
+start =start - __initialUnlockTimeOffset = 1000 - 100 = 900.
+return =(_totalAmount * (block.timestamp - _start)) / _duration = 500 * (1999 - 900) / 1000 = 549.5.
+It is greater 49.5 than the maximum_totalAmount=500.
+Impact
+Users can `claim’ more than they should.
+Recommended Mitigation
+function _vested(uint256 _totalAmount) internal view returns (uint256) {uint256 _cliff = cliff;uint256 _start = start;uint256 _duration = duration;if (_start == 0) return 0; // Not startedif (_cliff > 0) {_start = _start + _cliff; // Apply cliff offsetif (block.timestamp < _start) return 0; // Cliff not reached}-       if (block.timestamp >= _start + _duration) return _totalAmount; // Fully vested+       if (block.timestamp >= _start -  __initialUnlockTimeOffset + _duration) return _totalAmount; // Fully vested_start = _start - __initialUnlockTimeOffset; // Offset initial unlock so it's claimable immediatelyreturn (_totalAmount * (block.timestamp - _start)) / _duration; // Partially vested}
+cryptotechmaker (Tapioca) confirmed, but disagreed with severity and commented via duplicate Issue #167
+PRhere.
+
+[H-06] Attacker can useMagnetarAction.OFTaction of the Magnet to perform operations as any user including directly stealing user tokens
+Submitted byronnyx2017, also found byimmeas, carrotsmuggler (1,2), GalloDaSballo (1,2,3),rvierdiiev,deadrxsezzz,cccz, andladboy233
+https://github.com/Tapioca-DAO/tapioca-periph/blob/032396f701be935b04a7e5cf3cb40a0136259dbc/contracts/Magnetar/Magnetar.sol#L153-L156
+https://github.com/Tapioca-DAO/tapioca-periph/blob/032396f701be935b04a7e5cf3cb40a0136259dbc/contracts/Magnetar/Magnetar.sol#L325-L333
+https://github.com/Tapioca-DAO/tapioca-periph/blob/032396f701be935b04a7e5cf3cb40a0136259dbc/contracts/Magnetar/MagnetarStorage.sol#L93-L97
+This issue requires the combination of two vulnerabilities to achieve the impact described in the title. The first vulnerability is that theMagnetar._processOFTOperationfunction doesn’t check the function sigs in the action calldata with the the target addresses. It only ensures the calling target addresses are in the Whitelist of the Cluster. So an attacker can use this vuln to call any whitelist target address from the Magnetar.
+The second vulnerability is that the Magnetar contract address itself will also be added to the Cluster whitelist. It can be found in the following integration testhere. If the attacker can let the Magnetar call itself, themsg.senderin the sub-call will be in the whitelist. It will bypass the_checkSendercheck:
+function_checkSender(address_from)internalview{if(_from!=msg.sender&& !cluster.isWhitelisted(0,msg.sender)) {revertMagnetar_NotAuthorized(msg.sender,_from);}}
+Impact
+Combining the two issues mentioned above, we can carry out the following exploitation.
+CallMagnetar.burstfunction with_action.id == MagnetarAction.OFT, which will call_processOFTOperationfunction. The_targetis the Magnetar contract itself, and the_actionCalldatais still an encoded calldata to call theMagnetar.burstfunction with_action.id == MagnetarAction.OFTagain.In the second call, themsg.senderwill be the Magnetar itself, so the from address check in the_checkSenderfunction will be skipped directly because themsg.senderis in the whitelist.Now the attacker can pretend to be anyone and call any contract through the Magnetar. Please note that users approved their tokens to Magnetar if they used it.
+Proof of Concept
+TakingMagnetarAssetModuleas an example, it demonstrates how an attacker could steal users’ collateral in the market.
+Firstly the_checkSender(data.user);can be bypassed directly.
+And makedata.withdrawCollateralParams.withdraw = true, so thecollateralWithdrawReceiverwill be the Magnetar contract itself:
+address collateralWithdrawReceiver = data.withdrawCollateralParams.withdraw ? address(this) : data.user;
+Then ifcollateralShare > 0, the function will call_withdrawToChain(data.withdrawCollateralParams);to withdraw the collateral to the another chain by sending LZ message.
+There is no check forwithdrawCollateralParamsin the_withdrawToChainfunction. The attacker can set the receiver address to his address and finally receive the tokens on the target chain.
+Recommendation
+Check the target function sig in the_processOFTOperationfunction.
+cryptotechmaker (Tapioca) confirmed, but disagreed with severity and commented via duplicate Issue #170:
+Medium, the same happens if you approve the attacker for an ERC20. However, this is worth fixing in my opinion. I think we can add specific selectors instead of allowing any call to be executed.Fixedhere.
+
+[H-07] Incorrect math meansdata.removeAndRepayData.removeAssetFromSGLwill never work once SGL has accrued interest
+Submitted byGalloDaSballo, also found byKIntern_NAandbin2chen
+The code to remove shares from Singularity is as follows:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/modules/MagnetarOptionModule.sol#L158-L159
+singularity_.removeAsset(data.user,removeAssetTo,share);
+Whereshareis computed in this way:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/modules/MagnetarOptionModule.sol#L153
+uint256share=yieldBox_.toShare(_assetId,_removeAmount,false);
+The line is calculating: The (incorrectly rounded down) amount of shares of Yieldbox to burn in order to withdraw from Yieldbox the_removeAmount.
+But the code is calling:
+singularity_.removeAsset(data.user, removeAssetTo, share);
+This is asking Singularity to remove a % (part) of the total assets in Singularity. Due to this, the line will stop working as soon as singularity has had any operation that generated interest.
+Proof of Concept
+Please see the formula used by Singularity for pricing asset:
+https://github.com/Tapioca-DAO/Tapioca-bar/blob/c2031ac2e2667ac8f9ac48eaedae3dd52abef559/contracts/markets/singularity/SGLCommon.sol#L199-L216
+function_removeAsset(addressfrom,addressto,uint256fraction)internalreturns(uint256share) {if(totalAsset.base==0) {return0;}Rebasememory_totalAsset=totalAsset;uint256allShare=_totalAsset.elastic+yieldBox.toShare(assetId,totalBorrow.elastic,false);share= (fraction*allShare) /_totalAsset.base;}
+As you can see, thefractionwill be computed against_totalAsset.elastic + yieldBox.toShare(assetId, totalBorrow.elastic, false);. Meaning that the math will be incorrect as soon as any operation is done in Singularity
+Coded POC
+This Poc is built on the public repo:https://github.com/GalloDaSballo/yieldbox-foundry
+We show how a change in interest will changefraction. In my local testing,fractionandsharesare already out of sync. However, due to decimals it may be possible for them to be the same value, until some interest will makeborrowElasticgrow.
+Logs
+[PASS] testSingularityRebasedMathIsNotYieldbox() (gas: 34810)Logs:fraction 999999990000000099999share 100000000000000000000000000000[PASS] testSingularityRebasedMathIsNotYieldboxAfterInterest() (gas: 34756)Logs:fraction 666666662222222251851share 100000000000000000000000000000
+Code
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.0;import{Test}from"forge-std/Test.sol";import{console2}from"forge-std/console2.sol";import{TargetFunctions}from"./TargetFunctions.sol";import{FoundryAsserts}from"@chimera/FoundryAsserts.sol";contractCryticToFoundryisTest,TargetFunctions,FoundryAsserts{functionsetUp()public{setup();}functiontestSingularityRebasedMathIsNotYieldbox()public{uint256amountToRepay=1000e18;uint256totalAssetShares=2000e18;uint256totalAssetBase=2000e18;uint256totalBorrowElastic=2000e18;uint256share=yieldBox.toShare(assetId,amountToRepay,false);uint256allShare=totalAssetShares+yieldBox.toShare(assetId,totalBorrowElastic,true);uint256fraction=allShare==0?share: (share*totalAssetBase) /allShare;console2.log("fraction",fraction);console2.log("share",share);}functiontestSingularityRebasedMathIsNotYieldboxAfterInterest()public{uint256amountToRepay=1000e18;uint256totalAssetShares=2000e18;uint256totalAssetBase=2000e18;uint256totalBorrowElastic=3000e18;// NOTE: Higher cause of interestuint256share=yieldBox.toShare(assetId,amountToRepay,false);uint256allShare=totalAssetShares+yieldBox.toShare(assetId,totalBorrowElastic,true);uint256fraction=allShare==0?share: (share*totalAssetBase) /allShare;console2.log("fraction",fraction);console2.log("share",share);}}
+Mitigation
+The unused functiongetFractionForAmountshould help, minus some possible rounding considerations.
+cryptotechmaker (Tapioca) confirmed, but disagreed with severity and commented via duplicate Issue #159:
+PRhere.
+
+[H-08]IMarket.execute.selector,_checkSenderbypass allows to execute arbitrary operations
+Submitted byGalloDaSballo
+Because of an incorrect interpretation ofcalldatafor theexecutesignature, we are able to bypass the_checkSenderand perform arbitraryexecuteoperations as Magnetar.
+Impact
+Market.executeuses the following signature:
+functionexecute(Module[]calldatamodules,bytes[]calldatacalls,boolrevertOnFail)
+For Calldata variables, the size4:36is going to be thelengthof thecalldata. We can specify an arbitrary length that matches the value of any address that is whitelisted, or any address that we’re able to generate. This will allow us to bypass the check and perform arbitrary execution in the market.
+After forging our length, we have bypassed the check, allowing us to execute, while having permissions/allowances from other users:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/Magnetar.sol#L256-L281
+function_processMarketOperation(address_target,bytescalldata_actionCalldata,uint256_actionValue,bool_allowFailure)private{if(!cluster.isWhitelisted(0,_target))revertMagnetar_NotAuthorized(_target,_target);/// @dev owner address should always be first param.// addCollateral(address from,...)// borrow(address from,...)// addAsset(address from,...)// repay(address _from,...)// buyCollateral(address from,...)// sellCollateral(address from,...)bytes4funcSig=bytes4(_actionCalldata[:4]);if(funcSig==IMarket.execute.selector||funcSig==ISingularity.addAsset.selector/// @audit ??????||funcSig==ISingularity.removeAsset.selector) {/// @dev Owner param check. See Warning above._checkSender(abi.decode(_actionCalldata[4:36], (address)));/// @audit we can forge this 80%_executeCall(_target,_actionCalldata,_actionValue,_allowFailure);return;}
+POC
+This will allow us to transfer any token that is approved to us, stealing them. We can proceed to mine an address with low enough zeros, or simply use a suitable system address for any chain, as the requirement for_checkSender(abi.decode(_actionCalldata[4:36], (address)))is simply to match themsg.sender.
+An example would be the Optimism Portal on L2 which would have very low address; meaning we would be able to have a sufficient amount of operations there. Once we can bypass the check, we will be able to have Magnetarexecuteany market operation, such as transfers of other people tokens, allowing us to steal them.
+Coded POC
+The Coded POC shows how we can forge calldata to bypass the check, as long as we can use an address that matches the abi.decoding of the length:
+// SPDX-License-Identifier: MITpragmasolidity0.8.22;import{Test}from"forge-std/Test.sol";import{console2}from"forge-std/console2.sol";contractMockCallerChecker{functiondoTheCheck(bytescalldata_actionCalldata)external{console2.log("Calldata Length",_actionCalldata.length);_checkSender(abi.decode(_actionCalldata[4:36], (address)));}function_checkSender(addressentry)internal{console2.log("msg.sender",msg.sender);console2.log("entry",entry);require(msg.sender==entry);}}contractBasicTestisTest{// 4 bytes is funsig 0xaaaaaaaa// 32 bytes are the address (since abi.encoding uses a full word)// 0000000000000000000000000000000000000000111111111111111111111111bytesdata=hex"aaaaaaaa0000000000000000000000000000000000000000111111111111111111111111";functiontestDemo()public{MockCallerCheckerchecker=newMockCallerChecker();console2.log(data.length);// Same address as the lengthvm.prank(address(0x111111111111111111111111));checker.doTheCheck(data);// For a real exploit, all we have to do is find the cheapest between available addresses and one we can mine}}
+Logs
+Logs:36CalldataLength36msg.sender0x0000000000000000111111111111111111111111entry0x0000000000000000111111111111111111111111Traces:[217996] BasicTest::testDemo()├─ [169614] →newMockCallerChecker@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f│   └─ ←847bytesofcode├─ [0] console::log(36) [staticcall]│   └─ ← ()├─ [0] VM::prank(0x0000000000000000111111111111111111111111)│   └─ ← ()├─ [2931] MockCallerChecker::doTheCheck(0xaaaaaaaa0000000000000000000000000000000000000000111111111111111111111111)│   ├─ [0] console::log("Calldata Length",36) [staticcall]│   │   └─ ← ()│   ├─ [0] console::log("msg.sender",0x0000000000000000111111111111111111111111) [staticcall]│   │   └─ ← ()│   ├─ [0] console::log("entry",0x0000000000000000111111111111111111111111) [staticcall]│   │   └─ ← ()│   └─ ← ()└─ ← ()
+Notes on Cost
+The cost of the attack is the cost of finding an address that is small enough to steal all funds; As far as I can tell, this would take a few days on specialized hardware.
+On certain chains, with system contracts (e.g. Optimism) the cost would be zero as we could act on behalf of the Portal and we would be able to use very small amount of data.
+It’s also worth noting that Arbitrum (the base chain of the project), has no gas limit on blocks.
+Mitigation
+It may be necessary to removeexecutefrom available commands as all commands will be performed byMagnetar.
+Assessed type
+en/de-code
+0xWeiss (Tapioca) confirmed
+
+[H-09] Funds can be stolen through remote transfer functionality
+Submitted byrvierdiiev
+User can send LZ message through anyOfttoken using theTapiocaOmnichainSender.sendPacketfunction. User provides params that should be used and also providescomposed messageif he needs to send it.
+What is important for composed message isduring crafting message,msg.senderis stored assrcChainSender_. In this way we know who have triggered composed call.
+functionencode(bytes32_sendTo,uint64_amountShared,bytesmemory_composeMsg)internalviewreturns(bytesmemory_msg,boolhasCompose) {hasCompose=_composeMsg.length>0;// @dev Remote chains will want to know the composed function caller ie. msg.sender on the src._msg=hasCompose?abi.encodePacked(_sendTo,_amountShared,addressToBytes32(msg.sender),_composeMsg):abi.encodePacked(_sendTo,_amountShared);}
+The amount that should be sent to other chain is burnt (if any) and LZ callis sent. On another chain, the call will be handledbyTapiocaOmnichainReceiver._lzReceivefunction. This functionwill mint tokens to recipient. If the composed message was included, then it willsent it to endpoint, so it can be triggered later.
+When composed message is triggered, thenlzComposefunctionhandles it. As you can see, the function retrievessrcChainSender_to know who was initiator of compose call on source chain. Then_lzComposefunctioncontinue processing of message.
+UsingmsgTypeuser can provide operation he wants to execute on target chain. One of operationsisMSG_REMOTE_TRANSFERthat allows to remotely send tokens to another chain. The flow is next: on chain A user initiates compose call to chain B, that will send his tokens on chain B to chain A, or will use allowance to send tokens of other user on chain B to chain A. Let’s check how it works.
+First, the function shouldtransfer tokens from owner toaddress(this). This function receives owner of funds and_srcChainSenderas inputsto check allowance. As you can see, in the case of if_srcChainSenderis owner then we don’t need any approve.
+After transfer is done toaddress(this)then thecontract can send them back to chain A. So the functionburns tokensand crafts message to another chain and it can have composed call again; which means thatit will include_srcChainSender, so the contract on chain A knows who initiated the call.
+The problem is that_srcChainSenderthat will be included isowner of funds on chain B, which is incorrect.
+Here’s the described attack flow:
+Victim has funds on chain A, that attacker is going to steal to chain B.Attacker on chain A initiates compose call with victim as owner of funds and provides amount0as amount to transfer of chain B.Compose call succeed on chain B as it is possible to transfer0tokens and then another compose message was included, which transfers all tokens from victim to attacker on chain B.Because_srcChainSenderwas set to victim on first compose call. Then the next compose call on chain A will think that victim is initiator of remote transfer, which means that no allowance will be checked.Funds are stolen to attacker address on chain B.
+Impact
+Possible to steal funds.
+Tools Used
+VsCode
+Recommended Mitigation Steps
+Provide_srcChainSenderas initiator of compose call.
+_internalRemoteTransferSendPacket(_srcChainSender, remoteTransferMsg_.lzSendParam, remoteTransferMsg_.composeMsg);
+Assessed type
+Error
+0xWeiss (Tapioca) confirmed
+
+[H-10] Adversary can steal approvedtOLPs to Magnetar via_paricipateOnTOLP
+Submitted bydeadrxsezzz
+Any user could steal any approvedtOLPto Magnetar. This is because within the Magnetar call, if the user has not minted atOLPNFT, they can participate with any id they wish, by inputting it inparticipateData.
+function_participateOnTOLP(IOptionsParticipateDatamemoryparticipateData,addressuser,addresslockDataTarget,uint256tOLPTokenId)internal{if(!cluster.isWhitelisted(0,participateData.target)) {revertMagnetar_TargetNotWhitelisted(participateData.target);}// Check tOLPTokenIdif(participateData.tOLPTokenId!=0) {if(participateData.tOLPTokenId!=tOLPTokenId&&tOLPTokenId!=0) {revertMagnetar_tOLPTokenMismatch();}tOLPTokenId=participateData.tOLPTokenId;// @audit - does not verify sender owns that token}if(tOLPTokenId==0)revertMagnetar_ActionParamsMismatch();IERC721(lockDataTarget).approve(participateData.target,tOLPTokenId);uint256oTAPTokenId=ITapiocaOptionBroker(participateData.target).participate(tOLPTokenId);addressoTapAddress=ITapiocaOptionBroker(participateData.target).oTAP();IERC721(oTapAddress).safeTransferFrom(address(this),user,oTAPTokenId,"0x");}
+The only thing to consider is that the following line, must not revert:
+IERC721(lockDataTarget).approve(participateData.target,tOLPTokenId);
+Since the contract will not be an owner oftOLPTokenId, we’ll need to input a custom maliciouslockDataTargetaddress, for which the approve will not revert. ThelockDataTargetis not used at any other place within that function, so there’ll be no problem inputting a malicious address here.
+After doing the described steps above, the attacker will lock the innocent user’stOLPand get theoTAPNFT minted to themselves, effectively stealing the innocent user’s NFT.
+Recommended Mitigation Steps
+Verify that the sender owns thattOLPid.
+Assessed type
+ERC721
+0xWeiss (Tapioca) confirmed
+
+[H-11] Adversary can utilise approved to MagnetaroTAPandtOLPNFTs
+Submitted bydeadrxsezzz
+The idea of Magnetar is to allow users to batch transactions towards certain contract within the Tapioca contracts, includingTapiocaOptionBrokerandTapiocaOptionLiquidityProvision. In order to do so, users will have to giveoTAPandtOLPallowance to the Magnetar contract.
+The problem is that within the_processTapTokenOperationfunction, any user could make a call for another’s user’s approved NFT, as there are no checks that themsg.senderis the owner of the NFT.
+function_processTapTokenOperation(address_target,bytescalldata_actionCalldata,uint256_actionValue,bool_allowFailure)private{if(!cluster.isWhitelisted(0,_target))revertMagnetar_NotAuthorized(_target,_target);bytes4funcSig=bytes4(_actionCalldata[:4]);if(funcSig==ITapiocaOptionBroker.exerciseOption.selector||funcSig==ITapiocaOptionBroker.participate.selector||funcSig==ITapiocaOptionBroker.exitPosition.selector||funcSig==ITapiocaOptionLiquidityProvision.lock.selector||funcSig==ITapiocaOptionLiquidityProvision.unlock.selector) {_executeCall(_target,_actionCalldata,_actionValue,_allowFailure);return;}revertMagnetar_ActionNotValid(MagnetarAction.TapToken,_actionCalldata);}
+Example: A user can callexerciseOptionfor another person’s approvedoTAPand exercise their option:
+functionexerciseOption(uint256_oTAPTokenID,ERC20_paymentToken,uint256_tapAmount)externalwhenNotPaused{// Load data(,TapOptionmemoryoTAPPosition) =oTAP.attributes(_oTAPTokenID);LockPositionmemorytOLPLockPosition=tOLP.getLock(oTAPPosition.tOLP);boolisPositionActive=_isPositionActive(tOLPLockPosition);if(!isPositionActive)revertOptionExpired();uint256cachedEpoch=epoch;PaymentTokenOraclememorypaymentTokenOracle=paymentTokens[_paymentToken];// Check requirementsif(paymentTokenOracle.oracle==ITapiocaOracle(address(0))) {revertPaymentTokenNotSupported();}if(!oTAP.isApprovedOrOwner(msg.sender,_oTAPTokenID)) {revertNotAuthorized();}if(block.timestamp<oTAPPosition.entry+EPOCH_DURATION) {revertOneEpochCooldown();}// Can only exercise after 1 epoch duration// Get eligible OTC amountuint256gaugeTotalForEpoch=singularityGauges[cachedEpoch][tOLPLockPosition.sglAssetID];uint256netAmount=uint256(netDepositedForEpoch[cachedEpoch][tOLPLockPosition.sglAssetID]);if(netAmount==0)revertNoLiquidity();uint256eligibleTapAmount=muldiv(tOLPLockPosition.ybShares,gaugeTotalForEpoch,netAmount);eligibleTapAmount-=oTAPCalls[_oTAPTokenID][cachedEpoch];// Subtract already exercised amountif(eligibleTapAmount<_tapAmount)revertTooHigh();uint256chosenAmount=_tapAmount==0?eligibleTapAmount:_tapAmount;if(chosenAmount<1e18)revertTooLow();oTAPCalls[_oTAPTokenID][cachedEpoch] +=chosenAmount;// Adds up exercised amount to current epoch// Finalize the deal_processOTCDeal(_paymentToken,paymentTokenOracle,chosenAmount,oTAPPosition.discount);emitExerciseOption(cachedEpoch,msg.sender,_paymentToken,_oTAPTokenID,chosenAmount);}
+Recommended Mitigation Steps
+Add checks within Magnetar that the user owns the NFT on which they’re making a call.
+Assessed type
+Access Control
+0xWeiss (Tapioca) confirmed
+
+[H-12] Adversary can steal user’s NFT’s if they have set Magnetar asisApprovedForAll == true
+Submitted bydeadrxsezzz
+Since Magnetar is supposed to be used as a router for multiple operations, it can be expected that user will have it pre-approved for their NFTs (such astOLPasoTAPones, as they’ll be the ones primarily used).
+The Magnetar contract allows for any user to make aERC721.approve, via_processPermitOperation:
+function_processPermitOperation(address_target,bytescalldata_actionCalldata,bool_allowFailure)private{if(!cluster.isWhitelisted(0,_target))revertMagnetar_NotAuthorized(_target,_target);/// @dev owner address should always be first param.// permitAction(bytes,uint16)// permit(address owner...)// revoke(address owner...)// permitAll(address from,..)// permit(address from,...)// setApprovalForAll(address from,...)// setApprovalForAsset(address from,...)bytes4funcSig=bytes4(_actionCalldata[:4]);if(funcSig==IPermitAll.permitAll.selector||funcSig==IPermitAll.revokeAll.selector||funcSig==IPermit.permit.selector||funcSig==IPermit.revoke.selector||funcSig==IYieldBox.setApprovalForAll.selector||funcSig==IYieldBox.setApprovalForAsset.selector||funcSig==IERC20.approve.selector||funcSig==IPearlmit.approve.selector||funcSig==IERC721.approve.selector) {/// @dev Owner param check. See Warning above._checkSender(abi.decode(_actionCalldata[4:36], (address)));// No need to send value on permit_executeCall(_target,_actionCalldata,0,_allowFailure);return;}revertMagnetar_ActionNotValid(MagnetarAction.Permit,_actionCalldata);}
+The problem is that for OZ ERC721s (such asoTAPandtOLP), if an NFT owner has approved a spender asisApprovedForAll, the spender can callapprovefor any NFTs belonging to the owner.
+In other words, if user A has set Magnetar asapprovedForAll, user B can callNFT.approve(userB, id)and get access to user A’s NFT:
+functionapprove(addressto,uint256tokenId)publicvirtualoverride{addressowner=ERC721.ownerOf(tokenId);require(to!=owner,"ERC721: approval to current owner");require(_msgSender() ==owner||isApprovedForAll(owner,_msgSender()),"ERC721: approve caller is not token owner or approved for all");_approve(to,tokenId);}
+Recommended Mitigation Steps
+Do not allow users to make a call withERC721.approveselector.
+0xWeiss (Tapioca) confirmed
+

@@ -1,0 +1,31 @@
+Type of vulnerability: Loop Increment Misplacement
+
+Cause of vulnerability: The increment statement `++i` is placed inside the `else` block, causing it to be skipped when a strategy is supposed to be skipped, leading to an infinite loop or incorrect processing of strategies.
+
+Execution process:
+1. The function `slashQueuedWithdrawal` is called with a list of indices to skip.
+2. The loop iterates over the strategies in the queued withdrawal.
+3. If the current index `i` matches an index in `indicesToSkip`, it increments `indicesToSkipIndex` but does not increment `i`.
+4. On the next iteration, `i` remains the same, causing the loop to process the same strategy again, leading to a revert if the strategy is malicious.
+
+Vulnerable code:
+```solidity
+// keeps track of the index in the `indicesToSkip` array
+uint256 indicesToSkipIndex = 0;
+uint256 strategiesLength = queuedWithdrawal.strategies.length;
+for (uint256 i = 0; i < strategiesLength;) {
+    // check if the index i matches one of the indices specified in the `indicesToSkip` array
+    if (indicesToSkipIndex < indicesToSkip.length && indicesToSkip[indicesToSkipIndex] == i) {
+        unchecked { ++indicesToSkipIndex; }
+    } else {
+        if (queuedWithdrawal.strategies[i] == beaconChainETHStrategy) {
+            // withdraw the beaconChainETH to the recipient
+            _withdrawBeaconChainETH(queuedWithdrawal.depositor, recipient, queuedWithdrawal.shares[i]);
+        } else {
+            // tell the strategy to send the appropriate amount of funds to the recipient
+            queuedWithdrawal.strategies[i].withdraw(recipient, tokens[i], queuedWithdrawal.shares[i]);
+        }
+        unchecked { ++i; } // @audit
+    }
+}
+```

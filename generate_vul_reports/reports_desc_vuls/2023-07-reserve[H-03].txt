@@ -1,0 +1,24 @@
+Type of vulnerability: Reward Theft
+Cause of vulnerability: Inability to update reward checkpoints after contract shutdown
+Execution process: After contract shutdown, transferring tokens to new users allows them to claim undistributed rewards without updating their reward integral.
+Vulnerable code: 
+```solidity
+function _beforeTokenTransfer(address _from, address _to, uint256) internal override {
+    _checkpoint([_from, _to]);
+}
+
+function _checkpoint(address[2] memory _accounts) internal nonReentrant {
+    // if shutdown, no longer checkpoint in case there are problems
+    if (isShutdown()) return;
+    uint256 supply = _getTotalSupply();
+    uint256[2] memory depositedBalance;
+    depositedBalance[0] = _getDepositedBalance(_accounts[0]);
+    depositedBalance[1] = _getDepositedBalance(_accounts[1]);
+    IRewardStaking(convexPool).getReward(address(this), true);
+    _claimExtras();
+    uint256 rewardCount = rewards.length;
+    for (uint256 i = 0; i < rewardCount; i++) {
+        _calcRewardIntegral(i, _accounts, depositedBalance, supply, false);
+    }
+}
+```

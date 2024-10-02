@@ -1,0 +1,27 @@
+[H-03] [WP-H0] Fake balances can be created for not-yet-existing ERC20 tokens, which allows attackers to set traps to steal funds from future users
+Submitted by WatchPug, also found by 0xsanson, BondiPestControl, and IllIllI
+https://github.com/code-423n4/2022-05-cally/blob/1849f9ee12434038aa80753266ce6a2f2b082c59/contracts/src/Cally.sol#L158-L201
+functioncreateVault(uint256tokenIdOrAmount,addresstoken,...)externalreturns(uint256vaultId) {...Vaultmemoryvault=Vault({...});// vault index should always be oddvaultIndex+=2;vaultId=vaultIndex;_vaults[vaultId] =vault;// give msg.sender vault token_mint(msg.sender,vaultId);emitNewVault(vaultId,msg.sender,token);// transfer the NFTs or ERC20s to the contractvault.tokenType==TokenType.ERC721?ERC721(vault.token).transferFrom(msg.sender,address(this),vault.tokenIdOrAmount):ERC20(vault.token).safeTransferFrom(msg.sender,address(this),vault.tokenIdOrAmount);}
+https://github.com/code-423n4/2022-05-cally/blob/1849f9ee12434038aa80753266ce6a2f2b082c59/contracts/src/Cally.sol#L23-L34
+import"solmate/utils/SafeTransferLib.sol";...contractCallyisCallyNft,ReentrancyGuard,Ownable{usingSafeTransferLibforERC20;...
+When creating a new vault, solmate’sSafeTransferLibis used for pullingvault.tokenfrom the caller’s account, this issue won’t exist if OpenZeppelin’s SafeERC20 is used instead.
+That’s because there is a subtle difference between the implementation of solmate’sSafeTransferLiband OZ’sSafeERC20:
+OZ’sSafeERC20checks if the token is a contract or not, solmate’sSafeTransferLibdoes not.
+See:https://github.com/Rari-Capital/solmate/blob/main/src/utils/SafeTransferLib.sol#L9
+Note that none of the functions in this library check that a token has code at all! That responsibility is delegated to the caller.
+As a result, when the token’s address has no code, the transaction will just succeed with no error.
+This attack vector was made well-known by the qBridge hack back in Jan 2022.
+For our project, this alone still won’t be a problem, a vault created and wrongfully accounted for a certain amount of balance for a non-existing token won’t be much of a problem, there will be no fund loss as long as the token stays that way (being non-existing).
+However, it’s becoming popular for protocols to deploy their token across multiple networks and when they do so, a common practice is to deploy the token contract from the same deployer address and with the same nonce so that the token address can be the same for all the networks.
+For example: $1INCH is using the same token address for both Ethereum and BSC; Gelato's$GEL token is using the same token address for Ethereum, Fantom and Polygon.
+A sophisticated attacker can exploit it by taking advantage of that and setting traps on multiple potential tokens to steal from the future users that deposits with such tokens.
+Proof of Concept
+Given:
+ProjectA has TokenA on another network;ProjectB has TokenB on another network;ProjectC has TokenC on another network;The attackercreateVault()forTokenA,TokenB, andTokenCwith10000e18astokenIdOrAmounteach;A few months later, ProjectB lunchedTokenBon the local network at the same address;Alice created a vault with11000e18 TokenB;The attacker calledinitiateWithdraw()and thenwithdraw()to receive10000e18 TokenB.
+In summary, one of the traps set by the attacker was activated by the deployment ofTokenBand Alice was the victim. As a result,10000e18 TokenBwas stolen by the attacker.
+Recommendation
+Consider using OZ’sSafeERC20instead.
+outdoteth (Cally) confirmed and resolved:
+this issue has been fixed here:https://github.com/outdoteth/cally/pull/5
+HardlyDifficult (judge) commented:
+Great catch and the potential attack is very clearly explained. Although the window for an attack like this would not be common, it’s an easy trap to setup and likely would occur as some point if Cally is planning to support multiple networks.

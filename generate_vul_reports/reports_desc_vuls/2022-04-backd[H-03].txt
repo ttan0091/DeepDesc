@@ -1,0 +1,31 @@
+Type of vulnerability: Reentrancy and Token Approval Logic
+Cause of vulnerability: The `safeApprove` function from OpenZeppelin's `SafeERC20` library is used incorrectly, specifically when the allowance is changed from a non-zero value to another non-zero value. This causes the function to revert, preventing subsequent top-ups.
+Execution process: When a customer attempts to top up their account a second time, the `safeApprove` function is called with a non-zero value while the previous allowance is still non-zero. This triggers the `require` statement in the `safeApprove` function, causing it to revert and thus preventing the top-up.
+Vulnerable code: 
+```solidity
+function topUp(
+    51 bytes32 account,
+    52 address underlying,
+    53 uint256 amount,
+    54 bytes memory extra
+) external override returns (bool) {
+    56 bool repayDebt = abi.decode(extra, (bool));
+    57 CToken ctoken = cTokenRegistry.fetchCToken(underlying);
+    58 uint256 initialTokens = ctoken.balanceOf(address(this));
+    59
+    60 address addr = account.addr();
+    61
+    62 if (repayDebt) {
+    63     amount -= _repayAnyDebt(addr, underlying, amount, ctoken);
+    64     if (amount == 0) return true;
+    65 }
+    66
+    67 uint256 err;
+    68 if (underlying == address(0)) {
+    69     err = ctoken.mint{value: amount}(amount);
+    70 } else {
+    71     IERC20(underlying).safeApprove(address(ctoken), amount);
+    71 }
+}
+```
+This code snippet from `CompoundHandler.sol` shows the `safeApprove` function being called without first setting the allowance to zero, which is the cause of the vulnerability.

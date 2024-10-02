@@ -1,0 +1,18 @@
+Type of vulnerability: Incorrect Fee Deduction Logic
+Cause of vulnerability: Misinterpretation of when fees should be deducted, leading to fees being deducted when a Put option expires instead of when it is exercised.
+Execution process: When a Put option expires and the `withdraw()` function is called, the fee is incorrectly deducted from the strike amount. Additionally, when a Put option is exercised, no fee is deducted from the strike amount.
+Vulnerable code: 
+```solidity
+// In function withdraw() at PuttyV2.sol L#495-L503
+if (!order.isCall && !isExercised) {
+    uint256 feeAmount = 0;
+    if (fee > 0) {
+        feeAmount = (order.strike * fee) / 1000;
+    }
+    ERC20(order.baseAsset).safeTransfer(owner(), feeAmount);
+    ERC20(order.baseAsset).safeTransfer(msg.sender, order.strike - feeAmount);
+}
+
+// In function exercise() at PuttyV2.sol L#451
+ERC20(order.baseAsset).safeTransfer(msg.sender, order.strike);
+```

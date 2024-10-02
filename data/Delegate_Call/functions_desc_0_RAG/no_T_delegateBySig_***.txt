@@ -1,0 +1,62 @@
+The code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signed message. This function is commonly used in token contracts that implement voting or delegation mechanisms. Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    signatory: The address of the user who is delegating their voting rights.
+    delegatee: The address to which the voting rights are being delegated.
+    deadline: The timestamp after which the delegation signature is no longer valid.
+    v, r, s: The components of the ECDSA signature.
+
+2. Deadline Check:
+   solidity
+   require(deadline >= block.timestamp, "Delegation expired");
+   
+   This line checks if the current block timestamp is less than or equal to the deadline. If the deadline has passed, the function reverts with the message "Delegation expired".
+
+3. Signature Validation:
+   solidity
+   require(
+       uint256(s) <=
+           0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0,
+       "Invalid signature 's' value"
+   );
+   require(v == 27 || v == 28, "Invalid signature 'v' value");
+   
+   These lines validate the s and v values of the signature. The s value must be in the lower half of the secp256k1 curve's order to prevent signature malleability. The v value must be either 27 or 28, which are the standard values for ECDSA signatures on the Ethereum network.
+
+4. Message Digest Calculation:
+   solidity
+   bytes32 digest = keccak256(
+       abi.encodePacked(
+           "\x19\x01",
+           DOMAIN_SEPARATOR(),
+           keccak256(
+               abi.encode(
+                   DELEGATION_TYPEHASH,
+                   delegatee,
+                   nonce[signatory]++,
+                   deadline
+               )
+           )
+       )
+   );
+   
+   This block calculates the hash of the message that was signed. It uses the EIP712 structured data hashing and signing standard. The message includes the domain separator, the delegation type hash, the delegatee address, the nonce of the signatory (which is incremented after use), and the deadline.
+
+5. Signature Recovery:
+   solidity
+   address recoveredAddress = ecrecover(digest, v, r, s);
+   require(
+       recoveredAddress != address(0) && recoveredAddress == signatory,
+       "Invalid signature"
+   );
+   
+   The ecrecover function is used to recover the address that signed the message from the r, s, and v values. The recovered address is then checked to ensure it is not the zero address and matches the signatory address. If the recovered address is invalid, the function reverts with the message "Invalid signature".
+
+6. Delegation Execution:
+   solidity
+   return delegate(signatory, delegatee);
+   
+   If all checks pass, the function calls the internal delegate function to perform the actual delegation of voting rights from the signatory to the delegatee.
+
+### Summary
+The delegateBySig function allows a user to delegate their voting rights to another address by providing a signed message. It validates the signature components, checks the deadline, calculates the message digest, recovers the signer's address, and finally executes the delegation if all checks are successful. This function ensures secure and valid delegation of voting rights using ECDSA signatures and the EIP712 standard.

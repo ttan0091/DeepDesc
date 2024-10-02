@@ -1,0 +1,19 @@
+[H-03] Repeated Calls to Shelter.withdraw Can Drain All Funds in Shelter
+Submitted by mtz, also found by 0x1f8b, 0xliumin, bitbopper, cccz, cmichel, csanuragjain, Czar102, danb, Alex the Entreprenerd, GeekyLumberjack, gzeon, hickuphh3, hyh, leastwood, Randyyy, Rhynorater, Ruhum, and ShadowyNoobDev
+Shelter.sol#L52-L57
+tl;dr Anyone who can callwithdrawto withdraw their own funds can call it repeatedly to withdraw the funds of others.withdrawshould only succeed if the user hasn’t withdrawn the token already.
+The shelter can be used for users to withdraw funds in the event of an emergency. Thewithdrawfunction allows callers to withdraw tokens based on the tokens they have deposited into the shelter client: ConvexStakingWrapper. However,withdrawdoes not check if a user has already withdrawn their tokens. Thus a user that canwithdrawtokens, can call withdraw repeatedly to steal the tokens of others.
+Proof of Concept
+tl;dr an attacker that can successfully callwithdrawonce on a shelter, can call it repeatedly to steal the funds of others. Below is a detailed scenario where this situation can be exploited.
+Mallory deposits 1wETHintoConvexStakingWrapperusingdeposit. Let’s also assume that other users have deposited 2wETHinto the same contract.An emergency happens and the owner ofConvexStakingWrappercallssetShelter(shelter)andenterShelter([pidOfWETHToken, ...]). Nowshelterhas 3wETHand is activated forwETH.Mallory callsshelter.withdraw(wETHAddr, MalloryAddr), Mallory will rightfully receive 1 wETH because her share of wETH in the shelter is 1/3.Mallory callsshelter.withdraw(wETHAddr, MalloryAddr)again, receiving 1/3*2 = 2/3 wETH.withdrawdoes not check that she has already withdrawn. This time, the wETH does not belong to her, she has stolen the wETH of the other users. She can continue callingwithdrawto steal the rest of the funds
+Recommended Mitigation Steps
+To mitigate this,withdrawmust first check thatmsg.senderhas not withdrawn this token before andwithdrawmust also record thatmsg.senderhas withdrawn the token.
+The exact steps for this are below:
+Add the following line to the beginning ofwithdraw(line 53):
+require(!claimed[_token][msg.sender], "already claimed")
+Replaceline 55with the following:
+claimed[_token][msg.sender] = true;
+This replacement is necessary because we want to record who is withdrawing, not where they are sending the token which isn’t really useful info.
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a logical fallacy in theSheltercontract.This would allow a caller to claim their tokens multiple times, as long as they send them to a new address.Mitigation is as simple as checking claims againstmsg.sender, however because all funds can be drained, this finding is of High Severity.

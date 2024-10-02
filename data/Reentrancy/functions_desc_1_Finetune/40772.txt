@@ -1,0 +1,10 @@
+Type of vulnerability: Reentrancy or Race Condition
+
+Cause of vulnerability: The `get()` function in HoneyPot allows an attacker to repeatedly withdraw funds, calling arbitrary functions in the process each time the function is invoked. If the `get()` function is invoked due to an airdrop, rebasing, or paid causing a call to `get()` itself via a process in the contract, it can be called again and again, exploiting `arbitraryOperation` to steal tokens every time.
+
+Working process of the code: 
+1. An attacker deposits tokens into the HoneyPot contract.
+2. The `get()` function is called by the attacker, which initiates the reentrancy attack.
+3. The reentrancy attack first calls the `arbitraryOperation()` function, which sets `sumsTokensInPegTime` to `block.timestamp + TIME_TO_WAIT` and `sumTokensUntil` to `block.number + END_BLOCK_DELTA`.
+4. The `get()` function updates the `_supplyIntoTradeUntil`, adding `timeToWait = TIME_TO_WAIT` until the tokens stop arriving, and therefore, this becomes `timeToWait = TIME_TO_WAIT + now`; therefore, more tokens will stop arriving when the next rebase comes in.
+5. Since the `get()` function was invoked by an internal `arbitraryOperation()`, it will be invoked again by automated internal `arbitraryOperation()`.

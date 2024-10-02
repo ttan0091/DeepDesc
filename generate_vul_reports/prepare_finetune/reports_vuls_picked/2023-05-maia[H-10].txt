@@ -1,0 +1,25 @@
+Type of vulnerability: Slippage Protection Missing
+Cause of vulnerability: The `init()` function does not apply the `checkDeviation` modifier, which is designed to provide slippage protection during liquidity operations.
+Execution process: During the initialization of the contract, the `init()` function is called to make an initial deposit and mint tokens. The `_nonfungiblePositionManager.mint()` function is invoked with hardcoded minimum amounts (`amount0Min` and `amount1Min` set to 0), exposing the operation to potential slippage without any safeguards.
+Vulnerable code: 
+```solidity
+function init(uint256 amount0Desired, uint256 amount1Desired, address receiver) external virtual nonReentrant returns (uint256 shares, uint256 amount0, uint256 amount1) {
+    ...
+    (_tokenId, _liquidity, amount0, amount1) = _nonfungiblePositionManager.mint(
+        INonfungiblePositionManager.MintParams({
+            token0: address(_token0),
+            token1: address(_token1),
+            fee: poolFee,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp
+        })
+    );
+    ...
+}
+```

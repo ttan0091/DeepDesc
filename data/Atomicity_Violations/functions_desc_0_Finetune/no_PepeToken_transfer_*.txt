@@ -1,0 +1,12 @@
+Type of vulnerability: Missing Event
+Cause of vulnerability: The ApprovalController contract does not emit the ClaimApproved event, which is required for the ApprovedForAllFilterable storage to work correctly.
+Impact of vulnerability: The ApprovedForAllFilterable storage will not record the allowed amounts for the user's transfers on behalf of other accounts (operators).
+How the vulnerability can be exploited: An attacker could become an operator for a user via setApprovalForAll, leading to full access to the user's tokens. This can be abused to drain the user's tokens unnoticed, as the AllowedBalance filter does not block the transfers made by operators.
+
+To fix the vulnerability, you need to update the ApprovalController contract to emit the ClaimApproved event when an approval is set. Here's the updated code for the setApprovalForAll function:
+solidity
+function setApprovalForAll(address owner, address operator, bool approved) public virtual {
+    require(owner != operator, "Cannot approve self");
+    _claimApproved(owner, operator, nft::ApprovalInterface::OPERATOR_KEY, approved);
+    emit ClaimApproved(owner, operator, nft::ApprovalInterface::OPERATOR_KEY, approved);
+}

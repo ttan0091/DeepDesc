@@ -1,0 +1,14 @@
+Type of vulnerability: Invariant Violation (Broken Invariant)
+Cause of vulnerability: The `_afterTokenTransfer` function incorrectly handles vote delegation, causing the votes to be deducted from the NFT owner instead of the delegate, leading to a revert and disabling NFT transfers and burning.
+Execution process: 
+1. Alice delegates her votes to herself.
+2. Alice then delegates her votes to another address using `delegate()` or `delegateBySig()`.
+3. The `_moveDelegateVotes` function sets Alice's votes to zero.
+4. When Alice attempts to transfer or burn her NFT, the `_afterTokenTransfer` function calls `_moveDelegateVotes` with Alice's address instead of her delegate, causing a revert due to the zero vote balance.
+Vulnerable code:
+```solidity
+function _afterTokenTransfer(address _from, address _to, uint256 _tokenId) internal override {
+    // Transfer 1 vote from the sender to the recipient
+    _moveDelegateVotes(_from, _to, 1);
+}
+```

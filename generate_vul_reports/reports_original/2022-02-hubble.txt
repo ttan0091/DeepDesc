@@ -1,0 +1,47 @@
+[H-01] Update initializer modifier to prevent reentrancy during initialization
+Submitted by Dravee
+https://github.com/code-423n4/2022-02-hubble/blob/main/package.json#L17https://github.com/code-423n4/2022-02-hubble/blob/main/contracts/legos/Governable.sol#L5https://github.com/code-423n4/2022-02-hubble/blob/main/contracts/legos/Governable.sol#L24
+While Governable.sol is out of scope, I figured this issue would still be fair game.
+The solution uses:"@openzeppelin/contracts": "4.2.0".This dependency has a known high severity vulnerability:https://security.snyk.io/vuln/SNYK-JS-OPENZEPPELINCONTRACTS-2320176Which makes this contract vulnerable:
+File: Governable.sol05: import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";...24: contract Governable is VanillaGovernable, Initializable {}
+This contract is inherited at multiple places:
+contracts/AMM.sol:11: contract AMM is IAMM, Governable {contracts/InsuranceFund.sol:13: contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {contracts/Oracle.sol:11: contract Oracle is Governable {contracts/legos/HubbleBase.sol:15: contract HubbleBase is Governable, Pausable, ERC2771Context {contracts/ClearingHouse.sol:11: contract ClearingHouse is IClearingHouse, HubbleBase {contracts/MarginAccount.sol:25: contract MarginAccount is IMarginAccount, HubbleBase {
+ìnitializer()` is used here:
+contracts/AMM.sol:99:     ) external initializer {contracts/ClearingHouse.sol:44:     ) external initializer {contracts/MarginAccount.sol:124:     ) external initializer {contracts/Oracle.sol:20:     function initialize(address _governance) external initializer {
+Recommended Mitigation Steps
+Upgrade@openzeppelin/contractsto version 4.4.1 or higher.
+atvanguard (Hubble) confirmed and resolved
+moose-code (judge) commented:
+Agreed. Other issues such asthishave also popped up, so always safest to be on the newest OZ. This includes for contracts and contracts-upgradeable packages.
+
+[H-02] denial of service
+Submitted by danb, also found by cmichel, csanuragjain, hyh, kirk-baird, leastwood, Meta0xNull, minhquanym, Omik, robee, Ruhum, and throttle
+https://github.com/code-423n4/2022-02-hubble/blob/main/contracts/VUSD.sol#L53
+processWithdrawals can process limited amount in each call.An attacker can push to withdrawals enormous amount of withdrawals with amount = 0.In order to stop the dos attack and process the withdrawal, the governance needs to spend as much gas as the attacker.If the governance doesn’t have enough money to pay for the gas, the withdrawals can’t be processed.
+Proof of Concept
+Alice wants to attack vusd, she spends 1 millions dollars for gas to push as many withdrawals of amount = 0 as she can.If the governance wants to process the deposits after Alices empty deposits, they also need to spend at least 1 million dollars for gas in order to process Alice’s withdrawals first.But the governance doesn’t have 1 million dollars so the funds will be locked.
+Recommended Mitigation Steps
+Set a minimum amount of withdrawal. e.g. 1 dollar
+function withdraw(uint amount) external {require(amount >= 10 ** 6);burn(amount);withdrawals.push(Withdrawal(msg.sender, amount));}
+atvanguard (Hubble) confirmed, but disagreed with High severity and commented:
+Confirming this is an issue. Would classify it as2 (Med Risk)because this attack is expensive to carry out.
+atvanguard (Hubble) resolved
+moose-code (judge) commented:
+Would be interested to see the exact gas cost of executing withdraw. The thing is the grievance costs only gas to execute and the withdraw function is relatively cheap from first glance. The main issue here is that it can become SUPER expensive to clear the que in gas. I.e. if the attacker builds up a que of 200 withdrawals, some unknowning sucker is going to pay for more than 200 erc20 transfers in order to get their money out. Thats more than anyone would want to pay, and further since so much gas limit would be needed for this to be executed, to fit into a block you are going to have to pay a huge price.So basically it costs attacker x to execute, which means it is also going to cost next user likely even more than x to fix the problem.Also the que is not cleared so processWithdrawals becomes a really expensive function. If the items were cleared and set back to zero it would make it less expensive to de-que the que.This being said we definitely have this at at least medium severity. $10k in gas to constantly brick users withdrawls from protocol for a week is a serious issue and not the biggest cost for an attack.@JasoonS, going to put this as medium. Let’s discuss whether we want to have it as high.
+moose-code (judge) commented:
+Okay, going to keep this as high severity. The cost to fix the attack can be more than what the attack costs in total. It also burdens a random unsuspecting user with a really high gas cost to try and get their withdrawal. There are many good suggestions on how to fix this.
+
+[H-03] InsuranceFund depositors can be priced out & deposits can be stolen
+Submitted by cmichel, also found by danb
+https://github.com/code-423n4/2022-02-hubble/blob/8c157f519bc32e552f8cc832ecc75dc381faa91e/contracts/InsuranceFund.sol#L44-L54
+TheInsuranceFund.depositfunction mints initialsharesequal to the deposited amount.The deposit / withdraw functions also use the VUSD contract balance for the shares computation. (balance() = vusd.balanceOf(address(this)))
+It’s possible to increase the share price to very high amounts and price out smaller depositors.
+Proof of Concept
+deposit(_amount = 1): Deposit the smallest unit of VUSD as the first depositor. Mint 1 share and set the total supply and VUSD balance to1.Perform a direct transfer of1000.0VUSD to theInsuranceFund. Thebalance()is now1000e6 + 1Doing any deposits of less than1000.0VUSD will mint zero shares:shares = _amount * _totalSupply / _pool = 1000e6 * 1 / (1000e6 + 1) = 0.The attacker can callwithdraw(1)to burn their single share and receive the entire pool balance, making a profit. (balance() * _shares / totalSupply() = balance())
+I give this a high severity as the same concept can be used to always steal the initial insurance fund deposit by frontrunning it and doing the above-mentioned steps, just sending the frontrunned deposit amount to the contract instead of the fixed1000.0.
+They can then even repeat the steps to always frontrun and steal any deposits.
+Recommended Mitigation Steps
+The wayUniswapV2 prevents thisis by requiring a minimum deposit amount and sending1000initial shares to the zero address to make this attack more expensive.
+The same mitigation can be done here.
+atvanguard (Hubble) confirmed
+

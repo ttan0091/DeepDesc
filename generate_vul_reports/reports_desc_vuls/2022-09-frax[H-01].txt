@@ -1,0 +1,22 @@
+Type of vulnerability: Accounting Logic Error
+Cause of vulnerability: Incorrect timing of `syncRewards()` call within `beforeWithdraw` leading to miscalculation of rewards and potential underflow.
+Execution process: 
+1. User initiates a withdrawal.
+2. `beforeWithdraw` is called, which first decrements `storedTotalAssets`.
+3. If the timestamp is greater than `rewardsCycleEnd`, `syncRewards` is called.
+4. `syncRewards` calculates `nextRewards` based on the current balance and `storedTotalAssets`, which is already decremented.
+5. This leads to an inflated `nextRewards` calculation, causing excessive rewards payout or underflow in subsequent calls.
+Vulnerable code:
+```solidity
+function beforeWithdraw(uint256 assets, uint256 shares) internal override {
+    if (block.timestamp >= rewardsCycleEnd) {
+        syncRewards();
+    }
+    super.beforeWithdraw(assets, shares); // call xERC4626's beforeWithdraw AFTER
+}
+
+function syncRewards() internal {
+    uint256 nextRewards = asset.balanceOf(address(this)) - storedTotalAssets - lastRewardAmount;
+    // Further processing of nextRewards
+}
+```

@@ -1,0 +1,45 @@
+[H-01] Truncation inOrderValidatorcan lead to resetting the fill and selling more tokens
+Submitted by Spearbit, also found by 0xsanson, broccoli, cmichel, hyh, ming, OriDabush, Saw-mon_and_Natalie, and Yarpo
+OrderValidator.sol#L228OrderValidator.sol#L231OrderValidator.sol#L237OrderValidator.sol#L238
+A partial order’s fractions (numeratoranddenominator) can be reset to0due to a truncation. This can be used to craft malicious orders:
+Consider user Alice, who has 100 ERC1155 tokens, who approved all of their tokens to themarketplaceContract.Alice places aPARTIAL_OPENorder with 10 ERC1155 tokens and consideration of ETH.Malory tries to fill the order in the following way:Malory tries to fill 50% of the order, but instead of providing the fraction1 / 2, Bob provides2**118 / 2**119. This sets thetotalFilledto2**118andtotalSizeto2**119.Malory tries to fill 10% of the order, by providing1 / 10. The computation2**118 / 2**119 + 1 / 10is done by “cross multiplying” the denominators, leading to the acutal fraction beingnumerator = (2**118 * 10 + 2**119)anddenominator = 2**119 * 10.Because of theuint120truncation inOrderValidator.sol#L228-L248, thenumeratoranddenominatorare truncated to0and0respectively.Bob can now continue filling the order and draining any approved (1000 tokens in total) of the above ERC1155 tokens, for the same consideration amount!
+Proof of Concept
+Viewfull POC.
+The following change would make the above POC fail:
+modified   contracts/lib/OrderValidator.sol@@ -225,6 +225,8 @@ contract OrderValidator is Executor, ZoneInteraction {// Update order status and fill amount, packing struct values._orderStatus[orderHash].isValidated = true;_orderStatus[orderHash].isCancelled = false;+                require(filledNumerator + numerator <= type(uint120).max, "overflow");+                require(denominator <= type(uint120).max, "overflow");_orderStatus[orderHash].numerator = uint120(filledNumerator + numerator);@@ -234,6 +236,8 @@ contract OrderValidator is Executor, ZoneInteraction {// Update order status and fill amount, packing struct values._orderStatus[orderHash].isValidated = true;_orderStatus[orderHash].isCancelled = false;+            require(numerator <= type(uint120).max, "overflow");+            require(denominator <= type(uint120).max, "overflow");_orderStatus[orderHash].numerator = uint120(numerator);_orderStatus[orderHash].denominator = uint120(denominator);}
+Recommended Mitigation Steps
+A basic fix for this would involve adding the above checks for overflow / truncation and reverting in that case. However, we think the mechanism is still flawed in some respects and requires more changes to fully fix it. See a related issue:“A malicious filler can fill a partial order in such a way that the rest cannot be filled by anyone”that points out a related but a more fundamental issue with the mechanism.
+0age (OpenSea) confirmed
+0xleastwood (judge) commented:
+I’ve identified that this issue and all of its duplicates clearly outline how an attacker might overflow an order to continually fulfill an order at the same market price.An instance where this issue might cause issues is during a restricted token sale. A relevant scenario is detailed as follows:A new token is created and the owner wishes to sell 50% of the token supply to the public.Because of an edge case inOrderValidator, the order fulfillment can be reset to allow the public to more than 50% of the total token supply.As a result, allocations intended to be distributed to investors and the team, will no longer be available.It is important to note, that additional tokens will be sold at the intended market price listed by the original order.For these reasons, I believe this issue to be of high severity because it breaks certain trust assumptions made by the protocol and its userbase. By intentionally forcing a user to sell additional tokens, you are effectively altering the allocation of their wallet holdings, potentially leading to further funds loss as they may incur slippage when they have to sell these tokens back.A great finding from all involved!
+0age (OpenSea) resolved:
+PR:ProjectOpenSea/seaport#319
+
+[H-02]_aggregateValidFulfillmentOfferItems()can be tricked to accept invalid inputs
+Submitted by Spearbit, also found by Saw-mon_and_Natalie
+FulfillmentApplier.sol#L406
+The_aggregateValidFulfillmentOfferItems()function aims to revert on orders with zero value or where a total consideration amount overflows. Internally this is accomplished by having a temporary variableerrorBuffer, accumulating issues found, and only reverting once all the items are processed in case there was a problem found. This code is optimistic for valid inputs.
+Note: there is a similar issue in_aggregateValidFulfillmentConsiderationItems(), which is reported separately.
+The problem lies in how thiserrorBufferis updated:
+// Update error buffer (1 = zero amount, 2 = overflow).errorBuffer :=or(errorBuffer,or(shl(1,lt(newAmount,amount)),iszero(mload(amountPtr))))
+The final error handling code:
+// Determine if an error code is contained in the error buffer.switcherrorBuffercase1{// Store the MissingItemAmount error signature.mstore(0,MissingItemAmount_error_signature)// Return, supplying MissingItemAmount signature.revert(0,MissingItemAmount_error_len)}case2{// If the sum overflowed, panic.throwOverflow()}
+While the expected value is0(success),1or2(failure), it is possible to set it to3, which is unhandled and considered as a “success”. This can be easily accomplished by having both an overflowing item and a zero item in the order list.
+This validation error could lead to fulfilling an order with a consideration (potentially ~0) lower than expected.
+Proof of Concept
+Craft an offer containing two errors (e.g. with  zero amount and overflow).CallmatchOrders(). Via calls to_matchAdvancedOrders(),_fulfillAdvancedOrders(),_applyFulfillment(),_aggregateValidFulfillmentOfferItems()will be called.TheerrorBufferwill get a value of 3  (theorof 1 and 2).As the value of 3 is not detected, no error will be thrown and the order will be executed, including the mal formed values.
+Recommended Mitigation Steps
+Change the check onFulfillmentApplier.sol#L465to considercase 3.Potential option: Introduce an early abort in caseerrorBuffer != 0onFulfillmentApplier.sol#L338
+0age (OpenSea) confirmed
+HardlyDifficult (judge) decreased severity to Medium
+cmichel (warden) commented:
+This validation error could lead to fulfilling an order with a consideration (potentially ~0) lower than expected.That’s correct, you can use this to fulfill an order essentially for free, that’s why I’d consider this high severity.
+They could have done a better job demonstrating it with a POC test case but this sentence imo shows that they were aware of the impact.Seethis test caseshowing how to buy an NFT for 1 DAI instead of 1000 DAI.
+0age (OpenSea) disagreed with Medium severity:
+This is the highest-severity finding. If it were me, I’d switch this to high.
+HardlyDifficult (judge) increased severity to High
+0xleastwood (judge) commented:
+After further consideration and discussion with @HardlyDifficult, we agree with @cmichel that this should be of high severity. As the protocol allows for invalid orders to be created, users aware of this vulnerability will be able to fulfill an order at a considerable discount. This fits the criteria of a high severity issue as it directly leads to lost funds.
+0age (OpenSea) resolved:
+PR:ProjectOpenSea/seaport#320
+

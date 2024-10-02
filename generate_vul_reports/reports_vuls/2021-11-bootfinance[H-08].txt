@@ -1,0 +1,15 @@
+[H-08] Unable to claim vesting due to unbounded timelock loop
+Submitted by nathaniel, also found by WatchPug, leastwood, and pauliax
+Impact
+The timelocks for anybeneficiaryare unbounded, and can be vested by someone who is not thebeneficiary. When the array becomes significantly big enough, the vestments will no longer be claimable for thebeneficiary.
+Thevest()function in Vesting.sol does not check thebeneficiary, hence anyone can vest for anyone else, pushing a new timelock to thetimelocks[_beneficiary].
+The_claimableAmount()function (used byclaim()function), then loops through thetimelocks[_beneficiary]to determine the amount to be claimed.
+A malicious actor can easy repeatedly call thevest()function with minute amounts to make the array large enough, such that when it comes to claiming, it will exceed the gas limit and revert, rendering the vestment for the beneficiary unclaimable.
+The malicious actor could do this to eachbeneficiary, locking up all the vestments.
+Proof of Concept
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L81https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L195https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L148
+Tools Used
+Manual code review
+Recommended Mitigation Steps
+Create a minimum on the vestment amounts, such that it won’t be feasible for a malicious actor to create a large amount of vestments.Restrict the vestment contribution of abeneficiarywhererequire(beneficiary == msg.sender)
+chickenpie347 (Boot Finance) confirmed

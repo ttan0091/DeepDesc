@@ -1,0 +1,20 @@
+[H-10]TalosBaseStrategy#init()lacks slippage protection
+Submitted byAlexCzm, also found bylos_chicos,said, andT1MOH
+ThecheckDeviations modifier’s purpose is to add slippage protection for an increase/decrease in liquidity operations. It’s applied todeposit/redeem,rerange/rebalancebutinit()is missing it.
+Impact
+There is no slippage protection oninit().
+Proof of Concept
+In theinit()function ofTalosBaseStrategy, the following actions are performed: an initial deposit is made, a tokenId and shares are minted.
+The_nonfungiblePositionManager.mint()function is called with hardcoded values ofamount0Minandamount1Minboth set to 0. Additionally, it should be noted that theinit()function does not utilize thecheckDeviationmodifier, which was specifically designed to safeguard users against slippage.
+functioninit(uint256amount0Desired,uint256amount1Desired,addressreceiver)externalvirtualnonReentrantreturns(uint256shares,uint256amount0,uint256amount1){...(_tokenId,_liquidity,amount0,amount1) =_nonfungiblePositionManager.mint(INonfungiblePositionManager.MintParams({token0:address(_token0),token1:address(_token1),fee:poolFee,tickLower:tickLower,tickUpper:tickUpper,amount0Desired:amount0Desired,amount1Desired:amount1Desired,amount0Min:0,amount1Min:0,recipient:address(this),deadline:block.timestamp}));...
+https://github.com/Maia-DAO/maia-ecosystem-monorepo/blob/2f6e87348877684aa0c12aec204fea210cfbe6eb/src/scope/talos/base/TalosBaseStrategy.sol#L99-L147
+/// @notice Function modifier that checks if price has not moved a lot recently./// This mitigates price manipulation during rebalance and also prevents placing orders when it's too volatile.modifiercheckDeviation() {ITalosOptimizer_optimizer=optimizer;pool.checkDeviation(_optimizer.maxTwapDeviation(),_optimizer.twapDuration());_;}
+https://github.com/Maia-DAO/maia-ecosystem-monorepo/blob/2f6e87348877684aa0c12aec204fea210cfbe6eb/src/scope/talos/base/TalosBaseStrategy.sol#L419-L425
+Tools Used
+VS Code,uniswapv3book
+Recommended Mitigation Steps
+ApplycheckDeviationtoinit()function.
+Trust (judge) increased severity to High
+0xLightt (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

@@ -1,0 +1,32 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect initialization of `maxDelta` and `minDelta` variables, leading to incorrect assignment of `vaultIndexes`.
+Execution process: The function `sortVaultsByDelta` is called with positive deltas, causing `maxIndex` and `minIndex` to both be set to 0, resulting in an incorrect assignment of `vaultIndexes` and potential out-of-range errors.
+Vulnerable code: 
+```solidity
+function sortVaultsByDelta(bool bigFirst, uint256 unifiedTotalAssets, uint256[N_COINS] calldata unifiedAssets, uint256[N_COINS] calldata targetPercents) external pure override returns (uint256[N_COINS] memory vaultIndexes) {
+    uint256 maxIndex;
+    uint256 minIndex;
+    int256 maxDelta;
+    int256 minDelta;
+    for (uint256 i = 0; i < N_COINS; i++) {
+        // Get difference between vault current assets and vault target
+        int256 delta = int256(unifiedAssets[i] - unifiedTotalAssets.mul(targetPercents[i]).div(PERCENTAGE_DECIMAL_FACTOR));
+        // Establish order
+        if (delta > maxDelta) {
+            maxDelta = delta;
+            maxIndex = i;
+        } else if (delta < minDelta) {
+            minDelta = delta;
+            minIndex = i;
+        }
+    }
+    if (bigFirst) {
+        vaultIndexes[0] = maxIndex;
+        vaultIndexes[2] = minIndex;
+    } else {
+        vaultIndexes[0] = minIndex;
+        vaultIndexes[2] = maxIndex;
+    }
+    vaultIndexes[1] = N_COINS - maxIndex - minIndex;
+}
+```

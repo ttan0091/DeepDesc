@@ -1,0 +1,22 @@
+[H-02] Dual transaction nature of composed message transfer allows anyone to steal user funds
+Submitted by0xTheC0der, also found byd3e4andoakcobalt
+Sending OFTs with a composed message via LayerZero V2 involves 2 transactions on the destination chain (Canto) according to thedocumentation(see alsoREADME):
+Receiving: The LayerZero endpoint receives the message and processes the OFT transfer to theASDRoutercontract.Executing: Since the message is composed, it’spermissionlesslyprocessed by an executor who invokes thelzCompose(…)method of theASDRoutercontract.
+The above steps are processed in separate transactions (not atomic) and step 2 requires the OFTsto be already transferredto theASDRoutercontract.
+Furthermore, due to the permissionless nature of the execution step, thelzCompose(…)method does not enforce any constraints on themsg.sender; therefore, allows anyone to invoke it.
+Attack path:
+An adversary can monitor theASDRoutercontract forwhitelistedincoming USDC-like OFTs and immediately use those on their own (redeemasD) by crafting & invoking a call tolzCompose(…)before an executor does. As a consequence, user funds are directly stolen.
+Similarly, iflzCompose(…)fails for any reason, an adversary can re-try before the user to use the OFTs.
+Proof of Concept
+The dual transaction nature of the current composed message process is confirmed by the LayerZerodocumentation:
+If the message is composed, the contract retrieves and re-encodes the additional composed message information, then delivers the message to the endpoint, which will execute the additional logic as a separate transaction.
+Moreover, crafting a successful call tolzCompose(…)once OFTs are deposited is demonstrated by the existing test case“lzCompose: successful deposit and send on canto”.
+Recommended Mitigation Steps
+Immediate, but not a satisfying fix: Restrict thelzCompose(…)method to trusted/whitelisted executors.
+Alternative: Design change by directly implementing_lzReceive(…)(building anOApp) such that a composed message is not needed anymore.
+Assessed type
+Invalid Validation
+3docSec (judge) commented:
+Looks legitimate:lzComposeis permissionless and can be front-run becauseLayerZero calls it in a separate transaction after funds are delivered.
+dsudit01 (Canto) confirmed and commented:
+PRhere.

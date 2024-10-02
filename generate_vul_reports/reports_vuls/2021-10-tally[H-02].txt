@@ -1,0 +1,19 @@
+[H-02] Wrong calculation oferc20DeltaandethDelta
+Submitted by WatchPug, also found by harleythedog
+Swap.solL200-L225
+functionfillZrxQuote(IERC20zrxBuyTokenAddress,addresspayablezrxTo,bytescalldatazrxData,uint256ethAmount)internalreturns(uint256,uint256) {uint256originalERC20Balance=0;if(!signifiesETHOrZero(address(zrxBuyTokenAddress))) {originalERC20Balance=zrxBuyTokenAddress.balanceOf(address(this));}uint256originalETHBalance=address(this).balance;(boolsuccess,) =zrxTo.call{value:ethAmount}(zrxData);require(success,"Swap::fillZrxQuote: Failed to fill quote");uint256ethDelta=address(this).balance.subOrZero(originalETHBalance);uint256erc20Delta;if(!signifiesETHOrZero(address(zrxBuyTokenAddress))) {erc20Delta=zrxBuyTokenAddress.balanceOf(address(this)).subOrZero(originalERC20Balance);require(erc20Delta>0,"Swap::fillZrxQuote: Didn't receive bought token");}else{require(ethDelta>0,"Swap::fillZrxQuote: Didn't receive bought ETH");}return(erc20Delta,ethDelta);}
+When a user tries to swap unwrapped ETH to ERC20, even if there is a certain amount of ETH refunded, at L215,ethDeltawill always be0.
+That’s becauseoriginalETHBalancealready includes themsg.valuesent by the caller.
+Let’s say the ETH balance of the contract is1 ETHbefore the swap.
+A user swaps10 ETHto USDC;originalETHBalancewill be11 ETH;If there is1 ETHof refund;ethDeltawill be0as the new balance is2 ETHandsubOrZero(2, 11)is0.
+Similarly,erc20Deltais also computed wrong.
+Consider a special case of a user trying to arbitrage fromWBTCtoWBTC, theoriginalERC20Balancealready includes the input amount,erc20Deltawill always be much lower than the actual delta amount.
+For example, for an arb swap from1 WBTCto1.1 WBTC, theethDeltawill be0.1 WBTCwhile it should be1.1 WBTC.
+Impact
+User can not get ETH refund for swaps from ETH to ERC20 tokens;Arb swap with the same input and output token will suffer the loss of almost all of their input amount unexpectedly.
+Recommendation
+Consider subtracting the input amount from the originalBalance.
+Shadowfiend (Tally) confirmed:
+This doesn’t allow explicit stealing by an attacker, but does leak value. We would suggest a (2) severity on this.
+0xean (judge) commented:
+This results in a user losing assets that they will never be able to recover. Per documentation3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).Lost assets are a high sev.

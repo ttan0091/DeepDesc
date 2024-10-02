@@ -1,0 +1,26 @@
+This code defines an external function named trackMaltPrice, which is designed to track and update the price of a token named malt in relation to another token, referred to as rewardToken. The function is restricted to be called only by an account with the UPDATER_ROLE, as enforced by the onlyRole modifier. If the caller does not have this role, the function will revert with the message "Must have updater role".
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Access Control:
+    The onlyRole(UPDATER_ROLE, "Must have updater role") modifier ensures that only accounts with the UPDATER_ROLE can execute this function. This is a security measure to prevent unauthorized price updates.
+
+2. Fetching Reserves:
+    The function starts by calling stakeToken.getReserves(), which retrieves the reserves of two tokens in a liquidity pool. The returned values are reserve0, reserve1, and a timestamp, although the timestamp is not used in this function.
+
+3. Token Sorting:
+    It then uses UniswapV2Library.sortTokens(address(malt), address(rewardToken)) to determine the order of the tokens in the pool. This is crucial because Uniswap pairs always list tokens in a specific order, and knowing this order helps in correctly calculating the price.
+
+4. Decimals of Reward Token:
+    The function fetches the decimals of the rewardToken using rewardToken.decimals(). This is important for normalizing the price calculation, as different tokens might have different decimal precisions.
+
+5. Price Calculation:
+    The function checks if token0 (the first token in the sorted pair) is the rewardToken. If it is, it calculates the price using _normalizedPrice(reserve0, reserve1, rewardDecimals). Otherwise, it uses _normalizedPrice(reserve1, reserve0, rewardDecimals). The _normalizedPrice function is assumed to calculate the price of malt in terms of rewardToken, normalized by the decimals of rewardToken.
+
+6. Updating Moving Average:
+    The calculated price is then used to update a moving average price (maltPriceMA.update(price)), which could be part of a larger system for tracking and smoothing price data over time.
+
+7. Event Emission:
+    Finally, the function emits a TrackMaltPrice event with the calculated price. This allows external applications or services to listen for and react to price updates.
+
+In summary, the trackMaltPrice function is a critical component for maintaining an uptodate and accurate price tracking mechanism for the malt token relative to the rewardToken, leveraging the reserves from a liquidity pool and ensuring only authorized updates through rolebased access control.

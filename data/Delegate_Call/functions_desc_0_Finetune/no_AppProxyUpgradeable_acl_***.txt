@@ -1,0 +1,22 @@
+Type of vulnerability: Insecure Contract Initialization 
+
+Cause of vulnerability: Lack of access control or proper initial configuration during the first initialize or install transaction, allowing the DEFAULT_ACL address provided by the attacker to be associated with the Aragon App, granting the attacker full access.
+
+Working process: 
+1. Attacker deploys the Aragon Market App and submits a publishMarket() intent for their own instance of the app.
+2. The test vector then simulates a scenario in which the first create intent sent to the attacker’s instance would be for the AragonAppMarket.
+3. Analyzing the library contracts, the test vector identifies that the DEFAULT_ACL address is not restricted during the first mint of the initialize transaction.
+4. A test vector is seeded with minimal capabilities to perform a single create intent.
+5. The attacker’s Market provides an onIntentExecuted() hook that creates a create_intent for the attacker's instance of the AragonAppMarket.
+6. The first onRepresentativeSet() passed tests for models, policies, triggers, datasets, and to register the FKImportApp app.
+7. The tests reuse the testOrganization and testMarket which were used in workflow 6.
+8. The tests proceed using the same fkimportAppMarket app.
+9. The attacker’s Market provides a malicious ACL which associated the attacker to the FKConnectApp with all permission. This flow is authorized because the attacker is already a member of the Market App.
+10. After the createintent is executed on the attacker’s instance of AragonAppMarket, the test vector immediately sends the install intent to the attacker’s FKImportApp.
+11. The attacker’s FKImportApp hooks into handleIntent and registers the attacker’s firmAPp address as the DEFAULT_ACL address for the App.
+12. Because the DEFAULT_ACL address for the FKImportApp was set, this action was successful.
+13. The attacker’s FKImportApp has had its DEFAULT_ACL address set with all permissions to _DEFAULT_ACL in step 11 1, allowing the attacker to become the owner of FKConnectApp.
+
+Security implication: The attacker can set malicious ACL policies that provide full access to the _DEFAULT_ACL address, effectively allowing the attacker to become root and take control of the SDK.
+
+Mitigation strategy: Implement access control checks or secure the initial configuration of the apps during the first initialize or install transaction to prevent unauthorized associations of the _DEFAULT_ACL or DEFAULT_ACL addresses. Additionally, ensure that the Aragon Marketplace is healthy and properly configured from the beginning.

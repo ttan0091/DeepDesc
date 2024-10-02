@@ -1,0 +1,14 @@
+[H-01] Reentrancy inMessageProxyForSchainleads to replay attacks
+Submitted by cmichel
+ThepostIncomingMessagesfunction calls_callReceiverContract(fromChainHash, messages[i], startingCounter + 1)which gives control to a contract that is potentially attacker controlledbeforeupdating theincomingMessageCounter.
+for(uint256i=0;i<messages.length;i++) {// @audit re-entrant, can submit same postIncomingMessages again_callReceiverContract(fromChainHash,messages[i],startingCounter+1);}connectedChains[fromChainHash].incomingMessageCounter+=messages.length;
+The attacker can re-enter into thepostIncomingMessagesfunction and submit the same messages again, creating a replay attack.
+Note that thestartingCounteris the way how messages are prevented from replay attacks here, there are no further nonces.
+Proof of Concept
+Attacker can submit two cross-chain messages to be executed:
+Transfer 1000 USDCA call to their attacker-controlled contract, could be masked as a token contract that allows re-entrance ontransfer.
+Some node submits thepostIncomingMessages(params)transaction, transfers 1000 USDC, then calls the attackers contract, who can themself callpostIncomingMessages(params)again, receive 1000 USDC a second time, and stop the recursion.
+Recommended Mitigation Steps
+Add amessageInProgressLockermodifier topostIncomingMessagesas was done inMessageProxyForMainnet.
+cstrangedk (SKALE) resolved:
+Resolved viahttps://github.com/skalenetwork/IMA/pull/1054

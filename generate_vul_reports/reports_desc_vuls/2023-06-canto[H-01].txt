@@ -1,0 +1,34 @@
+Type of vulnerability: Specification Mismatch
+Cause of vulnerability: The pre-defined limit for ETH in the code does not match the specified limit in the documentation.
+Execution process: The function `GetMaximumSwapAmount` retrieves the maximum swap amount from the parameters, which includes an ETH limit set at 0.1 ETH instead of the documented 0.01 ETH.
+Vulnerable code: 
+```go
+// Parameter store keys
+var (
+    KeyFee = []byte("Fee") // fee key
+    KeyPoolCreationFee = []byte("PoolCreationFee") // fee key
+    KeyTaxRate = []byte("TaxRate") // fee key
+    KeyStandardDenom = []byte("StandardDenom") // standard token denom key
+    KeyMaxStandardCoinPerPool = []byte("MaxStandardCoinPerPool") // max standard coin amount per pool
+    KeyMaxSwapAmount = []byte("MaxSwapAmount") // whitelisted denoms
+    DefaultFee = sdk.NewDecWithPrec(0, 0)
+    DefaultPoolCreationFee = sdk.NewInt64Coin(sdk.DefaultBondDenom, 0)
+    DefaultTaxRate = sdk.NewDecWithPrec(0, 0)
+    DefaultMaxStandardCoinPerPool = sdk.NewIntWithDecimal(10000, 18)
+    DefaultMaxSwapAmount = sdk.NewCoins(
+        sdk.NewCoin(UsdcIBCDenom, sdk.NewIntWithDecimal(10, 6)),
+        sdk.NewCoin(UsdtIBCDenom, sdk.NewIntWithDecimal(10, 6)),
+        sdk.NewCoin(EthIBCDenom, sdk.NewIntWithDecimal(1, 17)),
+    )
+)
+
+func (k Keeper) GetMaximumSwapAmount(ctx sdk.Context, denom string) (sdk.Coin, error) {
+    params := k.GetParams(ctx)
+    for _, coin := range params.MaxSwapAmount {
+        if coin.Denom == denom {
+            return coin, nil
+        }
+    }
+    return sdk.Coin{}, sdkerrors.Wrap(types.ErrInvalidDenom, fmt.Sprintf("invalid denom: %s, denom is not whitelisted", denom))
+}
+```

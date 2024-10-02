@@ -1,0 +1,151 @@
+[H-01] PartyGovernance: Can vote multiple times by transferring NFT in same block as proposal
+Submitted by Lambda, also found by Trust
+PartyGovernanceNFTuses the voting power at the time of proposal when callingaccept. The problem with that is that a user can vote, transfer the NFT (and the voting power) to a different wallet, and then vote from this second wallet again during the same block that the proposal was created.
+This can also be repeated multiple times to get an arbitrarily high voting power and pass every proposal unanimously.
+The consequences of this are very severe. Any user (no matter how small his voting power is) can propose and pass arbitrary proposals animously and therefore steal all assets (including the precious tokens) out of the party.
+Proof Of Concept
+This diff shows how a user with a voting power of 50/100 gets a voting power of 100/100 by transferring the NFT to a second wallet that he owns and voting from that one:
+--- a/sol-tests/party/PartyGovernanceUnit.t.sol+++ b/sol-tests/party/PartyGovernanceUnit.t.sol@@ -762,6 +762,7 @@ contract PartyGovernanceUnitTest is Test, TestUtils {TestablePartyGovernance gov =_createGovernance(100e18, preciousTokens, preciousTokenIds);address undelegatedVoter = _randomAddress();+        address recipient = _randomAddress();// undelegatedVoter has 50/100 intrinsic VP (delegated to no one/self)gov.rawAdjustVotingPower(undelegatedVoter, 50e18, address(0));@@ -772,38 +773,13 @@ contract PartyGovernanceUnitTest is Test, TestUtils {// Undelegated voter submits proposal.vm.prank(undelegatedVoter);assertEq(gov.propose(proposal, 0), proposalId);--        // Try to execute proposal (fail).-        vm.expectRevert(abi.encodeWithSelector(-            PartyGovernance.BadProposalStatusError.selector,-            PartyGovernance.ProposalStatus.Voting-        ));-        vm.prank(undelegatedVoter);-        gov.execute(-            proposalId,-            proposal,-            preciousTokens,-            preciousTokenIds,-            "",-            ""-        );--        // Skip past execution delay.-        skip(defaultGovernanceOpts.executionDelay);-        // Try again (fail).-        vm.expectRevert(abi.encodeWithSelector(-            PartyGovernance.BadProposalStatusError.selector,-            PartyGovernance.ProposalStatus.Voting-        ));-        vm.prank(undelegatedVoter);-        gov.execute(-            proposalId,-            proposal,-            preciousTokens,-            preciousTokenIds,-            "",-            ""-        );+        (, PartyGovernance.ProposalStateValues memory valuesPrev) = gov.getProposalStateInfo(proposalId);+        assertEq(valuesPrev.votes, 50e18);+        gov.transferVotingPower(undelegatedVoter, recipient, 50e18); //Simulate NFT transfer+        vm.prank(recipient);+        gov.accept(proposalId, 0);+        (, PartyGovernance.ProposalStateValues memory valuesAfter) = gov.getProposalStateInfo(proposalId);+        assertEq(valuesAfter.votes, 100e18);}
+Recommended Mitigation Steps
+You should query the voting power atvalues.proposedTime - 1. This value is already finalized when the proposal is created and therefore cannot be manipulated by repeatedly transferring the voting power to different wallets.
+merklejerk (PartyDAO) confirmed and commented:
+This is our favorite find and want to call it out specifically. We would consider this critical.We will implement the suggested fix in this PR and useproposedTime - 1for voting power calculations.
+HardlyDifficult (judge) commented:
+Agree with High risk - any user with a non-zero voting power can pass a proposal & steal assets.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/130
+
+[H-02] Possibility to burn all ETH in Crowdfund under some circumstances
+Submitted by Lambda, also found by 8olidity
+Ifopts.initialContributoris set toaddress(0)(andopts.initialDelegateis not), there are two problems:
+1.) If the crowdfund succeeds, the initial balance will be lost. It is still accredited toaddress(0), but it is not retrievable.
+2.) If the crowdfund does not succeed, anyone can completely drain the contract by repeatedly callingburnwithaddress(0). This will always succeed becauseCrowdfundNFT._burncan be called multiple times foraddress(0). Every call will cause the initial balance to be burned (transferred toaddress(0)).
+Issue 1 is somewhat problematic, but issue 2 is very problematic, because all funds of a crowdfund are burned and an attacker can specifically set up such a deployment (and the user would not notice anything special, after all these are parameters that the protocol accepts).
+Proof Of Concept
+This diff illustrates scenario 2, i.e. where a malicious deployer burns all contributions (1 ETH) ofcontributor. He loses 0.25ETH for the attack, but this could be reduced significantly (with moreburn(payable(address(0)))calls:
+--- a/sol-tests/crowdfund/BuyCrowdfund.t.sol+++ b/sol-tests/crowdfund/BuyCrowdfund.t.sol@@ -36,9 +36,9 @@ contract BuyCrowdfundTest is Test, TestUtils {string defaultSymbol = 'PBID';uint40 defaultDuration = 60 * 60;uint96 defaultMaxPrice = 10e18;-    address payable defaultSplitRecipient = payable(0);+    address payable defaultSplitRecipient = payable(address(this));uint16 defaultSplitBps = 0.1e4;-    address defaultInitialDelegate;+    address defaultInitialDelegate = address(this);IGateKeeper defaultGateKeeper;bytes12 defaultGateKeeperId;Crowdfund.FixedGovernanceOpts defaultGovernanceOpts;@@ -78,7 +78,7 @@ contract BuyCrowdfundTest is Test, TestUtils {maximumPrice: defaultMaxPrice,splitRecipient: defaultSplitRecipient,splitBps: defaultSplitBps,-                    initialContributor: address(this),+                    initialContributor: address(0),initialDelegate: defaultInitialDelegate,gateKeeper: defaultGateKeeper,gateKeeperId: defaultGateKeeperId,@@ -111,40 +111,26 @@ contract BuyCrowdfundTest is Test, TestUtils {function testHappyPath() public {uint256 tokenId = erc721Vault.mint();// Create a BuyCrowdfund instance.-        BuyCrowdfund pb = _createCrowdfund(tokenId, 0);+        BuyCrowdfund pb = _createCrowdfund(tokenId, 0.25e18);// Contribute and delegate.address payable contributor = _randomAddress();address delegate = _randomAddress();vm.deal(contributor, 1e18);vm.prank(contributor);pb.contribute{ value: contributor.balance }(delegate, "");-        // Buy the token.-        vm.expectEmit(false, false, false, true);-        emit MockPartyFactoryCreateParty(-            address(pb),-            address(pb),-            _createExpectedPartyOptions(0.5e18),-            _toERC721Array(erc721Vault.token()),-            _toUint256Array(tokenId)-        );-        Party party_ = pb.buy(-            payable(address(erc721Vault)),-            0.5e18,-            abi.encodeCall(erc721Vault.claim, (tokenId)),-            defaultGovernanceOpts-        );-        assertEq(address(party), address(party_));-        // Burn contributor's NFT, mock minting governance tokens and returning-        // unused contribution.-        vm.expectEmit(false, false, false, true);-        emit MockMint(-            address(pb),-            contributor,-            0.5e18,-            delegate-        );-        pb.burn(contributor);-        assertEq(contributor.balance, 0.5e18);+        vm.warp(block.timestamp + defaultDuration + 1);+        // The auction was not won, we can now burn all ETH from contributor...+        assertEq(address(pb).balance, 1.25e18);+        pb.burn(payable(address(0)));+        assertEq(address(pb).balance, 1e18);+        pb.burn(payable(address(0)));+        assertEq(address(pb).balance, 0.75e18);+        pb.burn(payable(address(0)));+        assertEq(address(pb).balance, 0.5e18);+        pb.burn(payable(address(0)));+        assertEq(address(pb).balance, 0.25e18);+        pb.burn(payable(address(0)));+        assertEq(address(pb).balance, 0);
+Recommended Mitigation Steps
+Do not allow an initial contribution whenopts.initialContributoris not set.
+merklejerk (PartyDAO) confirmed and commented:
+Excellent catch. We will implement the fix from#238and prevent minting toaddress(0).
+HardlyDifficult (judge) commented:
+Agree with High risk - a crowdfund’s initial configuration could lead to the loss of user funds.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/127
+
+[H-03] A majority attack can easily bypass Zora auction stage in OpenseaProposal and steal the NFT from the party.
+Submitted by Trust
+The PartyGovernance system has many defenses in place to protect against a majority holder stealing the NFT. One of the main protections is that before listing the NFT on Opensea for a proposal-supplied price, it must first try to be auctioned off on Zora. To move from Zora stage to Opensea stage,\_settleZoraAuction()is called when executing ListedOnZora step in ListOnOpenseaProposal.sol. If the function returns false, the next step is executed which lists the item on Opensea. It is assumed that if majority attack proposal reaches this stage, it can steal the NFT for free, because it can list the item for negligible price and immediately purchase it from a contract that executes the Opensea proposal.
+Indeed, attacker can always makesettleZoraAuction()return false. Looking at  the code:
+try ZORA.endAuction(auctionId) {// Check whether auction cancelled due to a failed transfer during// settlement by seeing if we now possess the NFT.if (token.safeOwnerOf(tokenId) == address(this)) {emit ZoraAuctionFailed(auctionId);return false;}} catch (bytes memory errData) {
+As the comment already hints, an auction can be cancelled if the NFT transfer to the bidder fails. This is the relevant AuctionHouse code (endAuction):
+{// transfer the token to the winner and pay out the participants belowtry IERC721(auctions[auctionId].tokenContract).safeTransferFrom(address(this), auctions[auctionId].bidder, auctions[auctionId].tokenId) {} catch {_handleOutgoingBid(auctions[auctionId].bidder, auctions[auctionId].amount, auctions[auctionId].auctionCurrency);_cancelAuction(auctionId);return;}
+As most NFTs inherit from OpenZeppelin’s ERC721.sol code, safeTransferFrom will run:
+function _safeTransfer(address from,address to,uint256 tokenId,bytes memory data) internal virtual {_transfer(from, to, tokenId);require(_checkOnERC721Received(from, to, tokenId, data), "ERC721: transfer to non ERC721Receiver implementer");}
+So, attacker can bid a very high amount on the NFT to ensure it is the winning bid. When AuctionHouse tries to send the NFT to attacker, the safeTransferFrom will fail because attack will not implement an ERC721Receiver. This will force the AuctionHouse to return the bid amount to the bidder and cancel the auction. Importantly, it will lead to a graceful return fromendAuction(), which will makesettleZoraAuction()return false and progress to the OpenSea stage.
+Impact
+A majority attack can easily bypass Zora auction stage and steal the NFT from the party.
+Proof of Concept
+Pass a ListOnOpenseaProposal with a tiny list price and execute itCreate an attacker contract which bids on the NFT an overpriced amount, but does not implement ERC721Receiver. Call its bid() functionWait for the auction to end ( timeout after the bid() call)Create a contract with a function which calls execute() on the proposal and immediately buys the item on Seaport. Call the attack function.
+Recommended Mitigation Steps
+\_settleZoraAuctionis called from both ListOnZoraProposal and ListOnOpenseaProposal. If the auction was cancelled due to a failed transfer, as is described in the comment, we would like to handle it differently for each proposal type. For ListOnZoraProposal, it should indeed return false, in order to finish executing the proposal and not to hang the engine. For ListOnOpenseaProposal, the desired behavior is torevertin the case of a failed transfer. This is because the next stage is risky and defense against the mentioned attack is required. Therefore, pass a revertOnFail flag to\_settleZoraAuction, which will be used like so:
+// Check whether auction cancelled due to a failed transfer during// settlement by seeing if we now possess the NFT.if (token.safeOwnerOf(tokenId) == address(this)) {if (revertOnFail) {revert("Zora auction failed because of transfer to bidder")}emit ZoraAuctionFailed(auctionId);return false;}
+merklejerk (PartyDAO) confirmed and commented:
+Great find. We will modify_settleZoraAuction()to return some auction status to be communicated up to the Opensea proposal.
+HardlyDifficult (judge) commented:
+TIL. While digging into this I noticed that Zora changed this logic in their V3 implementation, avoiding this scenario - but there may be reasons to prefer the auction house contract.Agree with High risk - the auction safeguard can be bypassed, allowing a majority owner to steal from the rest of the party.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/137
+
+[H-04] TokenDistributor: ERC777 tokensToSend hook can be exploited to drain contract
+Submitted by Lambda
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/distribution/TokenDistributor.sol#L131
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/distribution/TokenDistributor.sol#L386
+Impact
+TokenDistributor.createERC20Distributioncan be used to create token distributions for ERC777 tokens (which are backwards-compatible with ERC20). However, this introduces a reentrancy vulnerability which allows a party to get the tokens of another party. The problem is thetokensToSendhook which is executed BEFORE balance updates happens (seehttps://eips.ethereum.org/EIPS/eip-777). When this hook is executed,token.balanceOf(address(this))therefore still returns the old value, but_storedBalances[balanceID]was already decreased.
+Proof Of Concept
+Party A and Party B have a balance of 1,000,000 tokens (of some arbitrary ERC777 token) in the distributor. Let’s say for the sake of simplicity that both parties only have one user (user A in party A, user B in party B). User A (or rather his smart contract) performs the following attack:
+He callsclaim, which transfers 1,000,000 tokens to his contract address. In_transfer,_storedBalances[balanceId]is decreased by 1,000,000 and therefore now has a value of 1,000,000.In thetokensToSendhook, he initiates another distribution for his party A by callingPartyGovernance.distributewhich callsTokenDistributor.createERC20Distribution(we assume for the sake of simplicity that the party does not have more of these tokens, so the call transfers 0 tokens to the distributor).TokenDistributor.createERC20Distributionpassestoken.balanceOf(address(this))to_createDistribution. Note that this is still 2,000,000 because we are in thetokensToSendhook.The supply of this distribution is calculated as(args.currentTokenBalance - _storedBalances[balanceId]) = 2,000,000 - 1,000,000 = 1,000,000.When thetokensToSendhook is exited (and the first transfer has finished), he can retrieve the tokens of the second distribution (that was created in the hook) to steal the 1,000,000 tokens of party B.
+Recommended Mitigation Steps
+Do not allow reentrancy in these functions.
+merklejerk (PartyDAO) confirmed and commented:
+Very few legitimate ERC777s so we think the probability of this happening to a party is somewhat low. Also, it only impacts distributions for that token. However, we will be implementing a reentrancy guard to fix it.
+HardlyDifficult (judge) commented:
+Agree that it does not seem very probable - but if 777 assets are distributed, it does appear to be a way of stealing from other users in the party and therefore High risk.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/132
+
+[H-05] ArbitraryCallsProposal.sol and ListOnOpenseaProposal.sol safeguards can be bypassed by cancelling in-progress proposal allowing the majority to steal NFT
+Submitted by 0x52
+Note: PartyDAO acknowledges that “canceling an InProgress proposal (mid-step) can leave the governance party in a vulnerable or undesirable state because there is no cleanup logic run during a cancel” in the “Known Issues / Topics” section of the contest readme. I still believe that this vulnerability needs to be mitigated as it can directly lead to loss of user funds.
+Impact
+Majority vote can abuse cancel functionality to steal an NFT owned by the party.
+Proof of Concept
+ArbitraryCallsProposal.sol implements the following safeguards for arbitrary proposals that are not unanimous:
+Prevents the ownership of any NFT changing during the call. It does this by checking the the ownership of all NFTs before and after the call.Prevents calls that would change the approval status of any NFT. This is done by disallowing the “approve” and “setApprovalForAll” function selectors.
+Additionally ListOnOpenseaProposal.sol implements the following safeguards:
+NFTs are first listed for auction on Zora so that if they are listed for a very low price then the auction will keep them from being purchased at such a low price.At the end of the auction the approval is revoked when\_cleanUpListingis called.
+These safeguards are ultimately ineffective though. The majority could use the following steps to steal the NFT:
+Create ListOnOpenseaProposal with high sell price and short cancel delayVote to approve proposal with majority voteExecute first step of proposal, listing NFT on Zora auction for high priceWait for Zora auction to end since the auction price is so high that no one will buy itExecute next step, listing the NFT on Opensea. During this step the contract grants approval of the NFT to the Opensea contractWait for cancelDelay to expireCall PartyGovernance.sol#cancel. This will immediately terminate the Opensea bypassing\_cleanUpListingand keeping the approval to the Opensea contract.Create ArbitraryCallsProposal.sol that lists the NFT on Opensea for virtually nothing. Since only approval selectors have been blacklisted and the NFT does not change ownership, the proposal does not need to be unanimous to execute.Approve proposal and execute.Buy NFT.
+Recommended Mitigation Steps
+When a proposal is canceled, it should call a proposal specific function that makes sure everything is cleaned up. NFTs delisted, approvals revoked, etc.
+merklejerk (PartyDAO) confirmed and commented:
+We will block calls toopensea.validate()in Arbitrary call proposals.
+HardlyDifficult (judge) commented:
+Agree with High risk - in this scenario a majority owner could steal the asset from others in the party.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/139
+
+[H-06]  A majority attack can steal precious NFT from the party by crafting and chaining two proposals
+Submitted by Trust, also found by ladboy233 and Lambda
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/proposals/ProposalExecutionEngine.sol#L116
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/proposals/FractionalizeProposal.sol#L54-L62
+Description
+The PartyGovernance system has many defenses in place to protect against a majority holder stealing the NFT. Majority cannot exfiltrate the ETH gained from selling precious NFT via any proposal, and it’s impossible to sell NFT for any asset except ETH. If the party were to be compensated via an ERC20 token, majority could pass an ArbitraryCallsProposal to transfer these tokens to an attacker wallet. Unfortunately, FractionalizeProposal is vulnerable to this attack. Attackers could pass two proposals and wait for them to be ready for execution. Firstly, a FractionalizeProposal to fractionalize the NFT and mint totalVotingPower amount of ERC20 tokens of the created vault. Secondly, an ArbitraryCallsProposal to transfer the entire ERC20 token supply to an attacker address. At this point, attacker can callvault.redeem()to burn the outstanding token supply and receive the NFT back.
+Impact
+A 51% majority could steal the precious NFT from the party and leave it empty.
+Proof of Concept
+The only non-trivial component of this attack is that the created vault, whose tokens we wish to transfer out, has an undetermined address untilVAULT_FACTORY.mint()is called, which creates it. The opcode which creates the vault contract is CREATE, which calculates the address withkeccak256(VAULT_FACTORY, nonce). Nonce will keep changing while new, unrelated NFTs are fractionalized. The attack needs to prepare both FractionalizedProposal and ArbitraryCallsProposal ahead of time, so that they could be chained immediately, meaning there would be no time for other members to calldistribute()on the party, which would store the fractionalized tokens safely in the distributor.
+In order to solve this chicken and the egg problem, we will use a technique taken from traditional low-level exploitation called heap feng shui.
+Firstly, calculate off-chain, the rate new NFTs are fractionalized, and multiple by a safety factor (like 1.2X), and multiply again by the proposal execution delay. This number, added to the currentVAULT_FACTORYnonce, will be ourtarget_nonce. Calculatetarget_vault = keccak256(VAULT_FACTORY, target_nonce),before_target_vault = keccak256(VAULT_FACTORY, target_nonce-1)
+Firstly, we will create a contract which has an attack function that:
+Loop while beforetargetvault != createdvault:
+• Mint new dummy attackerNFT
+• createdvault = VAULTFACTORY.mint(attacker_NFT…)Call execute()on the FractionalizedProposal  // We will feed the execute() parameters to the contract in a separate contract setter. Note that this is guaranteed to create target_vault on the correct address.Call execute()on the ArbitraryCallsProposal
+Then, we propose the two proposals:
+Propose a FractionalizedProposal, with any list price and the precious NFT as parameterPropose an ArbitraryCallsProposal, with target = target_vault, data = transfer(ATTACKER, totalVotingPower)
+Then, we set theexecute()parameters passed in step 2 and 3 of the attack contract using the proposalID allocated for them.
+Then, we wait for execution delay to finish.
+Finally, run theattack()function prepared earlier. This will increment theVAULT_FACTORYnonce until it is the one we count on during the ArbitraryCallsProposal. Pass enough gas to be able to burn enough nonces.
+At this point, attacker has all the vault tokens, so he may call vault.redeem() and receive the precious NFT.
+Recommended Mitigation Steps
+Enforce a minimum cooldown between proposals. This will mitigate additional weaknesses of the proposal structure. Here, this will give users the opportunity to calldistribute()to put the vault tokens safe in distributor.A specific fix here would be to calldistribute()at the end of FractionalizeProposal so that there is no window to steal the funds.
+merklejerk (PartyDAO) confirmed and commented:
+Will fix by creating an automatic distribution at the end of a successful fractionalize proposal.
+HardlyDifficult (judge) commented:
+Agree with High risk - this scenario allows a majority owner to steal from others in the party.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/131
+
+[H-07] Attacker can DOS private party by donating ETH then calling buy
+Submitted by 0x52
+Party is DOS’d and may potentially lose access to NFT.
+Proof of Concept
+Crowdfund.sol#L280-L298
+party = party_ = partyFactory.createParty(address(this),Party.PartyOptions({name: name,symbol: symbol,governance: PartyGovernance.GovernanceOpts({hosts: governanceOpts.hosts,voteDuration: governanceOpts.voteDuration,executionDelay: governanceOpts.executionDelay,passThresholdBps: governanceOpts.passThresholdBps,totalVotingPower: _getFinalPrice().safeCastUint256ToUint96(),feeBps: governanceOpts.feeBps,feeRecipient: governanceOpts.feeRecipient})}),preciousTokens,preciousTokenIds);
+BuyCrowdfundBase.sol#L166-L173
+function _getFinalPrice()internaloverrideviewreturns (uint256){return settledPrice;}
+When BuyCrowdFund.sol successfully completes a buy, totalVotingPower is set to\_getFinalPricewhich in the case of BuyCrowdFundBase.sol returns the price at which the NFT was purchased. totalVotingPower is used by the governance contract to determine the number of votes needed for a proposal to pass. If there are not enough claimable votes to meet that threshold then the party is softlocked because it can’t pass any proposals. An attacker could exploit this to DOS even a private party with the following steps:
+Wait for party to be filled to just under quorum thresholdDonate ETH to the crowdfund contractCall BuyCrowdFund.sol#buy. Since it is unpermissioned even for parties with a gatekeeper, the call won’t revert
+Since the voting power for the final amount of ETH cannot be claimed, the party is now softlocked. If emergencyExecuteDisabled is true then the party will be permanantly locked and the NFT would effectively be burned. If emergencyExecuteDisabled is false then users would have to wait for PartyDAO to reclaim the NFT.
+Recommended Mitigation Steps
+Permission to call BuyCrowdFund.sol#buy should be gated if there is a gatekeeper.
+merklejerk (PartyDAO) confirmed and commented:
+Theoretically possible but there doesn’t seem to be much upside for the attacker. We do think it’s unusual that buy()/bid() can be called by a non-member for a private/gatekept party, so we will add gatekeeping logic there to fix this. We will also cap the callValue (and therefore final price) tototalContributions.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/133
+HardlyDifficult (judge) increased severity to High and commented:
+Although it’s without upside, it is a path for the attacker to potentially lock the NFT. Since it can cause a loss of asset for users, this seems to be a High risk issue.Let me know if I misunderstood.
+merklejerk (PartyDAO) commented:
+~Don’t consider it high because there is a much more straightforward way to softlock a party: contribute normally and don’t ever participate in governance.~ Oh nvm, this is the private party one. Yeah I’m fine with high.
+

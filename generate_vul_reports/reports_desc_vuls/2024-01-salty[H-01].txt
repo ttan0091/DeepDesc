@@ -1,0 +1,12 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: Lack of access control on the `release()` function in `VestingWallet`
+Execution process: An attacker can call the `release()` function on `teamVestingWallet` to distribute SALT tokens without informing `upkeep`, leading to the distributed SALT being locked in `upkeep` forever.
+Vulnerable code: 
+```solidity
+function step11() public onlySameContract {
+    uint256 releaseableAmount = VestingWallet(payable(exchangeConfig.teamVestingWallet())).releasable(address(salt));
+    // teamVestingWallet actually sends the vested SALT to this contract - which will then need to be sent to the active teamWallet
+    VestingWallet(payable(exchangeConfig.teamVestingWallet())).release(address(salt));
+    salt.safeTransfer(exchangeConfig.managedTeamWallet().mainWallet(), releaseableAmount);
+}
+```

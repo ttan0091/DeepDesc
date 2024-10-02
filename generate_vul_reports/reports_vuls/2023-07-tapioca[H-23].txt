@@ -1,0 +1,30 @@
+[H-23] Refund mechanism for failed cross-chain transactions does not work
+Submitted bypeakbolt, also found byKaysoft,windhustler, carrotsmuggler (1,2),xuwinnie, andcergyk
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/usd0/modules/USDOLeverageModule.sol#L180-L185
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/usd0/modules/USDOMarketModule.sol#L178-L186
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/usd0/modules/USDOOptionsModule.sol#L187-L197
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTLeverageModule.sol#L195-L200
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTMarketModule.sol#L170-L175
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTOptionsModule.sol#L202-L212
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTStrategyModule.sol#L163-L168
+There is a refund mechanism inUSDOandTOFTmodules that will return funds when the execution on the destination chain fails.
+It happens whenmodule.delegatecall()fails, where the following code (see below) will trigger a refund of the bridged fund to the user. After that a revert is then ‘forwarded’ to the main executor contract (BaseUSDOorBaseTOFT).
+However, the issue is that the revert will also reverse the refund even when the revert is forwarded.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/usd0/modules/USDOLeverageModule.sol#L180-L185
+if(!success) {if(balanceAfter-balanceBefore>=amount) {IERC20(address(this)).safeTransfer(leverageFor,amount);}//@audit - this revert will actually reverse the refund before thisrevert(_getRevertMsg(reason));//forward revert because it's handled by the main executor}
+Although the main executor contract will_storeFailedMessage()to allow users toretryMessage()and re-execute the failed transaction, it will not go through if the error is permanent. That means theretryMessage()will also revert and there is no way to recover the funds.
+Impact
+User will lose their bridged fund if the cross chain execution encounters a permanent error, which will permanently lock up the bridged funds in the contract as there is no way to recover it.
+Proof of Concept
+Add arevert()inleverageUpInternal()withinUSDOLeverageModule.sol#L197as follows, to simulate a permanent failure for the remote execution at destination chain.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/usd0/modules/USDOLeverageModule.sol#L197.
+functionleverageUpInternal(uint256amount,IUSDOBase.ILeverageSwapDatamemoryswapData,IUSDOBase.ILeverageExternalContractsDatamemoryexternalData,IUSDOBase.ILeverageLZDatamemorylzData,addressleverageFor)publicpayable{//@audit - to simulate a permanent failure for this remote execution (e.g. issue with swap)revert();...}
+Add the followingconsole.logtosingularity.test.ts#L4113
+console.log("USDO_10 balance for deployer.address (expected to be equal to 10000000000000000000) : ",awaitUSDO_10.balanceOf(deployer.address));
+Run the test case'should bounce between 2 chains'under'multiHopBuyCollateral()'tests insingularity.test.ts. It will show that thedeployer.addressfails to receive the refund amount.
+Recommended Mitigation Steps
+Implement a ‘pull’ mechanism for users to withdraw the refund instead of ‘pushing’ to the user.
+That can be done by using a a new state variable withinUSDOandTOFTto store the refund amount for the transaction with the correspondingpayloadHashforfailedMessagesmapping.
+Checks must be implemented to ensure that if user withdraws the refund, the correspondingfailedMessagesentry is cleared so that the user cannot retry the transaction again.
+Similarly, ifretryMessage()is used to re-execute the transaction successfully, the refund amount in the new state variable should be cleared.
+0xRektora (Tapioca) confirmed via duplicate issue #1410

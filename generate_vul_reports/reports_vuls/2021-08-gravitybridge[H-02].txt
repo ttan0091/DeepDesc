@@ -1,0 +1,21 @@
+[H-02] Freeze Bridge via Non-UTF8 Token Name/Symbol/Denom
+Submitted by nascent
+Manual insertion of non-utf8 characters in a token name will break parsing of logs and will always result in the oracle getting in a loop of failing and early returning an error. The fix is non-trivial and likely requires significant redesign.
+Proof of Concept
+Note thec0in the last argument of the call data (invalid UTF8).
+It can be triggered with:
+datamemorybytes=hex"f7955637000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000461746f6d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046e616d6500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000673796d626fc00000000000000000000000000000000000000000000000000000";gravity.call(data);
+The log output is as follows:
+ERC20DeployedEvent("atom","name", ❮utf8decodefailed❯:0x73796d626fc0,18,2)
+Which hitsthis code path:
+letsymbol =String::from_utf8(input.data[index_start..index_end].to_vec());trace!("Symbol {:?}", symbol);ifsymbol.is_err() {returnErr(GravityError::InvalidEventLogError(format!("{:?} is not valid utf8, probably incorrect parsing",symbol)));}
+And would cause an early returnhere:
+leterc20_deploys = Erc20DeployedEvent::from_logs(&deploys)?;
+Never updating last checked block and therefore, this will freeze the bridge by disallowing any attestations to take place. This is an extremely low cost way to bring down the network.
+Recommendation
+This is a hard one. Re-syncing is permanently borked because, on the Go side, there is seemingly no way to ever process the event nonce because protobufs do not handle non-utf8 strings. The validator would report they need event nonceNfrom the orchestrator, but they can never parse the eventN. Seemingly, validators & orchestrators would have to know to ignore that specific event nonce. But it is a permissionless function, so it can be used to effectively permanently stop attestations & the bridge until a newGravity.solis deployed.
+One potential fix is to check in the solidity contract if the name contains valid utf8 strings for denom, symbol and name. This likely will be expensive though. Alternatively, you could require that validators sign ERC20 creation requests and perform checks before the transaction is sent.
+jkilpatr (Althea) confirmed:
+This is a valid and well considered bug.I do disagree about the difficulty of the fix though, if we fail to parse the token name as utf8 we can just encode the bytes themselves in hex and pass that along. The result will be perfectly valid if a little unergonomic.
+albertchon (judge) commented:
+Clever, great catch

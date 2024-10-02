@@ -1,0 +1,16 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: The function `validateActionCreation` is externally accessible and does not require any privileges, allowing any user to update the approval/disapproval threshold by calling this function.
+Execution process: An attacker can call the `validateActionCreation` function after an action has been created and some approvals/disapprovals have been cast, but before the threshold is met. By doing so, the attacker can update the approval/disapproval supply to the current timestamp, effectively lowering the required threshold and potentially changing the action's state.
+Vulnerable code: 
+```solidity
+function validateActionCreation(ActionInfo calldata actionInfo) external {
+    LlamaPolicy llamaPolicy = policy; // Reduce SLOADs.
+    uint256 approvalPolicySupply = llamaPolicy.getRoleSupplyAsNumberOfHolders(approvalRole);
+    if (approvalPolicySupply == 0) revert RoleHasZeroSupply(approvalRole);
+    uint256 disapprovalPolicySupply = llamaPolicy.getRoleSupplyAsNumberOfHolders(disapprovalRole);
+    if (disapprovalPolicySupply == 0) revert RoleHasZeroSupply(disapprovalRole);
+    // Save off the supplies to use for checking quorum.
+    actionApprovalSupply[actionInfo.id] = approvalPolicySupply;
+    actionDisapprovalSupply[actionInfo.id] = disapprovalPolicySupply;
+}
+```

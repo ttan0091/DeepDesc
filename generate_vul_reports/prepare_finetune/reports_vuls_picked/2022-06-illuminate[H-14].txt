@@ -1,0 +1,33 @@
+Type of vulnerability: Access Control
+Cause of vulnerability: The `redeem` function is publicly accessible and can be called by anyone, including before maturity.
+Execution process: An attacker can call the `redeem` function before maturity, forcing the protocol to sell its holdings at a discounted price, leading to a loss of funds for stakeholders.
+Vulnerable code: 
+```solidity
+function redeem(uint8 p, address u, uint256 m) public returns (bool) {
+    // Get the principal token that is being redeemed by the user
+    address principal = IMarketPlace(marketPlace).markets(u, m, p);
+    // Make sure we have the correct principal
+    if (p != uint8(MarketPlace.Principals.Swivel) && p != uint8(MarketPlace.Principals.Element) && p != uint8(MarketPlace.Principals.Yield) && p != uint8(MarketPlace.Principals.Notional)) {
+        revert Invalid('principal');
+    }
+    // The amount redeemed should be the balance of the principal token held by the Illuminate contract
+    uint256 amount = IERC20(principal).balanceOf(lender);
+    // Transfer the principal token from the lender contract to here
+    Safe.transferFrom(IERC20(principal), lender, address(this), amount);
+    if (p == uint8(MarketPlace.Principals.Swivel)) {
+        // Redeems zc tokens to the sender's address
+        ISwivel(swivelAddr).redeemZcToken(u, m, amount);
+    } else if (p == uint8(MarketPlace.Principals.Element)) {
+        // Redeems principal tokens from element
+        IElementToken(principal).withdrawPrincipal(amount, marketPlace);
+    } else if (p == uint8(MarketPlace.Principals.Yield)) {
+        // Redeems prinicipal tokens from yield
+        IYieldToken(principal).redeem(address(this), address(this), amount);
+    } else if (p == uint8(MarketPlace.Principals.Notional)) {
+        // Redeems the principal token from notional
+        amount = INotional(principal).maxRedeem(address(this));
+    }
+    emit Redeem(p, u, m, amount);
+    return true;
+}
+```

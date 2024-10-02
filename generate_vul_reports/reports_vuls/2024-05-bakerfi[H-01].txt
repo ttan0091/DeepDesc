@@ -1,0 +1,17 @@
+[H-01]ETHOracle.getLatestPriceneeds to convert to 18 decimals
+Submitted bybin2chen
+InETHOracle.sol,getPrecision()is defined as10 ** 18, but the actual oracle used is 8-decimals.
+https://data.chain.link/feeds/arbitrum/mainnet/eth-usd
+This data feeds’ decimals is 8.
+/***  ETH/USD Oracle using chainlink data feeds**  For more information about the feed go to@> *  https://data.chain.link/feeds/arbitrum/mainnet/eth-usd***/contractETHOracleisIOracle{IChainlinkAggregatorprivateimmutable_ethPriceFeed;@>uint256privateconstant_PRECISION=10**18;....functiongetLatestPrice()publicviewoverridereturns(IOracle.Pricememoryprice) {(,int256answer,uint256startedAt,uint256updatedAt,) =_ethPriceFeed.latestRoundData();if(answer<=0)revertInvalidPriceFromOracle();if(startedAt==0||updatedAt==0)revertInvalidPriceUpdatedAt();@>price.price=uint256(answer);//@audit 8 decimalsprice.lastUpdate=updatedAt;}
+PythOracleis used to get prices for other tokens, alsogetPrecision() == 18.
+contractPythOracleisIOracle{...uint256privateconstant_PRECISION=18;function_getPriceInternal(uint256age)privateviewreturns(IOracle.PricememoryoutPrice) {PythStructs.Pricememoryprice=age==0?_pyth.getPriceUnsafe(_priceID):_pyth.getPriceNoOlderThan(_priceID,age);if(price.expo>=0) {outPrice.price=uint64(price.price) *uint256(10** (_PRECISION+uint32(price.expo)));}else{outPrice.price=uint64(price.price) *uint256(10** (_PRECISION-uint32(-price.expo)));}outPrice.lastUpdate=price.publishTime;}
+Since a different precision is used, then the calculation oftotalCollateralInEthatStrategyLeveragewill be wrong.
+function_getPosition(uint256priceMaxAge)internalviewreturns(uint256totalCollateralInEth,uint256totalDebtInEth) {...totalCollateralInEth=0;totalDebtInEth=0;(uint256collateralBalance,uint256debtBalance) =_getMMPosition();if(collateralBalance!=0) {IOracle.PricememoryethPrice=priceMaxAge==0?_ethUSDOracle.getLatestPrice():_ethUSDOracle.getSafeLatestPrice(priceMaxAge);IOracle.PricememorycollateralPrice=priceMaxAge==0?_collateralOracle.getLatestPrice():_collateralOracle.getSafeLatestPrice(priceMaxAge);if(!(priceMaxAge==0||(priceMaxAge>0&& (ethPrice.lastUpdate>= (block.timestamp-priceMaxAge))) ||(priceMaxAge>0&&(collateralPrice.lastUpdate>= (block.timestamp-priceMaxAge))))) {revertPriceOutdated();}@>totalCollateralInEth= (collateralBalance*collateralPrice.price) /ethPrice.price;}if(debtBalance!=0) {totalDebtInEth=debtBalance;}}
+Impact
+Incorrect calculation oftotalCollateralInEth, affecting borrowing judgment, e.g. overvaluation overborrowing, etc.
+Recommended Mitigation
+Convert to 18 decimals.
+hvasconcelos (BakerFi) confirmed
+ickas (BakerFi) commented:
+Fixed →https://github.com/baker-fi/bakerfi-contracts/pull/40

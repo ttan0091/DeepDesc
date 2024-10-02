@@ -1,0 +1,27 @@
+[H-02]_aggregateValidFulfillmentOfferItems()can be tricked to accept invalid inputs
+Submitted by Spearbit, also found by Saw-mon_and_Natalie
+FulfillmentApplier.sol#L406
+The_aggregateValidFulfillmentOfferItems()function aims to revert on orders with zero value or where a total consideration amount overflows. Internally this is accomplished by having a temporary variableerrorBuffer, accumulating issues found, and only reverting once all the items are processed in case there was a problem found. This code is optimistic for valid inputs.
+Note: there is a similar issue in_aggregateValidFulfillmentConsiderationItems(), which is reported separately.
+The problem lies in how thiserrorBufferis updated:
+// Update error buffer (1 = zero amount, 2 = overflow).errorBuffer :=or(errorBuffer,or(shl(1,lt(newAmount,amount)),iszero(mload(amountPtr))))
+The final error handling code:
+// Determine if an error code is contained in the error buffer.switcherrorBuffercase1{// Store the MissingItemAmount error signature.mstore(0,MissingItemAmount_error_signature)// Return, supplying MissingItemAmount signature.revert(0,MissingItemAmount_error_len)}case2{// If the sum overflowed, panic.throwOverflow()}
+While the expected value is0(success),1or2(failure), it is possible to set it to3, which is unhandled and considered as a “success”. This can be easily accomplished by having both an overflowing item and a zero item in the order list.
+This validation error could lead to fulfilling an order with a consideration (potentially ~0) lower than expected.
+Proof of Concept
+Craft an offer containing two errors (e.g. with  zero amount and overflow).CallmatchOrders(). Via calls to_matchAdvancedOrders(),_fulfillAdvancedOrders(),_applyFulfillment(),_aggregateValidFulfillmentOfferItems()will be called.TheerrorBufferwill get a value of 3  (theorof 1 and 2).As the value of 3 is not detected, no error will be thrown and the order will be executed, including the mal formed values.
+Recommended Mitigation Steps
+Change the check onFulfillmentApplier.sol#L465to considercase 3.Potential option: Introduce an early abort in caseerrorBuffer != 0onFulfillmentApplier.sol#L338
+0age (OpenSea) confirmed
+HardlyDifficult (judge) decreased severity to Medium
+cmichel (warden) commented:
+This validation error could lead to fulfilling an order with a consideration (potentially ~0) lower than expected.That’s correct, you can use this to fulfill an order essentially for free, that’s why I’d consider this high severity.
+They could have done a better job demonstrating it with a POC test case but this sentence imo shows that they were aware of the impact.Seethis test caseshowing how to buy an NFT for 1 DAI instead of 1000 DAI.
+0age (OpenSea) disagreed with Medium severity:
+This is the highest-severity finding. If it were me, I’d switch this to high.
+HardlyDifficult (judge) increased severity to High
+0xleastwood (judge) commented:
+After further consideration and discussion with @HardlyDifficult, we agree with @cmichel that this should be of high severity. As the protocol allows for invalid orders to be created, users aware of this vulnerability will be able to fulfill an order at a considerable discount. This fits the criteria of a high severity issue as it directly leads to lost funds.
+0age (OpenSea) resolved:
+PR:ProjectOpenSea/seaport#320

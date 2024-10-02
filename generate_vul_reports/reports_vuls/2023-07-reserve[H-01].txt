@@ -1,0 +1,24 @@
+[H-01] CBEthCollateral and AnkrStakedEthCollateral _underlyingRefPerTok is incorrect
+Submitted byronnyx2017, also found by0xA5DF
+Lines of Code
+https://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/plugins/assets/cbeth/CBETHCollateral.sol#L67-L69https://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/plugins/assets/ankr/AnkrStakedEthCollateral.sol#L58-L61
+TheCBEthCollateral._underlyingRefPerTok()function just usesCBEth.exchangeRate()to get the ref/tok rate. TheCBEth.exchangeRate()can only get the conversion rate from cbETH to staked ETH2 on the coinbase. However as the docshttps://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/2023-07-reserve/protocol/contracts/plugins/assets/cbeth/README.mdthe ref unit should be ETH. The staked ETH2 must take a few days to unstake, which leads to a premium between ETH and cbETH.
+And theAnkrStakedEthCollateralandRethCollateralhas the same problem. According to the ankr docs, unstake eth by Flash unstake have to pay a fee, 0.5% of the unstaked amount.https://www.ankr.com/docs/liquid-staking/eth/unstake/
+Impact
+The_underlyingRefPerTokwill return a higher ref/tok rate than the truth. And the premium is positively correlated with the unstake delay of eth2. When the unstake queue suddenly increases, the attacker can uses cbeth to issue more rtokens. Even if the cbETH has defaulted, the CBEthCollateral will never mark the state as DISABLED because theCBEth.exchangeRate()is updated by coinbase manager and it only represents the cbETH / staked eth2 rate instead of the cbETH/ETH rate.
+Proof of Concept
+For example, Now it’s about 17819370 block high on the mainnet, and theCBEth.exchangeRate()(https://etherscan.io/token/0xbe9895146f7af43049ca1c1ae358b0541ea49704#readProxyContract#F12) is 1.045264058480813188, but the chainlink price feed for cbETH/ETH(https://data.chain.link/ethereum/mainnet/crypto-eth/cbeth-eth) is 1.0438.
+Recommended Mitigation Steps
+Use thecbETH/ETHoracle to get thecbETH/ETHrate.
+Or, the ref unit for the collateral should be the staked eth2.
+Assessed type
+Context
+tbrent (Reserve) commented:
+This feels like a duplicate of#32. The root cause is an incorrect reference unit. The reference unit should be staked eth2, as indicated here.
+pmckelvy1 (Reserve) confirmed
+ronnyx2017 (warden) commented:
+This issue and32explain the misuse of tar unit and ref unit in staked eth related assets from different perspectives. The root cause is same, that 1 staked eth2 != 1 eth. This issue assumes that the ref token and target is all eth, which is referred to inthe docs. So the error should be in the function_underlyingRefPerTok. But issue 32 assumes that the ref unit should be staked eth2 and the target unit is eth. So it needs to modify functiontargetPerRef. I also have mentioned this mitigation in theRecommended Mitigation Stepssection of the current issue:Or, the ref unit for the collateral should be the staked eth2.
+cccz (judge) increased severity to High
+Reserve Mitigated:
+Fixes units and price calculations in cbETH, rETH, ankrETH collateral plugins.PR:https://github.com/reserve-protocol/protocol/pull/899
+Status: Mitigation confirmed. Full details in reports fromronnyx2017,bin2chenandRaymondFam.

@@ -1,0 +1,17 @@
+[H-06] STORAGE COLLISION BETWEEN PROXY AND IMPLEMENTATION (LACK EIP 1967)
+Submitted by peritoflores
+Storage collision because of lack of EIP1967 could cause conflicts and override sensible variables
+Proof of Concept
+contract CoreProxy is Ownable {address private immutable _implement;
+When you implement proxies, logic and implementation share the same storage layout.    In order to avoid storage conflicts  EIP1967 was proposed.(https://eips.ethereum.org/EIPS/eip-1967)   The idea is to set proxy variables at fixed positions (likeimplandadmin).
+For example, according to the standard,  the slot for for logic address should be
+0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc(obtained asbytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)).
+In this case, for example, as you inherits fromOwnablethe variable _owner is at the first slot and can be overwritten in the implementation.   There is a table at OZ site that explains this scenario more in detail
+https://docs.openzeppelin.com/upgrades-plugins/1.x/proxies
+section  “Unstructured Storaged Proxies”
+Recommended Mitigation Steps
+Consider using EIP1967
+sofianeOuafir (Joyn) confirmed and commented:
+This is an issue we want to investigate and fix if our investigation suggests we indeed need to make improvement on that end.At the same time, I have little idea of what is the impact of this issue. I’m not sure if it’s a high risk item
+deluca-mike (judge) commented:
+Impact would be that an upgrade could brick a contract by simply rearranging inheritance order, or adding variables to an inherited contract, since the implantation slot will not be where it is expected. As the warden suggests, its critical that the implementation slot be fixed at an explicit location, and not an implicit location derived purely from inheritance and declaration order.

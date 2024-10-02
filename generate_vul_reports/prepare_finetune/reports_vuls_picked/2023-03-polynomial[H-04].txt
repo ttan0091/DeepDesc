@@ -1,0 +1,22 @@
+Type of vulnerability: Logical Error
+
+Cause of vulnerability: The `removeCollateral` function updates the storage variables `usedFunds` and `positionData.totalCollateral` but does not actually remove the collateral from the `EXCHANGE`, leading to discrepancies between the recorded collateral and the actual collateral held.
+
+Execution process: An admin calls the `removeCollateral` function with a specified amount of collateral to remove. The function updates the internal state to reflect the removal of collateral but fails to call the `EXCHANGE.removeCollateral` function, which would actually transfer the collateral back to the vault. This results in the collateral being unaccounted for and lost.
+
+Vulnerable code: 
+```solidity
+File: src/KangarooVault.sol
+436: function removeCollateral(uint256 collateralToRemove) external requiresAuth nonReentrant {
+437:     (uint256 markPrice,) = LIQUIDITY_POOL.getMarkPrice();
+438:     uint256 minColl = positionData.shortAmount.mulWadDown(markPrice);
+439:     minColl = minColl.mulWadDown(collRatio);
+440:
+441:     require(positionData.totalCollateral >= minColl + collateralToRemove);
+442:
+443:     usedFunds -= collateralToRemove;
+444:     positionData.totalCollateral -= collateralToRemove;
+445:
+446:     emit RemoveCollateral(positionData.positionId, collateralToRemove);
+447: }
+```

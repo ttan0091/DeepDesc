@@ -1,0 +1,15 @@
+[H-43] Accounted balance of GlpStrategy does not match withdrawable balance, allowing for attackers to steal unclaimed rewards
+Submitted bykaden, also found by kaden (1,2) andcergyk
+Attackers can steal unclaimed rewards due to insufficient accounting.
+Proof of Concept
+Pricing of shares for Yieldbox strategies is dependent upon the total underlying balance of the strategy. We can see below how we mint an amount of shares according to this underlying amount.
+// depositAsset()uint256totalAmount=_tokenBalanceOf(asset);if(share==0) {// value of the share may be lower than the amount due to rounding, that's okshare=amount._toShares(totalSupply[assetId],totalAmount,false);}else{// amount may be lower than the value of share due to rounding, in that case, add 1 to amount (Always round up)amount=share._toAmount(totalSupply[assetId],totalAmount,true);}_mint(to,assetId,share);
+The total underlying balance of the strategy is obtained viaasset.strategy.currentBalance.
+function_tokenBalanceOf(Assetstorageasset)internalviewreturns(uint256amount) {returnasset.strategy.currentBalance();}
+GlpStrategy._currentBalancedoes not properly track all unclaimed rewards.
+function_currentBalance()internalviewoverridereturns(uint256amount) {// This _should_ included both free and "reserved" GLP:amount=IERC20(contractAddress).balanceOf(address(this));}
+As a result, attackers can:
+Deposit a high amount when there are unclaimed rewardsReceiving a higher amount of shares than they would if accounting included unclaimed rewardsHarvests unclaimed rewards, increasing_currentBalance, only after they received sharesWithdraw all sharesNow that the balance is updated to include previously unclaimed rewards, the attacker profits their relative share of the unclaimed rewardsThe more the attacker deposits relative to the strategy balance, the greater proportion of interest they receive
+Recommended Mitigation Steps
+It’s recommended that_currentBalanceinclude some logic to retrieve the amount and value of unclaimed rewards to be included in it’s return value.
+cryptolyndon (Tapioca confirmed)

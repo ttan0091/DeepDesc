@@ -1,0 +1,23 @@
+Type of vulnerability: Flash Loan Attack
+Cause of vulnerability: Lack of validation to prevent unauthorized execution of `executeOperation()` by specifying `SuperVault` as the receiver in a flash loan.
+Execution process: An attacker initiates a flash loan specifying `SuperVault` as the receiver, crafts malicious parameters to manipulate the execution of `executeOperation()`, causing the contract to perform unfavorable token exchanges, leading to fund loss or theft.
+Vulnerable code: 
+```solidity
+function executeOperation(address[] calldata assets,uint256[] calldata amounts,uint256[] calldata premiums,address,bytes calldata params) external returns (bool) {
+    require(msg.sender == address(lendingPool), "SV002");
+    (Operation operation, bytes memory operationParams) = abi.decode(params, (Operation, bytes));
+    IERC20 asset = IERC20(assets[0]);
+    uint256 flashloanRepayAmount = amounts[0] + premiums[0];
+    if (operation == Operation.LEVERAGE) {
+        leverageOperation(asset, flashloanRepayAmount, operationParams);
+    }
+    if (operation == Operation.REBALANCE) {
+        rebalanceOperation(asset, amounts[0], flashloanRepayAmount, operationParams);
+    }
+    if (operation == Operation.EMPTY) {
+        emptyVaultOperation(asset, amounts[0], flashloanRepayAmount, operationParams);
+    }
+    asset.approve(address(lendingPool), flashloanRepayAmount);
+    return true;
+}
+```

@@ -1,0 +1,11 @@
+[H-01] A previously timelocked NFT token becomes permanently stuck in vault if it’s ever moved back into the vault
+Submitted by 0xRajeev, also found by pauliax
+Let’s consider a scenario where a particular NFT token was timelocked for a certain duration by the owner usingtimeLockERC721()with a delegate as the recipient and then transferred out of the vault by the delegate viatransferERC721()but without unlocking it explicitly usingtimeUnlockERC721().
+This is possible becausetransferERC721()does all the timelock checks onexpires/block.timestampandrecipient/msg.senderas is done intimeUnlockERC721(). But it misses deletingtimelockERC721s[key]for that NFTtokenID(as done in L572 oftimeUnlockERC721()).
+Because of this missing deletion, if that same NFT is ever put back into the vault later but this time without a timelock, the vault logic still thinks it is a timelocked NFT with the older/stale recipient from earlier because of the missing deletion. So now the owner who makes thetransferERC721()call will not match the older/stale recipient address and will fail the check on L510 (unless they control that stale recipient address from the earlier timelock).
+The impact is that, without access/control to the earlier timelock recipient, this NFT token is now locked in the vault forever.
+Alice time locks a particular NFT token with delegate Eve as recipient usingtimeLockERC721()Eve transfers NFT to Bob usingtransferERC721()but without callingtimeUnlockERC721()firstAlice buys the same NFT back from Bob (e.g. because it is now considered rare and more valuable) and again puts it back in her vault but this time without locking/delegating it to any recipient i.e. intending to control it herself.Because this NFT’s timelock data and delegate approval for Eve is never removed after Step 2, the NFT is still treated as timelocked in the vault with previous delegate Eve as the recipient (because of stale data intimelockERC721sandnftApprovals)Alice now cannot withdraw her own NFT without Eve’s help because the check on L510 will only allow Eve to transfer this NFT out of the vault.If Eve is no longer trusted/accessible then the NFT is locked in the vault forever.
+Recommend addingdelete timelockERC721s [timelockERC721Keys[nftContract][i]];after L510.
+xyz-ctrl (Visor) confirmed:
+ztcrypto (Visor) patched:
+patchlink

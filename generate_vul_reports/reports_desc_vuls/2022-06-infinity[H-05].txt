@@ -1,0 +1,23 @@
+Type of vulnerability: Access Control
+Cause of vulnerability: Missing check for order complication rules
+Execution process: A malicious trader can take orders that are restricted by their complication rules, bypassing intended access controls.
+Vulnerable code: `takeMultipleOneOrders` function in the Solidity contract, specifically where the complication check is missing:
+```solidity
+function takeMultipleOneOrders() {
+    ...
+    for (uint256 i = 0; i < numMakerOrders; ) {
+        bytes32 makerOrderHash = _hash(makerOrders[i]);
+        bool makerOrderValid = isOrderValid(makerOrders[i], makerOrderHash);
+        require(makerOrderValid, 'order not verified');
+        require(currency == makerOrders[i].execParams[1], 'cannot mix currencies');
+        require(isMakerSeller == makerOrders[i].isSellOrder, 'cannot mix order sides');
+        uint256 execPrice = _getCurrentPrice(makerOrders[i]);
+        totalPrice += execPrice; // @audit-issue missing complication check
+        _execTakeOneOrder(makerOrderHash, makerOrders[i], isMakerSeller, execPrice);
+        unchecked {
+            ++i;
+        }
+    }
+    ...
+}
+```

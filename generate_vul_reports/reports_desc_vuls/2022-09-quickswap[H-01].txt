@@ -1,0 +1,25 @@
+Type of vulnerability: Denial of Service (DoS) through Liquidity Cooldown Manipulation
+
+Cause of vulnerability: The ability for users to provide liquidity on behalf of others allows malicious actors to exploit the liquidity cooldown mechanism, preventing legitimate users from removing their liquidity.
+
+Execution process: A malicious user can call the `mint` function to add a small amount of liquidity on behalf of a target user. This action updates the `lastLiquidityAddTimestamp` for the target user's position, placing them in the liquidity cooldown period. By repeatedly doing this, the malicious user can indefinitely extend the cooldown period, effectively locking the target user's liquidity.
+
+Vulnerable code: 
+```solidity
+function mint(address sender, address recipient, int24 bottomTick, int24 topTick, uint128 liquidityDesired, bytes calldata data) {
+    ...
+    (_position.liquidity, _position.lastLiquidityAddTimestamp) = (liquidityNext, liquidityNext > 0 ? (liquidityDelta > 0 ? _blockTimestamp() : lastLiquidityAddTimestamp) : 0);
+    ...
+}
+
+function burn(int24 bottomTick, int24 topTick, uint128 liquidity) {
+    ...
+    if (liquidityDelta < 0) {
+        uint32 _liquidityCooldown = liquidityCooldown;
+        if (_liquidityCooldown > 0) {
+            require((_blockTimestamp() - lastLiquidityAddTimestamp) >= _liquidityCooldown);
+        }
+    }
+    ...
+}
+```

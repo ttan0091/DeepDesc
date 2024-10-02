@@ -1,0 +1,17 @@
+Type of vulnerability: Unused ERC20 tokens not refunded
+Cause of vulnerability: The contract only returns the leftover inputToken and does not account for leftover underlying tokens, leading to user fund loss.
+Execution process: An attacker can exploit this by calling `joinTokenSingle()` with a fake `outputBasket` contract and `swap.exchange` contract to steal the leftover tokens.
+Vulnerable code: 
+```solidity
+function joinTokenSingle(JoinTokenStructV2 calldata _joinTokenStruct) external {
+    // ######## INIT TOKEN #########
+    IERC20 inputToken = IERC20(_joinTokenStruct.inputToken);
+    inputToken.safeTransferFrom(msg.sender, address(this), _joinTokenStruct.inputAmount);
+    _joinTokenSingle(_joinTokenStruct);
+    // ######## SEND TOKEN #########
+    uint256 remainingIntermediateBalance = inputToken.balanceOf(address(this));
+    if (remainingIntermediateBalance > 0) {
+        inputToken.safeTransfer(msg.sender, remainingIntermediateBalance);
+    }
+}
+```

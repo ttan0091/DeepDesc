@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `receive` function resets the `sendingProgress` variable, allowing the reentrancy guard to be bypassed.
+Execution process: An attacker initiates the `receive` function to reset the reentrancy guard, then re-enters the contract through the `withdrawExactAmountETH` function, bypassing the health state check and exploiting the `paybackBadDebtForToken` function to steal funds.
+Vulnerable code: 
+```solidity
+function _sendValue(address _recipient, uint256 _amount) internal {
+    if (address(this).balance < _amount) { revert AmountTooSmall(); }
+    sendingProgress = true;
+    (bool success, ) = payable(_recipient).call{value: _amount}("");
+    sendingProgress = false;
+    if (success == false) { revert SendValueFailed(); }
+}
+```

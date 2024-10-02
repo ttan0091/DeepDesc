@@ -1,0 +1,21 @@
+[H-03] Wrong invocation of Whirpools’s updateFeesAndRewards will cause it to always revert
+Submitted byhash
+Deposits will be unwithdrawable from the lockbox.
+Proof of Concept
+If the entire liquidity of a position has been removed, the withdraw function calls theupdateFeesAndRewardsfunction on the Orca pool before attempting to close the position.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/lockbox-solana/solidity/liquidity_lockbox.sol#L277-L293
+functionwithdraw(uint64amount)external{addresspositionAddress=positionAccounts[firstAvailablePositionAccountIndex];......uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];......uint64remainder=positionLiquidity-amount;......if(remainder==0) {// Update fees for the positionAccountMeta[4]metasUpdateFees= [AccountMeta({pubkey:pool,is_writable:true,is_signer:false}),AccountMeta({pubkey:positionAddress,is_writable:true,is_signer:false}),AccountMeta({pubkey:tx.accounts.tickArrayLower.key,is_writable:false,is_signer:false}),AccountMeta({pubkey:tx.accounts.tickArrayUpper.key,is_writable:false,is_signer:false})];whirlpool.updateFeesAndRewards{accounts:metasUpdateFees, seeds: [[pdaProgramSeed,pdaBump]]}();
+This is faulty as theupdateFeesAndRewardsfunction will always revert if the position’s liquidity is 0.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/lockbox-solana/solidity/interfaces/whirlpool.sol#L198
+Whirlpool source code:
+updatefeesand_rewards->calculatefeeandrewardgrowths->_calculatemodifyliquidity
+https://github.com/orca-so/whirlpools/blob/3206c9cdfbf27c73c30cbcf5b6df2929cbf87618/programs/whirlpool/src/manager/liquidity_manager.rs#L97-L99
+fn_calculate_modify_liquidity(whirlpool: &Whirlpool,position: &Position,tick_lower: &Tick,tick_upper: &Tick,tick_lower_index:i32,tick_upper_index:i32,liquidity_delta:i128,timestamp:u64,) ->Result<ModifyLiquidityUpdate> {// Disallow only updating position fee and reward growth when position has zero liquidityifliquidity_delta ==0&& position.liquidity ==0{returnErr(ErrorCode::LiquidityZero.into());}
+Since the withdrawal positions are chosen sequentially, only a maximum of (first position’s liquidity - 1) amount of liquidity can be withdrawn.
+POC Test
+https://gist.github.com/10xhash/a687ef66de8210444a41360b86ed4bca
+Recommended Mitigation Steps
+Avoid theupdate_fees_and_rewardscall completely since fees and rewards would be updated in thedecreaseLiquiditycall.
+kupermind commented:
+We have changed the order of operations in our rust program indeed, and it works there. Verified the order of instructions provided here and it fails if the remainder is zero.
+Note: See full discussionhere.

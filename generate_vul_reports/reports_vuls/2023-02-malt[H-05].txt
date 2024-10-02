@@ -1,0 +1,28 @@
+[H-05]_distributeProfitwill use the staleglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio(), which will result in incorrect profit distribution
+Submitted bycccz
+The\_distributeProfit()(called by handleProfit()) will useglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio()when distributing profits, and the latestglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio()needs to be used to ensure that profits are distributed correctly.
+uint256globalSwingTraderDeficit= (maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralDeficit()) *maltDataLab.priceTarget()) / (10**collateralToken.decimals());// this is already in collateralToken.decimals()uint256lpCut;uint256swingTraderCut;if(globalSwingTraderDeficit==0) {lpCut=distributeCut;}else{uint256runwayDeficit=rewardThrottle.runwayDeficit();if(runwayDeficit==0) {swingTraderCut=distributeCut;}else{uint256totalDeficit=runwayDeficit+globalSwingTraderDeficit;
+However, the two calls to handleProfit in the contract do not call syncGlobalCollateral to synchronize the data in globalIC.
+syncGlobalCollateral will use the data ingetCollateralizedMalt(), including the collateralToken balance in overflowPool/swingTraderManager/liquidityExtension and the malt balance in swingTraderManager.
+function syncGlobalCollateral() public onlyActive {globalIC.sync(getCollateralizedMalt());}function getCollateralizedMalt() public view returns (PoolCollateral memory) {uint256 target = maltDataLab.priceTarget(); // 是否选用  getActualPriceTarget()uint256 unity = 10**collateralToken.decimals();// Convert all balances to be denominated in units of Malt target priceuint256 overflowBalance = maltDataLab.rewardToMaltDecimals((collateralToken.balanceOf(address(overflowPool)) * unity) / target);uint256 liquidityExtensionBalance = (collateralToken.balanceOf(address(liquidityExtension)) * unity) / target;(uint256 swingTraderMaltBalance,uint256 swingTraderBalance) = swingTraderManager.getTokenBalances();swingTraderBalance = (swingTraderBalance * unity) / target;
+Before handleProfit is called by StabilizerNode.stabilize.
+profitDistributor.handleProfit(rewards);
+a. checkAuctionFinalization is called to liquidityExtension.allocateBurnBudget, which transfers the collateralToken from liquidityExtension to swingTrader. The increase of collateralToken in swingTrader will make the data in globalIC stale.
+functionallocateBurnBudget(uint256amount)externalonlyRoleMalt(AUCTION_ROLE,"Must have auction privs")onlyActivereturns(uint256purchased){// Send the burnable amount to the swing trader so it can be used to burn more malt if requiredrequire(collateralToken.balanceOf(address(this)) >=amount,"LE: Insufficient balance");collateralToken.safeTransfer(address(swingTrader),amount);emitAllocateBurnBudget(amount);}
+b. swingTraderManager.sellMalt will exchange malt for collateralToken, and the increase of collateralToken in swingTrader will also make the data in globalIC stale.
+uint256swingAmount=swingTraderManager.sellMalt(tradeSize);
+Before SwingTrader.sellMalt is called to handleProfit.
+function_handleProfitDistribution(uint256profit)internalvirtual{if(profit!=0) {collateralToken.safeTransfer(address(profitDistributor),profit);profitDistributor.handleProfit(profit);}}
+a. dexHandler.sellMalt will exchange malt for collateralToken, and the increase of collateralToken in swingTrader will also make the data in globalIC stale.
+malt.safeTransfer(address(dexHandler),maxAmount);uint256rewards=dexHandler.sellMalt(maxAmount,10000);
+One obvious effect is that as the collateralToken in swingTrader increases, collateral.swingTrade will be smaller than it actually is, and the result ofglobalIC.swingTraderCollateralDeficit()will be larger than it should be.
+functionswingTraderCollateralDeficit()publicviewreturns(uint256) {// Note that collateral.swingTrader is already denominated in malt.decimals()uint256maltSupply=malt.totalSupply();uint256collateral=collateral.swingTrader;// gasif(collateral>=maltSupply) {return0;}returnmaltSupply-collateral;}
+thus making lpCut larger:
+uint256globalSwingTraderDeficit= (maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralDeficit()) *maltDataLab.priceTarget()) / (10**collateralToken.decimals());// this is already in collateralToken.decimals()uint256lpCut;uint256swingTraderCut;if(globalSwingTraderDeficit==0) {lpCut=distributeCut;}else{uint256runwayDeficit=rewardThrottle.runwayDeficit();if(runwayDeficit==0) {swingTraderCut=distributeCut;}else{uint256totalDeficit=runwayDeficit+globalSwingTraderDeficit;uint256globalSwingTraderRatio=maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralRatio());// Already in collateralToken.decimalsuint256poolSwingTraderRatio=impliedCollateralService.swingTraderCollateralRatio();if(poolSwingTraderRatio<globalSwingTraderRatio) {swingTraderCut= (distributeCut*swingTraderPreferenceBps) /10000;lpCut=distributeCut-swingTraderCut;}else{lpCut=(((distributeCut*runwayDeficit) /totalDeficit) *(10000-lpThrottleBps)) /10000;
+Proof of Concept
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/ProfitDistributor.sol#L164-L184
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/StabilizerNode.sol#L423-L424
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/SwingTrader.sol#L176-L181
+Recommended Mitigation Steps
+Call syncGlobalCollateral to synchronize the data in globalIC before calling handleProfit.
+0xScotch (Malt) confirmed

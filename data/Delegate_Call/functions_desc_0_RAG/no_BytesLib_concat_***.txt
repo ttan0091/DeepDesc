@@ -1,0 +1,35 @@
+This code defines an internal function named concat, which concatenates two byte arrays (_preBytes and postBytes) and returns the resulting concatenated byte array. The function is marked as pure, indicating that it does not read from or modify the state of the blockchain. Instead, it operates solely on its input parameters and returns a result based on those inputs.
+
+Here’s a detailed explanation of how this function works:
+
+1. Initialization of tempBytes:
+    The function starts by declaring a variable tempBytes of type bytes. This variable will hold the concatenated result of _preBytes and _postBytes.
+
+2. Assembly Block:
+    The function uses inline assembly to manipulate memory directly, which is more efficient for certain operations like byte array concatenation.
+
+3. Allocating Memory for tempBytes:
+    The assembly block begins by loading the next available memory location (denoted by 0x40) into tempBytes. This is where the concatenated byte array will be stored.
+
+4. Storing the Length of _preBytes:
+    The length of _preBytes is loaded and stored at the beginning of the tempBytes memory. This is necessary because the first 32 bytes of a dynamic byte array in Solidity are reserved for storing its length.
+
+5. Copying _preBytes to tempBytes:
+    A memory counter (mc) is initialized to the start of the actual data in tempBytes (after the length).
+    A copy counter (cc) is initialized to the start of the actual data in _preBytes.
+    A loop is set up to copy 32 bytes at a time from _preBytes to tempBytes until the entire _preBytes array is copied.
+
+6. Updating the Length of tempBytes:
+    The length of _postBytes is added to the current length of tempBytes and stored as the new length in the first 32 bytes of tempBytes.
+
+7. Copying _postBytes to tempBytes:
+    The memory counter (mc) is reset to the end of the _preBytes data.
+    A loop similar to the previous one is set up to copy 32 bytes at a time from _postBytes to tempBytes until the entire _postBytes array is copied.
+
+8. Updating the FreeMemory Pointer:
+    The freememory pointer (0x40) is updated to point to the next available memory location after the concatenated byte array. This is done by padding the last write location to 32 bytes and rounding down to the nearest multiple of 32.
+
+9. Returning tempBytes:
+    Finally, the function returns tempBytes, which now contains the concatenated result of _preBytes and _postBytes.
+
+This function efficiently concatenates two byte arrays by directly manipulating memory, ensuring that the operation is both fast and gasefficient. The use of inline assembly allows for precise control over memory operations, which is crucial for performance in smart contracts.

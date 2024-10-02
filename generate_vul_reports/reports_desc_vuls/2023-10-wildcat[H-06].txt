@@ -1,0 +1,17 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Incorrect order of arguments passed to `createEscrow()` function, leading to misconfiguration of the escrow contract.
+Execution process: The borrower (Bob) blocks a sanctioned lender (Larry) using the `nukeFromOrbit()` function, which incorrectly creates an escrow with Larry's funds. Bob then manipulates the escrow to release funds to himself, bypassing the intended sanctions checks.
+Vulnerable code: 
+```solidity
+function _blockAccount(MarketState memory state, address accountAddress) internal {
+    Account memory account = _accounts[accountAddress];
+    // ...
+    account.approval = AuthRole.Blocked;
+    // ...
+    account.scaledBalance = 0;
+    address escrow = IWildcatSanctionsSentinel(sentinel).createEscrow(accountAddress, borrower, address(this));
+    // ...
+    _accounts[escrow].scaledBalance += scaledBalance;
+    // ...
+}
+```

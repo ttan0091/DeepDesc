@@ -1,0 +1,13 @@
+[H-01] Call todeclareInsolvent()would revert when contract status reaches liquidation point after repayment of credit position 1
+Submitted bycryptphi, also found byadriro,Ch_301,PaludoX0,ayeslick, andperseverancesuccess
+https://github.com/debtdao/Line-of-Credit/blob/audit/code4rena-2022-11-03/contracts/modules/credit/LineOfCredit.sol#L143
+https://github.com/debtdao/Line-of-Credit/blob/audit/code4rena-2022-11-03/contracts/modules/credit/LineOfCredit.sol#L83-L86
+Impact
+The modifierwhileBorrowing()is used along in the call to LineOfCredit.declareInsolvent(). However this check reverts when count == 0 orcredits[ids[0]].principal == 0. Within the contract, any lender can add credit which adds an entry in credits array, credits[ids].
+Assume, when borrower chooses lender positions including credits[ids[0]] to draw on, and repays back the loan fully for credits[ids[1]], then the call to declareInsolvent() by the arbiter would revert since it does not pass thewhileBorrowing()modifier check due to the ids array index shift in the call to  stepQ(), which would shift ids[1] to ids[0], thereby making the condition forcredits[ids[0]].principal == 0be true causing the revert.
+Proof of Concept
+LineOfCredit contract is set up and 5 lenders have deposited into the contract.Alice, the borrower borrows credit from these 5 credit positions including by callingLineOfCredit.borrow()for the position ids.Later Alice pays back the loan for  credit position id 1 just before the contract gets liquidated.At the point whereids.stepQ()is called in\_repay(), position 1 is moved to ids[0]When contract status is LIQUIDATABLE, no loan drawn on credit position 0 and arbiter calls declareInsolvent() , the call would revert sincecredits[ids[0]].principal == 0
+Recommended Mitigation Steps
+The modifierwhileBorrowing()would need to be reviewed and amended.
+dmvt (judge) increased severity to High
+kibagateaux (Debt DAO) confirmed

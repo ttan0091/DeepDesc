@@ -1,0 +1,47 @@
+[H-01] Anyone Can Arbitrarily CallFSDVesting.updateVestedTokens()
+Submitted by leastwood, also found by cmichel, hickuphh3, hyh, rfa, and WatchPug
+Impact
+TheupdateVestedTokens()function is intended to be called by theFSD.solcontract when updating a user’s vested token amount. A check is performed to ensure that_user == beneficiary, however, as_useris a user controlled argument, it is possible to spoof calls toupdateVestedTokens()such that anyone can arbitrarily add any amount to the vested contract. Additionally, there is no check to ensure that the call originated from a trusted/whitelisted source.
+There are two main reasons as to why the beneficiary or an attacker would want to call this function:
+To increase the vested amount such thatcalculateVestingClaim()allows them to withdraw their entire vested amount without waiting the entire duration.An attacker wishes to block withdrawals from other vested contracts by preventing successful calls toclaimVestedTokens()by the beneficiary account. This can be done by increasing the vested amount such thatsafeTransfer()calls fail due to insufficient token balance within the contract.
+Proof of Concept
+https://github.com/code-423n4/2021-11-fairside/blob/main/contracts/token/FSDVesting.sol#L147-L161https://github.com/code-423n4/2021-11-fairside/blob/main/contracts/token/FSDVesting.sol#L100-L115https://github.com/code-423n4/2021-11-fairside/blob/main/contracts/token/FSDVesting.sol#L125https://github.com/code-423n4/2021-11-fairside/blob/main/contracts/token/FSDVesting.sol#L134
+Tools Used
+Manual code review.
+Discussions with dev.
+Recommended Mitigation Steps
+Ensure that theupdateVestedTokens()function is only callable from theFSD.solcontract. This can be done by implementing anonlyFSDrole.
+YunChe404 (FairSide) confirmed
+[H-02]FSDVesting: Claiming tributes should call FSD token’s corresponding functions
+Submitted by hickuphh3, also found by leastwood
+Impact
+The claiming of staking and governance tributes for the a beneficiary’s vested tokens should be no different than other users / EOAs. However, theclaimTribute()andclaimGovernanceTribute()are missing the actual claiming calls to the corresponding functions of the FSD token contract. As a result, the accrued rewards are taken from the beneficiary’s vested token while not claiming (replenishing) from the FSD token contract.
+Recommended Mitigation Steps
+In addition to what has been mentioned above, the internal accounting for claimedTribute states can be removed because they are already performed in the FSD token contract.
+// TODO: Remove _claimedTribute and _claimedGovernanceTribute mappings/***@devAllows claiming of staking tribute by`msg.sender`during their vesting period.* It updates the claimed status of the vest against the tribute* being claimed.** Requirements:* - claiming amount must not be 0.*/functionclaimTribute(uint256num)externalonlyBeneficiary{uint256tribute=fsd.availableTribute(num);require(tribute!=0,"FSDVesting::claimTribute: No tribute to claim");fsd.claimTribute(num);fsd.safeTransfer(msg.sender,tribute);emitTributeClaimed(msg.sender,tribute);}/***@devAllows claiming of governance tribute by`msg.sender`during their vesting period.* It updates the claimed status of the vest against the tribute* being claimed.** Requirements:* - claiming amount must not be 0.*/functionclaimGovernanceTribute(uint256num)externalonlyBeneficiary{uint256tribute=fsd.availableGovernanceTribute(num);require(tribute!=0,"FSDVesting::claimGovernanceTribute: No governance tribute to claim");fsd.claimGovernanceTribute(num);fsd.safeTransfer(msg.sender,tribute);emitGovernanceTributeClaimed(msg.sender,tribute);}
+YunChe404 (FairSide) confirmed
+[H-03] Beneficiary cant getfairSideConvictionNFT unless they only claim once, and only after it’s fully vested
+Submitted by WatchPug, also found by cmichel
+Based on the context, once the beneficiary claimed all their vesting tokens, they should get thefairSideConvictionNFT.
+However, in the current implementation, if the beneficiary has claimed any amounts before it’s fully vested, then they will never be able to get thefairSideConvictionNFT, because at L138, it requires thetokenbClaimto be equal to the initial vesting amount.
+FSDVesting.solL124-L142
+functionclaimVestedTokens()externaloverrideonlyBeneficiary{uint256tokenClaim=calculateVestingClaim();require(tokenClaim>0,"FSDVesting::claimVestedTokens: Zero claimable tokens");totalClaimed=totalClaimed.add(tokenClaim);lastClaimAt=block.timestamp;fsd.safeTransfer(msg.sender,tokenClaim);emitTokensClaimed(msg.sender,tokenClaim,block.timestamp);if(amount==tokenClaim) {uint256tokenId=fsd.tokenizeConviction(0);fairSideConviction.transferFrom(address(this),msg.sender,tokenId);}}
+Recommendation
+Change to:
+functionclaimVestedTokens()externaloverrideonlyBeneficiary{uint256tokenClaim=calculateVestingClaim();require(tokenClaim>0,"FSDVesting::claimVestedTokens: Zero claimable tokens");totalClaimed=totalClaimed.add(tokenClaim);lastClaimAt=block.timestamp;fsd.safeTransfer(msg.sender,tokenClaim);emitTokensClaimed(msg.sender,tokenClaim,block.timestamp);if(amount==totalClaimed) {uint256tokenId=fsd.tokenizeConviction(0);fairSideConviction.transferFrom(address(this),msg.sender,tokenId);}}
+YunChe404 (FairSide) confirmed and disagreed with severity
+[H-04] ERC20ConvictionScore._writeCheckpoint` does not write to storage on same block
+Submitted by cmichel
+InERC20ConvictionScore._writeCheckpoint, when the checkpoint is overwritten (checkpoint.fromBlock == blockNumber), the new value is set to thememory checkpointstructure and never written to storage.
+// @audit this is MEMORY, setting new convictionScore doesn't write to storageCheckpointmemorycheckpoint=checkpoints[user][nCheckpoints-1];if(nCheckpoints>0&&checkpoint.fromBlock==blockNumber) {checkpoint.convictionScore=newCS;}
+Users that have their conviction score updated several times in the same block will only have their first score persisted.
+POC
+User updates their conviction withupdateConvictionScore(user)In the same block, the user now redeems an NFT conviction usingacquireConviction(id). This calls_increaseConvictionScore(user, amount)which calls_writeCheckpoint(..., prevConvictionScore + amount). The updated checkpoint isnotwritten to storage, and the user lost their conviction NFT. (The conviction/governance totals might still be updated though, leading to a discrepancy.)
+Impact
+Users that have their conviction score updated several times in the same block will only have their first score persisted.
+This also applies to the total conviction scoresTOTAL_CONVICTION_SCOREandTOTAL_GOVERNANCE_SCORE(see_updateConvictionTotals) which is a big issue as these are updated a lot of times each block.
+It can also be used for inflating a user’s conviction by first callingupdateConvictionScoreand then creating conviction tokens withtokenizeConviction. The_resetConvictionwill not actually reset the user’s conviction.
+Recommended Mitigation Steps
+Define thecheckpointvariable as astoragepointer:
+Checkpointstoragecheckpoint=checkpoints[user][nCheckpoints-1];
+YunChe404 (FairSide) confirmed

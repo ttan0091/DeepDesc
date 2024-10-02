@@ -1,0 +1,13 @@
+[H-02]QuickAccManager.sol#cancel()WronghashTxmakes it impossible to cancel a scheduled transaction
+Submitted by WatchPug, also found by gpersoon
+InQuickAccManager.sol#cancel(), thehashTxto identify the transaction to be canceled is wrong. The last parameter is missing.
+As a result, users will be unable to cancel a scheduled transaction.
+QuickAccManager.sol#L91L91
+functioncancel(Identityidentity,QuickAccountcalldataacc,uintnonce,bytescalldatasig, Identity.Transaction[]calldatatxns)external{bytes32accHash=keccak256(abi.encode(acc));require(identity.privileges(address(this)) ==accHash,'WRONG_ACC_OR_NO_PRIV');bytes32hash=keccak256(abi.encode(CANCEL_PREFIX,address(this),block.chainid,accHash,nonce,txns,false));addresssigner=SignatureValidator.recoverAddr(hash,sig);require(signer==acc.one||signer==acc.two,'INVALID_SIGNATURE');// @NOTE: should we allow cancelling even when it's matured? probably not, otherwise there's a minor grief// opportunity: someone wants to cancel post-maturity, and you front them with execScheduledbytes32hashTx=keccak256(abi.encode(address(this),block.chainid,accHash,nonce,txns));require(scheduled[hashTx] !=0&&block.timestamp<scheduled[hashTx],'TOO_LATE');deletescheduled[hashTx];emitLogCancelled(hashTx,accHash,signer,block.timestamp);}
+Recommendation
+Change to:
+bytes32hashTx=keccak256(abi.encode(address(this),block.chainid,accHash,nonce,txns,false));
+Ivshti (Ambire) confirmed and resolved:
+Great find, resolved inhttps://github.com/AmbireTech/adex-protocol-eth/commit/5c5e6f0cb47e83793dafc08630577b93500c86ab
+GalloDaSballo (judge) commented:
+The warden has found that the methodcancelwas calculating the wronghashTx, this hash, used to verify which transaction to cancel, making it impossible to cancel a transaction.The sponsor has mitigated in a  subsequent pr

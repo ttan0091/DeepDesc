@@ -1,0 +1,21 @@
+[H-02] Theft of funds under relaying the transaction
+Submitted byV_B, also found byDevTimSch
+contracts/smart-contract-wallet/SmartAccount.sol#L200contracts/smart-contract-wallet/SmartAccount.sol#L239contracts/smart-contract-wallet/SmartAccount.sol#L248
+TheexecTransactionfunction is designed to accept a relayed transaction with a transaction cost refund. At the beginning of the function, thestartGasvalue is calculated as the amount of gas that the relayer will approximately spend on the transaction initialization, including the base cost of21000gas and the cost per calldata byte ofmsg.data.length * 8gas. At the end of the function, the total consumed gas is calculated asgasleft() - startGasand the appropriate refund is sent to the relayer.
+An attacker could manipulate the calldata to increase the refund amount while spending less gas than what is calculated by the contract. To do this, the attacker could provide calldata with zero padded bytes of arbitrary length. This would only cost 4 gas per zero byte, but the refund would be calculated as 8 gas per calldata byte. As a result, the refund amount would be higher than the gas amount spent by the relayer.
+Attack Scenario
+Let’s a smart wallet user signs a transaction. Some of the relayers trying to execute this transaction and send a transaction to theSmartAccountcontract. Then, an attacker can frontrun the transaction, changing the transaction calldata by adding the zeroes bytes at the end.
+So, the original transaction has such calldata:
+abi.encodeWithSignature(RelayerManager.execute.selector, (...))
+The modified (frontrun) transaction calldata:
+// Basically, just add zero bytes at the endabi.encodeWithSignature(RelayerManager.execute.selector, (...)) || 0x00[]
+Proof of Concept
+The PoC shows that the function may accept the data with redundant zeroes at the end. At the code above, an attacker send a 100_000 meaningless zeroes bytes, that gives a100_000 * 4 = 400_000additional gas refund. Technically, it is possible to pass even more zero bytes.
+pragmasolidity^0.8.12;contractDummySmartWallet{functionexecTransaction(Transactionmemory_tx,uint256batchId,FeeRefundmemoryrefundInfo,bytesmemorysignatures)external{// Do nothing, just test that data with appended zero bytes are accepted by Solidity}}contractPoC{addressimmutablesmartWallet;constructor() {smartWallet=address(newDummySmartWallet());}// Successfully call with original datafunctiontestWithOriginalData()external{bytesmemorytxCalldata=_getOriginalTxCalldata();(boolsuccess, ) =smartWallet.call(txCalldata);require(success);}// Successfully call with original data + padded zero bytesfunctiontestWithModifiedData()external{bytesmemoryoriginalTxCalldata=_getOriginalTxCalldata();bytesmemoryzeroBytes=newbytes(100000);bytesmemorytxCalldata=abi.encodePacked(originalTxCalldata,zeroBytes);(boolsuccess, ) =smartWallet.call(txCalldata);require(success);}function_getOriginalTxCalldata()internalpurereturns(bytesmemory) {Transactionmemorytransaction;FeeRefundmemoryrefundInfo;bytesmemorysignatures;returnabi.encodeWithSelector(DummySmartWallet.execTransaction.selector,transaction,uint256(0),refundInfo,signatures);}}
+Impact
+An attacker to manipulate the gas refund amount to be higher than the gas amount spent, potentially leading to arbitrary big ether loses by a smart wallet.
+Recommended Mitigation Steps
+You can calculate the number of bytes used by the relayer as a sum per input parameter. Then an attacker won’t have the advantage of providing non-standard ABI encoding for the PoC calldata.
+// Sum the length of each  bynamic and static length parameters.uint256 expectedNumberOfBytes = _tx.data.length + signatures.length + 12 * 32;uint256 dataLen = Math.min(msg.data.length, expectedNumberOfBytes);
+Please note, the length of thesignaturemust also be bounded to eliminate the possibility to put meaningless zeroes there.
+livingrockrises (Biconomy) confirmed

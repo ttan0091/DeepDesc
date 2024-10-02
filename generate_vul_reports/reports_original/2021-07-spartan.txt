@@ -1,0 +1,165 @@
+[H-01]SynthVaultwithdraw forfeits rewards
+Submitted by cmichel
+TheSynthVault.withdrawfunction does not claim the user’s rewards. It decreases the user’s weight and therefore they are forfeiting their accumulated rewards.
+ThesynthRewardvariable in_processWithdrawis also never used - it was probably intended that this variable captures the claimed rewards.
+Usually, withdrawal functions claim rewards first but this one does not. A user that withdraws loses all their accumulated rewards.
+Recommend claiming the rewards with the user’s deposited balance first inwithdraw.
+verifyfirst (Spartan) confirmed but disagreed with severity:
+We understand there is a risk of losing unclaimed rewards if a user directly interacts with the synth-vault and not the DAPP.
+This is a design choice to protect the withdrawal function.
+We affirm the synthReward variable to be culled.
+[H-02]Pool.sol&Synth.sol: Failing Max Value Allowance
+Submitted by hickuphh3, also found by shw, jonah1005, 0xRajeev and cmichel
+In the_approvefunction, if the allowance passed in istype(uint256).max, nothing happens (ie. allowance will still remain at previous value). Contract integrations (DEXes for example) tend to hardcode this value to set maximum allowance initially, but this will result in zero allowance given instead.
+This also makes the comment// No need to re-approve if already maxmisleading, because the max allowance attainable istype(uint256).max - 1, and re-approval does happen in this case.
+This affects theapproveAndCallimplementation since it usestype(uint256).maxas the allowance amount, but the resulting allowance set is zero.
+Recommend keeping it simple and removing the condition.
+function_approve(addressowner,addressspender,uint256amount)internalvirtual{require(owner!=address(0),"!owner");require(spender!=address(0),"!spender");_allowances[owner][spender] =amount;emitApproval(owner,spender,amount);}
+SamusElderg (Spartan) confirmed:
+We acknowledge the issue in the max approval for approveAndCall, which we don’t use.
+Furthermore, the issue is only a problem if a user directly approves a maximum possible amount which would mean they are assuming trust in the contract.We will also change _approve in the pool and synth contracts.
+Risk, as outlined above, is low.
+ghoul-sol (judge) commented:
+This is high risk as explained in #152
+[H-03] Result oftransfer/transferFromnot checked
+Submitted by gpersoon, also found by jonah1005, zer0dot, 0xRajeev, JMukesh, cmichel, k, shw, 7811, heiho1 and maplesyrup.
+A call totransferFromortransferis frequently done without checking the results. For certain ERC20 tokens, if insufficient tokens are present, no revert occurs but a result of “false” is returned. It’s important to check this. If you don’t, you could mint tokens without have received sufficient tokens to do so and could loose funds. Its also a best practice to check this.
+Recommend always checking the result oftransferFromandtransfer.
+verifyfirst (Spartan) confirmed:
+The intention was to not allow non-standard tokens with non-boolean returns however in the interest of future proofing the protocol we agree with this issue
+ghoul-sol (judge) commented:
+There are a lot of reported issues in relation of non-standard ERC20 andtransferreturn values. Some wardens report it all in one issue, some divided it into multiple issues. To keep playing field equal, I’ll keep one issue per warden and make others invalid.
+[H-04] Members lose SPARTA tokens inremoveLiquiditySingle()
+Submitted by 0xRajeev, also found by cmichel and XXX
+When a member callsremoveLiquiditySingle()requesting only SPARTA in return, i.e.toBASE= true, the LP tokens are transferred to the Pool to withdraw the constituent SPARTA and TOKENs back to the Router. The withdrawn TOKENs are then transferred back to the Pool to convert to SPARTA and directly transferred to the member from the Pool. However, the member’s SPARTA are left behind in the Router instead of being returned along with converted SPARTA from the Pool.
+In other words, the_member’s BASE SPARTA tokens that were removed from the Pool along with the TOKENs are never sent back to the_memberbecause the_token’s transferred to the Pool are converted to SPARTA and only those are sent back to member directly from the Pool viaswapTo().
+This effectively results in member losing the SPARTA component of their Pool LP tokens which get left behind in the Router and are possibly claimed by future transactions that remove SPARTA from Router.
+LPs sent to Pool,SPARTA and TOKENs withdrawn from Pool to Router,TOKENs from Router sent to Pool, andTOKENs in Pool converted to BASE SPARTA and sent to member directly from the Pool.
+Recommend:
+BASE SPARTA should also be transferred to the Pool beforeswapTo()so they get sent to the member along with the converted TOKENs viaswapTo()Useswap(BASE)instead ofswapTo()so that TOKENs are swapped for BASE SPARTA in Pool and sent back to ROUTER. Then send all the SPARTA from ROUTER to member.
+verifyfirst (Spartan) confirmed:
+This bug was missed in a last minute edit before pushing to code423n4, wouldn’t have made it past testNet testing.
+However, it is a good find.
+[H-05] Synthrealiseis vulnerable to flash loan attacks
+Submitted by jonah1005, also found by adelamo_
+Synthrealisefunction calculatesbaseValueLPandbaseValueSynthbase on AMM spot price which is vulnerable to flash loan attack.Synth’s lp is subject torealisewhenever the AMM ratio is different than Synth’s debt ratio.
+The attack does not necessarily require a flash loan. A big whale of the lp token holders could keep callingrealiseby shifting token ratio of AMM pool back and forth.
+The vulnerability is located atSynth.solL187-L199. Where the formulahereis dangerous.
+Here’s a script for conducting flashloan attack:
+flashloan_amount = init_amountuser = w3.eth.accounts[0]marked_token.functions.transfer(user, flashloan_amount).transact()marked_token.functions.transfer(token_pool.address, flashloan_amount).transact({'from': user})token_pool.functions.addForMember(user).transact({'from': user})received_lp = token_pool.functions.balanceOf(user).call()synth_balance_before_realise = token_synth.functions.mapSynth_LPBalance(token_pool.address).call()token_synth.functions.realise(token_pool.address).transact()token_pool.functions.transfer(token_pool.address, received_lp).transact({'from': user})token_pool.functions.removeForMember(user).transact({'from': user})token_synth.functions.realise(token_pool.address).transact()synth_balance_after_realise = token_synth.functions.mapSynth_LPBalance(token_pool.address).call()print('synth_lp_balance_after_realise', synth_balance_after_realise)print('synth_lp_balance_before_realise', synth_balance_before_realise)
+Output:
+synth_balance_after_realise 1317859964829313908162synth_balance_before_realise 2063953488372093023256
+Calculating Lp token’s value base on AMM protocol is known to be dangerous.
+There are a few steps that might solve the issue:
+calculate token’s price from a reliable source.  Implement a TWAP oracle or uses chainlink oracle.calculate lp token value based on anti-flashloan formula.  Alpha finance’s formula is a good reference:https://blog.alphafinance.io/fair-lp-token-pricing
+verifyfirst (Spartan) confirmed and disagreed with severity:
+A proposal has been suggested to limit the use of realise() for a DAO proposal. This will allow only liquidity providers to choose the outcome of a function that directly affects them.
+[H-06]SynthVaultrewards can be gamed
+Submitted by cmichel
+TheSynthVault._depositfunction addsweightfor the user that depends on the spot value of the deposit synth amount inBASE.
+This spot price can be manipulated and the cost of manipulation is relative to the pool’s liquidity.
+However, the reward (seecalcReward) is measured in BASE tokens unrelated to the pool.
+Therefore, if the pool’s liquidity is low and the reward reserve is high, the attack can be profitable:
+Manipulate the pool spot price of theiSYNTH(_synth).LayerONE()pool by dripping a lot ofBASEinto it repeatedly (sending lots of smaller trades is less costly due to thepath-independence of the continuous liquidity model). This increases theBASEpertokenprice.CallSynthVault.depositForMemberand deposit asmallamount of synth token. TheiUTILS(_DAO().UTILS()).calcSpotValueInBase(iSYNTH(_synth).LayerONE(), _amount)will return an inflated weight due to the price.Optionally drip moreBASEinto the pool and repeat the depositsDrip backtokento the pool to rebalance it
+The user’sweightis now inflated compared to the deposited / locked-up amount and they can claim a large share of the rewards. The cost of the attack depends on the pool’s liquidity and the profit depends on the reserve. It could therefore be profitable under certain circumstances.
+Recommend tracking a TWAP price of the synth instead, store the deposited synths instead, and compute the weight & total weight on the fly based on the TWAP * deposit amount instead of at the time of deposit.
+verifyfirst (Spartan) acknowledged:
+There is already a discussion in place to change spot rate to swap rate calculation for weights.
+[H-07] Missing slippage checks
+Submitted by cmichel, also found by tensors
+There are no minimum amounts out, or checks that frontrunning/slippage is sufficiently mitigated.
+This means that anyone with enough capital can force arbitrarily large slippage by sandwiching transactions, close to 100%. See issue page for referenced code.
+Recommend adding a minimum amount out parameter. The function reverts if the minimum amount isn’t obtained.
+verifyfirst (Spartan) acknowledge:
+We acknowledge the issue for the protocol’s AMM, but if this becomes a large issue in the future, the router is easily upgradeable to include a minimum rate parameter.
+SamusEldburg (Spartan) confirmed and disagreed with severity:
+Have changed this to confirmed; even though we already were aware of it; we have discussed and are happy to add in a UI-handed arg for minAmount now rather than reactively in the future. Disagree with severity though; this wasn’t a problem with V1 at all.
+ghoul-sol (Judge) commented:
+I’ll keep high risk as sandwich attacks are very common and risk of getting a bad swap is real.
+[H-08] Dividend reward can be gamed
+Submitted by cmichel
+TheRouter.addDividendfunction tells the reserve to send dividends to the pool depending on the fees.
+The attacker provides LP to a curated pool. Ideally, they become a large LP holder to capture most of the profit, they should choose the smallest liquidity pool as the dividends are pool-independent.ThenormalAverageFeevariable that determines the pool dividends can be set to zero by the attacker by trading a single wei in the poolarrayFeeSize(20) times (usebuyTo). The fees of the single wei trades will be zero and thus thenormalAverageFeewill also be zero as, seeaddTradeFee.The attacker then does a trade that generates some non-zero fees, setting thenormalAverageFeeto this trade’s fee. ThefeeDividendis then computed as_fees * dailyAllocation / (_fees + normalAverageFee) = _fees * dailyAllocation / (2 * _fees) = dailyAllocation / 2. Half of thedailyAllocationis sent to the pool.The attacker repeats the above steps until the reserve is almost empty. Each time thedailyAllocationgets smaller but it’s still possible to withdraw almost all of it.They redeem their LP tokens and gain a share of the profits
+The reserve can be emptied by the attacker.
+Counting only the last 20 trades as a baseline for the dividends does not work. It should probably average over a timespan but even that can be gamed if it is too short.
+I think a better idea is to compute the dividends based onvolumetraded over a timespan instead of looking at individual trades.
+verifyfirst (Spartan) acknowledged:
+Only very deep pools will be curated for dividends.
+Variables can be changed reactively to alter the dividends.
+Whilst we were aware of this and feel the attack is limited its sparked some discussion for some new ideas to solve this.
+ghoul-sol (judge) commented:
+Keeping high risk as the report is valid
+[H-09] arbitrary synth mint/burn from pool
+Submitted by jonah1005
+Poolcan mint arbitrarySynthprovided as long as it’s a valid synth. When there are multiple curated pools and synth (which the protocol is designed for), hackers can mint expensive synthetics from a cheaper AMM pool. The hacker can burn the minted synth at the expensive pool and get profit. The arbitrage profit can be amplified with flash loan services and break all the pegs.
+Pool’s mintSynth logic,Synth’s mintSynth logic, andSynth’s authorization logic.
+The price of the synthetics to be mint is calculated inPoolbased on the AMM price of the current Pool
+Here’s a web3.py script of minting arbitrarySynthin a pool.
+For simplicity, two pools are set with the assumption that link is 10x expensive than dai.
+sparta_amount =100*10**18initail_link_synth = link_synth.functions.balanceOf(user).call()base.functions.transfer(link_pool.address, sparta_amount).transact({'from': user})link_pool.functions.mintSynth(link_synth.address, user).transact({'from': user})after_link_synth = link_synth.functions.balanceOf(user).call()print('get link synth amount from link pool:', after_link_synth - initail_link_synth)sparta_amount =100*10**18initail_link_synth = link_synth.functions.balanceOf(user).call()base.functions.transfer(dai_pool.address, sparta_amount).transact({'from': user})dai_pool.functions.mintSynth(link_synth.address, user).transact({'from': user})after_link_synth = link_synth.functions.balanceOf(user).call()print('get link synth amount from dai pool:', after_link_synth - initail_link_synth)
+The log of the above script
+getlinksynthamountfromlinkpool:97078046905036524413getlinksynthamountfromdaipool:970780469050365244136
+Recommend Checking the provided synth’s underlying token inmintSynth
+require(iSYNTH(synthOut).LayerONE() ==TOKEN,"invalid synth");
+verifyfirst (Spartan) confirmed:
+We agree and appreciate this finding being valid high risk issue.
+[H-10] Hijack token pool by burning liquidity token
+Submitted by jonah1005
+Poolallows users to burn lp tokens without withdrawing the tokens. This allows the hacker to mutate the pools’ rate to a point that no one can get any lp token anymore (even if depositing token).
+The liquidity tokens are calculated atUtils:calcLiquidityUnits
+// units = ((P (t B + T b))/(2 T B)) * slipAdjustment// P * (part1 + part2) / (part3) * slipAdjustmentuintslipAdjustment=getSlipAdustment(b,B,t,T);uintpart1=t*(B);uintpart2=T*(b);uintpart3=T*(B)*(2);uint_units= (P* (part1+ (part2))) / (part3);return_units*slipAdjustment/one;// Divide by 10**18
+wherePstands fortotalSupplyof current Pool. IfPis too small (e.g, 1) then all the units would be rounding to 0.
+Since any person can create aPoolatPoolFactory, hackers can create a Pool and burn his lp and settotalSupplyto 1. He will be the only person who owns the Pool’s lp from now on.Pool’s burn logicandUtils’ lp token formula.
+Here’s a script of a user depositing 1M token to a pool wheretotalSupplyequals 1
+dai_pool.functions.burn(init_amount-1).transact()print('total supply',dai_pool.functions.totalSupply().call())dai.functions.transfer(dai_pool.address,1000000*10**18).transact()dai_pool.functions.addForMember(user).transact()print('lp received from depositing 1M dai: ',dai_pool.functions.balanceOf(user).call())
+Output:
+totalsupply1lpreceivedfromdepositing1Mdai:0
+Recommend removingburnor restrict it to privileged users only.
+verifyfirst (Spartan) confirmed:
+We agree to this issue and will restrict access to burn in the pool contract.
+We have already proposed adding a 1 week withdraw coolOff for all users per pool from the genesis of creation. Users can only add liquidity within this period.
+[H-11] Misuse of AMM model on mintingSynth(resubmit to add more detail)
+Submitted by jonah1005
+Poolcalculates the amount to be minted based ontoken_amountandsparta_amountof the Pool. However, sincetoken_amountin the pool would not decrease when users mintSynth, it’s always cheaper to mintsynththan swap the tokens.
+The synthetics would be really hard to be on peg. Or, there would be a flash-loan attacker to win all the arbitrage space.
+InPool’s mintsynth, Thesynthamount is calculated at L:232
+uintoutput=iUTILS(_DAO().UTILS()).calcSwapOutput(_actualInputBase,baseAmount,tokenAmount);
+which is the same as swapping base to token at L:287
+uint256_X=baseAmount;uint256_Y=tokenAmount;_y=iUTILS(_DAO().UTILS()).calcSwapOutput(_x,_X,_Y);// Calc TOKEN output
+However, while swapping tokens decrease pool’s token, mint just mint it out of the air.
+Here’s a POC:
+Swap sparta to token for ten times
+foriinrange(10):amount =10*10**18transfer_amount =int(amount/10)base.functions.transfer(token_pool.address, transfer_amount).transact()token_pool.functions.swapTo(token.address, user).transact()
+MintSynthfor ten times
+foriinrange(10):amount =10*10**18transfer_amount =int(amount/10)base.functions.transfer(token_pool.address, transfer_amount).transact()token_pool.functions.mintSynth(token_synth.address, user).transact()
+The Pool was initialized with 10000:10000 in both cases. While the first case(swap token) gets4744.4059and the second case gets6223.758.
+The debt should be considered in the AMM pool so I recommend to maintain a debt variable in the Pool and usetokenAmount - debtwhen the Pool calculates the token price. Here’s some idea of it:
+uint256publicdebt;function_tokenAmount()returns(uint256) {returntokenAmount-debt;}// Swap SPARTA for SynthsfunctionmintSynth(addresssynthOut,addressmember)externalreturns(uintoutputAmount,uintfee) {require(iSYNTHFACTORY(_DAO().SYNTHFACTORY()).isSynth(synthOut) ==true,"!synth");// Must be a valid Synthuint256_actualInputBase=_getAddedBaseAmount();// Get received SPARTA amount// Use tokenAmount - debt to calculate the valueuintoutput=iUTILS(_DAO().UTILS()).calcSwapOutput(_actualInputBase,baseAmount,_tokenAmount());// Calculate value of swapping SPARTA to the relevant underlying TOKEN// increment the debtdebt+=outputuint_liquidityUnits=iUTILS(_DAO().UTILS()).calcLiquidityUnitsAsym(_actualInputBase,address(this));// Calculate LP tokens to be minted_incrementPoolBalances(_actualInputBase,0);// Update recorded SPARTA amountuint_fee=iUTILS(_DAO().UTILS()).calcSwapFee(_actualInputBase,baseAmount,tokenAmount);// Calc slip fee in TOKENfee=iUTILS(_DAO().UTILS()).calcSpotValueInBase(TOKEN,_fee);// Convert TOKEN fee to SPARTA_mint(synthOut,_liquidityUnits);// Mint the LP tokens directly to the Synth contract to holdiSYNTH(synthOut).mintSynth(member,output);// Mint the Synth tokens directly to the user_addPoolMetrics(fee);// Add slip fee to the revenue metricsemitMintSynth(member,BASE,_actualInputBase,TOKEN,outputAmount);return(output,fee);}
+verifyfirst (Spartan) confirmed:
+We agree with the issue submitted, discussions are already in progress around ensuring the mint rate considers the floating debt.
+Potential high risk, however, hard to create a scenario to prove this.
+[H-12] wrongcalcLiquidityHoldingsthat leads to dead fund in the Pool
+Submitted by jonah1005
+The lptoken minted by thePoolcontract is actually the mix of two types of tokens. One is the original lptokens user get by callingaddForMember. This lpToken is similar to lp of Uniswap, Crv, Sushi, … etc. The other one is the debt-lp token the Synth contract will get when the user callsmintSynth. TheSynthcontract can only withdrawSpartafor burning debt-lp. Mixing two types of lp would raise several issues.
+LP user would not get their fair share when they burn the lP.
+Alice adds liquidity with Sparta 1000 and token B 1000 and create a new Pool.Bob mint Synth with 1000 Sparta and get debt.Alice withdraw all lp TokenBob burn all Synth.
+The pool would end up left behind a lot of token B in the Pool while there’s no lp holder.
+I would say this is a high-risk vulnerability since it pauses unspoken risks and losses for all users (all the time)
+The logic ofburn original lpandburn debt-lp.
+I do not know whether this is the team’s design choice or its composite with a series of bugs. If this is the original design, I do not come up with a fix. It’s a bit similar to the impermanent loss. However, the loss would be left behind in the Pool. This is more complicated and maybe worse than the impermanent loss. If this is the design choice, I think it’s worth emphasize and explain to the users.
+verifyfirst (Spartan) confirmed and disagreed with severity:
+We are in discussion of a viable solution to limit the effects of a bank run.
+One example is limiting the minted synths based on the depth of its underlying pool.
+SamusElderg (Spartan) commented:
+LP units are only used for accounting; even if they were drained to zero or vice versa on the synth contract; they would result in the same redemption value when burning. Hence the risk is low; however there is already discussions on implementing controls to synths including a maximum synthSupply vs tokenDepth ratio to prevent top-heavy synths ontop of the pools which isn’t really specific to the warden’s scenario; however does help limit those ‘unknowns’ that the warden addressed.
+[H-13] Flash loan manipulation ongetPoolShareWeightofUtils
+Submitted by shw
+ThegetPoolShareWeightfunction returns a user’s pool share weight by calculating how many SPARTAN the user’s LP tokens account for. However, this approach is vulnerable to flash loan manipulation since an attacker can swap a large number of TOKEN to SPARTAN to increase the number of SPARTAN in the pool, thus effectively increasing his pool share weight.
+According to the implementation ofgetPoolShareWeight,a user’s pool share weight is calculated byuints * baseAmount / totalSupply, whereuintsis the number of user’s LP tokens,totalSupplyis the total supply of LP tokens, andbaseAmountis the number of SPARTAN in the pool. Thus, a user’s pool share weight is proportional to the number of SPARTAN in the pool. Consider the following attack scenario:
+Supposing the attacked pool is SPARTAN-WBNB. The attacker first prepares some LP tokens (WBNB-SPP) by adding liquidity to the pool.The attacker then swaps a large number of WBNB to SPARTAN, which increases the pool’sbaseAmount. He could split his trade into small amounts to reduce slip-based fees.The attacker now wants to increase his weight in theDaoVault. He adds his LP tokens to the pool by calling thedepositfunction ofDao.Daothen callsdepositLPofDaoVault, causing the attacker’s weight to be recalculated. Due to the large proportion of SPARTAN in the pool, the attacker’s weight is artificially increased.With a higher member weight, the attacker can, for example, vote the current proposal with more votes than he should have or obtain more rewards when callingharvestof theDaocontract.The attacker then swaps back SPARTAN to WBNB and only loses the slip-based fees.
+Referenced code:Utils.sol#L46-L50,Utils.sol#L70-L77,DaoVault.sol#L44-L56,Dao.sol#L201, andDao.sol#L570.
+A possible mitigation is to record the current timestamp when a user’s weight in theDaoVaultorBondVaultis recalculated and force the new weight to take effect only after a certain period, e.g., a block time. This would prevent the attacker from launching the attack since there is typically no guarantee that he could arbitrage the WBNB back in the next block.
+SamusElderg (Spartan) confirmed and disagreed with severity:
+Recommended mitigation has been included in contributors ongoing discussions to make this more resistant to manipulation
+ghoul-sol (judge) commented:
+Keeping high risk because of impact

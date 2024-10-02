@@ -1,0 +1,23 @@
+Type of vulnerability: Oracle Staleness
+Cause of vulnerability: The contract does not validate the freshness of price updates, allowing stale prices to be accepted as current.
+Execution process: When the network is congested or the endpoint is down, transactions containing stale prices can be delayed and then accepted as fresh prices, leading to incorrect liquidations.
+Vulnerable code: 
+```rust
+pub fn feed_prices(deps: DepsMut, env: Env, info: MessageInfo, prices: Vec<(String, Decimal256)>) -> Result<Response, ContractError> {
+    let mut attributes = vec![attr("action", "feed_prices")];
+    let sender_raw = deps.api.addr_canonicalize(info.sender.as_str())?;
+    for price in prices {
+        let asset: String = price.0;
+        let price: Decimal256 = price.1;
+        // Check feeder permission
+        let feeder = read_feeder(deps.storage, &asset)?;
+        if feeder != sender_raw {
+            return Err(ContractError::Unauthorized{});
+        }
+        attributes.push(attr("asset", asset.to_string()));
+        attributes.push(attr("price", price.to_string()));
+        store_price(deps.storage, &asset, &PriceInfo{last_updated_time: env.block.time.seconds(), price,})?;
+    }
+    Ok(Response::new().add_attributes(attributes))
+}
+```

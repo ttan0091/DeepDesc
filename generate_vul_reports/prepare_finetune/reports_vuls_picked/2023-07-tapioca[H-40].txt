@@ -1,0 +1,12 @@
+Type of vulnerability: Insufficient Token Withdrawal
+Cause of vulnerability: Incorrect scaling of the withdrawal amount by `pricePerShare`
+Execution process: The function `_withdraw` calculates the amount to withdraw by scaling down the desired amount by `pricePerShare` and then calls `_vaultWithdraw` with this scaled-down amount. Since `_vaultWithdraw` expects the exact number of tokens to be withdrawn, it withdraws fewer tokens than required, leading to a revert in the subsequent `require` statement.
+Vulnerable code: 
+```solidity
+if(amount > queued) {
+    uint256 pricePerShare = pool.getRate();
+    uint256 decimals = IStrictERC20(address(pool)).decimals();
+    uint256 toWithdraw = (((amount - queued) * (10**decimals)) / pricePerShare);
+    _vaultWithdraw(toWithdraw);
+}
+```

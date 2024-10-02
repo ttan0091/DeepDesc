@@ -1,0 +1,20 @@
+[H-01] Destruction of theSmartAccountimplementation
+Submitted byV_B, also found bygogo,gogo,adriro,smit_rajput,Koolex,hihen,spacelord47,0xdeadbeef0x,Matin,chaduke,jonatascm,ro,taek,HE1M, andkankodu
+contracts/smart-contract-wallet/SmartAccount.sol#L166contracts/smart-contract-wallet/SmartAccount.sol#L192contracts/smart-contract-wallet/SmartAccount.sol#L229contracts/smart-contract-wallet/base/Executor.sol#L23
+If theSmartAccountimplementation contract is not initialized, it can be destroyed using the following attack scenario:
+Initialize theSmartAccountimplementationcontract using theinitfunction.Execute a transaction that contains a singledelegatecallto a contract that executes theselfdestructopcode on any incoming call, such as:
+contractDestructor{fallback()external{selfdestruct(payable(0));}}
+The destruction of the implementation contract would result in the freezing of all functionality of the wallets that point to such an implementation. It would also be impossible to change the implementation address, as theSingletonfunctionality and the entire contract would be destroyed, leaving only the functionality from the Proxy contract accessible.
+In the deploy script there is the following logic:
+constSmartWallet=awaitethers.getContractFactory("SmartAccount");constbaseImpl=awaitSmartWallet.deploy();awaitbaseImpl.deployed();console.log("base wallet impl deployed at: ",baseImpl.address);
+So, in the deploy script there is no enforce that theSmartAccountcontract implementation was initialized.
+The same situation inscw-contracts/scripts/wallet-factory.deploy.tsscript.
+Please note, that in case only the possibility of initialization of theSmartAccountimplementation will be banned it will be possible to use this attack. This is so because in such a caseownervariable will be equal to zero and it will be easy to pass a check inside ofcheckSignaturesfunction using the fact that for incorrect input parametersecrecoverreturns a zero address.
+Impact
+Complete freezing of all functionality of all wallets (including complete funds freezing).
+Recommended Mitigation Steps
+Add to the deploy script initialization of theSmartAccountimplementation, or add to theSmartAccountcontract the following constructor that will prevent implementation contract from the initialization:
+// Constructor ensures that this implementation contract can not be initializedconstructor()public{owner=address(1);}
+gzeon (judge) commented:
+#14also notes that if owner is left to address(0) some validation can be bypassed.
+livingrockrises (Biconomy) confirmed

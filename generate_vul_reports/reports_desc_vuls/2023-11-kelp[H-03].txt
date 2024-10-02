@@ -1,0 +1,34 @@
+Type of vulnerability: Price Manipulation (Donation Attack)
+Cause of vulnerability: The initial staker can manipulate the price of rsETH by donating assets, inflating the total value of deposited assets relative to the initial supply of rsETH.
+Execution process: The first staker deposits a small amount of asset to receive a minimal amount of rsETH, then donates a large amount of the same asset to artificially inflate the total value of assets in the pool. This manipulation causes the price of rsETH to skyrocket, preventing subsequent stakers from receiving any rsETH for their deposits.
+Vulnerable code: 
+```solidity
+function getRsETHAmountToMint(address asset, uint256 amount) public view override returns (uint256 rsethAmountToMint) {
+    // setup oracle contract
+    address lrtOracleAddress = lrtConfig.getContract(LRTConstants.LRT_ORACLE);
+    ILRTOracle lrtOracle = ILRTOracle(lrtOracleAddress);
+    // calculate rseth amount to mint based on asset amount and asset exchange rate
+    rsethAmountToMint = (amount * lrtOracle.getAssetPrice(asset)) / lrtOracle.getRSETHPrice();
+}
+
+function getRSETHPrice() external view returns (uint256 rsETHPrice) {
+    address rsETHTokenAddress = lrtConfig.rsETH();
+    uint256 rsEthSupply = IRSETH(rsETHTokenAddress).totalSupply();
+    if (rsEthSupply == 0) {
+        return 1 ether;
+    }
+    uint256 totalETHInPool;
+    address lrtDepositPoolAddr = lrtConfig.getContract(LRTConstants.LRT_DEPOSIT_POOL);
+    address[] memory supportedAssets = lrtConfig.getSupportedAssetList();
+    uint256 supportedAssetCount = supportedAssets.length;
+    for (uint16 asset_idx; asset_idx < supportedAssetCount;) {
+        address asset = supportedAssets[asset_idx];
+        uint256 assetER = getAssetPrice(asset);
+        uint256 totalAssetAmt = ILRTDepositPool(lrtDepositPoolAddr).getTotalAssetDeposits(asset);
+        totalETHInPool += totalAssetAmt * assetER;
+        unchecked { ++asset_idx; }
+    }
+    //@audit the price of rsETH is calculated based on the asset and totalSupply
+    return totalETHInPool / rsEthSupply;
+}
+```

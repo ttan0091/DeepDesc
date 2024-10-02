@@ -1,0 +1,19 @@
+Type of vulnerability: Storage Manipulation
+Cause of vulnerability: The function incorrectly updates both the previous and the current checkpoint when changing or removing a delegate, leading to incorrect vote counting.
+Execution process: When the `delegate` function is called, it modifies the latest checkpoint by adding a new `tokenId`. It then calls `_writeCheckpoint`, which either updates the existing checkpoint for the current block or creates a new one. However, since the previous checkpoint was already modified in storage, both the new and the previous checkpoint end up containing the same `tokenId`, leading to incorrect vote counting.
+Vulnerable code: 
+```solidity
+if(nCheckpoints>0) {
+    Checkpoint storage checkpoint = checkpoints[toTokenId][nCheckpoints-1];
+    checkpoint.delegatedTokenIds.push(tokenId);
+    _writeCheckpoint(toTokenId, nCheckpoints, checkpoint.delegatedTokenIds);
+}
+
+Checkpoint memory oldCheckpoint = checkpoints[toTokenId][nCheckpoints-1];
+if(nCheckpoints>0 && oldCheckpoint.fromBlock == block.number) {
+    oldCheckpoint.delegatedTokenIds = _delegatedTokenIds;
+} else {
+    checkpoints[toTokenId][nCheckpoints] = Checkpoint(block.number, _delegatedTokenIds);
+    numCheckpoints[toTokenId] = nCheckpoints + 1;
+}
+```

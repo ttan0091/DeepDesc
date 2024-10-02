@@ -1,0 +1,30 @@
+This code defines an internal function named equal, which compares two byte arrays (_preBytes and _postBytes) for equality. The function is marked as pure because it does not modify the state of the blockchain and only relies on its input parameters. The function returns a boolean value indicating whether the two byte arrays are equal.
+
+Here’s a detailed explanation of how this function works:
+
+1. Initialization:
+    The function starts by declaring a boolean variable success and initializing it to true. This variable will be used to track whether the comparison succeeds (i.e., the byte arrays are equal).
+
+2. Assembly Block:
+    The function then enters an inline assembly block, which allows for lowlevel operations directly on the EVM (Ethereum Virtual Machine).
+
+3. Load Lengths:
+    Inside the assembly block, the function first loads the lengths of the two byte arrays using mload. mload(_preBytes) retrieves the length of the first byte array, and mload(_postBytes) retrieves the length of the second byte array.
+
+4. Length Comparison:
+    The function uses a switch statement to compare the lengths of the two byte arrays. If the lengths are equal (eq(length, mload(_postBytes)) returns 1), it proceeds to compare the contents of the byte arrays. Otherwise, it sets success to 0 (false) and skips the content comparison.
+
+5. Content Comparison:
+    If the lengths are equal, the function initializes a circuit breaker variable cb to 1, which is used to control the loop.
+    It then calculates the starting memory addresses (mc and cc) for the actual byte data of _preBytes and _postBytes, respectively. These addresses are offset by 0x20 bytes because the first 0x20 bytes in each byte array are reserved for storing the length.
+    The function calculates the end address (end) for the first byte array.
+
+6. Loop for Content Comparison:
+    The function enters a for loop to compare the contents of the two byte arrays. The loop condition checks whether the current memory pointer mc is less than the end address end and whether the circuit breaker cb is 1.
+    Inside the loop, the function compares the 32byte chunks (256 bits) of the two byte arrays using mload(mc) and mload(cc). If any of these chunks are not equal, the function sets success to 0 (false) and cb to 0 to break the loop.
+    The memory pointers mc and cc are incremented by 0x20 bytes in each iteration to move to the next 32byte chunk.
+
+7. Return Result:
+    After the loop, the function returns the value of success, which indicates whether the two byte arrays are equal.
+
+In summary, the equal function uses inline assembly to efficiently compare the lengths and contents of two byte arrays. It returns true if the arrays are identical in both length and content, and false otherwise. This approach is optimized for performance by leveraging lowlevel EVM operations.

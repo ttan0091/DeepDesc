@@ -1,0 +1,20 @@
+Type of vulnerability: Denial of Service (DoS) through unbounded array manipulation
+Cause of vulnerability: Lack of restrictions on vestment amounts and beneficiary verification in the `vest()` function, allowing an attacker to add numerous small vestments to the `timelocks[_beneficiary]` array.
+Execution process: A malicious actor repeatedly calls the `vest()` function with small amounts for a beneficiary, increasing the size of the `timelocks[_beneficiary]` array. When the beneficiary attempts to claim their vestments using the `claim()` function, the loop in `_claimableAmount()` exceeds the gas limit due to the large array size, causing the transaction to revert and making the vestments unclaimable.
+Vulnerable code: 
+```solidity
+function vest() public {
+    // No check for beneficiary, allowing anyone to vest for anyone else
+    timelocks[_beneficiary].push(newTimelock);
+}
+
+function _claimableAmount() internal view returns (uint256) {
+    uint256 totalClaimable = 0;
+    for (uint256 i = 0; i < timelocks[_beneficiary].length; i++) {
+        // Loop through timelocks[_beneficiary] to calculate claimable amount
+        // This loop can exceed gas limit if timelocks[_beneficiary] is too large
+        totalClaimable += calculateClaimable(timelocks[_beneficiary][i]);
+    }
+    return totalClaimable;
+}
+```

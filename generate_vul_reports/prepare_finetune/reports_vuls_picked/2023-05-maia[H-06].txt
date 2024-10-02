@@ -1,0 +1,17 @@
+Type of vulnerability: Uncontrolled Resource Consumption (Denial of Service)
+Cause of vulnerability: Inadequate validation of the `amountRequested` parameter in the `claimReward` function, allowing the withdrawal of all rewards when `amountRequested` is set to 0.
+Execution process: A malicious or accidental call to `withdrawProtocolFees()` with `amountRequested` set to 0 results in the withdrawal of all rewards, leading to loss of user rewards.
+Vulnerable code: 
+```solidity
+function claimReward(address to, uint256 amountRequested) external returns (uint256 reward) {
+    reward = rewards[msg.sender];
+    if (amountRequested != 0 && amountRequested < reward) {
+        reward = amountRequested;
+        rewards[msg.sender] -= reward;
+    } else {
+        rewards[msg.sender] = 0;
+    }
+    if (reward > 0) hermes.safeTransfer(to, reward);
+    emit RewardClaimed(to, reward);
+}
+```

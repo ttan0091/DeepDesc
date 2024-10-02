@@ -1,0 +1,57 @@
+The code provided defines a smart contract named EXPERIMENTAL_ETH_AUCTION which includes a mapping to store bids and a function to revoke a bid. Here’s a detailed explanation of how this contract works:
+
+### Contract Structure
+ Contract Name: EXPERIMENTAL_ETH_AUCTION
+ State Variables:
+   mapping(address => uint) public Bids;: This mapping associates Ethereum addresses with a uint value, representing the amount of Ether bid by each address.
+
+### Function: RevokeBid
+ Function Name: RevokeBid
+ Visibility: public
+ State Mutability: payable
+
+#### Detailed Explanation
+1. Function Purpose: The RevokeBid function allows a user to revoke their bid, returning the bid amount to the user.
+2. Execution Steps:
+    Retrieve Bid Amount: The function first retrieves the bid amount associated with the caller's address (msg.sender) from the Bids mapping.
+     solidity
+     uint toTransfer = Bids[msg.sender];
+     
+    Reset Bid Amount: It then sets the bid amount for the caller's address to zero, effectively removing their bid from the auction.
+     solidity
+     Bids[msg.sender] = 0;
+     
+    Transfer Ether: Finally, it attempts to transfer the retrieved bid amount back to the caller using a lowlevel call.
+     solidity
+     msg.sender.call.value(toTransfer);
+     
+
+### Potential Vulnerabilities
+ Reentrancy Attack: The use of call.value(toTransfer) is susceptible to reentrancy attacks. If the caller is a contract that implements a fallback function to recursively call RevokeBid, it could repeatedly withdraw funds before the state is updated, leading to multiple withdrawals of the same funds.
+ Lack of Event Emission: The contract does not emit any events, which could be useful for offchain monitoring of bid revocations.
+
+### Recommendations
+ Use transfer or send: Instead of call.value(toTransfer), consider using transfer or send which are safer against reentrancy attacks but have their own limitations (e.g., 2300 gas stipend for transfer).
+ Reentrancy Guard: Implement a reentrancy guard (e.g., using OpenZeppelin's ReentrancyGuard modifier) to prevent reentrancy attacks.
+ Event Emission: Emit an event after successfully revoking a bid to facilitate logging and offchain monitoring.
+
+### Example with Improvements
+solidity
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract EXPERIMENTAL_ETH_AUCTION is ReentrancyGuard {
+
+    mapping(address => uint) public Bids;
+
+    event BidRevoked(address indexed bidder, uint amount);
+
+    function RevokeBid() public payable nonReentrant {
+        uint toTransfer = Bids[msg.sender];
+        Bids[msg.sender] = 0;
+        msg.sender.transfer(toTransfer);
+        emit BidRevoked(msg.sender, toTransfer);
+    }
+}
+
+
+This improved version includes a reentrancy guard and emits an event upon bid revocation, enhancing security and usability.

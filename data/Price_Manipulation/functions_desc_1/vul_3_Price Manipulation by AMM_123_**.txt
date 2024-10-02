@@ -1,0 +1,24 @@
+This code defines an internal function named _rebalanceVault, which is responsible for maintaining the balance of a vault by either withdrawing or depositing underlying assets based on certain conditions. The function takes a single parameter underlyingToWithdraw, which specifies the amount of underlying assets to be withdrawn.
+
+Here’s a detailed explanation of how this function works:
+
+1. Initialization and Validation:
+    The function starts by calling getVault() to retrieve the instance of the vault (IVault).
+    It checks if the address of the vault is address(0), which means the vault is not set. If so, the function returns immediately, doing nothing.
+
+2. Fetching and Calculating Balances:
+    The function retrieves the amount of locked LP tokens by calling staker.getStakedByActions().
+    It calculates the total amount of underlying assets staked by multiplying the locked LP tokens by the exchange rate using scaledMul(exchangeRate()).
+    It then fetches the current balance of underlying assets by calling _getBalanceUnderlying(true).
+
+3. Calculating Deviation and Target Balance:
+    The function calculates the maximum allowable deviation from the target balance by multiplying the total underlying staked by the maximum reserve deviation ratio using scaledMul(getMaxReserveDeviationRatio()).
+    It calculates the next target balance by multiplying the total underlying staked by the required reserve ratio using scaledMul(getRequiredReserveRatio()).
+
+4. Conditional Checks and Rebalancing:
+    The function first checks if the amount to withdraw exceeds the current underlying balance or if the resulting balance after withdrawal would fall outside the acceptable deviation range from the next target balance.
+      If either condition is true, it calculates the required deposits needed to meet the next target balance and calls vault.withdraw(requiredDeposits) to withdraw the required amount from the vault.
+    If the conditions for withdrawal are not met, it calculates the next balance after withdrawal.
+      If the next balance exceeds the target balance by more than the maximum deviation, it calculates the excess deposits and transfers these excess deposits out to the vault using _doTransferOut(payable(address(vault)), excessDeposits), followed by calling vault.deposit() to deposit the excess back into the vault.
+
+This function ensures that the vault's balance remains within acceptable limits relative to the staked assets and predefined ratios, maintaining the stability and efficiency of the system.

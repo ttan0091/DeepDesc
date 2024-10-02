@@ -1,0 +1,28 @@
+Type of vulnerability: Logic/Design Flaw
+Cause of vulnerability: The contract does not handle the scenario where a user's lock has expired before they attempt to undelegate, preventing them from re-delegating or withdrawing their tokens.
+Execution process: A user delegates their votes to another address and then forgets to undelegate before their lock expires. When they try to undelegate or withdraw, the contract checks if the lock has expired, which it has, and thus prevents the action, locking the tokens indefinitely.
+Vulnerable code: 
+```solidity
+function withdraw() external nonReentrant {
+    ...
+    require(locked_.delegatee == msg.sender, "Lock delegated");
+    ...
+}
+
+function delegate(address _addr) external nonReentrant {
+    LockedBalance memory locked_ = locked[msg.sender];
+    ...
+    LockedBalance memory fromLocked;
+    LockedBalance memory toLocked;
+    locked_.delegatee = _addr;
+    if (delegatee == msg.sender) {
+        ...
+    } else if (_addr == msg.sender) {
+        // Undelegate
+        fromLocked = locked[delegatee]; // Delegatee
+        toLocked = locked_; // Alice's lock
+    }
+    ...
+    require(toLocked.end > block.timestamp, "Delegatee lock expired");
+}
+```

@@ -1,0 +1,21 @@
+Type of vulnerability: Reward Calculation Inaccuracy
+
+Cause of vulnerability: The reward calculation does not account for changes in the pool's total points due to stake or unstake actions at different times, leading to inaccurate rewards distribution.
+
+Execution process: 
+1. A user stakes an asset, increasing the pool's total points.
+2. Another user stakes or unstakes an asset, further modifying the pool's total points.
+3. When the first user claims rewards, the calculation uses the current total points of the pool, which may be higher or lower than the points at the time of their initial stake, resulting in either reduced or inflated rewards.
+4. A malicious actor can exploit this by calling the reward function at times when the pool's total points are high, intentionally reducing another user's rewards.
+
+Vulnerable code: 
+```solidity
+// Return final shares.
+unchecked {
+    uint256 share = points * _PRECISION / pool.totalPoints * totalReward;
+    uint256 daoShare = share * pool.daoTax / (100 * _DIVISOR);
+    share /= _PRECISION;
+    daoShare /= _PRECISION;
+    return ((share - daoShare), daoShare);
+}
+```

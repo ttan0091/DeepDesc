@@ -1,0 +1,22 @@
+[H-24] Incorrect formula used in functionMarket.computeClosingFactor()
+Submitted byKIntern_NA, also found bycarrotsmugglerand0xRobocop
+Incorrect amount of assets that will be liquidated
+Proof of Concept
+FunctionBigBang._liquidateUser()is used to liquidate an under-collateralization position in the market. This function callsBigBang._updateBorrowAndCollateralShare()to calculate the amount ofborrowPartandcollateralSharethat will be removed from the user’s position and update the storage.
+The amount ofborrowPartto be removed can be calculated using the functionMarket.computeClosingFactor(). This amount will then be converted toborrowAmount, which is the corresponding elastic amount, and be used to determine the amount ofcollateralSharethat needs to be removed.
+Link to function
+However, the returned value fromMarket.computeClosingFactor()is incorrect, which leads to the wrong update for the user’s position.
+To prove the statement above, let’s denote:
+x: The elastic amount that will be removed to execute the liquidation.userElasticanduserElastic': The elastic amount corresponding touserBorrowPart[user]before and after the liquidation.collateralShareandcollateralShare': The value ofuserCollateralShare[user]before and after the liquidation.Following the implementation ofyieldBox.toAmount()andyieldBox.toShare(), in one transaction we can denote that:yieldBox.toAmount(): A multiplication expression with a constantC.yieldBox.toShare(): A division expression with constantC.
+Following the update of these variables depicted in the functionBigBang._updateBorrowAndCollateralShare(), we have:
+$userElastic' = userElastic - x$$collateralShare' = collateralShare - \frac{x \times (1+liquidationMultiplier)*\frac{exchangeRate}{10^{18}}}{C}$
+After the liquidation, the functionMarket._isSolvent(user)must return true. In other words, at least the followingequationshould hold:
+$C \times (collateralShare' \times \frac{collateralRate}{10^5} \times \frac{10^{18}}{exchangeRate}) = userElastic'$
+Solving the equation, we get:
+$C \times (collateralShare' \times \frac{collateralRate}{10^5} \times \frac{10^{18}}{exchangeRate}) = userElastic'$$C \times collateralShare \times \frac{collateralRate}{10^5} \times \frac{10^{18}}{exchangeRate} - x \times (1 + \frac{liquidationMultiplier}{10^5}) \times \frac{collateralizationRate}{10^5} = userElastic - x$$x = \frac{userElastic - C \times collateralShare \times \frac{collateralRate}{10^5} \times \frac{10^{18}}{exchangeRate}}{1 - (1 + \frac{liquidationMultiplier}{10^5}) * \frac{collateralizationRate}{10^5}}$
+So, the returned value of the functionMarket.computeClosingFactor()should be the corresponding base amount ofx(totalBorrow.toBase(x, false)).
+Comparing it to the currentimplementationofcomputeClosingFactor(), we can see the issues are:
+The implementation uses theborrowPartin the numerator instead of the corresponding elastic amount ofborrowPart.The multiplication withborrowPartDecimalsandcollateralPartDecimalsdoesn’t make sense since these decimals can be different and may cause the numerator to underflow.
+Recommended Mitigation Steps
+Correct the formula of functioncomputeClosingFactor()following the section “Proof of Concept”.
+cryptotechmaker (Tapioca) confirmed

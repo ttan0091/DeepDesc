@@ -1,0 +1,35 @@
+[H-01] copy paste error in_batchConfirmOutstandingPendingActions
+Submitted by gpersoon, also found by cmichel and shw
+The function_batchConfirmOutstandingPendingActionsofLongShort.solprocesses the variablebatched_amountSyntheticToken_toShiftAwayFrom_marketSide, and sets it to 0 after processing. However, probably due to a copy/paste error, in the second instance, wherebatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false]is processed, the wrong version is set to 0:batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true]= 0
+This means the next time thebatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false]is processed again. As it is never reset, it keeps increasing. The result is that the internal administration will be off and far too many tokens will be shifted tokens from SHORT to LONG.
+LongShort.solL1126
+function_batchConfirmOutstandingPendingActions(..amountForCurrentAction_workingVariable=batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true];batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] =0;...amountForCurrentAction_workingVariable=batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false];batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] =0;// should probably be false)
+Recommend changing the second instance of the following (on line 1207)batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] = 0tobatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false] = 0
+p.s. confirmed by Jason of Floatcapital: “Yes, that should definitely be false!”
+JasoonS (Float) commented:
+Mitigation- batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] = 0+ batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false] = 0
+moose-code (Float) confirmed:
+Good attention to detail. Silly on our part.
+DenhamPreen (Float) patched:
+https://github.com/Float-Capital/monorepo/pull/1087Resolved PR*note this repo is still private
+[H-02] 2 variables not indexed bymarketIndex
+Submitted by gpersoon
+In the token contract:batched_stakerNextTokenShiftIndexis indexed bymarketIndex, so it can have separate (or the same) values for each differentmarketIndex.
+stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingandstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mappingare not indexed bymarketIndex.
+So the values ofstakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingandstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mappingcan be overwritten by a different market, ifbatched_stakerNextTokenShiftIndex[market1]==batched_stakerNextTokenShiftIndex[market2]
+This will lead to weird results in_calculateAccumulatedFloat, allocating too much or too little float.
+Staker.solL622
+functionpushUpdatedMarketPricesToUpdateFloatIssuanceCalculations(...stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mapping[batched_stakerNextTokenShiftIndex[marketIndex]  ] =stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingIfShiftExecuted;stakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mapping[batched_stakerNextTokenShiftIndex[marketIndex]  ] =latestRewardIndex[marketIndex] +1;batched_stakerNextTokenShiftIndex[marketIndex] +=1;...)
+Recommend adding an index withmarketIndexto the variables:
+stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mapping
+Also consider shortening the variable names, this way mistakes can be spotted easier.
+Confirmed by Jason of Float Capital: Yes, you are totally right, it should use themarketIndexsince they are specific per market!
+JasoonS (Float) confirmed:
+Embarrassed by this one!Thank you for the report.Fixed!!
+[H-03] Users could shift tokens onStakerwith more than he has staked
+Submitted by shw
+TheshiftTokensfunction ofStakerchecks whether the user has staked at least the number of tokens he wants to shift from one side to the other (line 885). A user could call theshiftTokensfunction multiple times before the next price update to shift the staker’s token from one side to the other with more than he has staked.Staker.sol#L885
+Recommend adding checks onuserNextPrice_amountStakedSyntheticToken_toShiftAwayFrom_longanduserNextPrice_amountStakedSyntheticToken_toShiftAwayFrom_shortto ensure that the sum of the two variables does not exceed user’s stake balance.
+JasoonS (Float) confirmed:
+Yes, spot on! We spotted this the next morning after launching the competition. Token shifting was a last minute addition to the codebase. Really glad someone spotted it, but only in the last few hours, phew!This would allow a malicious user to completely shift all the tokens (even those not belonging to them to one side or the other!!)
+No funds could be stolen by the user directly (since the execution of those shifts would fail on the user level), but it could be done for personal gain (eg improving the users FLT issuance rate, or similar economic manipulation).

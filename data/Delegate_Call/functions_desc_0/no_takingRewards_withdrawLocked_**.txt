@@ -1,0 +1,31 @@
+This code defines a public function named withdrawLocked, which is designed to allow users to withdraw their locked staked tokens under specific conditions. The function is marked as nonReentrant, which means it is protected against reentrancy attacks, and it also calls another function updateReward(msg.sender) to update the rewards for the caller before proceeding with the withdrawal.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    function withdrawLocked(bytes32 kek_id) public nonReentrant updateReward(msg.sender): This function takes a single parameter kek_id, which is a unique identifier for the locked stake. It is marked as public, meaning it can be called from outside the contract, and nonReentrant to prevent reentrancy attacks. The updateReward(msg.sender) modifier ensures that the rewards for the caller are updated before the withdrawal process begins.
+
+2. Initialization:
+    LockedStake memory thisStake;: A local variable thisStake of type LockedStake is declared to store the details of the stake to be withdrawn.
+    thisStake.amount = 0;: The amount of the stake is initialized to 0.
+    uint theIndex;: A variable theIndex is declared to store the index of the stake in the lockedStakes array.
+
+3. Finding the Stake:
+    for (uint i = 0; i < lockedStakes[msg.sender].length; i++): A loop iterates over all the locked stakes of the caller (msg.sender).
+    if (kek_id == lockedStakes[msg.sender][i].kek_id): If the kek_id matches the kek_id of the current stake in the loop, the details of the stake are stored in thisStake, and the index is stored in theIndex. The loop is then exited using break.
+
+4. Validation:
+    require(thisStake.kek_id == kek_id, "Stake not found");: This ensures that the stake was found by checking if thisStake.kek_id matches the provided kek_id. If not, the function reverts with the message "Stake not found".
+    require(block.timestamp >= thisStake.ending_timestamp || unlockedStakes == true, "Stake is still locked!");: This checks if the current timestamp is greater than or equal to the stake's ending timestamp or if the unlockedStakes flag is true. If neither condition is met, the function reverts with the message "Stake is still locked!".
+
+5. Calculating and Updating Balances:
+    uint256 theAmount = thisStake.amount;: The amount of the stake is stored in theAmount.
+    uint256 boostedAmount = theAmount.mul(thisStake.multiplier).div(PRICE_PRECISION);: The boosted amount is calculated by multiplying the amount by the stake's multiplier and dividing by PRICE_PRECISION.
+    If theAmount is greater than 0, the following actions are performed:
+      The locked balance and boosted balance of the caller are reduced by theAmount and boostedAmount, respectively.
+      The total staking token supply and boosted supply are reduced by theAmount and boostedAmount, respectively.
+      The stake is removed from the lockedStakes array by deleting the element at theIndex.
+      The staking token is transferred to the caller using stakingToken.safeTransfer(msg.sender, theAmount).
+      An event WithdrawnLocked is emitted to notify that the locked stake has been withdrawn.
+
+This function ensures that users can only withdraw their locked stakes if they are no longer locked or if an override condition (unlockedStakes) is met, and it correctly updates the balances and supplies to reflect the withdrawal.

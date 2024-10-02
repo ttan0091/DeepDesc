@@ -1,0 +1,34 @@
+This code defines an external function named permit, which is designed to allow a token holder (referred to as target) to grant an allowance to a spender without the need for them to directly call the approve function on the token contract. This function is commonly used in token contracts that support the ERC20 standard and is particularly useful for scenarios where offchain signatures are used to authorize transactions.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    target: The address of the token owner who is granting the allowance.
+    spender: The address of the account that will be allowed to spend the tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which the permit is no longer valid.
+    v, r, s: These are components of an ECDSA signature that verify the token owner's consent.
+
+2. Time Validity Check:
+    The function starts by checking if the current block timestamp (block.timestamp) is less than or equal to the deadline. This ensures that the permit is only valid within the specified time frame. If the permit has expired, the function reverts with the message "WERC10: Expired permit".
+
+3. Hash Calculation:
+    The function then calculates a hash (hashStruct) of the structured data that includes the permit details. This hash is calculated using the keccak256 function on the encoded data which includes:
+      PERMIT_TYPEHASH: A constant hash that defines the structure of the permit data.
+      target: The token owner's address.
+      spender: The spender's address.
+      value: The allowance amount.
+      nonces[target]++: A nonce that is incremented each time a permit is used for the target address, ensuring each permit is unique.
+      deadline: The permit's expiration timestamp.
+
+4. Signature Verification:
+    The function verifies the signature (v, r, s) against the calculated hash (hashStruct). It attempts to verify the signature in two ways:
+      verifyEIP712: This function verifies the signature using the EIP712 standard, which is a structured data signing standard in Ethereum.
+      verifyPersonalSign: This function verifies the signature using the personal sign method, which is a simpler signing method but less structured.
+    If either verification method passes, the function proceeds; otherwise, it reverts, indicating that the signature is invalid.
+
+5. Approval Update and Event Emission:
+    If the signature is valid, the function updates the allowance mapping to set the allowance of the spender to value for tokens owned by the target.
+    It then emits an Approval event, which notifies external observers (such as blockchain explorers or offchain services) that an approval has been made.
+
+This function is crucial for enhancing the usability of token contracts by enabling offchain approval mechanisms, reducing the number of onchain transactions required. However, it also introduces complexity and potential security considerations, such as ensuring the validity and integrity of signatures and handling nonces correctly to prevent replay attacks.

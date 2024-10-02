@@ -1,0 +1,25 @@
+Type of vulnerability: Reentrancy
+
+Cause of vulnerability: The vulnerability arises from the use of `safeTransferFrom` for transferring ERC1155 tokens, which triggers the `onERC1155Received` callback on the borrower's safe before the rental is registered. This allows an attacker to exploit the reentrancy by setting a custom fallback handler that hijacks the tokens during the callback.
+
+Execution process:
+1. The attacker creates a custom fallback handler contract implementing the `onERC1155Received` function.
+2. The attacker sets this custom fallback handler on their Gnosis Safe.
+3. The attacker initiates a rental process, during which the Seaport Conduit transfers the ERC1155 token to the attacker's safe using `safeTransferFrom`.
+4. This transfer triggers the `onERC1155Received` callback in the custom fallback handler.
+5. The custom fallback handler executes a malicious transaction to transfer the ERC1155 token to the attacker's address.
+6. The rental is not yet registered, so the transfer is allowed.
+
+Vulnerable code:
+```solidity
+function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns(bytes4) {
+    _transferHijackedTokensToOwner();
+    return 0xf23a6e61;
+}
+
+function _transferHijackedTokensToOwner() internal returns(bool) {
+    SafeUtils.executeTransaction(address(safe), address(tokenToHijack), maliciousSafeTransaction, maliciousSafeTransactionSignature);
+    return true;
+}
+```
+This code snippet from the `CustomFallbackHandler` contract shows the implementation of the `onERC1155Received` function, which is triggered by the `safeTransferFrom` call. The function then executes a malicious transaction to transfer the hijacked tokens to the attacker's address.

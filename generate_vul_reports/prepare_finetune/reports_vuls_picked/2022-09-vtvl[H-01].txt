@@ -1,0 +1,31 @@
+Type of vulnerability: Loss of vested amounts
+
+Cause of vulnerability: The `revokeClaim` function in the VTVLVesting contract does not account for the amount already vested and not yet withdrawn, leading to inconsistent behavior based on the timing of the `withdraw` and `revokeClaim` function calls.
+
+Execution process: If the `revokeClaim` function is called before the user withdraws the vested amount, the user loses the right to withdraw the already vested amount. If the `revokeClaim` function is called after the user withdraws the vested amount, the user only loses the right to vest the remaining part in the future.
+
+Vulnerable code: 
+```solidity
+function revokeClaim(address _recipient) external onlyAdmin hasActiveClaim(_recipient) {
+    // Fetch the claim
+    Claim storage _claim = claims[_recipient];
+    // Calculate what the claim should finally vest to
+    uint112 finalVestAmt = finalVestedAmount(_recipient);
+
+    // No point in revoking something that has been fully consumed
+    // so require that there be unconsumed amount
+    require( _claim.amountWithdrawn < finalVestAmt, "NO_UNVESTED_AMOUNT");
+
+    _claim.isActive = false;
+
+    uint112 vestedSoFarAmt = vestedAmount(_recipient, uint40(block.timestamp));
+    // The amount that is "reclaimed" is equal to the total allocation less what was already
+    // vested without the part that was already withdrawn.
+    uint112 amountRemaining = finalVestAmt - (vestedSoFarAmt - _claim.amountWithdrawn);
+
+    numTokensReservedForVesting -= amountRemaining; // Reduces the allocation
+
+    // Tell everyone a claim has been revoked.
+    emit ClaimRevoked(_recipient, amountRemaining, uint40(block.timestamp), _claim);
+}
+```

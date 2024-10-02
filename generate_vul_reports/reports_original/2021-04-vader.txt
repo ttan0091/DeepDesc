@@ -1,0 +1,241 @@
+[H-01] Unhandled return value of transfer intransferOut()of Pools.sol
+ERC20 implementations are not always consistent. Some implementations of transfer andtransferFromcould return ‘false’ on failure instead of reverting. It is safer to wrap such calls intorequire()statements to handle these failures.
+The transfer callon L211oftransferOut()could be made on a user-supplied untrusted token address (from the different call sites) whose implementation can be malicious.
+For reference, see similar finding from Consensys Diligence Audit of AAVE Protocol V2
+Recommend requirements to check the return value and revert on 0/false or use OpenZeppelin’s SafeERC20 wrapper functions.
+strictly-scarce (vader) disputed:
+Not valid. Since the funds came in, and did not revert, they can leave. If the call passes, then the transferout is valid.
+[H-02] Flash attack mitigation does not work as intended in USDV.sol
+One of the stated protocol (review) goals is to detect susceptibility to “Any attack vectors using flash loans on Anchor price, synths or lending.” As such, USDV contract aims to protect against flash attacks usingflashProof()modifier which uses the following check inisMature()to determine if currently executing contract context is at leastblockDelayduration ahead of the previous context:lastBlock[tx.origin] + blockDelay <= block.number
+However,blockDelaystate variable is not initialized which means it has a default uint value of 0. So unless it is set to >= 1 bysetParams()which can be called only by the DAO (which currently does not have the capability to callsetParams()function),blockDelaywill be 0, which allows current executing context (block.number) to be the same as the previous one (lastBlock[tx.origin]). This effectively allows multiple calls on this contract to be executed in the same transaction of a block which enables flash attacks as opposed to what is expected as commented onL41: ”// Stops an EOA from doing a flash attack in the same block”
+Even if the DAO can callsetParams()to changeblockDelayto >= 1, there is a big window of opportunity for flash attacks until the DAO votes, finalizes and approves such a proposal. Moreover, such proposals can be cancelled by a DAO minority or replaced by a malicious DAO minority to launch flash attacks.
+Recommend initalizingblockDelayto >= 1 at declaration or in constructor.
+strictly-scarce (vader) confirmed:
+The actual issue is simply:
+blockDelaystate variable is not initializedIt is intended to be initialised to 1, so this is a bug. Severity: 2
+[H-03] Missing DAO functionality to callchangeDAO()function in Vader.sol
+changeDAO()is authorized to be called only from the DAO (per modifier) but DAO contract has no corresponding functionality to callchangeDAO()function. As a result, DAO address cannot be changed (L192-L196).
+Recommend adding functionality to DAO to be able to callchangeDAO()of Vader.sol.
+strictly-scarce (vader) commented:
+#46
+dmvt (judge) commented:
+Unlike in issues #140, #157, #158, & #159; without this functionality, missing functionality in the DAO becomes a very serious issue. As a result, this one is very high risk were it to be overlooked.
+[H-04] Proposals can be cancelled
+Anyone can cancel any proposals by callingDAO.cancelProposal(id, id)witholdProposalID == newProposalID.
+This always passes the minority check as the proposal was approved.
+An attacker can launch a denial of service attack on the DAO governance and prevent any proposals from being executed.
+Recommend checking thatoldProposalID==newProposalID
+strictly-scarce (vader) confirmed:
+This is valid, can fix with arequire()
+strictly-scarce (vader) commented:
+[H-05] Flash loans can affect governance voting in DAO.sol
+Flash loans can significantly increase a single voter’s weight and be used to impact the voting outcome. A voter can borrow a significant quantity of tokens to increase their voting weight in a transaction within which, they also deterministically  influence the voting outcome to their choice.
+This has already happened in the case of MakerDAO governance wherea flash loan was used to affect voting outcomeand noted by the Maker team as: “a practical example for the community that flash loans can and may impact system governance”
+Given that flash loans are a noted concern, the impact of it to DAO governance which can control all critical protocol parameters should be mitigated as in other places.
+Recommend accounting for flash loans incountMemberVotes()by using weight from previous blocks or consider capping the weight of individual voters. (L158-L163)
+strictly-scarce (vader) disputed:
+Not valid.
+All pools use slip-based fees so flash loan attack by buying up USDV or synths is not going to work.
+dmvt (judge) commented:
+The funds to execute this attack do not need to come from a pool. It could be done as simply as malicious members pooling their funds in a flash loan contract, and each borrowing the funds in turn to vote.
+[H-06] Incorrect burn address in Vader.sol
+Theinternal _transfer()function is called from external facingtransfer(),transferFrom(), andtransferTo()functions all of which have different sender addresses. It ismsg.senderfortransfer(), sender parameter fortransferFrom()andtx.originfortransferTo().
+These different senders are reflected in the sender parameter of_transfer()function. While this sender parameter is correctly used for transfer of tokens within_transfer, the call to_burn()on L129 incorrectly usesmsg.senderas the burn address which is correct only in the case of thetransfer()caller’s context. This is incorrect fortransferFrom()andtransferTo()caller contexts.
+This will incorrectly burn the fees from a different (intermediate contract) account for all users of the protocol interacting with thetransferTo()andtransferFrom()functions and lead to incorrect accounting of token balances or exceptional conditions. Protocol will break and lead to fund loss.
+Recommend changing L129 to:_burn(sender, _fee);
+strictly-scarce (vader) confirmed:
+Valid, disagree with severity though. Funds-not-at-risk.
+Recommend: 2
+[H-07] WrongcalcAsymmetricSharecalculation
+The inline-comment defines the number of asymmetric shares as(u * U * (2 * A^2 - 2 * U * u + U^2))/U^3but theUtils.calcAsymmetricSharefunction computes(uA * 2U^2 - 2uU + u^2) / U^3which is not equivalent as can be seen from theA^2term in the first term which does not occur in the second one.
+The associativity onP * part1is wrong, andpart2is not multiplied byP.
+The math from the spec is not correctly implemented and could lead to the protocol being economically exploited, as the asymmetric share (which is used to determine the collateral value in base tokens) could be wrong. For example, it might be possible to borrow more than the collateral put up.
+Recommend clarifying if the comment or the code is correct and fix them if not.
+strictly-scarce (vader) confirmed:
+Valid
+strictly-scarce (vader) commented:
+Whilst the math is incorrect, in the current implementation it is not yet implemented, so disagree with Severity (funds not lost), recommend: 2
+[H-08] Wrong liquidity units calculation
+The spec defines the number of LP units to be minted asunits = (P (a B + A b))/(2 A B) * slipAdjustment = P * (part1 + part2) / part3 * slipAdjustmentsbut theUtils.calcLiquidityUnitsfunction computes((P * part1) + part2) / part3 * slipAdjustments.
+The associativity onP * part1is wrong, andpart2is not multiplied byP.
+The math from the spec is not correctly implemented and could lead to the protocol being economically exploited, as redeeming the minted LP tokens does not result in the initial tokens anymore.
+Recommend fixing the equation.
+strictly-scarce (vader) confirmed:
+Valid, but funds not at risk.
+[H-09] Incorrect initialization gives IL protection of only 1 second instead of 100 days in Router.sol
+Incorrect initialization oftimeForFullProtectionto 1 sec instead of 8640000 secs (100 days) as indicated in code comments, appears to be a test setting mistakenly carried over for deployment. Therefore, unlesstimeForFullProtectionis reset to 100 days bysetParams()(calling this function is a missing functionality in the DAO currently), the Impermanent Loss (IL) protection “rule” of 100 days will not apply inUtils.getProtection().
+This breaks a key value proposition of the Vader protocol which is IL protection as indicated in the specification:
+“Impermanent Loss Protection: The deposit value for each member is recorded when they deposit. When they go to withdraw, the redemption value is computed. If it is less than the deposit value, the member is paid the deficit from the reserve. The protection issued increases from 0 to 100% linearly for 100 days.”
+Recommend changing to“timeForFullProtection = 8640000; //100 days”on L84
+strictly-scarce (vader) disputed:
+It’s deliberately set to 1 second to conduct adequate testing.
+[H-10] Anyone can list anchors / curate tokens
+TheRouter.listAnchorfunction can be called by anyone and tokens can be added. The only check is thatrequire(iPOOLS(POOLS).isAnchor(token));but this can easily be set by callingPools.addLiquidity(VADER, token, _)once even without actually sending any tokens to the contract. This makes it an essentially useless check.
+This only works initially as long as theanchorLimithas not been reached yet.
+However, thereplaceAnchorcan be used in the same way and flash loans can be used to get around the liquidity restrictions and push another anchor token out of the price range as these checks use the current reserves.
+Anchored pools are automatically curated pools and determine if a pool receives rewards. An attacker can remove rewards of a curated pool this way and add rewards to their own pool with a custom token they control.
+After a pool has been anchored through flash loans, liquidity can be withdrawn which could make the anchor price easy to manipulate in the next block and launch other attacks.
+Recommend revisiting the_isAnchor[token] = true;statement inaddLiquidity, it seems strange without any further checks.
+Consider makinglistAnchor/replaceAnchorDAO-only functions and make them flash-loan secure.
+One should probably use time-weighted prices for these pools for the bounds check.
+strictly-scarce (vader) disputed:
+The protocol is intended to be launched with 5 anchors so it can only be attacked by usingreplaceAnchor(), in which case slip-based fees apply for attacks and thwart the attack path.
+[H-11] Swap token can be traded as fake base token
+ThePools.swapfunction does not check ifbaseis one of the base tokens. One can transfertokens to the pool and setbase=tokenand callswap(token, token, member, toBase=false)
+The_actualInput = getAddedAmount(base, token);will return thetokenamount added but use the ratio compared to thebasereservecalcSwapOutput(_actualInput=tokenInput, mapToken_baseAmount[token], mapToken_tokenAmount[token]); = tokenIn / baseAmount * tokenAmountwhich yields a wrong swap result.
+It breaks the accounting for the pool astokens are transferred in, but thebasebalance is increased (andtokenbalance decreased). LPs cannot correctly withdraw again, and others cannot correctly swap again.
+Another example scenario is that the token pool amount can be stolen.
+SendtokenIn=baseAmountof tokens to the pool and callswap(base=token, token, member, toBase=false). Depending on the price oftokenrelative tobasethis could be cheaper than trading with the base tokens.
+Recommend checking thatbaseis eitherUSDVorVADER.
+strictly-scarce (vader) confirmed:
+Valid, funds can be lost
+[H-12]getAddedAmountcan return wrong results
+ThegetAddedAmountfunction only works correctly when called with(VADER/USDV, pool)or(pool, pool).
+However, when called with (token, pool)wheretokenis neitherVADER/USDV/pool, it returns the wrong results:
+It gets thetokenbalanceAnd subtracts it from the storedmapToken_tokenAmount[_pool]amount which can be that of a completely different token
+Anyone can break individual pairs by callingsync(token1, token2)where thetoken1balance is less thanmapToken_tokenAmount[token2]. This will add the difference tomapToken_tokenAmount[token2]and break the accounting and result in a wrong swap logic.
+Furthermore, this can also be used to swap tokens without having to pay anthing withswap(token1, token2, member, toBase=false).
+Recommend adding a require statement in theelsebranch that checks that_token == _pool.
+strictly-scarce (vader) confirmed:
+Valid, funds can be lost
+strictly-scarce (vader) commented:
+Would bundle this issue with:https://github.com/code-423n4/2021-04-vader-findings/issues/205
+[H-13] 4 Synths can be minted with fake base token
+ThePools.mintSynthfunction does not check ifbaseis one of the base tokens. One can transfertokens to the pool and setbase=tokenand callmintSynth(token, token, member).
+The_actualInput = getAddedAmount(base, token);will return thetokenamount added but use the ratio compared to thebasereservecalcSwapOutput(_actualInput=tokenInput, mapToken_baseAmount[token], mapToken_tokenAmount[token]); = tokenIn / baseAmount * tokenAmountwhich yields a wrong swap result.
+It breaks the accounting for the pool astokens are transferred in, but thebasebalance is increased.
+The amount that is minted could also be inflated (cheaper than sending the actual base tokens), especially iftokenis a high-precision token or worth less than base.
+Recommend checking thatbaseis eitherUSDVorVADERinmintSynth.
+strictly-scarce (vader) confirmed:
+Valid, funds can be lost.
+strictly-scarce (vader) commented:
+would bundle this issue with:https://github.com/code-423n4/2021-04-vader-findings/issues/205
+[H-14] Missing access restriction onlockUnits/unlockUnits
+ThePool.lockUnitsallows anyone to steal pool tokens from amemberand assign them tomsg.sender. Anyone can steal pool tokens from any other user.
+Recommend adding access control and require thatmsg.senderis the router or another authorized party.
+strictly-scarce (vader) confirmed:
+Valid, although this is part of the partially-complete lending code.
+[H-15] Wrong slippage protection on Token -> Token trades
+TheRouter.swapWithSynthsWithLimitallows trading token to token and specifying slippage protection. A token to token trade consists of two trades:
+token to basebase to token
+The slippage protection of the second trade (base to token) is computed wrong:
+require(iUTILS(UTILS()).calcSwapSlip(inputAmount,// should use outToken here from prev tradeiPOOLS(POOLS).getBaseAmount(outputToken)) <=slipLimit);
+It compares thetokeninput amount (of the first trade) to thebasereserve of the second pair.
+Slippage protection fails and either the trade is cancelled when it shouldn’t be or it is accepted even though the user suffered more losses than expected.
+Recommend it should use the base output from the first trade to check for slippage protection. Note that this still just computes the slippage protection of each trade individually. An even better way would be to come up with a formula to compute the slippage on the two trades at once.
+strictly-scarce (vader) confirmed:
+Valid, although disagree with severity, the wrongly compute slip amount would just fail the trade or allow the second trade to go thru with no protection.
+Mervyn853 commented:
+Our decision matrix for severity:0: No-risk: Code style, clarity, off-chain monitoring (events etc), exclude gas-optimisations
+1: Low Risk: UX, state handling, function incorrect as to spec
+2: Funds-Not-At-Risk, but can impact the functioning of the protocol, or leak value with a hypothetical attack path with stated assumptions, but external requirements
+3: Funds can be stolen/lost directly, or indirectly if a valid attack path shown that does not have handwavey hypotheticals.Recommended: 1
+[H-16] Tokens can be stolen throughtransferTo
+I know that it’s stated that:
+VADER, USDV, SYNTHS all employ thetransferTo()function, which interrogates fortx.originand skips approvals. The author does not subscribe to the belief that this is dangerous
+In my opinion, it can be very dangerous. Imagine the following scenario:
+I create a custom attacker ERC20 token that has a hook in the_transferfunction that checks tx.origin for USDV/VADER/SYNTHS and callstransferToto steal these funds.I set up a honeypot by providing liquidity to theBASE <> ATTACKERpool.I target high-profile accounts holdinging VADER/USDV/SYNTHS and airdrop them free tokens.Block explorers / Vader swap websites could show that this token has value and can be traded for actualBASEtokens.User wants to sell the airdroppedATTACKERtoken to receive valuable tokens through the Vader swap and has all their tokens (that are even completely unrelated to the tokens being swapped) stolen.
+In general, a holder of any of the core assets of the protocol risks all their funds being stolen if they ever interact with an unvetted external contract/token.
+This could even be completely unrelated to the VADER protocol.
+Recommend removingtransferToand usepermit+transferFrominstead to move tokens fromtx.origin.
+strictly-scarce (vader) acknowledged:
+This attack path has already been assessed as the most likely, no new information is being presented here.
+Do not interact with attack contracts, interacting with an ERC20 is an attack contract.
+0xBrian commented:
+@strictly-scarce (vader) What would be the downside of adopting the suggested mitigation? Since we cannot communicate effectively with all users to tell them not to interact with certain kinds of contracts (and even if we could, they may not be able to discern which are OK and which aren’t), we don’t want to set up a thicket for fraudsters to operate. If the downside of the mitigation is not too bad, I think it could be worth it in order to deny fraudsters an opportunity to steal.
+Mervyn853 commented:
+Our decision matrix for severity:0: No-risk: Code style, clarity, off-chain monitoring (events etc), exclude gas-optimisations
+1: Low Risk: UX, state handling, function incorrect as to spec
+2: Funds-Not-At-Risk, but can impact the functioning of the protocol, or leak value with a hypothetical attack path with stated assumptions, but external requirements
+3: Funds can be stolen/lost directly, or indirectly if a valid attack path shown that does not have handwavey hypotheticals.Recommended: 0
+[H-17] Transfer fee is burned on wrong accounts
+TheVader._transferfunction burns the transfer fee onmsg.senderbut this address might not be involved in the transfer at all due totransferFrom.
+Smart contracts that simply relay transfers like aggregators have their Vader balance burned or the transaction fails because these accounts don’t have any balance to burn, breaking the functionality.
+Recommend that It should first increase the balance ofrecipientby the full amount and then burn the fee on therecipient.
+strictly-scarce (vader) confirmed:
+For composabilty with the rest of the ecosystem, this should be addressed, although disagree with the severity, no funds are lost, just the aggregrator cannot transfer unless they first transfer to themselves, which most often do.
+Mervyn853 commented:
+Our decision matrix for severity:0: No-risk: Code style, clarity, off-chain monitoring (events etc), exclude gas-optimisations
+1: Low Risk: UX, state handling, function incorrect as to spec
+2: Funds-Not-At-Risk, but can impact the functioning of the protocol, or leak value with a hypothetical attack path with stated assumptions, but external requirements
+3: Funds can be stolen/lost directly, or indirectly if a valid attack path shown that does not have handwavey hypotheticals.Recommended: 2
+[H-18]  Vault rewards can be gamed
+The_depositfunction increases the member’sweightby_weight = iUTILS(UTILS()).calcValueInBase(iSYNTH(_synth).TOKEN(), _amount);which is the swap output amount when trading the deposited underlying synth amount.
+Notice that anyone can create synths of custom tokens by callingPools.deploySynth(customToken).
+Therefore an attacker can deposit valueless custom tokens and inflate their member weight as follows:
+Create a custom token and issue lots of tokens to the attackerCreate synth of this tokenAdd liquidity for theTOKEN <> BASEpair by providing a single wei ofTOKENand10^18BASE tokens. This makes theTOKENprice very expensive.Mint some synths by paying BASE to the poolDeposit the fake synth,_weightwill be very high because the token pool price is so high.
+Callharvest(realSynth)with a synth with actual value. This will increase the synth balance and it can be withdrawn later.
+Anyone can inflate their member weight through depositing a custom synth and earn almost all vault rewards by callingharvest(realSynth)with a valuable “real” synth.
+The rewards are distributed pro rata to the member weight which is independent of the actual synth deposited.
+ThecalcRewardfunction completely disregards thesynthparameter which seems odd.
+Recommend thinking about making the rewards based on the actual synths deposited instead of a “global” weight tracker.
+Alternatively, whitelist certain synths that count toward the weight, or don’t let anyone create synths.
+strictly-scarce (vader) confirmed:
+This is a valid attack path.The counter is two fold:In the vault,require(isCurated(token))this will only allow synths of curated tokens to be deposited for rewards.The curation logicdoes a check for liquidity depth, so only deep pools can become synths. Thus an attacker would need to deposit a lot of BASE.In the vaults, use_weight = iUTILS(UTILS()).calcSwapValueInBase(iSYNTH(_synth).TOKEN(), _amount);, which computes the weight with respect to slip, so a small manipulated pool cannot be eligible. The pool would need to be deep.The Vault converts all synths back to common accounting asset - USDV, so member weight can be tracked.strictly-scarce (vader) commented:Disagree with severity, since the daily rewards can be claimed by anyone in a fee-bidding war but no actual extra inflation occurs.Severity: 2
+[H-19] Vault rewards last claim time not always initialized
+TheharvestcallscalcCurrentRewardwhich computes_secondsSinceClaim = block.timestamp - mapMemberSynth_lastTime[member][synth];.  As one can claim different synths than the synths that they deposited,mapMemberSynth_lastTime[member][synth]might still be uninitialized and the_secondsSinceClaimbecomes the current block timestamp.
+The larger the_secondsSinceClaimthe larger the rewards.
+This bug allows claiming a huge chunk of the rewards.
+Recommend letting users only harvest synths that they deposited.
+strictly-scarce (vader) confirmed:
+This is valid.The member should only claim against synths they have deposited, where the time would be initialised.
+strictly-scarce (vader) commented:
+Would place this as severity: 2, since the anyone can participate in claiming rewards, but no extra inflation occurs.
+[H-20] Vault Weight accounting is wrong for withdrawals
+When depositing two different synths, their weight is added to the samemapMember_weight[_member]storage variable.
+When withdrawing the full amount of one synth with_processWithdraw(synth, member, basisPoints=10000the full weight is decreased.
+The second deposited synth is now essentially weightless.
+Users that deposited more than one synth can not claim their fair share of rewards after a withdrawal.
+Recommed that the weight should be indexed by the synth as well.
+strictly-scarce (vader) confirmed:
+This is valid.The weight should be reduced only as applied to a specific synthThere is no loss of funds, just less rewards for that member, disputing severity level.
+Mervyn853 commented:
+Our decision matrix for severity:0: No-risk: Code style, clarity, off-chain monitoring (events etc), exclude gas-optimisations
+1: Low Risk: UX, state handling, function incorrect as to spec
+2: Funds-Not-At-Risk, but can impact the functioning of the protocol, or leak value with a hypothetical attack path with stated assumptions, but external requirements
+3: Funds can be stolen/lost directly, or indirectly if a valid attack path shown that does not have handwavey hypotheticals.Recommended: 2
+dmvt (judge) commented:
+My viewpoint on this and the last several reward based high risk issues is that loss of rewards is loss of funds. High risk is appropriate.
+[H-21] Anyone Can Avoid All Vether Transfer Fees By Adding Their Address to the VetherExcludedAddressesList.
+Vether.solimplements a fee on every token transfer, unless either the sender or the recipient exists on a list of excluded addresses(mapAddress_Excluded). However, theaddExcluded()function inVether.solhas no restrictions on who can call it.
+So any user can calladdExcludedwith their own address as the argument, and bypass all transfer fees.
+Alice calls:
+(1)Vether.addExcluded(aliceAddress), which adds Alice’s address tomapAddress_Excluded.
+(2) Alice can now freely transfer Vether with no fees.
+Recommend adding restrictions to who can calladdExcluded, perhaps by restricting it to a caller set byDAO.sol
+strictly-scarce (vader) commented:
+Vether contract is outside of contest
+dmvt (judge) commented:
+https://github.com/code-423n4/2021-04-vader-findings/issues/3#issuecomment-849043144The warden should be paid out on this issue, in my opinion, because the code was included in the repo to be reviewed. The work to review the contract was done despite the fact that the team has addressed the issue and has already deployedvether.sol. I do not think that any issues related toVether.solshould be included in the final report generated by @code423n4.It was unclear to me (and obviously most of the wardens) thatVether.solwas considered out of scope.
+moneylegobatman (C4 Editor) commented:
+Leaving report and discussion in for transparency, since finding was awarded.
+[H-22] Users may unintentionally remove liquidity under a phishing attack.
+TheremoveLiquidityfunction inPools.solusestx.originto determine the person who wants to remove liquidity. However, such a design is dangerous since the pool assumes that this function is called from the router, which may not be true if the user is under a phishing attack, and he could unintentionally remove liquidity.
+Referenced code:Pool.sol#L77-L79
+Recommend consider making the function_removeLiquidityexternal, which can be utilized by the router, providing information of which person removes his liquidity.
+strictly-scarce (vader) acknowledged:
+If a user has been phished, consider all their funds already stolen.
+Vader’s security assumption is a user is not phished.
+Mervyn853 commented:
+Our decision matrix for severity:0: No-risk: Code style, clarity, off-chain monitoring (events etc), exclude gas-optimisations
+1: Low Risk: UX, state handling, function incorrect as to spec
+2: Funds-Not-At-Risk, but can impact the functioning of the protocol, or leak value with a hypothetical attack path with stated assumptions, but external requirements
+3: Funds can be stolen/lost directly, or indirectly if a valid attack path shown that does not have handwavey hypotheticals.Recommended: 0
+dmvt (judge) commented:
+This is reasonably easy to mitigate as an issue and failure to do so does leave an attack vector open. If exploited it will result in a loss of user funds.
+[H-23] Anyone can curate pools and steal rewards
+TheRouter.curatePoolandreplacePooldon’t have any access restriction.
+An attacker can get a flash loan of base tokens and replace existing curated pools with their own curated pools.
+Curated pools determine if a pool receives rewards. An attacker can remove rewards of a curated pool this way and add rewards to their own pool with a custom token they control.
+They can then go ahead and game the reward system by repeatedly swapping in their custom pool with useless tokens, withdraw liquidity, and in the end, pay back the base flashloan.
+Recommend preventing the replacing of curations through flash loans. Also, consider making pool curations DAO-exclusive actions.
+strictly-scarce (vader) disputed:
+Slip-based pools cannot be attacked with flash loans.
+dmvt (judge) commented:
+Further comment from @cmichelio:I can curate my custom token usingcuratePoolwithout using a flashloan or using replacePool by temporarily providing liquidity to the pool without trading in it and getting slip-fee’d. I’m not trading in the pool, and don’t think providing/removing liquidity comes with a fee. I think this is still an issue.
+[H-25] Incorrect initialization causes VADER emission rate of 1 second instead of 1 day in Vader.sol
+Incorrect initialization (perhaps testing parameterization mistakenly carried over to deployment) ofsecondsPerErato 1 sec instead of 86400 secs (1 day) causes what should be the daily emission rate to be a secondly emission rate.
+This causes inflation of VADER token and likely breaks VADER<>USDV peg and other protocol invariants. Protocol will break and funds will be lost.
+Recommend InitializingsecondsPerErato 86400 on L67.
+strictly-scarce (vader) acknowledged:
+This is purely for testing purposes.

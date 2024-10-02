@@ -1,0 +1,10 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The MoldCoin contract does not implement the ReentrancyGuard modifier, allowing the buyRecipient function to be called repeatedly during the same transaction before the token minting is complete.
+Working process of the vulnerability: 
+1. User A sends a flash loan to User B through MoldWallet.flashLoan() and MoldLoan.call().
+2. User B calls MoldCoin.buyRecipient(address), specifying the Moldwork Market as the recipient.
+3. The MoldCoin contract sells the flashloaned XRUNE tokens for 100000 units of CUSH, which are sent to the founder via the MoldCoin.buyRecipient(address) function.
+4. The founder, which is the MoldworkFundAddress, accumulates the CUSH tokens until MoldworkFund.buyXGoldForToken is called.
+5. The Moldwork Fund is audited.
+6. The MoldworkFund.bug() function is called, which mints additional tokens for the market. If MoldCoin.buyRecipient(address) hasn't been called yet for the Moldwork Market, the founder will end up with many pending transactions due to accumulating CUSH tokens.
+7. At this point, all pending transactions of the founder can be executed at once, including another MoldCoin.buyRecipient(address) from a different MoldLoan, and mints more XRUNE tokens than the flash loan fee.

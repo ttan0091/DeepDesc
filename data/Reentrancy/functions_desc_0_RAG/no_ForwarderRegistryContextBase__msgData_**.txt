@@ -1,0 +1,11 @@
+[Execution Flow]:
+This code defines an internal view function named _msgData, which returns the calldata of the current message. The function is designed to handle different scenarios based on whether the transaction is initiated directly by an externally owned account (EOA) or through a contract that complies with EIP2771 (a standard for metatransactions). Here’s a detailed explanation of how this function works:
+
+The function signature includes no parameters and it returns a bytes calldata type. _msgData is an internal view function, meaning it can only be called within the contract or its derived contracts and it does not modify the state of the blockchain.
+
+The function first checks if the transaction is initiated directly by an EOA or if the calldata length is less than 24 bytes. This is determined by comparing msg.sender (the address of the sender of the message) with tx.origin (the original EOA that started the transaction). If msg.sender is equal to tx.origin or if the length of msg.data (the calldata of the current message) is less than 24 bytes, it returns msg.data directly. This is because in these scenarios, the transaction is not being forwarded by a contract that complies with EIP2771.
+
+If the transaction is not initiated directly by an EOA or the calldata length is not less than 24 bytes, the function then checks if the message was forwarded by a contract that is either the _forwarderRegistry itself or an approved forwarder according to the _forwarderRegistry. This is done by checking if msg.sender is equal to the address of _forwarderRegistry or if _forwarderRegistry.isApprovedForwarder(ERC2771Calldata.msgSender(), msg.sender) returns true. If either condition is met, the function returns the calldata as per EIP2771, which is obtained by calling ERC2771Calldata.msgData(). This function likely strips off the appended sender information from the calldata.
+
+If neither of the above conditions is met, the function defaults to returning msg.data, which includes the full calldata without any modifications.
+

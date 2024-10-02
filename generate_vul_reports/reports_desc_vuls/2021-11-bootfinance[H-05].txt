@@ -1,0 +1,29 @@
+Type of vulnerability: Reentrancy and Logic Error
+Cause of vulnerability: The contract allows a user to reset their airdrop claim status by exploiting the `validate()` function after claiming the last part of their airdrop, enabling them to claim again.
+Execution process: 
+1. A user claims the last part of their airdrop using `claimExact()`, setting `airdrop[msg.sender].amount` to 0.
+2. The user then calls `validate()`, bypassing the check `require(airdrop[msg.sender].amount == 0)` because `amount` is already 0.
+3. Inside `validate()`, `airdrop[msg.sender]` is overwritten with new values, resetting `airdrop[msg.sender].claimed` to 0.
+4. The user can now claim their airdrop again, as the contract state has been reset.
+Vulnerable code:
+```solidity
+function claimExact(uint256 _value) external nonReentrant {
+    require(msg.sender != address(0));
+    require(airdrop[msg.sender].amount != 0);
+    uint256 avail = _available_supply();
+    uint256 claimable = avail * airdrop[msg.sender].fraction / 10**18;
+    if (airdrop[msg.sender].claimed != 0) {
+        claimable -= airdrop[msg.sender].claimed;
+    }
+    require(airdrop[msg.sender].amount >= claimable);
+    require(_value <= claimable);
+    airdrop[msg.sender].amount -= _value;
+}
+
+function validate() external nonReentrant {
+    require(airdrop[msg.sender].amount == 0, "Already validated.");
+    Airdrop memory newAirdrop = Airdrop(airdroppable, 0, airdroppable, 10**18 * airdroppable / airdrop_supply);
+    airdrop[msg.sender] = newAirdrop;
+    validated[msg.sender] = 1;
+}
+```

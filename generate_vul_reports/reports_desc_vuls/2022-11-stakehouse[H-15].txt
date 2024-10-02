@@ -1,0 +1,23 @@
+Type of vulnerability: Reward Distribution Mismanagement
+
+Cause of vulnerability: The contract does not transfer the user's remaining rewards before setting the claimed amount to the maximum value, causing the user to lose their unclaimed rewards.
+
+Execution process: 
+1. User deposits ETH into the giant pool, increasing their lpTokenETH balance.
+2. The contract calls `_onDepositETH()`, which in turn calls `_setClaimedToMax(msg.sender)`.
+3. `_setClaimedToMax` sets the `claimed[msg.sender][address(lpTokenETH)]` to the maximum value based on the current `accumulatedETHPerLPShare` and the user's lpTokenETH balance.
+4. This operation overwrites any remaining unclaimed rewards, effectively causing the user to lose these rewards.
+
+Vulnerable code:
+```solidity
+/// @dev On depositing on ETH set claimed to max claim so the new depositor cannot claim ETH that they have not accrued
+function _onDepositETH() internal override {
+    _setClaimedToMax(msg.sender);
+}
+
+/// @dev Internal re-usable method for setting claimed to max for msg.sender
+function _setClaimedToMax(address _user) internal {
+    // New ETH stakers are not entitled to ETH earned by
+    claimed[_user][address(lpTokenETH)] = (accumulatedETHPerLPShare * lpTokenETH.balanceOf(_user)) / PRECISION;
+}
+```

@@ -1,0 +1,12 @@
+Type of vulnerability: Incorrect Address Handling
+Cause of vulnerability: The USDS tokens are transferred to the USDS contract instead of the Liquidizer contract, leading to an imbalance in the amount of USDS that should be burned versus the actual balance available for burning.
+Execution process: A user repays USDS, which is sent to the USDS contract. The Liquidizer contract is updated to expect this amount to be burned, but since the USDS is not in the Liquidizer contract, it triggers the conversion of Protocol Owned Liquidity (POL) to USDS to cover the deficit. This process can be exploited by repeatedly borrowing and repaying to exhaust POL, creating bad debt for USDS.
+Vulnerable code: 
+```solidity
+function repayUSDS(uint256 amountRepaid) external nonReentrant {
+    ...
+    usds.safeTransferFrom(msg.sender, address(usds), amountRepaid); // Incorrect address
+    liquidizer.incrementBurnableUSDS(amountRepaid);
+    ...
+}
+```

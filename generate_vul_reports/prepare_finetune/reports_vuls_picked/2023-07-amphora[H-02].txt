@@ -1,0 +1,27 @@
+Type of vulnerability: Access Control
+Cause of vulnerability: Lack of proper access control in the `getReward` function of the `BaseRewardPool` contract, allowing any user to call it on behalf of any other user.
+Execution process: A malicious user can call the `getReward` function on behalf of the Vault, disrupting the normal operation of the `claimRewards` function in the Vault contract, thereby preventing the Vault from claiming its rewards and minting the deserved AMPH tokens.
+Vulnerable code: 
+```solidity
+function claimRewards(address[] memory _tokenAddresses) external override onlyMinter {
+    uint256 _totalCrvReward;
+    uint256 _totalCvxReward;
+    IAMPHClaimer _amphClaimer = CONTROLLER.claimerContract();
+    for (uint256 _i; _i < _tokenAddresses.length;) {
+        IVaultController.CollateralInfo memory _collateralInfo = CONTROLLER.tokenCollateralInfo(_tokenAddresses[_i]);
+        if (_collateralInfo.tokenId == 0) revert Vault_TokenNotRegistered();
+        if (_collateralInfo.collateralType != IVaultController.CollateralType.CurveLPStakedOnConvex) {
+            revert Vault_TokenNotCurveLP();
+        }
+        IBaseRewardPool _rewardsContract = _collateralInfo.crvRewardsContract;
+        uint256 _crvReward = _rewardsContract.earned(address(this));
+        if (_crvReward != 0) {
+            // Claim the CRV reward
+            _totalCrvReward += _crvReward;
+            _rewardsContract.getReward(address(this), false);
+            _totalCvxReward += _calculateCVXReward(_crvReward);
+        }
+        ...
+    }
+}
+```

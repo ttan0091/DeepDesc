@@ -1,0 +1,26 @@
+[H-31] Collateral can be locked in BigBang contract whendebtStartPointis nonzero
+Submitted byzzzitron, also found byminhtrng,RedOneN,kutugu,bin2chen,0xSky,0xrugpull_detector,mojito_auditor,plainshift,KIntern_NA,carrotsmuggler,zzebra83,0xRobocop, andchaduke
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/Penrose.sol#L395-L397
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L242-L255
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L180-L201
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L512-L520
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L309-L317
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L263-L271
+Following conditions have to be met for this issue to happen:
+This issue occurs when the BigBang market is not an ETH market.Penrose.registerBigBang()being called withdataparam wheredata.debtStartPointis nonzero.The first borrower borrows usingBigBang.borrow(), with function paramamount(borrow amount) has to be less thandebtStartPoint.
+NowBigBang.getDebtRate()will always revert and the collateral from the first borrower is locked, becauseBigBang.getDebtRate()is used inBigBang._accrue(), andBigBang._accrue()is used in every function that involves totalBorrow like inBigBang.liquidate(),BigBang.repay().
+The reason for the revert is that inBigBang.getDebtRate(),totalBorrow.elasticwhich gets assigned to the variable_currentDebt(line 186 BigBang.sol) will not be 0, and then on line 192 in the BigBang contract, the_currentDebtis smaller thandebtStartPointwhich causes the revert.
+As a consequence the collateral is trapped as repay or liquidate requires to call accrue before hand.
+Proof of Concept
+The following gist contains a proof of concept to demonstrate this issue.
+A non-ETH bigbang market (wbtc market) is deployed withPenrose::registerBigBang. Note that thedebtStartPointparameter in the init data is non-zero (set to be 1e18).
+First we set up the primary eth market:
+Some weth is minted and deposited to the ETH market. Then some assets were borrowed against the collateral. This is necessary condition for this bug to happen, which is the ETH market to have some borrowed asset. However, this condition is very likely to be fulfilled, as the primary ETH market would be deployed before any non-eth market.
+Now, an innocent user is adding collateral and borrows in the non-eth market (the wbtc market). The issue occurs when the user borrows less than thedebtStartPoint. If the user should borrow less than thedebtStartPoint, theBigBang::accruewill revert and the collateral is trapped in this Market.
+https://gist.github.com/zzzitron/a6d6377b73130819f15f1e5a2e2a2ba9
+The bug happens here in the line 192 in theBigBang.
+179/// @notice returns the current debt rate180functiongetDebtRate()publicviewreturns(uint256) {181if(_isEthMarket)returnpenrose.bigBangEthDebtRate();// default 0.5%182if(totalBorrow.elastic==0)returnminDebtRate;183184uint256_ethMarketTotalDebt=BigBang(penrose.bigBangEthMarket())185.getTotalDebt();186uint256_currentDebt=totalBorrow.elastic;187uint256_maxDebtPoint= (_ethMarketTotalDebt*188debtRateAgainstEthMarket) /1e18;189190if(_currentDebt>=_maxDebtPoint)returnmaxDebtRate;191192uint256debtPercentage= ((_currentDebt-debtStartPoint) *193DEBT_PRECISION) / (_maxDebtPoint-debtStartPoint);194uint256debt= ((maxDebtRate-minDebtRate) *debtPercentage) /195DEBT_PRECISION+196minDebtRate;197
+Recommended Mitigation Steps
+Consider adding a require statement toBigBang.borrow()to make sure that the borrow amount has to be >=debtStartPoint.
+// BigBang// borrow247require(amount>=debtStartPoint);
+0xRektora (Tapioca) confirmed

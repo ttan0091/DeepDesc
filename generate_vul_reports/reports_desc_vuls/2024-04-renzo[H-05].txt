@@ -1,0 +1,24 @@
+Type of vulnerability: Reentrancy and Insolvency due to Rebasing Tokens
+
+Cause of vulnerability: The contract does not account for the balance changes of rebasing tokens like stETH between the time a withdrawal is requested and when it is claimed. This can lead to insolvency and unfair distribution of protocol reserves.
+
+Execution process:
+1. User initiates a withdrawal request for a rebasing token (e.g., stETH).
+2. The contract records the amount to redeem in the `WithdrawRequest` struct.
+3. A rebasing event occurs that changes the balance of the rebasing token in the contract.
+4. User attempts to claim the withdrawal, but the recorded amount to redeem may exceed the contract's actual balance, leading to failure or unfair distribution.
+
+Vulnerable code:
+```solidity
+function withdraw(uint256 amount, address assetOut) public {
+    uint256 amountToRedeem = renzoOracle.lookupTokenAmountFromValue(amount, assetOut);
+    WithdrawRequest memory request = WithdrawRequest(amountToRedeem, assetOut);
+    withdrawRequests[msg.sender].push(request);
+    claimReserve[assetOut] += amountToRedeem;
+}
+
+function claim(uint256 index) public {
+    WithdrawRequest memory request = withdrawRequests[msg.sender][index];
+    IERC20(request.assetOut).transfer(msg.sender, request.amountToRedeem);
+}
+```

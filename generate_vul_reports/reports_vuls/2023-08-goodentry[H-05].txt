@@ -1,0 +1,16 @@
+[H-05] V3Proxy swapTokensForExactETH does not send back to the caller the unused input tokens
+Submitted by3docSec, also found byFulum,Limbooo,DanielArmstrong,T1MOH, andKrace
+TheV3ProxyswapTokensForExactETHfunction swaps an unspecified amount of a given ERC-20 for a specified amount of the native currency. After the swap happens, however, the difference between the amount taken from the caller (amountInMax) and the actual swapped amount (amounts[0]) is not given back to the caller and remains locked in the contract.
+Impact
+Any user of theswapTokensForExactETHwill always payamountInMaxfor swaps even if part of it was not used for the swap. This part is lost, locked in theV3Proxycontract.
+Proof of Concept
+CallswapTokensForExactETHwith an excessively highamountInMaxCheck that any extra input tokens are sent back - this check will fail
+functiontestV3ProxyKeepsTheChange()public{IQuoterq=IQuoter(0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6);ISwapRouterr=ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);V3Proxyv3proxy=newV3Proxy(r,q,500);vm.label(address(v3proxy),"V3Proxy");address[]memorypath=newaddress[](2);path[0] =address(USDC);path[1] =address(WETH);address[]memorypath2=newaddress[](2);path2[0] =address(WETH);path2[1] =address(USDC);// fund Alicevm.prank(tokenWhale);USDC.transfer(alice,1870e6);// Alice initiates a swapuint256[]memoryamounts;uint256balanceUsdcBefore=USDC.balanceOf(alice);uint256balanceBefore=alice.balance;vm.startPrank(alice);USDC.approve(address(v3proxy),1870e6);amounts=v3proxy.swapTokensForExactETH(1e18,1870e6,path,alice,block.timestamp);// we check if the swap was done wellrequire(amounts[0] <1870e6);require(amounts[1] ==1e18);require(alice.balance==balanceBefore+amounts[1]);// the following check fails, but would pass if swapTokensForExactETH// sent back the excess tokensrequire(USDC.balanceOf(alice) ==balanceUsdcBefore-amounts[0],"Unused input tokens were not sent back!");}
+Recommended Mitigation Steps
+Send back the excess tokens:
+function swapTokensForExactETH(uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline) payable external returns (uint[] memory amounts) {require(path.length == 2, "Direct swap only");require(path[1] == ROUTER.WETH9(), "Invalid path");ERC20 ogInAsset = ERC20(path[0]);ogInAsset.safeTransferFrom(msg.sender, address(this), amountInMax);ogInAsset.safeApprove(address(ROUTER), amountInMax);amounts = new uint[](2);amounts[0] = ROUTER.exactOutputSingle(ISwapRouter.ExactOutputSingleParams(path[0], path[1], feeTier, address(this), deadline, amountOut, amountInMax, 0));amounts[1] = amountOut;ogInAsset.safeApprove(address(ROUTER), 0);IWETH9 weth = IWETH9(ROUTER.WETH9());acceptPayable = true;weth.withdraw(amountOut);acceptPayable = false;payable(msg.sender).call{value: amountOut}("");+        ogInAsset.safeTransfer(msg.sender, amountInMax - amounts[0]);emit Swap(msg.sender, path[0], path[1], amounts[0], amounts[1]);}
+Keref (Good Entry) confirmed and commented:
+SeePR#2.
+Good Entry Mitigated:
+Send back unused funds to user.PR:https://github.com/GoodEntry-io/ge/pull/2
+Status:Mitigation confirmed. Full details in reports fromkutugu,xuwinnieand3docSec.

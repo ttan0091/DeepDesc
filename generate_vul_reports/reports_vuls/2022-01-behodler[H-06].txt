@@ -1,0 +1,15 @@
+[H-06] Loss Of Flash Governance Tokens If They Are Not Withdrawn Before The Next Request
+Submitted by kirk-baird
+Users who have not calledwithdrawGovernanceAsset()after  they have locked their tokens from a previous proposal (i.e.assertGovernanceApproved), will lose their tokens ifassertGovernanceApproved()is called again with the sametargetandsender.
+Thesenderwill losependingFlashDecision[target][sender].amounttokens and the tokens will become unaccounted for and locked in the contract. Since the new amount is not added to the previous amount, instead the previous amount is overwritten with the new amount.
+The impact of this is worsened by another vulnerability, that isassertGovernanceApproved()is apublicfunction and may be called by any arbitrary user so long as thesenderfield has calledapprove()forFlashGovernanceArbiteron the ERC20 token. This would allow an attacker to make these tokens inaccessible for any arbitrarysender.
+Proof of Concept
+InassertGovernanceApproved()as seen below, the linependingFlashDecision[target][sender] = flashGovernanceConfigwill overwrite the previous contents. Thereby, making any previous rewards unaccounted for and inaccessible to anyone.
+Note that we must waitpendingFlashDecision[target][sender].unlockTimebetween calls.
+functionassertGovernanceApproved(addresssender,addresstarget,boolemergency)public{if(IERC20(flashGovernanceConfig.asset).transferFrom(sender,address(this),flashGovernanceConfig.amount) &&pendingFlashDecision[target][sender].unlockTime<block.timestamp) {require(emergency|| (block.timestamp-security.lastFlashGovernanceAct>security.epochSize),"Limbo: flash governance disabled for rest of epoch");pendingFlashDecision[target][sender] =flashGovernanceConfig;pendingFlashDecision[target][sender].unlockTime+=block.timestamp;security.lastFlashGovernanceAct=block.timestamp;emitflashDecision(sender,flashGovernanceConfig.asset,flashGovernanceConfig.amount,target);}else{revert("LIMBO: governance decision rejected.");}}
+Recommended Mitigation Steps
+Consider updating the initial if statement to ensure thependingFlashDecisionfor thattargetandsenderis empty, that is:
+functionassertGovernanceApproved(addresssender,addresstarget,boolemergency)public{if(IERC20(flashGovernanceConfig.asset).transferFrom(sender,address(this),flashGovernanceConfig.amount) &&pendingFlashDecision[target][sender].unlockTime==0) {...
+Note we cannot simply add the newamountto the previousamountincase the underlyingassethas been changed.
+gititGoro (Behodler) confirmed and commented:
+Excellent find! Thank you.

@@ -1,0 +1,20 @@
+[H-06] Division by zero error causes KangarooVault to be DoS with funds locked inside
+Submitted bypeakbolt
+KangarooVaultcan be DoS with funds locked in the contract due to a division by zero error ingetTokenPrice()as it does not handle the scenario wheregetTotalSupply()is zero.
+Impact
+Funds will be locked within theKangarooVault(as shown in the PoC below) and it is not able to recover from the DoS.
+That is because, to recover from the DoS, it requires increasing total supply through minting of new tokens via deposits. However, that is not possible asinitiateDeposit()relies ongetTokenPrice().
+Also, we cannot withdraw the remaining funds as there are no moreVaultTokensleft to burn.
+Detailed Explanation
+getTokenPrice()will attempt to perform a division bygetTotalSupply()whentotalFunds != 0andpositionId == 0. This scenario is possible when there are remaining funds inKangarooVaultwhen all positions are closed and all vault token holders withdrawn their funds.
+function getTokenPrice() public view returns (uint256) {if (totalFunds == 0) {return 1e18;}uint256 totalSupply = getTotalSupply();if (positionData.positionId == 0) {return totalFunds.divWadDown(totalSupply);}
+Proof of Concept
+Add the following imports and test case totest/Kangaroo.Vault.t.sol
+function testKangarooDivisionByZero() public {uint256 amt = 231e18;// Open position to decrease availableFunds for withdrawals.kangaroo.openPosition(amt, 0);skip(100);kangaroo.executePerpOrders(emptyData);kangaroo.clearPendingOpenOrders(0);// initiate user withdrawal// this will be a partial withdrawal due to the open position.vm.prank(user_1);kangaroo.initiateWithdrawal(user_1, 5e23);kangaroo.processWithdrawalQueue(1);// close all positionkangaroo.closePosition(amt, 1000000e18);skip(100);kangaroo.executePerpOrders(emptyData);kangaroo.clearPendingCloseOrders(0);// Complete remaining withdrawals of funds.// this will reduce totalSupply to zero and later cause a division by zero error.kangaroo.processWithdrawalQueue(1);/// prepare for new depositvm.startPrank(user_1);susd.approve(address(kangaroo), 5e23);// This deposit will revert due to division by zero.vm.expectRevert();kangaroo.initiateDeposit(user_1, 5e23);vm.stopPrank();// KangarooVault is now DoS and some funds are locked in itassertEq(susd.balanceOf(address(kangaroo)), 168969);}
+Recommended Mitigation Steps
+FixgetTokenPrice()to handle the scenario whentotalSupply()is zero.
+Dravee (judge) commented:
+Feels extremely similar tohttps://github.com/code-423n4/2023-03-polynomial-findings/issues/157by the same warden, but the impact is on a different contract and requires a different POC.Won’t flag as a duplicate for now.
+mubaris (Polynomial) confirmed
+Dravee (judge) commented:
+Will keep as high due to the warden showing in this case a direct impact on assets.

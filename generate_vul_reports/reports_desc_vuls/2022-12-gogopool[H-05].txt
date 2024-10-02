@@ -1,0 +1,33 @@
+Type of vulnerability: Initial Value Manipulation (Front-running Attack)
+Cause of vulnerability: The initial exchange rate of shares to assets can be manipulated by the first depositor due to the calculation of the exchange rate being based on the ratio of totalSupply to totalAssets, which can be artificially inflated.
+Execution process: 
+1. Attacker deposits a small amount of AVAX to receive shares.
+2. Attacker transfers a significant amount of WAVAX to the vault.
+3. Attacker calls `syncRewards` to update the exchange rate, inflating it.
+4. Subsequent depositors receive fewer shares for their deposits, and the attacker can withdraw more assets than their share.
+Vulnerable code: 
+- `convertToShares` function:
+  ```solidity
+  function convertToShares(uint256 assets) public view virtual returns (uint256) {
+      uint256 supply = totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.
+      return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());
+  }
+  ```
+- `syncRewards` function:
+  ```solidity
+  function syncRewards() public {
+      // Ensure nextRewardsCycleEnd will be evenly divisible by `rewardsCycleLength`.
+      uint32 nextRewardsCycleEnd = ((timestamp + rewardsCycleLength) / rewardsCycleLength) * rewardsCycleLength;
+      // ...
+  }
+  ```
+- `depositAVAX` function:
+  ```solidity
+  function depositAVAX() public payable returns (uint256 shares) {
+      // ...
+      if ((shares = previewDeposit(assets)) == 0) {
+          revert ZeroShares();
+      }
+      // ...
+  }
+  ```

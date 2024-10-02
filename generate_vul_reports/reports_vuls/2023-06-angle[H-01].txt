@@ -1,0 +1,19 @@
+[H-01] Possible reentrancy during redemption/swap
+Submitted byauditor0517, also found byLambda
+Redeemers might charge more collaterals during redemption/swap by the reentrancy attack.
+Proof of Concept
+Redeemers can redeem the agToken for collaterals inRedeemercontract and_redeem()burns the agToken and transfers the collaterals.
+function_redeem(uint256amount,addressto,uint256deadline,uint256[]memoryminAmountOuts,address[]memoryforfeitTokens)internalreturns(address[]memorytokens,uint256[]memoryamounts) {TransmuterStoragestoragets=s.transmuterStorage();if(ts.isRedemptionLive==0)revertPaused();if(block.timestamp>deadline)revertTooLate();uint256[]memorysubCollateralsTracker;(tokens,amounts,subCollateralsTracker) =_quoteRedemptionCurve(amount);// Updating the normalizer enables to simultaneously and proportionally reduce the amount// of stablecoins issued from each collateral without having to loop through each of them_updateNormalizer(amount,false);IAgToken(ts.agToken).burnSelf(amount,msg.sender);//@audit-info burn agTokenaddress[]memorycollateralListMem=ts.collateralList;uint256indexCollateral;for(uint256i;i<amounts.length; ++i) {if(amounts[i] <minAmountOuts[i])revertTooSmallAmountOut();// If a token is in the `forfeitTokens` list, then it is not sent as part of the redemption processif(amounts[i] >0&&LibHelpers.checkList(tokens[i],forfeitTokens) <0) {CollateralstoragecollatInfo=ts.collaterals[collateralListMem[indexCollateral]];if(collatInfo.onlyWhitelisted>0&& !LibWhitelist.checkWhitelist(collatInfo.whitelistData,to))revertNotWhitelisted();if(collatInfo.isManaged>0)LibManager.release(tokens[i],to,amounts[i],collatInfo.managerData.config);elseIERC20(tokens[i]).safeTransfer(to,amounts[i]);//@audit reentrancy}if(subCollateralsTracker[indexCollateral] -1<=i) ++indexCollateral;}emitRedeemed(amount,tokens,amounts,forfeitTokens,msg.sender,to);}
+During the collateral transfers(direct transfer or inLibManager.release()), there might be a hook for the recipient in the case of ERC777 tokens.
+Then the recipient might charge more collaterals by reentrancy like this.
+Let’s suppose there are 2 collateralscolAandcolB. The transmuter contract contains 1000 amounts ofcolAandcolB. Alice has 20 amounts of agToken.At the first time, Alice callsredeem()with 10 amounts of agToken and she should receive 10 amounts ofcolAandcolB.AscolAis an ERC777 token, she callsredeem(10)again inside the hook after thecolA transfer.During the second redemption, total collaterals will becolA = 990, colB = 1000becausecolBisn’t transferred in the first redemption yet.After all, Alice will receive more collaterals in the second redemption fromthis calculation.
+I think a similar reentrancy attack might be possible during the swap as well.
+Recommended Mitigation Steps
+I think we should add thenonReentrantmodifier to the major functions likeredeem()/swap().
+Picodes (Angle) confirmed, but disagreed with severity and commented:
+Valid. We had this in mind but thought it was ok as we don’t plan to accept collaterals with callbacks. However better than sorry and we may add the modifier.
+hansfriese (Judge) commented:
+@Picodes -LibManager.release()is called during the redemption and it might have a callback although the governance doesn’t accept collaterals with hooks.Because the assumption is practical enough and the users can steal collaterals directly, will keep as High.
+Angle mitigated:
+PR:https://github.com/AngleProtocol/angle-transmuter/commit/864c1c47cb550f8e337244f0f70409a171a4e671Adds a reentrancy guard to several functions.
+Status:Mitigation confirmed. Full details in reports fromauditor0517,Lambda, andJeiwan.

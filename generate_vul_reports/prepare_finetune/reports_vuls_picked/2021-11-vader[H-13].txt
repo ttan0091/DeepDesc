@@ -1,0 +1,19 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: Lack of access control and improper handling of asset transfers
+Execution process: A malicious user monitors the blockchain for contract approvals that match `VaderPoolV2.sol`, then frontruns the call to `mintSynth()` by setting the `to` argument to their own address, resulting in the transfer of `nativeDeposit` from the victim and the minting of a synthetic asset to the attacker's address.
+Vulnerable code: 
+```solidity
+function mintSynth(address from, address to, address foreignAsset, uint256 nativeDeposit) external override nonReentrant {
+    require(nativeDeposit > 0, "VaderPoolV2: Insufficient native deposit");
+    require(foreignAsset != address(0), "VaderPoolV2: Zero address foreign asset");
+    require(to != address(0), "VaderPoolV2: Zero address to");
+
+    address synth = _getSynth(foreignAsset);
+    require(synth != address(0), "VaderPoolV2: Synth does not exist");
+
+    IERC20(nativeAsset).safeTransferFrom(from, address(this), nativeDeposit);
+    IERC20(synth).safeTransfer(to, nativeDeposit);
+
+    emit MintSynth(from, to, foreignAsset, nativeDeposit);
+}
+```

@@ -1,0 +1,39 @@
+Type of vulnerability: Unsafe Truncation
+Cause of vulnerability: The use of `uint8` to store array indices, which can lead to truncation and corruption of indices when the array length exceeds 255.
+Execution process: As the `assets` and `feeders` arrays grow over time, their indices are truncated to `uint8`, causing incorrect referencing and removal of elements, leading to permanent structure corruption.
+Vulnerable code:
+```solidity
+function _addAsset(address _asset) internal onlyWhenAssetNotExisted(_asset) {
+    assetFeederMap[_asset].registered = true;
+    assets.push(_asset);
+    assetFeederMap[_asset].index = uint8(assets.length - 1); // Vulnerable line
+    emit AssetAdded(_asset);
+}
+
+function _addFeeder(address _feeder) internal onlyWhenFeederNotExisted(_feeder) {
+    feeders.push(_feeder);
+    feederPositionMap[_feeder].index = uint8(feeders.length - 1); // Vulnerable line
+    feederPositionMap[_feeder].registered = true;
+    _setupRole(UPDATER_ROLE, _feeder);
+    emit FeederAdded(_feeder);
+}
+
+function _removeAsset(address _asset) internal onlyWhenAssetExisted(_asset) {
+    uint8 assetIndex = assetFeederMap[_asset].index;
+    delete assets[assetIndex];
+    delete assetPriceMap[_asset];
+    delete assetFeederMap[_asset];
+    emit AssetRemoved(_asset);
+}
+
+function _removeFeeder(address _feeder) internal onlyWhenFeederExisted(_feeder) {
+    uint8 feederIndex = feederPositionMap[_feeder].index;
+    if (feederIndex >= 0 && feeders[feederIndex] == _feeder) {
+        feeders[feederIndex] = feeders[feeders.length - 1];
+        feeders.pop();
+    }
+    delete feederPositionMap[_feeder];
+    revokeRole(UPDATER_ROLE, _feeder);
+    emit FeederRemoved(_feeder);
+}
+```

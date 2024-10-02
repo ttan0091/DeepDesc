@@ -1,0 +1,19 @@
+Type of vulnerability: First Depositor Inflation Attack
+Cause of vulnerability: Initial totalSupply and totalAssets are zero, allowing the first depositor to manipulate the share price by directly transferring collateral tokens to the strategy.
+Execution process: The first depositor deposits a small amount of ETH, receives shares, then transfers a large amount of collateral tokens to the strategy, inflating the share-to-asset ratio. Subsequent depositors receive fewer shares for their deposits, and the first depositor profits by redeeming their shares.
+Vulnerable code: 
+```solidity
+function deposit(address receiver)...{
+    ...
+    // Step 1, creates a variable of Rebase type by passing as parameters the totalAssets() and totalSupply() of the Vault!
+    Rebase memory total = Rebase(_totalAssets(maxPriceAge), totalSupply());
+    ...
+    // Step 3, the deposited amount is deployed on the Strategy!
+    bytes memory result = (address(_strategy)).functionCallWithValue(abi.encodeWithSignature("deploy()"), msg.value);
+    uint256 amount = abi.decode(result, (uint256));
+    // Step 4, Computes the amount of shares to mint for the amount that was deployed after leverage on the Strategy
+    shares = total.toBase(amount, false);
+    _mint(receiver, shares);
+    emit Deposit(msg.sender, receiver, msg.value, shares);
+}
+```

@@ -1,0 +1,15 @@
+Type of vulnerability: Integer Underflow
+Cause of vulnerability: Lack of bounds checking for circulatory volume in JPYP due to mint/burn on peg inconsistency.
+Working Process of the Code:
+
+1. Users deposit USDJY into the protocol to mint JPYP.
+2. Minting triggers the BeforeTokenTransfer hook to get the state, which checks the currentState field.
+3. The currentState is set based on start & end times.
+4. If currentState is Normal, suumTokensInJPY is called, which triggers the DepositToSelf stores, updates, and adds the necessary collateral.
+5. Due to the logic in getEffectiveReserveAndBlockTime, this deposit might be larger/smaller before contribution.
+6. This update triggers a new contribution seller to get tokens when they withdraw.
+7. The new deposit is token.display(dTV). Mul() on 3 times issues Nothing() from the premium pool.
+8. This triggers an internal deposit resulting in empty transfers.
+9. In sellForAlternativeToReserveChange, it washes the first 10So tokens for time orders and money to redeem the TPSC/tokens.
+10. Because decrements in balances happen in the Transaction Below, sellForAlternative... will revert in bottom.
+11. The samme is that we revert in the deposit function.

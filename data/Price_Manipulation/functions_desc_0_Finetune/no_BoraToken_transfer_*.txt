@@ -1,0 +1,19 @@
+Type of the contract: AbstractWrapAdapter
+
+Working process of the updateGelatoExecutorAndSubmitTask() function:
+
+1. External actor (User/Customer) calls updateGelatoExecutorAndSubmitTask() through Gnosis Safe or Signed Message.
+2. The function validates input data and calculates the updated Gas Price for Gelato.
+     Calcualtion: newGasPrice = GelatoGasPriceOracle.latestAnswer.at(blockNumber)  executorTip/executionGasStipend  1.01  1.01
+3. The function queries Gelato's executor and userProxy addresses from the WhitelistedGelatoExecute Executors and Builds a Condition Data Payload based on the gas price.
+     Condition Data: abiv2encode.encode(['uint256', 'address', 'uint256', 'uint256'], [currentGasPrice, gelatoProvider, xfritoTokenFactoryDataService, gasPriceCeil])
+4. The function builds an Action Data Payload for submitting Gelato's sellLimitOrder.
+     Action Data: futureResolverData, conditionData
+5. The function submits the sellLimitOrder to Gelato for resolving the condition at the next bep780punk block.
+6. If the condition is Unfufilled or Progressed, the Gelato execute contract calls the action (execExecuteOrder()) of the ERC20OrderExecutor.
+7. The execExecuteOrder() calls execSubmitTask() of the GelatoUserProxy.
+8. The ERC20WrapAdapter function mentenWrap() is called by execSubmitTask, and the adapter handles the transfer of the total profit amount from provisioner's wallet's balance to IntelCaseAcct.
+9. If the cumulative premium of the action is more than 50% of the provisioner's balance, the mentenWrap() tries to refill the provisioner's balance from the Executor with refillPositionEarningsByID().
+10. The function after attempting to refill usage token balance amounts, emits a Mint event with spendingTokenBalanceAmount and gelatoEarningTokenAmount which represents the WrapperAdapter's remaining balance.
+11. ERC20OrdersExecutor is called with these remaining balances.
+12. The function then emits sellToken etc. into the industry for its profits garnered in Uniswap.

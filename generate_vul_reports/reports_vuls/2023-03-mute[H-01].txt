@@ -1,0 +1,17 @@
+[H-01] Bond max-buyer might end up buying the max buy of the next epoch
+Submitted by0xA5DF, also found byhansfrieseandHollaDieWaldfee
+TheMuteBond.deposit()function allows users to specify the amount of value they want to purchase bonds for or to setmax_buyto true.
+Ifmax_buyis set to true the amount specified in thevalueparameter is ignored and instead the maximum amount available for purchase in the current epoch is used.
+This can lead to a scenario where a user intends to purchase the remaining amount of current epoch, but till the tx is included in the blockchain a new epoch starts (either by an innocent user or by an attacker) and the user ends up buying the entire amount of the next epoch.
+Impact
+A. The user ends up buying a much higher amount than intendedB. The user ends up buying it for a lower price than intended (i.e. less payout for the buyer)
+Proof of Concept
+The PoC below shows howmaxPurchaseAmount()increases when a new era starts.
+File:test/bonds.ts
+it('Max buy PoC',asyncfunction() {// buy 99% of amount available for purchase in current epochletmaxValue=awaitbondContract.maxPurchaseAmount();letdepositValue=maxValue.mul(99).div(100);awaitbondContract.connect(buyer1).deposit(depositValue,buyer1.address,false);// The amount available when the victim sends out the txvarexpectedDeposit=awaitbondContract.maxPurchaseAmount()awaitbondContract.connect(buyer1).deposit('0',buyer1.address,true);// The amount available when the victims's tx is included in the blockchainvaractualDeposit=awaitbondContract.maxPurchaseAmount();// expected deposit = 1 wad// actual deposit = 100 wadconsole.log({expectedDeposit,actualDeposit});})
+The following snippetshows that when a user setsmax_buyto true the value used is themaxPurchaseAmount()
+if(max_buy==true){value=maxPurchaseAmount();payout=maxDeposit();}else{
+Recommended Mitigation Steps
+Require the user to specify the epoch number when doing a ‘max buy’, and revert if it doesn’t match the current epoch (it might be a good idea to refactor the code to 2 external functions for normal buy and max buy, where they both share an internal function to make the actual deposit).
+Side note: this is similar to another bug I’ve reported regarding getting a lower price than expected, however the root cause, impact, and mitigation are different and therefore I’ve reported this separately.
+mattt21 (Mute Switch) confirmed

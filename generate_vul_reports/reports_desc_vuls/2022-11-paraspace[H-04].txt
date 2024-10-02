@@ -1,0 +1,22 @@
+Type of vulnerability: Access Control Vulnerability
+
+Cause of vulnerability: The `removeFeeder` function is intended to be called only by the owner, but due to incorrect use of the `onlyWhenFeederExisted` modifier instead of `onlyRole(DEFAULT_ADMIN_ROLE)`, it can be called by anyone.
+
+Execution process:
+1. A malicious user calls the `removeFeeder` function with a valid feeder address.
+2. The `removeFeeder` function internally calls `_removeFeeder`, which checks if the feeder exists but does not authenticate the caller.
+3. The feeder is removed, and all subsequent queries for the price of NFTs reliant on the `NFTFloorOracle` will revert due to the absence of feeders.
+4. This causes all calls to `liquidateERC721` to revert, preventing liquidations and potentially leading to protocol insolvency.
+
+Vulnerable code:
+```solidity
+/// @notice Allows owner to remove feeder.
+/// @param _feeder feeder to remove
+function removeFeeder(address _feeder)
+    external
+    onlyWhenFeederExisted(_feeder)
+{
+    _removeFeeder(_feeder);
+}
+```
+https://github.com/code-423n4/2022-11-paraspace/blob/c6820a279c64a299a783955749fdc977de8f0449/paraspace-core/contracts/misc/NFTFloorOracle.sol#L165-L172

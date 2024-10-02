@@ -1,0 +1,26 @@
+This code defines an external function named transferLogic, which is designed to handle the transfer of tokens from one address to another. The function is restricted to be called only by a specific caller, as indicated by the onlyCaller modifier. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Control:
+    function transferLogic(address sender, address to, uint256 value) external onlyCaller returns(bool): This line declares the function transferLogic with three parameters: sender (the address from which tokens are to be transferred), to (the address to which tokens are to be transferred), and value (the amount of tokens to be transferred). The function is marked as external, meaning it can only be called from outside the contract. The onlyCaller modifier ensures that this function can only be invoked by a specific authorized caller.
+
+2. Input Validation:
+    require(to != address(0), "cannot transfer to address zero");: This line checks that the to address is not the zero address. Transferring tokens to the zero address is generally considered a bad practice as it effectively burns the tokens, so this check prevents such transfers.
+    require(sender != to, "sender need != to");: This line ensures that the sender and to addresses are not the same. Transferring tokens to the same address as the sender is pointless and could indicate an error.
+    require(value > 0, "value need > 0");: This line checks that the value is greater than zero, ensuring that a nonzero amount of tokens is being transferred.
+    require(address(store) != address(0), "dataStore address error");: This line verifies that the store address (presumably a contract or data storage mechanism used to manage balances) is not the zero address, ensuring that the balance operations can be performed correctly.
+
+3. Balance Operations:
+    uint256 balanceFrom = store.balanceOf(sender);: This line retrieves the current balance of the sender from the store.
+    uint256 balanceTo = store.balanceOf(to);: This line retrieves the current balance of the to address from the store.
+    require(value <= balanceFrom, "insufficient funds");: This line checks that the sender has enough balance to cover the transfer. If the value is greater than balanceFrom, the function will revert with the message "insufficient funds".
+    balanceFrom = balanceFrom.safeSub(value);: This line safely subtracts the value from the sender's balance. The use of safeSub indicates that this operation is performed in a way that prevents underflow (i.e., subtracting a larger number from a smaller one).
+    balanceTo = balanceTo.safeAdd(value);: This line safely adds the value to the to address's balance. The use of safeAdd ensures that this operation prevents overflow (i.e., adding a number that would exceed the maximum value for uint256).
+
+4. Updating Balances:
+    store.setBalance(sender, balanceFrom);: This line updates the sender's balance in the store to the new value after the subtraction.
+    store.setBalance(to, balanceTo);: This line updates the to address's balance in the store to the new value after the addition.
+
+5. Return Value:
+    return true;: Finally, the function returns true to indicate that the transfer was successful.
+
+In summary, the transferLogic function performs a series of checks and balance adjustments to securely transfer a specified amount of tokens from one address to another, ensuring that all operations are valid and safe before executing the transfer.

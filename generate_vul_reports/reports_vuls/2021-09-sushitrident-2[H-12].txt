@@ -1,0 +1,15 @@
+[H-12]ConcentratedLiquidityPool:secondsPerLiquidityshould be modified whenever pool liquidity changes
+Submitted by hickuphh3
+Impact
+secondsPerLiquidityis updated as such:secondsPerLiquidity += uint160((diff << 128) / liquidity);wherediff = timestamp - uint256(lastObservation). Hence, whenever liquidity changes,secondsPerLiquidityshould be updated prior to the change.
+In particular, this affects themint()andburn()functions, in the case where liquidity changes whenlowerTick <= currentTick < upperTick.
+In fact, the latestsecondsPerLiquidityvalue should be calculated and used inTicks.insert(). For comparison, notice how UniswapV3 fetches the latest value by callingobservations.observeSingle()in its_updatePosition()function.
+Recommended Mitigation Steps
+ThesecondsPerLiquidityincrement logic should be applied prior to liquidity addition inmint()and removal inburn().
+// insert logic before these lines in mint()unchecked{if(priceLower<currentPrice&&currentPrice<priceUpper)liquidity+=uint128(_liquidity);}nearestTick=Ticks.insert(ticks,feeGrowthGlobal0,feeGrowthGlobal1,secondsPerLiquidity,// should calculate and use latest secondsPerLiquidity value...);// insert logic before before these lines in burn()unchecked{if(priceLower<currentPrice&&currentPrice<priceUpper)liquidity-=amount;}
+sarangparikh22 (Sushi) disputed:
+The secondsPerLiquidity is same, changing the order of that will not affect anything, since it is not getting calculated at the mint or burn function.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), could you please elaborate on why this isn’t an issue?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) my apologies, this is an issue. I could confirm this.

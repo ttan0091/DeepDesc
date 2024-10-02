@@ -1,0 +1,27 @@
+[H-35]Rerange/rebalanceshould not useprotocolFeeas an asset for adding liquidity
+Submitted byT1MOH, also found bylukejohn,bin2chen,said,los_chicos,SpicyMeatball, andmax10afternoon
+The account ofprotocolFeeis broken because tokens ofprotocolFee0andprotocolFee1are used while rerange/rebalance are used to add liquidity. At the same time, the variablesprotocolFee0andprotocolFee1are not updated and the de-facto contract doesn’t haveprotocolFeeon balance.
+Proof of Concept
+Functionrerangeis used both inrerangeand inrebalance:
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/talos/strategies/TalosStrategySimple.sol#L30-L46
+functiondoRerange()internaloverridereturns(uint256amount0,uint256amount1) {(tickLower,tickUpper,amount0,amount1,tokenId,liquidity) =nonfungiblePositionManager.rerange(PoolActions.ActionParams(pool,optimizer,token0,token1,tickSpacing),poolFee);}functiondoRebalance()internaloverridereturns(uint256amount0,uint256amount1) {int24baseThreshold=tickSpacing*optimizer.tickRangeMultiplier();PoolActions.ActionParamsmemoryactionParams=PoolActions.ActionParams(pool,optimizer,token0,token1,tickSpacing);PoolActions.swapToEqualAmounts(actionParams,baseThreshold);(tickLower,tickUpper,amount0,amount1,tokenId,liquidity) =nonfungiblePositionManager.rerange(actionParams,poolFee);}
+Let’s have a look at this function. This function callsgetThisPositionTicksto get the amounts ofbalance0andbalance1of tokens toaddLiquidity:
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/talos/libraries/PoolActions.sol#L56-L88
+functionrerange(INonfungiblePositionManagernonfungiblePositionManager,ActionParamsmemoryactionParams,uint24poolFee)internalreturns(int24tickLower,int24tickUpper,uint256amount0,uint256amount1,uint256tokenId,uint128liquidity){int24baseThreshold=actionParams.tickSpacing*actionParams.optimizer.tickRangeMultiplier();uint256balance0;uint256balance1;(balance0,balance1,tickLower,tickUpper) =getThisPositionTicks(actionParams.pool,actionParams.token0,actionParams.token1,baseThreshold,actionParams.tickSpacing);emitSnapshot(balance0,balance1);(tokenId,liquidity,amount0,amount1) =nonfungiblePositionManager.mint(INonfungiblePositionManager.MintParams({token0:address(actionParams.token0),token1:address(actionParams.token1),amount0Desired:balance0,amount1Desired:balance1,...}));}
+The mistake is in the functiongetThisPositionTicks()because it returns the actual token balance of theStrategycontract:
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/talos/libraries/PoolActions.sol#L90-L103
+functiongetThisPositionTicks(IUniswapV3Poolpool,ERC20token0,ERC20token1,int24baseThreshold,int24tickSpacing)privateviewreturns(uint256balance0,uint256balance1,int24tickLower,int24tickUpper) {// Emit snapshot to record balancesbalance0=token0.balanceOf(address(this));balance1=token1.balanceOf(address(this));//Get exact ticks depending on Optimizer's balances(tickLower,tickUpper) =pool.getPositionTicks(balance0,balance1,baseThreshold,tickSpacing);}
+This returns the actual balance which consists of 2 parts:protocolFeeand users’ funds.Rerangemust use users’ funds, but notprotocolFee.
+Suppose the following scenario:
+A user has added 1000 tokens of liquidity.This liquidity generated 100 tokens of fee, 50 of which isprotocolFee.Rerangeis called. After removing liquidity contract, they have a 1000 + 100 tokens balance. And the contract adds liquidity of whole balances - 1100 tokens.FunctioncollectFeedoesn’t work because the actual balance is less than the withdrawing amount and the protocol loses profit.
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/talos/base/TalosBaseStrategy.sol#L394-L415
+functioncollectProtocolFees(uint256amount0,uint256amount1)externalnonReentrantonlyOwner{uint256_protocolFees0=protocolFees0;uint256_protocolFees1=protocolFees1;if(amount0>_protocolFees0) {revertToken0AmountIsBiggerThanProtocolFees();}if(amount1>_protocolFees1) {revertToken1AmountIsBiggerThanProtocolFees();}ERC20_token0=token0;ERC20_token1=token1;uint256balance0=_token0.balanceOf(address(this));uint256balance1=_token1.balanceOf(address(this));require(balance0>=amount0&&balance1>=amount1);if(amount0>0)_token0.transfer(msg.sender,amount0);if(amount1>0)_token1.transfer(msg.sender,amount1);protocolFees0=_protocolFees0-amount0;protocolFees1=_protocolFees1-amount1;emitRewardPaid(msg.sender,amount0,amount1);}
+Recommended Mitigation Steps
+I suggest using a different address forprotocolFee. Transfer allprotocolFeetokens away from this contract to not mix it with users’ assets. Create a contract likeProtocolFeeReceiver.soland make a force transfer of tokens whenStrategygets fee.
+Also a note - that in the forked parent project,SorbettoFragola, it is implemented viaburnExactLiquidity.
+https://github.com/Popsicle-Finance/SorbettoFragola/blob/9fb31b74f19005d86a78abc758553e7914e7ba49/SorbettoFragola.sol#L458-L483
+Assessed type
+Math
+0xLightt (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

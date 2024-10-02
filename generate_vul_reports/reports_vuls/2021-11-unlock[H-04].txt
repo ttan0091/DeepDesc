@@ -1,0 +1,17 @@
+[H-04] Approvals not cleared after key transfer
+Submitted by cmichel
+The locks implement three different approval types, seeonlyKeyManagerOrApprovedfor an overview:
+key manager (mapkeyManagerOf)single-person approvals (mapapproved). Cleared by_clearApprovalor_setKeyManagerOfoperator approvals (mapmanagerToOperatorApproved)
+TheMixinTransfer.transferFromrequires any of the three approval types in theonlyKeyManagerOrApprovedmodifier on the tokenId to authenticate transfers fromfrom.
+Notice that if thetoaddress previously had a key but it expired only the_setKeyManagerOfcall is performed, which does not clearapprovedif the key manager was already set to 0:
+functiontransferFrom(address_from,address_recipient,uint_tokenId)publiconlyIfAlivehasValidKey(_from)onlyKeyManagerOrApproved(_tokenId){// @audit this is skipped if user had a key that expiredif(toKey.tokenId==0) {toKey.tokenId=_tokenId;_recordOwner(_recipient,_tokenId);// Clear any previous approvals_clearApproval(_tokenId);}if(previousExpiration<=block.timestamp) {// The recipient did not have a key, or had a key but it expired. The new expiration is the sender's key expiration// An expired key is no longer a valid key, so the new tokenID is the sender's tokenIDtoKey.expirationTimestamp=fromKey.expirationTimestamp;toKey.tokenId=_tokenId;// Reset the key Manager to the key owner// @audit  doesn't clear approval if key manager already was 0_setKeyManagerOf(_tokenId,address(0));_recordOwner(_recipient,_tokenId);}// ...}//function_setKeyManagerOf(uint_tokenId,address_keyManager)internal{// @audit-ok only clears approved if key manager updatedif(keyManagerOf[_tokenId] !=_keyManager) {keyManagerOf[_tokenId] =_keyManager;_clearApproval(_tokenId);emitKeyManagerChanged(_tokenId,address(0));}}
+Impact
+It’s possible to sell someone a key and then claim it back as the approvals are not always cleared.
+Proof Of Concept
+Attacker A has a valuable key (tokenId = 42) with an expiry date far in the future.A sets approvals for their second attacker controlled account A’ by callingMixinKeys.setApprovalForAll(A', true), which setsmanagerToOperatorApproved[A][A'] = true.A clears the key manager by setting it to zero, for example, by transferring it to a second account that does not have a key yet, this calls the above_setKeyManagerOf(42, address(0));intransferFromA sets single-token approval to A’ by callingMixinKeys.approve(A', 42), settingapproved[42] = A'.A sells the token to a victim V for a discount (compared to purchasing it from the Lock). The victim needs to have owned a key before which already expired. ThetransferFrom(A, V, 42)call sets the owner of token 42 toV, but does not clear theapproved[42] == A'field as described above. (_setKeyManagerOf(_tokenId, address(0));is called but the key manager was already zero, which then does not clear approvals.)A’ can claim back the token by callingtransferFrom(V, A', 42)and theonlyKeyManagerOrApproved(42)modifier will pass asapproved[42] == A'is still set.
+Recommended Mitigation Steps
+The_setKeyManagerOffunction should not handle clearing approvals of single-token approvals (approved) as these are two separate approval types.
+ThetransferFromfunction should always call_clearApprovalin the(previousExpiration <= block.timestamp)case.
+julien51 (Unlock Protocol) confirmed and commented:
+Thanks for reporting this.
+This is valid and we will fix it.

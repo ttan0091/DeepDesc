@@ -1,0 +1,29 @@
+Type of vulnerability: Reentrancy or Logic Exploit
+Cause of vulnerability: Lack of proper validation on the ticket contract address, allowing a malicious ticket contract to manipulate reward calculations.
+Execution process:
+1. Attacker creates a malicious ticket contract that implements the `ITicket` interface but returns manipulated values for `getAverageBalanceBetween` and `getAverageTotalSuppliesBetween`.
+2. Attacker creates a new promotion using `createPromotion()` with the malicious ticket contract address and the token address of a targeted promotion.
+3. Attacker calls `claimRewards()` with the malicious promotion ID and a specific `epochId`.
+4. The malicious ticket contract returns manipulated values, causing `_calculateRewardAmount()` to compute an arbitrarily large reward amount.
+5. The contract transfers the computed reward amount to the attacker's address.
+
+Vulnerable code:
+```solidity
+function claimRewards(address _user, uint256 _promotionId, uint256[] calldata _epochIds) external override returns (uint256) {
+    Promotion storage _promotion = promotions[_promotionId];
+    uint256 _rewardsAmount = _calculateRewardAmount(_promotion, _user, _epochIds);
+    _promotion.token.safeTransfer(_user, _rewardsAmount);
+    return _rewardsAmount;
+}
+
+function _calculateRewardAmount(Promotion storage _promotion, address _user, uint256[] calldata _epochIds) internal view returns (uint256) {
+    uint256 _totalRewards = 0;
+    for (uint256 i = 0; i < _epochIds.length; i++) {
+        uint256 _epochId = _epochIds[i];
+        uint256 _averageBalance = _promotion.ticket.getAverageBalanceBetween(_user, _promotion.epochStartTimes[_epochId], _promotion.epochEndTimes[_epochId]);
+        uint256 _averageTotalSupplies = _promotion.ticket.getAverageTotalSuppliesBetween(_promotion.epochStartTimes[_epochId], _promotion.epochEndTimes[_epochId]);
+        _totalRewards += (_promotion.tokensPerEpoch * _averageBalance) / _averageTotalSupplies;
+    }
+    return _totalRewards;
+}
+```

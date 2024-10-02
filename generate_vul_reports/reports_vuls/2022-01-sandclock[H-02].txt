@@ -1,0 +1,21 @@
+[H-02] Withdrawers can get more value returned than expected with reentrant call
+Submitted by camden, also found by cmichel and harleythedog
+The impact of this is that users can get significantly more UST withdrawn than they would be alotted if they had done non-reentrant withdraw calls.
+Proof of Concept
+Here’s an outline of the attack:
+Assume the vault has 100 UST in it.
+The attacker makes two deposits of 100UST and waits for them to be withdrawable.
+The attacker triggers a withdraw one of their deposit positions.
+The vault code executes until it reaches this point:https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L565Since the attacker is the claimer, the vault will call back to the attacker.
+InsideonDepositBurned, trigger another 100 UST deposit.
+Sinceclaimers.onWithdrawhas already been called, reducing the amount of shares, but the UST hasn’t been transferred yet, the vault will compute the amount of UST to be withdrawn based on an unexpected value for_totalUnderlyingMinusSponsored(300).https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L618
+After the attack, the attacker will have significantly more than if they had withdrawn without reentrancy.
+Here’s my proof of concept showing a very similar exploit withdeposit, but I think it’s enough to illustrate the point. I have a forge repo if you want to see it, just ping me on discord.https://gist.github.com/CamdenClark/abc67bc1b387c15600549f6dfd5cb27a
+Tools Used
+Forge
+Recommended Mitigation Steps
+Reentrancy guards.
+Also, consider simplifying some of the shares logic.
+ryuheimat (Sandclock) confirmed
+naps62 (Sandclock) resolved:
+Fixed inhttps://github.com/sandclock-org/solidity-contracts/pull/75

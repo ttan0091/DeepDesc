@@ -1,0 +1,31 @@
+This code defines a public function named deposit, which allows users to deposit a specified amount of tokens into a specific pool identified by its pool ID (_pid). Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    deposit(uint256 _pid, uint256 _amount) public: This function takes two parameters: _pid (the pool ID) and _amount (the amount of tokens to deposit). It is marked as public, meaning it can be called from outside the contract as well as internally.
+
+2. Pool and User Information Retrieval:
+    PoolInfo storage pool = poolInfo[_pid];: This line retrieves the pool information for the given pool ID (_pid) and stores it in a local variable pool.
+    UserInfo storage user = userInfo[_pid][msg.sender];: This line retrieves the user information for the given pool ID and the caller of the function (msg.sender) and stores it in a local variable user.
+
+3. Pool Update:
+    updatePool(_pid);: This function call updates the pool information, ensuring that the accumulated rewards per share (accRewardsPerShare) is uptodate. This is crucial for accurately calculating the pending rewards.
+
+4. Pending Rewards Calculation and Transfer:
+    if (user.amount > 0) {: This condition checks if the user has an existing balance in the pool.
+      uint256 pending = user.amount.mul(pool.accRewardsPerShare).div(1e12).sub(user.rewardDebt);: This line calculates the pending rewards by multiplying the user's amount by the accumulated rewards per share, dividing by 1e12 (to adjust for precision), and subtracting the user's reward debt.
+      if (pending > 0) {: If there are pending rewards, they are transferred to the user.
+        totalRewardDebt = totalRewardDebt.sub(pending);: This line updates the total reward debt by subtracting the pending rewards.
+        safeRewardsTransfer(msg.sender, pending);: This function call safely transfers the pending rewards to the user.
+
+5. Token Deposit:
+    if (_amount > 0) {: This condition checks if the deposit amount is greater than zero.
+      pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);: This line transfers the specified amount of tokens from the user to the contract.
+      user.amount = user.amount.add(_amount);: This line updates the user's balance by adding the deposited amount.
+
+6. Update User Reward Debt:
+    user.rewardDebt = user.amount.mul(pool.accRewardsPerShare).div(1e12);: This line recalculates the user's reward debt based on the new balance and the current accumulated rewards per share.
+
+7. Event Emission:
+    emit Deposit(msg.sender, _pid, _amount);: This line emits a Deposit event, which logs the deposit action, including the sender's address, the pool ID, and the deposited amount. This event can be used for tracking and offchain applications.
+
+In summary, the deposit function allows users to deposit tokens into a specific pool, updates the pool and user information, calculates and transfers any pending rewards, and adjusts the user's reward debt accordingly. It ensures that the rewards are distributed fairly and accurately based on the user's share in the pool.

@@ -1,0 +1,10 @@
+[H-04]AuctionBurnReserveSkew.getPegDeltaFrequency()Wrong implementation can result in an improper amount of excess Liquidity Extension balance to be used at the end of an auction
+Submitted by WatchPug
+https://github.com/code-423n4/2021-11-malt/blob/c3a204a2c0f7c653c6c2dda9f4563fd1dc1cecf3/src/contracts/AuctionBurnReserveSkew.sol#L116-L132
+functiongetPegDeltaFrequency()publicviewreturns(uint256) {uint256initialIndex=0;uint256index;if(count>auctionAverageLookback) {initialIndex=count-auctionAverageLookback;}uint256total=0;for(uint256i=initialIndex;i<count; ++i) {index=_getIndexOfObservation(i);total=total+pegObservations[index];}returntotal*10000/auctionAverageLookback;}
+Whencount < auctionAverageLookback, at L131, it should bereturn total * 10000 / count;. The current implementation will return a smaller value than expected.
+The result ofgetPegDeltaFrequency()will be used for calculatingrealBurnBudgetfor auctions. With the result ofgetPegDeltaFrequency()being inaccurate, can result in an improper amount of excess Liquidity Extension balance to be used at the end of an auction.
+0xScotch (sponsor) confirmed and disagreed with severity:
+I actually think this should be higher severity. This bug could manifest in liquidity extension being depleted to zero which could have catastrophic consequences downstream.
+Alex the Entreprenerd (judge) commented:
+Agree with the finding, this is an incorrect logic in the protocol, which can limit it’s functionality and as the sponsor says:could have catastrophic consequences downstreamas such I’ll increase the severity to high.Mitigation seems to be straightforward

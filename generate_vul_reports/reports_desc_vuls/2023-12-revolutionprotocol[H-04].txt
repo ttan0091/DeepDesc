@@ -1,0 +1,33 @@
+Type of vulnerability: Denial of Service (DoS) through Voting Delegation Manipulation
+
+Cause of vulnerability: The vulnerability arises from the ability of a malicious delegatee to repeatedly delegate votes to `address(0)`, which subtracts the delegator's votes from their checkpoints, leading to an underflow condition when the delegator tries to redelegate or transfer their NFTs.
+
+Execution process: 
+1. User `X` delegates their votes to User `Y`.
+2. User `Y` repeatedly delegates their votes to `address(0)`, causing the votes of User `X` to be subtracted from User `Y`'s checkpoints.
+3. When User `X` attempts to redelegate or transfer their NFTs, the `_moveDelegateVotes` function tries to subtract User `X`'s votes from User `Y`'s now depleted checkpoints, leading to an underflow and a revert.
+
+Vulnerable code:
+```solidity
+function _moveDelegateVotes(address from, address to, uint256 amount) private {
+    VotesStorage storage $ = _getVotesStorage();
+    if (from != to && amount > 0) {
+        if (from != address(0)) {
+            (uint256 oldValue, uint256 newValue) = _push($._delegateCheckpoints[from], _subtract, SafeCast.toUint208(amount));
+            emit DelegateVotesChanged(from, oldValue, newValue);
+        }
+        if (to != address(0)) {
+            (uint256 oldValue, uint256 newValue) = _push($._delegateCheckpoints[to], _add, SafeCast.toUint208(amount));
+            emit DelegateVotesChanged(to, oldValue, newValue);
+        }
+    }
+}
+
+function _delegate(address account, address delegatee) internal virtual {
+    VotesStorage storage $ = _getVotesStorage();
+    address oldDelegate = delegates(account);
+    $._delegatee[account] = delegatee;
+    emit DelegateChanged(account, oldDelegate, delegatee);
+    _moveDelegateVotes(oldDelegate, delegatee, _getVotingUnits(account));
+}
+```

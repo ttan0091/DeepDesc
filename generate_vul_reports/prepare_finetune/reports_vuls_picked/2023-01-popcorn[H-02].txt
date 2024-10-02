@@ -1,0 +1,14 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Lack of proper validation for the `_beefyBooster` address provided by the vault owner during the initialization of the `BeefyAdapter` contract.
+Execution process: A malicious vault owner can specify a malicious `_beefyBooster` contract during the initialization of the `BeefyAdapter`. This malicious `_beefyBooster` can then exploit the approval given to it by the `_beefyVault` to transfer all tokens stored by the adapter to itself.
+Vulnerable code: 
+```solidity
+function initialize(bytes memory adapterInitData, address registry, bytes memory beefyInitData) external initializer {
+    (address _beefyVault, address _beefyBooster) = abi.decode(beefyInitData, (address, address)); //@audit <--------- beefyInitData comes from the owner's input
+    if (_beefyBooster != address(0) && IBeefyBooster(_beefyBooster).stakedToken() != _beefyVault)
+        revert InvalidBeefyBooster(_beefyBooster);
+    ...
+    if (_beefyBooster != address(0))
+        IERC20(_beefyVault).approve(_beefyBooster, type(uint256).max); //@audit <---------  _beefyVault approve _beefyBooster
+}
+```

@@ -1,0 +1,21 @@
+[H-25] Overflow risk in Market contract
+Submitted byKIntern_NA
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L415-L421
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L390-L396
+Actions of users (borrow, repay, removeCollateral, …) in Martket contract might be reverted by overflow, resulting in their funds might be frozen.
+Proof of concept
+Function_isSolventinMarketcontract use conversion from share to amount of yieldBox.
+yieldBox.toAmount(collateralId,collateralShare*(EXCHANGE_RATE_PRECISION/FEE_PRECISION) *collateralizationRate,false)
+It will trigger_toAmountfunction inYieldBoxRebasecontract
+function_toAmount(uint256share,uint256totalShares_,uint256totalAmount,boolroundUp)internalpurereturns(uint256amount) {totalAmount++;totalShares_+=1e8;amount= (share*totalAmount) /totalShares_;if(roundUp&& (amount*totalShares_) /totalAmount<share) {amount++;}}
+The calculationamount = (share * totalAmount) / totalShares_might be overflow becauseshare * totalAmount=collateralShare * (EXCHANGE_RATE_PRECISION / FEE_PRECISION) * collateralizationRate * totalAmount
+In the default condition,EXCHANGE_RATE_PRECISION= 1e18,FEE_PRECISION= 1e5,collateralizationRate= 0.75e18
+ThecollateralShareis equal to around1e8 * collateralAmountby default (becausetotalAmount++; totalShares_ += 1e8;is present in the_toAmountfunction).
+=>share * totalAmount~= (collateralAmount * 1e8) * (1e18 / 1e5) * 0.75e18 * totalAmount = collateralAmount * totalAmount * 0.75e39
+This formula will overflow whencollateralAmount * totalAmount> 1.5e38. This situation can occur easily with 18-decimal collateral. As a consequence, user transactions will revert due to overflow, resulting in the freezing of market functionalities.
+The same issue applies to the calculation of_computeMaxBorrowableAmountin the Market contract.
+Recommended Mitigation Steps
+Reduce some variables used to trigger yieldBox.toAmount(), such asEXCHANGE_RATE_PRECISIONandcollateralizationRate, and use these variables to calculate with the obtained amount.
+Example, the expected amount can be calculated as:
+yieldBox.toAmount(collateralId,collateralSharefalse) * (EXCHANGE_RATE_PRECISION/FEE_PRECISION) *collateralizationRate
+0xRektora (Tapioca) confirmed

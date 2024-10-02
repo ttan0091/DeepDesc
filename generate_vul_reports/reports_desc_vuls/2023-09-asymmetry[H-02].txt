@@ -1,0 +1,26 @@
+Type of vulnerability: Zero amount withdrawal bricking
+Cause of vulnerability: The `unstake` function in SafEth and the `sellCvx` function in VotiumStrategy revert when called with a zero amount, causing the entire withdrawal process to fail.
+Execution process: A user requests a withdrawal that results in a zero amount for SafEth or VotiumStrategy. When the withdrawal is executed, the zero amount causes the `unstake` or `sellCvx` function to revert, bricking the withdrawal process.
+Vulnerable code: 
+```solidity
+252: ISafEth(SAF_ETH_ADDRESS).unstake(withdrawInfo.safEthWithdrawAmount, 0);
+253: AbstractStrategy(vEthAddress).withdraw(withdrawInfo.vEthWithdrawId);
+```
+and
+```solidity
+250: function sellCvx(
+251:     uint256 _cvxAmountIn
+252: ) internal returns (uint256 ethAmountOut) {
+253:     address CVX_ETH_CRV_POOL_ADDRESS = 0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4;
+254:     // cvx -> eth
+255:     uint256 ethBalanceBefore = address(this).balance;
+256:     IERC20(CVX_ADDRESS).approve(CVX_ETH_CRV_POOL_ADDRESS, _cvxAmountIn);
+257:     ICrvEthPool(CVX_ETH_CRV_POOL_ADDRESS).exchange_underlying(
+258:         1,
+259:         0,
+260:         _cvxAmountIn,
+261:         0 // this is handled at the afEth level
+262:     );
+263:     ethAmountOut = address(this).balance - ethBalanceBefore;
+264: }
+```

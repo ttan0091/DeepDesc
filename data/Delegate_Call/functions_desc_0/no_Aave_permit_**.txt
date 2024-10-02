@@ -1,0 +1,25 @@
+This code defines an external function named permit, which is designed to allow an owner (referred to as target) to grant an allowance to a spender without the need for the owner to directly interact with the smart contract. This function is particularly useful for scenarios where the owner wants to authorize a transaction on their behalf using an offchain signature, following the EIP2612 standard.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    target: The address of the owner who is granting the allowance.
+    spender: The address that will be allowed to spend the tokens on behalf of the target.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp until which the permit is valid.
+    v, r, s: These are components of an ECDSA signature that the owner provides to authorize this transaction.
+
+2. Time Validity Check:
+    The function first checks if the current block timestamp (block.timestamp) is less than or equal to the deadline. If the permit has expired (i.e., block.timestamp > deadline), the function reverts with the error message "WERC10: Expired permit".
+
+3. Hash Calculation:
+    The function calculates a hash (hashStruct) of the structured data that includes the PERMIT_TYPEHASH (a constant that defines the type of the data being hashed), target, spender, value, the current nonce of the target (which is incremented after being used), and deadline. This hash is used to verify the signature provided by the owner.
+
+4. Signature Verification:
+    The function then verifies the signature using two methods: verifyEIP712 and verifyPersonalSign. It checks if either verification method confirms that the signature is valid for the hashStruct and the target's address. This dual verification allows flexibility in how the signature can be generated and interpreted.
+
+5. Approval and Event Emitting:
+    If the signature is valid, the function sets the allowance of the spender to the specified value for the target's tokens. This is done by updating the allowance mapping.
+    An Approval event is emitted to notify the network of the change in allowance, which includes the target, spender, and value.
+
+This function leverages offchain signatures to manage onchain permissions, reducing the need for multiple onchain transactions and thus saving gas fees. It is a common pattern used in token contracts to enhance user experience and security.

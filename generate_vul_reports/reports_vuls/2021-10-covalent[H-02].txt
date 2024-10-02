@@ -1,0 +1,18 @@
+[H-02]unstakeshould update exchange rates first
+Submitted by cmichel
+Theunstakefunction does not immediately update the exchange rates. It first computes thevalidatorSharesRemove = tokensToShares(amount, v.exchangeRate)with the old exchange rate.
+Only afterwards, it updates the exchange rates (if the validator is not disabled):
+// @audit shares are computed here with old rateuint128validatorSharesRemove=tokensToShares(amount,v.exchangeRate);require(validatorSharesRemove>0,"Unstake amount is too small");if(v.disabledEpoch==0) {// @audit rates are updated hereupdateGlobalExchangeRate();updateValidator(v);// ...}
+Impact
+More shares for the amount are burned than required and users will lose rewards in the end.
+POC
+Demonstrating that users will lose rewards:
+Assume someone staked1000 amountand received1000 shares, andv.exchangeRate = 1.0. (This user is the single staker)Several epochs pass, interest accrues, and1000 tokensaccrue for the validator,tokensGivenToValidator = 1000. User should be entitled to 1000 in principal + 1000 in rewards = 2000 tokens.But user callsunstake(1000), which setsvalidatorSharesRemove = tokensToShares(amount, v.exchangeRate) = 1000 / 1.0 = 1000.Afterwards, the exchange rate is updated:v.exchangeRate += tokensGivenToValidator / totalShares = 1.0 + 1.0 = 2.0. The staker is updated withs.shares -= validatorSharesRemove = 0ands.staked -= amount = 0. And the user receives their 1000 tokens but notice how the user’s shares are now at zero as well.User tries to claim rewards callingredeemAllRewardswhich fails as therewardsare 0.
+If the user had first calledredeemAllRewardsandunstakeafterwards they’d have received their 2000 tokens.
+Recommended Mitigation Steps
+The exchange rates always need to be updated first before doing anything.
+Move theupdateGlobalExchangeRate()andupdateValidator(v)calls to the beginning of the function.
+kitti-katy (Covalent) confirmed
+GalloDaSballo (judge) commented:
+Agree with the finding, using the old exchange rate ends up burning more shares than what would be correct
+The sponsor has mitigated the issue

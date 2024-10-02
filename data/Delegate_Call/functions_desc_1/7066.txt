@@ -1,0 +1,20 @@
+This code defines a smart contract named Proxy, which is designed to delegate calls to another contract, referred to as the "master" contract. The Proxy contract maintains an address of the master contract and includes a modifier and a function to manage this relationship.
+
+Here’s a detailed explanation of how this contract works:
+
+1. State Variable:
+    address master;: This variable stores the address of the master contract. It is used to determine which contract the Proxy should delegate calls to.
+
+2. Modifier:
+    modifier onlyOwner: This modifier restricts access to certain functions to only the owner of the Proxy contract. The owner is identified by comparing msg.sender (the address that initiated the current call) with the master address. If they match, the function execution continues (_; indicates the rest of the function body should execute). If not, the transaction is reverted with a failure message.
+
+3. Function:
+    function masterCopy(address _master) external onlyOwner: This function allows the owner of the Proxy contract to change the master contract address. It is marked as external, meaning it can be called from outside the contract, and it uses the onlyOwner modifier to ensure only the owner can execute it.
+
+4. Assembly Block:
+    Inside the masterCopy function, an assembly block is used to perform lowlevel operations:
+      calldatacopy(0, 0, calldatasize()): This instruction copies the entire calldata (the input data of the current function call) to memory, starting at position 0. This is necessary because the delegatecall instruction requires the calldata to be in memory.
+      let success := delegatecall(not(0), _master, 0, calldatasize, 0, 0): This instruction performs a delegatecall to the new master contract address (_master). The delegatecall is a special type of call in Ethereum that executes the code of the target contract (_master) in the context of the calling contract (Proxy). The parameters for delegatecall include the gas limit (not(0) which is equivalent to 1, meaning all available gas), the target address, and the memory regions for input and output data.
+      returndatacopy(0, 0, returndatasize): This instruction copies the return data from the delegatecall back into memory, starting at position 0. This is necessary to forward the result of the delegatecall back to the caller of the Proxy contract.
+
+This Proxy contract design is commonly used in upgradable contract patterns, where the logic of the contract can be updated by changing the master contract address, while keeping the state (stored in the Proxy contract) intact. The use of delegatecall ensures that the state of the Proxy contract is used in the execution of the master contract's code, effectively allowing the Proxy to "borrow" the functionality of the master contract.

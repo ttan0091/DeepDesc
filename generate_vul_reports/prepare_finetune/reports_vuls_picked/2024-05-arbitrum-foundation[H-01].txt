@@ -1,0 +1,32 @@
+Type of vulnerability: Denial of Service (DoS) through Insolvency
+Cause of vulnerability: Inadequate staking mechanism and stake management
+Execution process:
+1. Initial stake requirement set to 1000 ETH.
+2. Admin updates the required stake to 700 ETH.
+3. Alice makes an invalid assertion F, staking 1000 ETH.
+4. Alice creates a child assertion G, requiring only 700 ETH.
+5. Alice manipulates Bob to stake 700 ETH for assertion G.
+6. Alice withdraws her stake, leaving the contract with only 700 ETH.
+7. Honest validator unable to withdraw original stake due to insufficient funds.
+
+Vulnerable code:
+```solidity
+if (!getAssertionStorage(newAssertionHash).isFirstChild) {
+    // only 1 of the children can be confirmed and get their stake refunded
+    // so we send the other children's stake to the loserStakeEscrow
+    IERC20(stakeToken).safeTransfer(loserStakeEscrow, assertion.beforeStateData.configData.requiredStake);
+}
+
+require(amountStaked(msg.sender) >= assertion.beforeStateData.configData.requiredStake, "INSUFFICIENT_STAKE");
+
+function requireInactiveStaker(address stakerAddress) internal view {
+    require(isStaked(stakerAddress), "NOT_STAKED");
+    // A staker is inactive if
+    // a) their last staked assertion is the latest confirmed assertion
+    // b) their last staked assertion have a child
+    bytes32 lastestAssertion = latestStakedAssertion(stakerAddress);
+    bool isLatestConfirmed = lastestAssertion == latestConfirmed();
+    bool haveChild = getAssertionStorage(lastestAssertion).firstChildBlock > 0;
+    require(isLatestConfirmed || haveChild, "STAKE_ACTIVE");
+}
+```

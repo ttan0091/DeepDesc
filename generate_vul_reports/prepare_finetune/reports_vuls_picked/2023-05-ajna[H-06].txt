@@ -1,0 +1,15 @@
+Type of vulnerability: Incomplete logic in contract interaction
+Cause of vulnerability: Lack of synchronization between PositionManager and RewardsManager regarding bucket bankruptcy status
+Execution process: A lender calls `PositionManager.memorializePositions`, which zeros out the previous tracked LP if the bucket is bankrupt. However, this does not check if the lender has claimed their rewards, leading to loss of unclaimed rewards.
+Vulnerable code: 
+```solidity
+// check for previous deposits
+if (position.depositTime != 0) {
+    // check that bucket didn't go bankrupt after prior memorialization
+    if (_bucketBankruptAfterDeposit(pool, index, position.depositTime)) {
+        // if bucket did go bankrupt, zero out the LP tracked by position manager
+        position.lps = 0;
+    }
+}
+```
+[Source](https://github.com/code-423n4/2023-05-ajna/blob/main/ajna-core/src/PositionManager.sol#L192-L199)

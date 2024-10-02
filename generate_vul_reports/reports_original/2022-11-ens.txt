@@ -1,0 +1,60 @@
+[H-01]PARENT_CANNOT_CONTROLandCANNOT_CREATE_SUBDOMAINfuses can be bypassed
+Submitted byizhuer
+The fuse constraints can be violated by a malicious owner of the parent node (i.e., the hacker). There are two specific consequences the hacker can cause.
+Suppose the subnode has been assigned to a victim user, the hacker can re-claim him as the owner of the subnode even if thePARENT_CANNOT_CONTROLof the subnode has been burnt.Suppose the owner of the subnode remains to be the hacker, he can create sub-subnode even if theCANNOT_CREATE_SUBDOMAINof the subnode has been burnt.
+Basically, ENS NameWrapper uses the following rules to prevent all previous C4 hacks (note that I will assume the audience has some background regarding the ENS codebase).
+ThePARENT_CANNOT_CONTROLfuse of a subnode can be burnt if and only if theCANNOT_UNWRAPfuse of its parent has already been burnt.TheCANNOT_UNWRAPfuse of a subnode can be burnt if and only if itsPARENT_CANNOT_CONTROLfuse has already been burnt.
+However, such guarantees would only get effective when theCANNOT_UNWRAPfuse of the subject node is burnt.
+Considering the following scenario.
+sub1.eth(the ETH2LD node) is registered and wrapped to the hacker -the ENS registry owner, i.e.,ens.owner, ofsub1.ethis the NameWrapper contract.sub2.sub1.ethis created with no fuses burnt, where the wrapper owner is still the hacker -the ENS registry owner ofsub2.sub1.ethis the NameWrapper contract.sub3.sub2.sub1.ethis created with no fuses burnt and owned by a victim user -the ENS registry owner ofsub3.sub2.sub1.ethis the NameWrapper contract.the hacker unwrapssub2.sub1.eth-the ENS registry owner ofsub2.sub1.ethbecomes the hacker.via ENS registry, the hacker claims himself as the ENS registry owner ofsub3.sub2.sub1.eth. Note that thesub3.sub2.sub1.ethin the NameWrapper contract remains valid till now -the ENS registry owner ofsub3.sub2.sub1.ethis the hacker.the hacker wrapssub2.sub1.eth-the ENS registry owner ofsub2.sub1.ethbecomes the NameWrapper contract.the hacker burns thePARENT_CANNOT_CONTROLandCANNOT_UNWRAPfuses ofsub2.sub1.eth.the hacker burns thePARENT_CANNOT_CONTROL,CANNOT_UNWRAP, andCANNOT_CREATE_SUBDOMAINfuses ofsub3.sub2.sub1.eth.Note that the current ENS registry owner ofsub3.sub2.sub1.ethremains to be the hacker
+At this stage, things went wrong.
+Again, currently thesub3.sub2.sub1.ethis valid in NameWrapper w/PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_CREATE_SUBDOMAINburnt, but the ENS registry owner ofsub3.sub2.sub1.ethis the hacker.
+The hacker can:
+invokeNameWrapper::wrapto wrapsub3.sub2.sub1.eth, and re-claim himself as the owner ofsub3.sub2.sub1.ethin NameWrapper.invokeENSRegistry::setSubnodeRecordto createsub4.sub3.sub2.sub1.ethand wrap it accordingly, violatingCANNOT_CREATE_SUBDOMAIN
+Proof of Concept
+Thepoc_ens.jsfile (included inwarden’s original submission) demonstrates the above hack, via 6 different attack paths.
+To validate the PoC, put the file in./test/wrapperand runnpx hardhat test test/wrapper/poc_ens.js
+Recommended Mitigation Steps
+TheNameWrapper.solfile (included inwarden’s original submission) demonstrates the patch.
+In short, we try to guarantee only fuses ofwrappednodes can be burnt.
+Alex the Entreprenerd (judge) commented:
+Will need to test POC but looks valid.
+jefflau (ENS) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how to sidestep fuses burned to effectively steal nodes.
+Via wrapping, by leveraging a lack of checks, the warden was able to gain access to nodes which belong to other accounts.Because this finding:Shows broken invariants (sidestepped fuses)Was shown to allow stealing of child-nodesI agree with High Severity.
+izhuer (warden) commented:
+Specifically, the PR proposedherelooks good to me. It ensures that, if a given node has some fuses to burn,ens.owner(node) == address(NameWrapper)must be sanctified.However, I also observe that there is a newPRproposing a refactoring regardingSetSubnodeOwner. I may need to check this further since the logic seems to change quite a bit.
+izhuer (warden) commented:
+With regard to the test, maybe we can integrate the PoC (w/ slight modification) into test cases? So that it makes sure that any future refactoring would not break the security guarantee.
+izhuer (warden) commented:
+Made some comments in therefactoring RP. It seems not 100% safe and I may still need more time to review it.
+csanuragjain (warden) commented:
+It is now ensured that child fuses can only be burned if node is wrapped ie ens.owner(node) == address(NameWrapper).if (!isWrapped(node)) {ens.setSubnodeOwner(parentNode, labelhash, address(this));_wrap(node, name, owner, fuses, expiry);} else {_updateName(parentNode, node, label, owner, fuses, expiry);}
+
+[H-02] During the deprecation period where both .eth registrar controllers are active, a crafted hack can be launched and cause the same malicious consequences of [H-01] even if [H-01] is properly fixed
+Submitted byizhuer
+Specifically, according to thedocumentation, there will be a deprecation period that two types of .eth registrar controllers are active.
+Names can be registered as normal using the current .eth registrar controller. However, the new .eth registrar controller will be a controller on the NameWrapper, and have NameWrapper will be a controller on the .eth base registrar.
+Both .eth registrar controllers will be active during a deprecation period, giving time for front-end clients to switch their code to point at the new and improved .eth registrar controller.
+The current .eth registrar controller can directly register ETH2LD and send to the user, while the new one will automatically wrap the registered ETH2LD.
+If the two .eth registrar controllers are both active, an ETH2LD node can beimplicitlyunwrapped while the NameWrapper owner remains to be the hacker.
+Note that this hack can easily bypass the patch of [H-01].
+Considering the following situtation.
+the hacker registered and wrapped an ETH2LD nodesub1.eth, withPARENT_CANNOT_CONTROL | CANNOT_UNWRAPburnt. The ETH2LD will be expired shortly and can be re-registred within the aformentioned deprecation period.aftersub1.ethis expired, the hacker uses the current .eth registrar controller to registersub1.ethto himself.at this step, thesub1.ethis implicitly unwrapped.the hacker owns the registrar ERC721 as well as the one of ENS registry forsub1.eth.however,sub1.ethin NameWrapper remains valid.he setsEnsRegistry.ownerofsub1.ethas NameWrapper.note thatthis is to bypass the proposed patch for [H-01].he wrapssub2.sub1.ethwithPARENT_CANNOT_CONTROL | CANNOT_UNWRAPand trafers it to a victim user.he usesBaseRegistrar::reclaimto become theEnsRegistry.ownerofsub1.ethat this step, the hack can be launched as[H-01]does.
+For example,
+he can first invokesEnsRegistry::setSubnodeOwnerto become the owner ofsub2.sub1.ethhe then invokesNameWrapper::wrapto wrapsub2.sub1.ethto re-claim as the owner.
+Note that it does not mean the impact of the above hack is limited in the deprecation period.
+What the hacker needs to do is to re-registerssub1.ethvia the old .eth registrar controller (in the deprecation period). He can then launch the attack any time he wants.
+Proof of Concept
+it('Attack happens within the deprecation period where both .eth registrar controllers are active',async()=>{awaitNameWrapper.registerAndWrapETH2LD(label1,hacker,1*DAY,EMPTY_ADDRESS,CANNOT_UNWRAP)// wait the ETH2LD expired and re-register to the hacker himselfawaitevm.advanceTime(GRACE_PERIOD+1*DAY+1)awaitevm.mine()// XXX: note that at this step, the hackler should use the current .eth// registrar to directly register `sub1.eth` to himself, without wrapping// the name.awaitBaseRegistrar.register(labelHash1,hacker,10*DAY)expect(awaitEnsRegistry.owner(wrappedTokenId1)).to.equal(hacker)expect(awaitBaseRegistrar.ownerOf(labelHash1)).to.equal(hacker)// set `EnsRegistry.owner` as NameWrapper. Note that this step is used to// bypass the newly-introduced checks for [H-01]//// XXX: corrently, `sub1.eth` becomes a normal nodeawaitEnsRegistryH.setOwner(wrappedTokenId1,NameWrapper.address)// create `sub2.sub1.eth` to the victim user with `PARENT_CANNOT_CONTROL`// burnt.awaitNameWrapperH.setSubnodeOwner(wrappedTokenId1,label2,account2,PARENT_CANNOT_CONTROL|CANNOT_UNWRAP,MAX_EXPIRY)expect(awaitNameWrapper.ownerOf(wrappedTokenId2)).to.equal(account2)// XXX: reclaim the `EnsRegistry.owner` of `sub1.eth` as the hackerawaitBaseRegistrarH.reclaim(labelHash1,hacker)expect(awaitEnsRegistry.owner(wrappedTokenId1)).to.equal(hacker)expect(awaitBaseRegistrar.ownerOf(labelHash1)).to.equal(hacker)// reset the `EnsRegistry.owner` of `sub2.sub1.eth` as the hackerawaitEnsRegistryH.setSubnodeOwner(wrappedTokenId1,labelHash2,hacker)expect(awaitEnsRegistry.owner(wrappedTokenId2)).to.equal(hacker)// wrap `sub2.sub1.eth` to re-claim as the ownerawaitEnsRegistryH.setApprovalForAll(NameWrapper.address,true)awaitNameWrapperH.wrap(encodeName('sub2.sub1.eth'),hacker,EMPTY_ADDRESS)expect(awaitNameWrapper.ownerOf(wrappedTokenId2)).to.equal(hacker)})
+Recommended Mitigation Steps
+May need to discuss with ENS team. A naive patch is to check whther a given ETH2LD node is indeed wrapped every time we operate it. However, it is not gas-friendly.
+jefflau (ENS) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, because of the migration period, with two controller registrar being active at the same time, a malicious attacker could claim sub-nodes that belong to other people.In contrast to an external requirement that is vague, the Sponsor has made it clear that a similar setup will happen in reality, and because of the impact, I agree with a High Severity.It may be worth exploring a “Migration Registry”, which maps out which name was migrated, while allowing migration to move only in one way.
+izhuer (warden) commented:
+The correspondingpatchlooks valid.I was trying to find a more gas-efficient (w/o tricky code) mitigation patch but did not get lucky yet. I will let Sponsor know here if I figure it out.
+csanuragjain (warden) commented:
+Looks good to me.For expired node, if registrar owner is not NameWrapper then owner is nullified and becomes address(0)if(registrarExpiry > block.timestamp &&registrar.ownerOf(uint256(labelHash)) != address(this)) {owner = address(0);}
+

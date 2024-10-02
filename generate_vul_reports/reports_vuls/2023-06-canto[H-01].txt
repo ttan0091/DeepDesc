@@ -1,0 +1,19 @@
+[H-01] Pre-defined limit is different from the spec
+Submitted bysces60107, also found byFranfran,Team_FliBit,dontonka,Lirios, and3docSec
+https://github.com/code-423n4/2023-06-canto/blob/main/Canto/x/coinswap/keeper/swap.go#L212https://github.com/code-423n4/2023-06-canto/blob/main/Canto/x/coinswap/types/params.go#L34
+Impact
+In the spec, the pre-defined limit of ETH is 0.01 ETHs. But the actual limit in the code is not 0.01 ETH which could result in misleading.
+Proof of Concept
+In the spec, it said that the pre-defined limit of ETH is 0.01 ETHs.https://github.com/code-423n4/2023-06-canto/blob/main/README.md#swap
+For risk management purposes, a swap will fail if the input coin amount exceeds a pre-defined limit (10 USDC, 10 USDT, 0.01 ETH) or if the swap amount limit is not defined.
+But inx/coinswap/types/params.go, the actual limit of ETH is 1*10e17 which is 0.1 ETH.
+// Parameter store keysvar(KeyFee= []byte("Fee")// fee keyKeyPoolCreationFee= []byte("PoolCreationFee")// fee keyKeyTaxRate= []byte("TaxRate")// fee keyKeyStandardDenom= []byte("StandardDenom")// standard token denom keyKeyMaxStandardCoinPerPool= []byte("MaxStandardCoinPerPool")// max standard coin amount per poolKeyMaxSwapAmount= []byte("MaxSwapAmount")// whitelisted denomsDefaultFee=sdk.NewDecWithPrec(0,0)DefaultPoolCreationFee=sdk.NewInt64Coin(sdk.DefaultBondDenom,0)DefaultTaxRate=sdk.NewDecWithPrec(0,0)DefaultMaxStandardCoinPerPool=sdk.NewIntWithDecimal(10000,18)DefaultMaxSwapAmount=sdk.NewCoins(sdk.NewCoin(UsdcIBCDenom,sdk.NewIntWithDecimal(10,6)),sdk.NewCoin(UsdtIBCDenom,sdk.NewIntWithDecimal(10,6)),sdk.NewCoin(EthIBCDenom,sdk.NewIntWithDecimal(1,17)),))
+The limit is used inswap.GetMaximumSwapAmount. Wrong could harm the risk management.https://github.com/code-423n4/2023-06-canto/blob/main/Canto/x/coinswap/keeper/swap.go#L212
+func(kKeeper)GetMaximumSwapAmount(ctxsdk.Context,denomstring) (sdk.Coin,error) {params :=k.GetParams(ctx)for_, coin :=rangeparams.MaxSwapAmount{ifcoin.Denom==denom{returncoin,nil}}returnsdk.Coin{},sdkerrors.Wrap(types.ErrInvalidDenom,fmt.Sprintf("invalid denom: %s, denom is not whitelisted",denom))}
+Recommended Mitigation Steps
+0.01 ETH should besdk.NewIntWithDecimal(1, 16).
+Assessed type
+Error
+0xean (judge) increased severity to High
+tkkwon1998 (Canto) confirmed and commented on duplicate issue 8:
+Agreed, this issue is valid as limit is 10x higher than it should be. Although losses are still minimal (0.1 eth at most), I agree with high risk since funds can be lost if pools are manipulated.

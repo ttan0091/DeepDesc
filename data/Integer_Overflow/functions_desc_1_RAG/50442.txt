@@ -1,0 +1,57 @@
+The code provided consists of two main components: a library named SafeMath and a contract named GameCell. Below, I will provide a detailed explanation of each part and how they work together.
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        uint256 c = a + b;
+        assert(c >= a);
+        return c;
+    }
+}
+
+
+This code defines a library named SafeMath which contains a single function add. The purpose of this library is to provide safe arithmetic operations that prevent overflow and underflow errors, which are common vulnerabilities in smart contracts.
+
+ Function add: This function takes two unsigned integers a and b as inputs and returns their sum. It performs the addition operation and stores the result in variable c.
+ Assertion: The assert(c >= a) statement ensures that the result c is greater than or equal to a, which implies that no overflow occurred during the addition. If an overflow had occurred, the assertion would fail, causing the function to revert the transaction.
+
+### GameCell Contract
+
+solidity
+contract GameCell {
+  using SafeMath for uint;
+  mapping(address => TimeLock[2]) public allocations;
+
+  struct TimeLock {
+      uint256 releaseTime;
+      uint256 balance;
+  }
+  uint total_lockamount = 100;
+  uint total_unlockamount = 100;
+
+  function subAllocation(address sender) private {
+      if (allocations[sender][0].releaseTime < block.timestamp) {
+          total_unlockamount = total_unlockamount.add(allocations[sender][0].balance);
+      }
+      else {
+          total_lockamount = total_lockamount.add(allocations[sender][1].balance);
+      }
+  }
+}
+
+
+This contract named GameCell uses the SafeMath library for safe arithmetic operations. It includes a mapping allocations that associates an address with an array of two TimeLock structures. Each TimeLock structure contains a releaseTime and a balance.
+
+ Struct TimeLock: This structure defines two fields: releaseTime (the time when the balance can be released) and balance (the amount of tokens locked).
+ Mapping allocations: This mapping associates each address with an array of two TimeLock structures. This could be used to manage different types of locks or stages for each address.
+ Variables total_lockamount and total_unlockamount: These variables keep track of the total locked and unlocked amounts, initialized to 100 each.
+
+ Function subAllocation: This private function takes an address as input and updates the total_unlockamount or total_lockamount based on the releaseTime of the TimeLock structures associated with the sender's address.
+   Condition Check: The function checks if the releaseTime of the first TimeLock structure is less than the current block timestamp (block.timestamp). If true, it means the balance can be unlocked, so it adds the balance to total_unlockamount using the add function from the SafeMath library.
+   Else Block: If the condition is false, it adds the balance of the second TimeLock structure to total_lockamount.
+
+### Summary
+
+The SafeMath library ensures safe arithmetic operations in the GameCell contract, preventing overflow errors. The GameCell contract manages token allocations with time locks, updating the total locked and unlocked amounts based on the release times of the allocations. The subAllocation function is used to adjust these totals based on the current block timestamp and the release times of the allocations associated with a given address.

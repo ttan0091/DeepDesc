@@ -1,0 +1,58 @@
+This code defines a smart contract named PRNG_Challenge, which includes a function to determine a winner based on a pseudorandom number generation process. Here’s a detailed explanation of how this contract works:
+
+### Contract Variables
+1. lucky_number: A public constant uint256 variable set to a specific large number. This number is used as a target in the challenge function to determine if a participant has won.
+2. winner: A public address variable that stores the address of the winner. Initially, this will be the zero address.
+
+### Function: challenge()
+This function is marked as private, meaning it can only be called from within the contract itself.
+
+1. Participant Identification:
+   solidity
+   address participant = msg.sender;
+   
+   This line captures the address of the participant who called the function.
+
+2. Initialization of shift_32:
+   solidity
+   uint64 shift_32 = uint64(4294967296);
+   
+   This initializes a uint64 variable shift_32 with the value \(2^{32}\).
+
+3. Generation of hash32:
+   solidity
+   uint32 hash32 = uint32(sha3(msg.value, participant, participant.balance, block.blockhash(block.number1), block.timestamp, block.number));
+   
+   This line generates a 32bit hash (hash32) using the SHA3 hashing algorithm. The input to the hash function includes:
+    msg.value: The amount of ether sent with the transaction.
+    participant: The address of the participant.
+    participant.balance: The balance of the participant's account.
+    block.blockhash(block.number1): The hash of the previous block.
+    block.timestamp: The timestamp of the current block.
+    block.number: The current block number.
+
+4. Generation of hash64:
+   solidity
+   uint64 hash64 = uint64(hash32)  shift_32 + uint32(sha3(hash32));
+   
+   This line combines the 32bit hash (hash32) with another 32bit hash generated from hash32 to create a 64bit hash (hash64).
+
+5. Comparison and Winner Determination:
+   solidity
+   if (hash64 == lucky_number) {
+       if (!participant.send(this.balance)) throw;
+       winner = participant;
+   }
+   
+   This block checks if the generated hash64 matches the lucky_number. If they match:
+    The contract sends its entire balance to the participant.
+    The participant's address is set as the winner.
+
+6. Return Statement:
+   solidity
+   return;
+   
+   This ends the function execution.
+
+### Summary
+The challenge() function attempts to determine a winner by generating a 64bit hash from various blockchain and transaction data. If this hash matches the predefined lucky_number, the participant wins and receives the contract's balance. This contract uses a combination of block data and transaction data to generate a pseudorandom number, which is then compared to a fixed number to determine the winner.

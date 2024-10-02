@@ -1,0 +1,27 @@
+Type of vulnerability: Reentrancy and Logic Flaw
+
+Cause of vulnerability: Lack of proper validation and checks on parameters passed to the `removeCollateral` function, allowing an attacker to manipulate the execution flow and steal the balance of the TOFT contract.
+
+Execution process:
+1. An attacker deploys a malicious contract that implements the `IMarket` interface.
+2. The attacker invokes the `removeCollateral` function from any chain to the chain where the underlying balance resides.
+3. The malicious contract is passed as `removeParams.market` and `removeParams.marketHelper`.
+4. The `withdrawParams.withdrawLzFeeAmount` is set to match the balance of the TOFT.
+5. The `withdrawToChain` function is called, transferring all the balance of the TOFT to the attacker's contract.
+
+Vulnerable code:
+```solidity
+function remove(bytes memory _payload) public {
+    (,, address to,, ITapiocaOFT.IRemoveParams memory removeParams, ICommonData.IWithdrawParams memory withdrawParams, ICommonData.IApproval[] memory approvals) = abi.decode(_payload, (uint16, address, address, bytes32, ITapiocaOFT.IRemoveParams, ICommonData.IWithdrawParams, ICommonData.IApproval[]));
+    if(approvals.length > 0) {
+        _callApproval(approvals);
+    }
+    approve(removeParams.market, removeParams.share);
+    IMarket(removeParams.market).removeCollateral(to, to, removeParams.share);
+    if(withdrawParams.withdraw) {
+        address ybAddress = IMarket(removeParams.market).yieldBox();
+        uint256 assetId = IMarket(removeParams.market).collateralId();
+        IMagnetar(removeParams.marketHelper).withdrawToChain{value: withdrawParams.withdrawLzFeeAmount}(ybAddress, to, assetId, withdrawParams.withdrawLzChainId, LzLib.addressToBytes32(to), IYieldBoxBase(ybAddress).toAmount(assetId, removeParams.share, false), removeParams.share, withdrawParams.withdrawAdapterParams, payable(to), withdrawParams.withdrawLzFeeAmount);
+    }
+}
+```

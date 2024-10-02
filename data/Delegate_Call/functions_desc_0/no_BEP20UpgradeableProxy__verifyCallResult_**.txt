@@ -1,0 +1,26 @@
+This code defines a private pure function named _verifyCallResult, which is designed to handle the results of external function calls in Solidity smart contracts. The function takes three parameters: a boolean success indicating whether the call was successful, a bytes memory returndata containing the data returned by the call, and a string memory errorMessage which is used to provide a custom error message in case the call fails.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    bool success: This boolean indicates whether the external call was successful.
+    bytes memory returndata: This contains the data returned by the external call if it was successful.
+    string memory errorMessage: This is a custom error message that can be specified to be used if the call fails.
+
+2. Function Logic:
+    The function first checks the success parameter. If success is true, it simply returns the returndata as the external call was successful and there is no need to handle any errors.
+    If success is false, indicating that the call failed, the function proceeds to handle the error:
+      It first checks if the length of returndata is greater than 0. If it is, this means that the external call failed and provided a revert reason in the form of data. The function then uses inline assembly to handle this revert reason:
+        let returndata_size := mload(returndata): This line loads the size of the returndata into returndata_size.
+        revert(add(32, returndata), returndata_size): This line reverts the transaction and bubbles up the revert reason contained in returndata. The add(32, returndata) part is used to correctly offset the pointer to the start of the actual data in returndata (since the first 32 bytes contain the length of the data).
+      If returndata is empty, indicating that no specific revert reason was provided, the function simply reverts with the custom errorMessage provided.
+
+3. Use of Inline Assembly:
+    The use of inline assembly (assembly { ... }) allows for lowlevel operations that are not directly accessible through Solidity. In this case, it is used to handle the revert reason more efficiently and directly.
+
+4. Function Return:
+    If the call was successful (success is true), the function returns the returndata.
+    If the call failed and a revert reason was provided, the function reverts with this reason.
+    If the call failed but no revert reason was provided, the function reverts with the custom errorMessage.
+
+This function is particularly useful in scenarios where a smart contract needs to make external calls and handle potential failures gracefully, providing meaningful error messages or bubbling up revert reasons to the caller.

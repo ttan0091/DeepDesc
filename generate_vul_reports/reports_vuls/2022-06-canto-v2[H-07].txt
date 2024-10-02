@@ -1,0 +1,13 @@
+[H-07] Deny of service inAccountantDelegate.sweepInterest
+Submitted by 0x1f8b, also found by Critical
+https://github.dev/Plex-Engineer/lending-market-v2/blob/2646a7676b721db8a7754bf5503dcd712eab2f8a/contracts/Accountant/AccountantDelegate.sol#L101
+ThesweepInterestmethod is susceptible to denial of service.
+Proof of Concept
+The logic of thesweepInterestmethod relative to thetreasuryis as follows:
+boolsuccess=cnote.transfer(treasury,amtToSweep);if(!success) {revertSweepError(treasury,amtToSweep); }TreasuryInterfaceTreas=TreasuryInterface(treasury);Treas.redeem(address(cnote),amtToSweep);require(cnote.balanceOf(treasury) ==0,"AccountantDelegate::sweepInterestError");
+As you can see,amtToSweepis passed to it andredeemthat amount. Later it is checked that the balance ofcnotein thetreasuryaddress must be 0. However, all calculations related toamtToSweepcome out of the balance ofaddress(this)so if a third party sends a single tokencnoteto the address oftreasurythe method will be denied.
+Recommended Mitigation Steps
+Check that the balance is the same after and before thebool success = cnote.transfer(treasury, amtToSweep);
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to an incorrect invariant (treasury having zero cNote), any griefer can permanently brick thesweepInterestfunction.The finding shows how a loss of yield can be achieved, so Medium Severity would be in order.However, because:an invariant was brokenthe tokens cannot be withdrawn via an alternative methodI believe High Severity to be more appropriate.

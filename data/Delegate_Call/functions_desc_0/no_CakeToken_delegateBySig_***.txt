@@ -1,0 +1,47 @@
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signed message. This function is commonly used in token contracts that support governance, where token holders can delegate their voting power to other addresses without having to transfer their tokens.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    delegatee: The address to which the voting rights will be delegated.
+    nonce: A unique value associated with the signatory's address, used to prevent replay attacks.
+    expiry: The timestamp after which the signature is no longer valid.
+    v, r, s: The components of the ECDSA signature.
+
+2. Domain Separator:
+    The function first computes a domainSeparator using the keccak256 hash function. This separator is derived from:
+      DOMAIN_TYPEHASH: A constant that defines the domain type.
+      keccak256(bytes(name())): The hash of the contract's name.
+      getChainId(): The ID of the blockchain network.
+      address(this): The address of the contract itself.
+    The purpose of the domain separator is to prevent crosschain replay attacks and to ensure that the signature is specific to this contract and this chain.
+
+3. Struct Hash:
+    Next, the function computes a structHash using the keccak256 hash function. This hash is derived from:
+      DELEGATION_TYPEHASH: A constant that defines the delegation type.
+      delegatee: The address being delegated to.
+      nonce: The nonce value.
+      expiry: The expiry timestamp.
+    The struct hash represents the specific delegation action being taken.
+
+4. Digest Calculation:
+    The function then computes a digest using the keccak256 hash function. This digest is derived from:
+      The prefix "\x19\x01", which is a standard prefix for EIP712 typed data signatures.
+      The domainSeparator.
+      The structHash.
+    The digest is the final hash that is signed by the user.
+
+5. Signature Recovery:
+    The function uses the ecrecover function to recover the address of the signatory from the digest and the signature components (v, r, s).
+    The recovered address is stored in the variable signatory.
+
+6. Validation Checks:
+    The function checks that the recovered signatory address is not the zero address, indicating an invalid signature.
+    It then checks that the provided nonce matches the current nonce for the signatory and increments the nonce to prevent replay attacks.
+    Finally, it checks that the current timestamp is before the expiry timestamp, ensuring that the signature has not expired.
+
+7. Delegation:
+    If all the validation checks pass, the function calls the internal _delegate function, passing the signatory and the delegatee addresses.
+    The _delegate function will handle the actual delegation of voting rights.
+
+In summary, the delegateBySig function allows a user to delegate their voting rights to another address by providing a signed message that includes the delegatee address, nonce, expiry timestamp, and the signature components. The function validates the signature and ensures that the delegation is valid before executing the delegation action.

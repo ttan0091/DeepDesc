@@ -1,0 +1,32 @@
+Type of vulnerability: Replay Attack / Asset Locking
+
+Cause of vulnerability: The vulnerability arises because the same `seaportPayload.orderHash` can be used multiple times if the offer is set to partial. This results in the same hash being generated for different partial orders, leading to asset locking.
+
+Execution process:
+1. An attacker creates multiple partial orders referring to the same `seaportPayload.orderHash`.
+2. Each partial order results in the same hash, causing the assets to be locked in the attacker's safe.
+3. When the lender tries to stop the rent, it reverts due to the rental status already being removed, leaving the remaining assets locked.
+
+Vulnerable code:
+```solidity
+function _rentFromZone(RentPayload memory payload, SeaportPayload memory seaportPayload) internal {
+    // ...
+    bytes32 orderHash = _deriveRentalOrderHash(order);
+    STORE.addRentals(orderHash, _convertToStatic(rentalAssetUpdates));
+    // ...
+}
+
+function _deriveRentalOrderHash(RentalOrder memory order) internal view returns (bytes32) {
+    // ...
+    return keccak256(abi.encode(_RENTAL_ORDER_TYPEHASH, order.seaportOrderHash, keccak256(abi.encodePacked(itemHashes)), keccak256(abi.encodePacked(hookHashes)), order.orderType, order.lender, order.renter, order.startTimestamp, order.endTimestamp));
+}
+
+function removeRentals(bytes32 orderHash, RentalAssetUpdate[] calldata rentalAssetUpdates) external onlyByProxy permissioned {
+    if (!orders[orderHash]) {
+        revert Errors.StorageModule_OrderDoesNotExist(orderHash);
+    } else {
+        delete orders[orderHash];
+    }
+    // ...
+}
+```

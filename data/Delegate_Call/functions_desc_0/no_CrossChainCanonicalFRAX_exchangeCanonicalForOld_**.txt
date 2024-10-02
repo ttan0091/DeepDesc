@@ -1,0 +1,27 @@
+This code defines an external function named exchangeCanonicalForOld, which is designed to facilitate the exchange of canonical tokens for old tokens through a bridge mechanism. The function takes two parameters: bridge_token_address, which is the address of the bridge token, and token_amount, which is the amount of canonical tokens to be exchanged. The function is marked as nonReentrant to prevent reentrancy attacks and includes a custom modifier validBridgeToken to ensure that the provided bridge token address is valid.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    external: This specifies that the function can only be called from outside the contract.
+    nonReentrant: This modifier is used to prevent reentrancy attacks by ensuring that the function cannot be called again before the current invocation completes.
+    validBridgeToken(bridge_token_address): This custom modifier checks if the provided bridge_token_address is a valid bridge token.
+
+2. Preconditions Check:
+    require(!exchangesPaused && canSwap[bridge_token_address], "Exchanges paused");: This line checks two conditions:
+      !exchangesPaused: Ensures that exchanges are not paused globally.
+      canSwap[bridge_token_address]: Ensures that the specific bridge token is allowed to be swapped.
+    If either condition is not met, the function reverts with the message "Exchanges paused".
+
+3. Burning Canonical Tokens:
+    super._burn(msg.sender, token_amount);: This line calls the _burn function from a parent contract to burn the specified token_amount of canonical tokens from the msg.sender's balance. This ensures that the canonical tokens are removed from circulation.
+
+4. Handling Fees:
+    bridge_tokens_out = token_amount;: Initially, the amount of bridge tokens to be received by the sender is set to the same amount of canonical tokens.
+    if (!_isFeeExempt(msg.sender)) {: This condition checks if the msg.sender is not exempt from fees.
+      bridge_tokens_out = ((bridge_tokens_out  swap_fees[bridge_token_address][1]) / PRICE_PRECISION);: If the sender is not exempt, a fee is deducted from the bridge_tokens_out amount. The fee is calculated based on the swap_fees mapping, which stores the fee rates for each bridge token. The fee is subtracted from bridge_tokens_out to reflect the actual amount of bridge tokens the sender will receive after the fee.
+
+5. Transferring Old Tokens:
+    TransferHelper.safeTransfer(bridge_token_address, msg.sender, bridge_tokens_out);: This line uses a helper function safeTransfer to transfer the calculated bridge_tokens_out amount of old tokens from the bridge token address to the msg.sender. This completes the exchange process by providing the sender with the old tokens.
+
+In summary, the exchangeCanonicalForOld function allows users to exchange their canonical tokens for old tokens through a bridge, subject to certain conditions and fees. The function ensures the integrity of the exchange process by burning the canonical tokens and transferring the appropriate amount of old tokens to the sender, after accounting for any applicable fees.

@@ -1,0 +1,26 @@
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signature instead of directly calling the function. This is particularly useful for scenarios where the user might not be able to interact directly with the contract, such as when using hardware wallets or multisig wallets.
+
+Here’s a detailed explanation of how this function works:
+
+1. Domain Separator Calculation:
+    The function starts by calculating the domainSeparator, which is a hash used to prevent signature reuse across different contracts or chains. This is done using the keccak256 hash function on the encoded data of a predefined type hash (DOMAIN_TYPEHASH), the contract's name (retrieved via name()), the chain ID (retrieved via getChainId()), and the contract's address (address(this)).
+
+2. Struct Hash Calculation:
+    Next, the function calculates the structHash, which is another hash used to uniquely identify the data being signed. This is done using the keccak256 hash function on the encoded data of a predefined type hash (DELEGATION_TYPEHASH), the delegatee's address, the nonce, and the expiry timestamp.
+
+3. Digest Calculation:
+    The digest is then calculated by hashing the EIP712 prefix ("\x19\x01"), the domainSeparator, and the structHash together using abi.encodePacked. This digest is what the user signs to prove their intention to delegate their voting rights.
+
+4. Signature Recovery:
+    The function uses the ecrecover function to recover the address of the signatory from the signature (v, r, s). This address is stored in the variable signatory.
+
+5. Validation Checks:
+    The function then performs several validation checks:
+      It ensures that the recovered signatory address is not the zero address, which would indicate an invalid signature.
+      It checks that the provided nonce matches the current nonce for the signatory and then increments the nonce to prevent replay attacks.
+      It verifies that the current timestamp is less than or equal to the expiry timestamp provided in the signature, ensuring that the signature has not expired.
+
+6. Delegation Execution:
+    If all the validation checks pass, the function calls the internal _delegate function, passing the signatory and the delegatee addresses. This function will handle the actual delegation of voting rights.
+
+Overall, the delegateBySig function leverages EIP712 structured data hashing and signing to securely and efficiently allow users to delegate their voting rights to another address using a signature. This method enhances user experience and security by enabling offchain signature generation and onchain verification.

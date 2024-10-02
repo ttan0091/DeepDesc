@@ -1,0 +1,21 @@
+This code defines a smart contract named ESS, which includes several components to manage token sales and withdrawals. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    address public token: This variable stores the address of the token contract that this ESS contract interacts with. It is publicly accessible, meaning other contracts and external accounts can read its value.
+    mapping (address => uint256) public sold: This mapping keeps track of the amount of tokens sold to each address. The key is the buyer's address, and the value is the amount of tokens sold to that address. It is also publicly accessible.
+    uint256 public pubEnd = 0: This variable indicates the end time of a public sale period. It is initialized to 0, which might imply that the sale period has not started or is not set yet. It is publicly accessible.
+
+2. Function withdrawPUB:
+    This function allows users to withdraw their tokens after the public sale period has ended.
+    Access Modifier: public  This function can be called by any address externally or internally within the contract.
+    Return Type: returns(bool)  The function returns a boolean value indicating whether the token transfer was successful.
+    Function Logic:
+      require(block.timestamp > pubEnd);: This line checks if the current block timestamp is greater than the pubEnd timestamp. If not, the function execution is halted, and all changes made so far are reverted. This ensures that tokens can only be withdrawn after the public sale period has ended.
+      bool result = token.call(bytes4(keccak256("transfer(address,uint256)")), msg.sender, sold[msg.sender]);: This line uses the lowlevel call function to invoke the transfer method of the token contract. The transfer function is identified by its signature (hashed to bytes4), and it is called with the sender's address (msg.sender) and the amount of tokens they are entitled to (sold[msg.sender]). The result of this call (whether it succeeded or failed) is stored in the result variable.
+      return result;: Finally, the function returns the result of the token transfer call.
+
+Security Considerations:
+ The use of call is a lowlevel function that can execute arbitrary code. It is generally safer to use the transfer function directly if the token contract follows the ERC20 standard, as call can expose the contract to reentrancy attacks if not handled properly.
+ The require statement ensures that tokens are only withdrawn after the sale period ends, but it does not prevent multiple withdrawals or handle cases where the token contract might not have enough balance to fulfill the transfer.
+
+This contract provides a basic framework for managing token sales and withdrawals, but it would benefit from additional safeguards and functionality depending on the specific requirements of the token sale.

@@ -1,0 +1,14 @@
+Type of vulnerability: Precision Loss
+Cause of vulnerability: Improper handling of precision loss when converting between the amount of shares and the amount of underlying tokens.
+Execution process: When `IndexTemplate.sol#compensate()` is called internally by `PoolTemplate.sol#resume()`, if the index pool is unable to cover the compensation, the CDS pool is used. The CDS pool transfers corresponding shares instead of underlying tokens, leading to precision loss. This results in the transferred shares being less than the shortage, causing the transaction to revert at `require(underlyingValue(msg.sender) >= _amount)`.
+Vulnerable code: 
+```solidity
+uint256 _shortage;
+if (totalLiquidity() < _amount) {
+    // Insolvency case
+    _shortage = _amount - _value;
+    uint256 _cds = ICDSTemplate(registry.getCDS(address(this))).compensate(_shortage);
+    _compensated = _value + _cds;
+}
+vault.offsetDebt(_compensated, msg.sender);
+```

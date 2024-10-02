@@ -1,0 +1,24 @@
+Type of vulnerability: Improper Precision Handling
+
+Cause of vulnerability: The `roundUp` function in the `PerpetualAtlanticVault` contract imposes a minimum value of `1e6`, which leads to incorrect strike price calculations for PUT options, specifically not ensuring that the strike price is 25% Out-of-The-Money (OTM).
+
+Execution process: 
+1. A user calls the `bond` function in the `RdpxV2Core` contract.
+2. The `calculateBondCost` function is invoked to determine the required `rdpxRequired` and `wethRequired` for minting dpxETH.
+3. Within `calculateBondCost`, the `rdpxPrice` is obtained and used to calculate the strike price as `rdpxPrice - (rdpxPrice / 4)`.
+4. This calculated strike price is then passed to the `roundUp` function of the `PerpetualAtlanticVault` contract.
+5. The `roundUp` function rounds up the strike price to a minimum of `1e6`, regardless of its original value.
+6. This rounded-up strike price is used to calculate the premium for the PUT option, leading to an incorrect and higher premium than intended.
+
+Vulnerable code:
+```solidity
+function roundUp(uint256 _strike) public view returns (uint256 strike) {
+    uint256 remainder = _strike % roundingPrecision;
+    if (remainder == 0) {
+        return _strike;
+    } else {
+        return _strike - remainder + roundingPrecision;
+    }
+}
+```
+This function in the `PerpetualAtlanticVault` contract is responsible for the improper rounding up of the strike price, leading to the vulnerability.

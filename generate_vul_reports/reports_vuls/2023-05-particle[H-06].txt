@@ -1,0 +1,24 @@
+[H-06] Marketplace may callonERC721Received()and create a lien duringbuyNftFromMarket(), creating divergence
+Submitted byminhquanym
+The contract supports a “push-based” NFT supply, where the price and rate are embedded in the data bytes. This way, the lender doesn’t need to additionally approve the NFT, but can just transfer it directly to the contract. However, since the contract also interacts with the marketplace to buy/sell NFT, it has to prevent the issue where the marketplace also sends data bytes, which might tie 1 NFT with 2 different liens and create divergence.
+functiononERC721Received(addressoperator,addressfrom,uint256tokenId,bytescalldatadata)externalreturns(bytes4) {if(data.length==64) {// @audit marketplace is router so the executor contract might not be whitelistedif(registeredMarketplaces[operator]) {/// @dev transfer coming from registeredMarketplaces will go through buyNftFromMarket, where the NFT/// is matched with an existing lien (realize PnL) already. If procceds here, this NFT will be tied/// with two liens, which creates divergence.revertErrors.Unauthorized();}/// @dev MAX_PRICE and MAX_RATE should each be way below bytes32(uint256price,uint256rate) =abi.decode(data, (uint256,uint256));/// @dev the msg sender is the NFT collection (called by safeTransferFrom's _checkOnERC721Received check)_supplyNft(from,msg.sender,tokenId,price,rate);}returnthis.onERC721Received.selector;}
+The contract prevents it by using theregisteredMarketplaces[]mapping, where it records the address of the marketplace. This check is explicitly commented in the codebase.
+However, this is not enough. The protocol plans to integrate with Reservoir’s Router contract, so only the Router address is whitelisted inregisteredMarketplaces[]. But the problem is, the address that transfers the NFT is not the Router, but the specific Executor contract, which is not whitelisted.
+As a result, the marketplace might bypass this check and create a new lien inonERC721Received()during thebuyNftFromMarket()flow, thus making 2 liens track the same NFT.
+Proof of Concept
+Function_execBuyNftFromMarket()does a low-level call to the exchange.
+// execute raw order on registered marketplaceboolsuccess;if(useToken==0) {// use ETH// solhint-disable-next-line avoid-low-level-calls(success, ) =marketplace.call{value:amount}(tradeData);}elseif(useToken==1) {// use WETHweth.deposit{value:amount}();weth.approve(marketplace,amount);// solhint-disable-next-line avoid-low-level-calls(success, ) =marketplace.call(tradeData);}
+The contract calls to Reservoir’s router contract, which then calls to a specific module to execute the buy.
+https://github.com/reservoirprotocol/indexer/blob/6c89d546d3fb98d5eaa505b9943e89bd91f2e8ec/packages/contracts/contracts/router/ReservoirV6_0_1.sol#L50
+function_executeInternal(ExecutionInfocalldataexecutionInfo)internal{addressmodule=executionInfo.module;// Ensure the target is a contractif(!module.isContract()) {revertUnsuccessfulExecution();}(boolsuccess, ) =module.call{value:executionInfo.value}(executionInfo.data);if(!success) {revertUnsuccessfulExecution();}}
+Recommended Mitigation Steps
+Consider adding a flag that indicates the contract is in thebuyNftFromMarket()flow and use it as a check inonERC721Received(). For example:
+_marketBuyFlow=1;_execBuyNftFromMarket(lien.collection,tokenId,amount,useToken,marketplace,tradeData);_marketBuyFlow=0;
+And inonERC721Receive():
+if(data.length==64) {if(_martketBuyFlow) {returnthis.onERC721Received.selector;}}
+Assessed type
+Invalid Validation
+wukong-particle (Particle) confirmed and commented:
+We are considering addingReentrancyGaurdaround all functions that modify the lien (to prevent other issues likehttps://github.com/code-423n4/2023-05-particle-findings/issues/14). Here, we should be able to re-use theReentrancyGaurdvariable to prevent divergence.So something like this:buyNftFromMarket(...) external payable override validateLien(Lien, LienId) nonReentrant {...}inonERC721Received:if (data.length == 64) {if(_status === _ENTERED) {revert Errors.Unauthorized();}}We will need to modify _status to beinternalinstead ofprivatefrom Openzeppelin’s originalReentrancyGaurd.sol.
+wukong-particle (Particle) commented:
+Fixed.

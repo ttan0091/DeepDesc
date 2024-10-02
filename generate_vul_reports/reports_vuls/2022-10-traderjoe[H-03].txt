@@ -1,0 +1,29 @@
+[H-03] Wrong implementation of functionLBPair.setFeeParametercan break the funcionality of LBPair and make user’s tokens locked
+Submitted byKIntern_NA, also found byTrustandKingNFT
+StructFeeParameterscontains 12 fields as follows:
+structFeeParameters{// 144 lowest bits in slotuint16binStep;uint16baseFactor;uint16filterPeriod;uint16decayPeriod;uint16reductionFactor;uint24variableFeeControl;uint16protocolShare;uint24maxVolatilityAccumulated;// 112 highest bits in slotuint24volatilityAccumulated;uint24volatilityReference;uint24indexRef;uint40time;}
+FunctionLBPair.setFeeParamters(bytes _packedFeeParamters)is used to set the first 8 fields which was stored in 144 lowest bits ofLBPair._feeParameter’s slot to 144 lowest bits of_packedFeeParameters(The layout of_packedFeeParameterscan be seenhere).
+/// @notice Internal function to set the fee parameters of the pair/// @param _packedFeeParameters The packed fee parametersfunction_setFeesParameters(bytes32_packedFeeParameters)internal{bytes32_feeStorageSlot;assembly{_feeStorageSlot :=sload(_feeParameters.slot)}/// [#explain]  it will get 112 highest bits of feeStorageSlot,///             and stores it in the 112 lowest bits of _varParametersuint256_varParameters=_feeStorageSlot.decode(type(uint112).max,_OFFSET_VARIABLE_FEE_PARAMETERS/*=144*/);/// [#explain]  get 144 lowest bits of packedFeeParameters///             and stores it in the 144 lowest bits of _newFeeParametersuint256_newFeeParameters=_packedFeeParameters.decode(type(uint144).max,0);assembly{// [$audit-high] wrong operation `or` here//              Mitigate: or(_newFeeParameters, _varParameters << 144)sstore(_feeParameters.slot,or(_newFeeParameters,_varParameters))}}
+As we can see in the implementation ofLBPair._setFeesParametesabove, it gets the 112 highest bits of_feeStorageSlotand stores it in the 112 lowest bits of_varParameter. Then it gets the 144 lowest bits ofpackedFeeParameterand stores it in the 144 lowest bits of_newFeeParameters.
+Following the purpose of functionsetFeeParameters, the newLBPair._feeParametersshould form as follow:
+// keep 112 highest bits remain unchanged// set 144 lowest bits to `_newFeeParameter`[...112 bits...][....144 bits.....][_varParameters][_newFeeParameters]
+It will makefeeParameters = _newFeeParameters | (_varParameters << 144). But current implementation just stores theorvalue of_varParametersand_newFeeParameterinto_feeParameters.slot. It forgot to shift left the_varParameters144 bits before executingoroperation.
+This will make the value ofbinStep, …,maxVolatilityAccumulatedincorrect, and also remove the value (make the bit equal to 0) ofvolatilityAccumulated, …,time.
+Impact
+Incorrect fee calculation when executing an action with LBPair (swap, flashLoan, mint)Break the functionality of LBPair. The user can’t swap/mint/flashLoan
+--> Make all the tokens stuck in the pools
+Proof of concept
+Here is our test script to describe the impacts
+https://gist.github.com/WelToHackerLand/012e44bb85420fb53eb0bbb7f0f13769
+You can place this file into/testfolder and run it using
+forge test --match-contract High1Test -vv
+Explanation of test script:
+First we create a pair withbinStep = DEFAULT_BIN_STEP = 25We do some actions (add liquidity -> mint -> swap) to increase the value ofvolatilityAccumulatedfrom0to60000We call functionfactory.setFeeParametersOnPairto set new fee parameters.After that the value ofvolatilityAccumulatedchanged to value0(It should still be unchanged afterfactory.setFeeParametersOnPair)We check the value ofbinStepand it changed from25to60025binStephas that value becauseline 915setbinStep = uint16(volatilityAccumulated) | binStep = 60000 | 25 = 60025.This change ofbinStepvalue will break all the functionality ofLBPaircausebinStep > Constant.BASIS_POINT_MAX = 10000-->Error: BinStepOverflows
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Modify functionLBPair._setFeesParatersas follow:
+function_setFeesParameters(bytes32_packedFeeParameters)internal{bytes32_feeStorageSlot;assembly{_feeStorageSlot :=sload(_feeParameters.slot)}uint256_varParameters=_feeStorageSlot.decode(type(uint112).max,_OFFSET_VARIABLE_FEE_PARAMETERS);uint256_newFeeParameters=_packedFeeParameters.decode(type(uint144).max,0);assembly{sstore(_feeParameters.slot,or(_newFeeParameters,shl(144,_varParameters)))}}
+0x0Louis (Trader Joe) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to a missing shift, packed settings forfeeParameterswill be improperly stored, causing undefined behaviour.The mistake can be trivially fixed and the above code offers a test case for remediation.Because the finding impacts the protocol functionality, despite it’s perceived simplicity, I agree with High Severity as the code is not working as intended in a fundamental way.

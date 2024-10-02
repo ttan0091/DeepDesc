@@ -1,0 +1,22 @@
+Type of vulnerability: Incorrect Index Usage
+Cause of vulnerability: The function `_claimRewardsOn` uses the wrong index (`i`) instead of the correct index (`claimableIndex`) to access the amounts array.
+Execution process: When `twTAP.claimAndSendRewards()` is called, it incorrectly claims rewards using the index `i` instead of `claimableIndex`, leading to incorrect amounts being claimed for each reward token.
+Vulnerable code: 
+```solidity
+function _claimRewardsOn(uint256 _tokenId, address _to, IERC20[] memory _rewardTokens) internal {
+    uint256[] memory amounts = claimable(_tokenId);
+    unchecked {
+        uint256 len = _rewardTokens.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 claimableIndex = rewardTokenIndex[_rewardTokens[i]];
+            uint256 amount = amounts[i]; // Vulnerable line: should use claimableIndex instead of i
+            if (amount > 0) {
+                // Math is safe: `amount` calculated safely in `claimable()`
+                claimed[_tokenId][claimableIndex] += amount;
+                rewardTokens[claimableIndex].safeTransfer(_to, amount);
+            }
+            ++i;
+        }
+    }
+}
+```

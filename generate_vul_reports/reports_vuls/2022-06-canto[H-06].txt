@@ -1,0 +1,17 @@
+[H-06] Accountant can’t be initialized
+Submitted by Ruhum, also found by cccz
+It’s not possible to initialize the accountant because of a mistake in the function’s require statement.
+I rate it as MED since a key part of the protocol wouldn’t be available until the contract is modified and redeployed.
+Proof of Concept
+The issue is the followingrequire()statement:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Accountant/AccountantDelegate.sol#L29
+There, the function checks whether the accountant has received the correct amount of tokens. But, it compares the accountant’s balance with the_initialSupply. That value is always 0. So the require statement will always fail
+When the Note contract is initialized,_initialSupplyis set to 0:
+https://github.com/Plex-Engineer/lending-market/blob/main/deploy/canto/004_deploy_Note.ts#L14https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Note.sol#L9https://github.com/Plex-Engineer/lending-market/blob/main/contracts/ERC20.sol#L32
+After_mint_to_Accountant()mintstype(uint).maxtokens to the accountant:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/Note.sol#L18That increases thetotalSupplybut not the_initialSupply:https://github.com/Plex-Engineer/lending-market/blob/main/contracts/ERC20.sol#L242
+The_initialSupplyvalue is only modified by the ERC20 contract’s constructor.
+Recommended Mitigation Steps
+Change the require statement to
+require(note.balanceOf(msg.sender) ==note.totalSupply(),"AccountantDelegate::initiatlize: Accountant has not received payment");
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has shown how, due to an incorrect assumption,AccountantDelegate.initializecannot work, meaning part of the protocol will never work without fixing this issue.While the change should be fairly trivial, the impact is pretty high, for those reasons am going to raise severity to High.

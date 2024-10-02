@@ -1,0 +1,63 @@
+This code defines an internal function named moveVotingPower, which is designed to transfer voting power between two delegates. Here’s a detailed explanation of how this function works:
+
+### Function Signature
+solidity
+function moveVotingPower(
+    address src,
+    address dst,
+    uint256 amount
+) internal
+
+ Parameters:
+   src: The address of the old delegate from whom the voting power is being transferred.
+   dst: The address of the new delegate to whom the voting power is being transferred.
+   amount: The amount of voting power to be transferred.
+
+### Function Logic
+1. Initial Checks:
+   solidity
+   if (src != dst && amount > 0) {
+   
+    The function first checks if the source (src) and destination (dst) addresses are different and if the amount is greater than zero. This ensures that the transfer is meaningful and not a selftransfer of voting power.
+
+2. Removing Voting Power from the Old Delegate:
+   solidity
+   if (src != address(0)) {
+       (uint256 oldWeight, uint256 newWeight) = writeCheckpoint(
+           _checkpoints[src],
+           subtract,
+           amount
+       );
+       emit DelegateVotesChanged(src, oldWeight, newWeight);
+   }
+   
+    If the source address (src) is not the zero address, the function calls writeCheckpoint to update the voting power of the old delegate. The writeCheckpoint function is expected to subtract the amount from the old delegate's voting power.
+    The function then emits an event DelegateVotesChanged to notify listeners of the change in voting power for the old delegate.
+
+3. Adding Voting Power to the New Delegate:
+   solidity
+   if (dst != address(0)) {
+       (uint256 oldWeight, uint256 newWeight) = writeCheckpoint(
+           _checkpoints[dst],
+           add,
+           amount
+       );
+       emit DelegateVotesChanged(dst, oldWeight, newWeight);
+   }
+   
+    If the destination address (dst) is not the zero address, the function calls writeCheckpoint to update the voting power of the new delegate. The writeCheckpoint function is expected to add the amount to the new delegate's voting power.
+    The function then emits an event DelegateVotesChanged to notify listeners of the change in voting power for the new delegate.
+
+### Additional Notes
+ Checkpoints:
+   The _checkpoints mapping likely stores the voting power history for each delegate, allowing for tracking changes over time.
+   The writeCheckpoint function is responsible for updating these checkpoints. It takes a checkpoint array, an operation (either subtract or add), and an amount as inputs.
+
+ Events:
+   The DelegateVotesChanged event is emitted twice in this function: once for the old delegate and once for the new delegate. This event is crucial for offchain systems to track changes in voting power.
+
+ Security Considerations:
+   The comments referencing Slither issues (e.g., slitherdisablenextline variablescope) indicate that the code has been reviewed for certain vulnerabilities and has been adjusted accordingly. These comments are used to suppress specific warnings from the Slither static analysis tool.
+
+### Summary
+The moveVotingPower function is a critical component for managing voting power delegation in a decentralized system. It ensures that voting power is correctly transferred from one delegate to another, while maintaining a historical record of these changes through checkpoints and emitting events to inform external systems of these updates.

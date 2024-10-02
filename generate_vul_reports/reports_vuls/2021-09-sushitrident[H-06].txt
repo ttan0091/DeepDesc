@@ -1,0 +1,9 @@
+[H-06]IndexPool:  Poor conversion from Balancer V1’s corresponding functions
+Submitted by GreyArt
+Impact
+A number of functions suffer from the erroneous conversion of Balancer V1’s implementation.
+_compute()(equivalent to Balancer’sbpow())if (remain == 0) output = wholePow;when a return statement should be used instead._computeSingleOutGivenPoolIn()(equivalent to Balancer’s_calcSingleOutGivenPoolIn())tokenOutRatioshould be calculated with_compute()instead of_pow()zazshould be calculated with_mul()instead of the native*_pow()(equivalent to Balancer’sbpowi())Missing brackets{}for the for loop causes a different interpretation_mulshould be used instead of the native*
+Recommended Mitigation Steps
+The fixed implementation is provided below.
+function_computeSingleOutGivenPoolIn(uint256tokenOutBalance,uint256tokenOutWeight,uint256_totalSupply,uint256_totalWeight,uint256toBurn,uint256_swapFee)internalpurereturns(uint256amountOut) {uint256normalizedWeight=_div(tokenOutWeight,_totalWeight);uint256newPoolSupply=_totalSupply-toBurn;uint256poolRatio=_div(newPoolSupply,_totalSupply);uint256tokenOutRatio=_compute(poolRatio,_div(BASE,normalizedWeight));uint256newBalanceOut=_mul(tokenOutRatio,tokenOutBalance);uint256tokenAmountOutBeforeSwapFee=tokenOutBalance-newBalanceOut;uint256zaz=_mul(BASE-normalizedWeight,_swapFee);amountOut=_mul(tokenAmountOutBeforeSwapFee, (BASE-zaz));}function_compute(uint256base,uint256exp)internalpurereturns(uint256output) {require(MIN_POW_BASE<=base&&base<=MAX_POW_BASE,"INVALID_BASE");uint256whole= (exp/BASE) *BASE;uint256remain=exp-whole;uint256wholePow=_pow(base,whole/BASE);if(remain==0)returnwholePow;uint256partialResult=_powApprox(base,remain,POW_PRECISION);output=_mul(wholePow,partialResult);}function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2) {a=_mul(a,a);if(n%2!=0)output=_mul(output,a);}}
+maxsam4 (Sushi) acknowledged

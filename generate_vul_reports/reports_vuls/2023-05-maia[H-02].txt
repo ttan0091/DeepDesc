@@ -1,0 +1,18 @@
+[H-02] Use ofslot0to getsqrtPriceLimitX96can lead to price manipulation.
+Submitted byshealtielanz, also found byBreeje,0xStalin,xuwinnie,RED-LOTUS-REACH,0xnev, andkutugu
+InRootBrigdeAgent.sol, the functions_gasSwapOutand_gasSwapInuseUniswapV3.slot0to get the value ofsqrtPriceX96, which is used to perform the swap. However, thesqrtPriceX96is pulled fromUniswap.slot0, which is the most recent data point and can be manipulated easily viaMEVbots andFlashloanswith sandwich attacks; which can cause the loss of funds when interacting with theUniswap.swapfunction.
+Proof of Concept
+You can see the_gasSwapInfunction inRootBrigdeAgent.solhere:
+//Get sqrtPriceX96(uint160sqrtPriceX96,,,,,,) =IUniswapV3Pool(poolAddress).slot0();// Calculate Price limit depending on pre-set price impactuint160exactSqrtPriceImpact= (sqrtPriceX96* (priceImpactPercentage/2)) /GLOBAL_DIVISIONER;//Get limituint160sqrtPriceLimitX96=zeroForOneOnInflow?sqrtPriceX96-exactSqrtPriceImpact:sqrtPriceX96+exactSqrtPriceImpact;//Swap imbalanced token as long as we haven't used the entire amountSpecified and haven't reached the price limittryIUniswapV3Pool(poolAddress).swap(address(this),zeroForOneOnInflow,int256(_amount),sqrtPriceLimitX96,abi.encode(SwapCallbackData({tokenIn:gasTokenGlobalAddress}))
+You can also see the_gasSwapOutfunction inRootBrigdeAgent.solhere.
+(uint160sqrtPriceX96,,,,,,) =IUniswapV3Pool(poolAddress).slot0();// Calculate Price limit depending on pre-set price impactuint160exactSqrtPriceImpact= (sqrtPriceX96* (priceImpactPercentage/2)) /GLOBAL_DIVISIONER;//Get limitsqrtPriceLimitX96=zeroForOneOnInflow?sqrtPriceX96+exactSqrtPriceImpact:sqrtPriceX96-exactSqrtPriceImpact;}//Swap imbalanced token as long as we haven't used the entire amountSpecified and haven't reached the price limit(int256amount0,int256amount1) =IUniswapV3Pool(poolAddress).swap(address(this),!zeroForOneOnInflow,int256(_amount),sqrtPriceLimitX96,abi.encode(SwapCallbackData({tokenIn:address(wrappedNativeToken)})));
+These both use the functionsqrtPriceX96pulled fromUniswap.slot0. An attacker can simply manipulate thesqrtPriceX96and if theUniswap.swapfunction is called with thesqrtPriceX96, the token will be bought at a higher price and the attacker would run the transaction to sell; thereby earning gains but causing a loss of funds to whoever called those functions.
+Recommended Mitigation Steps
+Use theTWAPfunction to get the value ofsqrtPriceX96.
+Assessed type
+MEV
+0xBugsy (Maia) acknowledged, but disagreed with severity
+Trust (judge) commented:
+Due to a risk of material loss of funds and the only condition for abuse is being able to sandwich a TX, high seems appropriate.
+0xBugsy (Maia) confirmed and commented:
+We recognize the audit’s findings on Anycall Gas Management. These will not be rectified due to the upcoming migration of this section to LayerZero.

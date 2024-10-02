@@ -1,0 +1,14 @@
+Type of vulnerability: Incorrect Argument Order in Function Call
+Cause of vulnerability: The positional arguments for the `pool.swap` function are incorrectly used, leading to the wrong amounts being passed for native and foreign assets.
+Execution process: The function `_swap` is called with a 3-path hop intended to swap foreign assets to native assets and then to different foreign assets. However, due to the incorrect argument order, the swap operation fails when the pool check `require(nativeAmountIn = amountIn <= nativeBalance - nativeReserve = 0)` is performed.
+Vulnerable code: 
+```solidity
+function _swap(uint256 amountIn, address[] calldata path, address to) private returns (uint256 amountOut) {
+    if (path.length == 3) {
+        // @audit calls this with nativeAmountIn = amountIn. but should be foreignAmountIn (second arg)
+        return pool1.swap(0, pool0.swap(amountIn, 0, address(pool1)), to);
+    }
+}
+// @audit should be this instead
+return pool1.swap(pool0.swap(0, amountIn, address(pool1)), 0, to);
+```

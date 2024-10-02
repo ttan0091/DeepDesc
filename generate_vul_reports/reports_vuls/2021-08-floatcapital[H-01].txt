@@ -1,0 +1,14 @@
+[H-01] copy paste error in_batchConfirmOutstandingPendingActions
+Submitted by gpersoon, also found by cmichel and shw
+The function_batchConfirmOutstandingPendingActionsofLongShort.solprocesses the variablebatched_amountSyntheticToken_toShiftAwayFrom_marketSide, and sets it to 0 after processing. However, probably due to a copy/paste error, in the second instance, wherebatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false]is processed, the wrong version is set to 0:batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true]= 0
+This means the next time thebatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false]is processed again. As it is never reset, it keeps increasing. The result is that the internal administration will be off and far too many tokens will be shifted tokens from SHORT to LONG.
+LongShort.solL1126
+function_batchConfirmOutstandingPendingActions(..amountForCurrentAction_workingVariable=batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true];batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] =0;...amountForCurrentAction_workingVariable=batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false];batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] =0;// should probably be false)
+Recommend changing the second instance of the following (on line 1207)batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] = 0tobatched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false] = 0
+p.s. confirmed by Jason of Floatcapital: “Yes, that should definitely be false!”
+JasoonS (Float) commented:
+Mitigation- batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][true] = 0+ batched_amountSyntheticToken_toShiftAwayFrom_marketSide[marketIndex][false] = 0
+moose-code (Float) confirmed:
+Good attention to detail. Silly on our part.
+DenhamPreen (Float) patched:
+https://github.com/Float-Capital/monorepo/pull/1087Resolved PR*note this repo is still private

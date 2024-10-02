@@ -1,0 +1,29 @@
+This code defines an internal view function named _msgSender, which is designed to return the address of the sender of the current transaction. This function is particularly useful in scenarios where a contract interacts with trusted forwarders, such as in metatransactions or relayer networks.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    The function _msgSender() is declared as internal and view, meaning it can be accessed within the contract or derived contracts and does not modify the state of the blockchain.
+    It returns a variable of type address named sender.
+
+2. Trusted Forwarder Check:
+    The function first checks if the msg.sender (the immediate caller of the function) is a trusted forwarder by calling the isTrustedForwarder(msg.sender) function. This function presumably checks if the sender is in a list of trusted addresses that are allowed to forward transactions on behalf of other users.
+
+3. Assembly Block for Trusted Forwarders:
+    If msg.sender is a trusted forwarder, the function uses inline assembly to extract the original sender's address from the calldata.
+    The assembly code shr(96, calldataload(sub(calldatasize(), 20))) performs the following operations:
+      calldatasize() returns the size of the calldata in bytes.
+      sub(calldatasize(), 20) calculates the position in the calldata where the last 20 bytes (the size of an Ethereum address) are located. This is typically where the original sender's address is appended by the forwarder.
+      calldataload(sub(calldatasize(), 20)) loads these 20 bytes from the calldata.
+      shr(96, ...) shifts these bytes right by 96 bits (12 bytes), effectively removing any leading bytes and leaving only the last 20 bytes, which represent the original sender's address.
+      sender := ... assigns this value to the sender variable.
+
+4. Fallback for NonTrusted Forwarders:
+    If msg.sender is not a trusted forwarder, the function simply returns msg.sender directly. This means that in normal transaction scenarios where there is no forwarding involved, the function behaves like a standard msg.sender retrieval.
+
+5. Use Case and Security Considerations:
+    This function is crucial in contracts that support metatransactions or use relayers, as it ensures that the contract can correctly identify the original sender of a transaction even when it is forwarded by a trusted intermediary.
+    The use of inline assembly is justified here for performance reasons and because it provides a more direct way to decode the sender's address from the calldata compared to Solidity's abi.decode.
+    Care must be taken to ensure that the isTrustedForwarder function is correctly implemented and that only legitimate forwarders are added to the trusted list to prevent address spoofing attacks.
+
+In summary, the _msgSender function enhances the contract's ability to handle transactions forwarded by trusted entities, ensuring that the original sender's address is correctly identified and used within the contract's logic.

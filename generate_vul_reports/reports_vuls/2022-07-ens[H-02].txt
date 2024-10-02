@@ -1,0 +1,17 @@
+[H-02] The expiry of the parent node can be smaller than the one of a child node, violating the guarantee policy
+Submitted by PwnedNoMore
+NameWrapper.sol#L504NameWrapper.sol#L356
+By design, the child node’s expiry can only be extended up to the parent’s current one. Adding these restrictions means that the ENS users only have to look at the name itself’s fuses and expiry (without traversing the hierarchy) to understand what guarantees the users have.
+When a parent node tries tosetSubnodeOwner/setSubnodeRecord, the following code is used to guarantee that the new expiry can only be extended up to the current one.
+function_getDataAndNormaliseExpiry(bytes32parentNode,bytes32node,uint64expiry)internalviewreturns(addressowner,uint32fuses,uint64){uint64oldExpiry;(owner,fuses,oldExpiry) =getData(uint256(node));(, ,uint64maxExpiry) =getData(uint256(parentNode));expiry=_normaliseExpiry(expiry,oldExpiry,maxExpiry);return(owner,fuses,expiry);}
+However, the problem shows when
+The sub-domain (e.g.,sub1.base.eth) has its own sub-sub-domain (e.g.,sub2.sub1.base.eth)The sub-domain is unwrapped later, and thus itsoldExpirybecomes zero.Whenbase.ethcallsNameWrapper.setSubnodeOwner, there is not constraint ofsub1.base.eth’s expiry, sinceoldExpiry == 0. As a result, the new expiry ofsub1.base.ethcan be arbitrary and smaller than the one ofsub2.sub1.base.eth
+The point here is that theoldExpirywill be set as 0 when unwrapping the node even it holds child nodes, relaxing the constraint.
+Specifically, considering the following scenario
+The hacker owns a domain (or a 2LD), e.g.,base.ethThe hacker assigns a sub-domain to himself, e.g.,sub1.base.ethThe expiry should be as large as possibleHacker assigns a sub-sub-domain, e.g.,sub2.sub1.base.ethThe expiry should be as large as possibleThe hacker unwraps his sub-domain, i.e.,sub1.base.ethThe hacker re-wraps his sub-domain viaNameWrapper.setSubnodeOwnerThe expiry can be small than the one of sub2.sub1.base.eth
+The root causeseemsthat we should not zero out the expiry when burning a node if the node holds any subnode.
+Suggested Fix
+Potential fix 1: auto-burnCANNOT_UNWRAPwhich thus letsexpirydecide whether a node can be unwrapped.Potential fix 2: force the parent to haveCANNOT_UNWRAPburnt if they want to set expiries on a child viasetSubnodeOwner/setSubnodeRecord/setChildFuses
+Proof of Concept / Attack Scenario
+For full details, please seeoriginal warden submission.
+Arachnid (ENS) confirmed

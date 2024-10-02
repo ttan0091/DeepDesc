@@ -1,0 +1,9 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Incorrect ordering of smart contract function logic
+Working process of the code: 
+1. Initially, `lastPlayer` is set to `0x0` and `jackpot` to `1000000 ether` in the `LastIsMe` contract.
+2. When `buyTicket` is called, it checks if `lastPlayer` is not `0x0`. If true, it sends the `jackpot` value to `lastPlayer` and resets `startedAt` to the current block timestamp.
+3. `startedAt` is used in the `progressToCompletion` modifier of the `Negotiator` contract, where a minimum buy-in time is enforced.
+4. Due to the conditions set by the `progressToCompletion` function, if there's an attack immediately after the contract starts (within ~5s), the attacker is consid 
+5. The attacker can call `buyTicket` on `LastIsMe`, which sends `1000000 wei` to the attacker. If the attack happens within the minimum buy-in time, none of the changes in the `Negotiator` `sellTicket` section will have occurred yet.
+6. This leads to a newly-originated `LastIsMe` contract with `lastPlayer` set to the attacker and `jackpot` set back to `1000000 ether`.

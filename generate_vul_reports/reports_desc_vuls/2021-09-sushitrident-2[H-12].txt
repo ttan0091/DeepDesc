@@ -1,0 +1,18 @@
+Type of vulnerability: Incorrect State Update
+Cause of vulnerability: The `secondsPerLiquidity` variable is not updated prior to changes in pool liquidity during the `mint()` and `burn()` functions, leading to inaccurate state tracking.
+Execution process: When liquidity is added or removed within the specified tick range (`lowerTick <= currentTick < upperTick`), the `secondsPerLiquidity` should be recalculated and updated before the liquidity change occurs. However, the current implementation does not enforce this, potentially leading to discrepancies in the `secondsPerLiquidity` value.
+Vulnerable code: 
+```solidity
+// insert logic before these lines in mint()
+unchecked {
+    if (priceLower < currentPrice && currentPrice < priceUpper) 
+        liquidity += uint128(_liquidity);
+}
+nearestTick = Ticks.insert(ticks, feeGrowthGlobal0, feeGrowthGlobal1, secondsPerLiquidity, // should calculate and use latest secondsPerLiquidity value...);
+
+// insert logic before before these lines in burn()
+unchecked {
+    if (priceLower < currentPrice && currentPrice < priceUpper) 
+        liquidity -= amount;
+}
+```

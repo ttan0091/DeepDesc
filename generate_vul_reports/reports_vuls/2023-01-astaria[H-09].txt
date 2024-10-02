@@ -1,0 +1,18 @@
+[H-09] At the second time the nft is used as collateral to take a loan, the debt repayment via auction fund can be failed when liquidation
+Submitted byKIntern_NA
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/ClearingHouse.sol#L143-L146
+When a user transfer an NFT toCollateralTokencontract, it will toggle the functionCollateralToken.onERC721Received(). In this function if there didn’t exist anyclearingHousefor thecollateralId, it will create a new one for that collateral.
+if(s.clearingHouse[collateralId] ==address(0)) {addressclearingHouse=ClonesWithImmutableArgs.clone(s.ASTARIA_ROUTER.BEACON_PROXY_IMPLEMENTATION(),abi.encodePacked(address(s.ASTARIA_ROUTER),uint8(IAstariaRouter.ImplementationType.ClearingHouse),collateralId));s.clearingHouse[collateralId] =clearingHouse;}
+The interesting thing of this technique is: there will bejust oneclearingHousebe used for each collateral no matter how many times the collateral is transferred to the contract. Even when the lien is liquidated / fully repayed, thes.clearingHouse[collateralId]remain unchanged.
+The question here is any stale datas inclearingHousefrom the previous time that the nft was used as collateral can affect the behavior of protocol when the nft was transfered to CollateralToken again?
+Let take a look at the functionClearingHouse._execute(). In this function, the implementation usessafeApprove()to approvepayment - liquidatorPaymentamount for theTRANSFER_PROXY.
+ERC20(paymentToken).safeApprove(address(ASTARIA_ROUTER.TRANSFER_PROXY()),payment-liquidatorPayment);
+thesafeApprovefunction will revert if the allowance was set from non-zero value to non-zero value. This will incur some potential risk for the function like example below:
+NFT x is transferred toCollateralTokento take loans and then it is liquidated.At time 10, functionClearingHouse._execute()was called and thepayment - liquidatorPayment > totalDebt. This will thepaymentToken.allowance[clearingHouse][TRANSFER_PROXY] > 0after the function ended.NFT x is transferred toCollateralTokenfor the second time to take a loans and then it is liquidated again.At time 15 (> 10), functionClearingHouse._execute()was called, but at this time, thesafeApprovewill revert since the previous allowance is different from 0
+Impact
+The debt can be repayed by auction funds when liquidation.
+Recommended Mitigation Steps
+Consider to useapproveinstead ofsafeApprove.
+androolloyd (Astaria) commented:
+We use the solmate library which doesn’t seem to have a check for approvals being set to 0.
+SantiagoGregory (Astaria) confirmed

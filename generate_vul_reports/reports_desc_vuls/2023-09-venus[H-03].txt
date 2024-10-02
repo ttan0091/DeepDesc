@@ -1,0 +1,12 @@
+Type of vulnerability: Incorrect Decimal Usage
+
+Cause of vulnerability: The incorrect decimals value used to calculate user’s score and market’s sumOfMembersScore, which impacts the delta that is added to market’s rewardIndex when Prime.accrueInterest function is called.
+
+Execution process: The vulnerability occurs when the vToken.decimals() is used instead of vToken.underlying().decimals() in the calculation of capital. This results in the precision of capital being 18 + (18 - 8) = 28 decimals instead of 18 decimals, making the score calculation from Scores.calculateScore function incorrect. As a result, delta for market’s rewardIndex is incorrectly calculated and can be 0 even though it shouldn’t be, which means that users will not accrue any rewards.
+
+Vulnerable code: 
+```solidity
+(uint256 capital, , ) = _capitalForScore(xvsBalanceForScore, borrow, supply, market);
+capital = capital * (10**(18 - vToken.decimals()));
+return Scores.calculateScore(xvsBalanceForScore, capital, alphaNumerator, alphaDenominator);
+```

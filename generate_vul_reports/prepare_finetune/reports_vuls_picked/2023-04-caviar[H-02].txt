@@ -1,0 +1,29 @@
+Type of vulnerability: Arbitrary Execution
+
+Cause of vulnerability: The `execute` function allows the owner of the PrivatePool to send arbitrary data to any target contract, enabling them to exploit user approvals to transfer ERC20 tokens and NFTs from the user's wallet.
+
+Execution process: 
+1. A user approves the PrivatePool contract to transfer their ERC20 tokens or NFTs.
+2. The owner of the PrivatePool crafts a payload using the `transferFrom` function of an ERC20 token or NFT contract.
+3. The owner calls the `execute` function with the target set to the ERC20 or NFT contract and the data set to the crafted payload.
+4. The `execute` function sends the crafted payload to the target contract, transferring the tokens or NFTs from the user's wallet to the owner's wallet.
+
+Vulnerable code:
+```solidity
+function execute(address target, bytes memory data) public payable onlyOwner returns (bytes memory) {
+    // call the target with the value and data
+    (bool success, bytes memory returnData) = target.call{value: msg.value}(data);
+    // if the call succeeded return the return data
+    if (success) return returnData;
+    // if we got an error bubble up the error message
+    if (returnData.length > 0) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            let returnData_size := mload(returnData)
+            revert(add(32, returnData), returnData_size)
+        }
+    } else {
+        revert();
+    }
+}
+```

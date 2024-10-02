@@ -1,0 +1,20 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: Lack of validation to ensure that a delegate is a transcoder before subtracting the tally of votes.
+Execution process: A delegator (Bob) delegates their votes to another delegator (Alice) who is not a transcoder. Bob then votes, and the system incorrectly subtracts Bob's voting weight from the tally of Alice's vote choice, effectively allowing Bob to manipulate the vote tally without first increasing their voting power.
+Vulnerable code: 
+```solidity
+if(delegateVoter.hasVoted) {
+    // this is a delegator overriding its delegated transcoder vote,
+    // we need to update the current totals to move the weight of
+    // the delegator vote to the right outcome.
+    VoteType delegateSupport = delegateVoter.support;
+    if(delegateSupport == VoteType.Against) {
+        _tally.againstVotes -= _weight;
+    } else if(delegateSupport == VoteType.For) {
+        _tally.forVotes -= _weight;
+    } else {
+        assert(delegateSupport == VoteType.Abstain);
+        _tally.abstainVotes -= _weight;
+    }
+}
+```

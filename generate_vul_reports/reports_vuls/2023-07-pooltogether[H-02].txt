@@ -1,0 +1,20 @@
+[H-02] A malicious user can steal other user’s deposits from Vault.sol
+Submitted byzzzitron, also found bypontifex
+Lines of code
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L509-L521https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L407-L415
+Impact
+When theVault.withdraw()function is called, a maximum oftype(uint96).maxshares are burnt subsequently:Vault.withdraw()->Vault._withdraw()->Vault._burnburnsuint96(_shares), seeVault.sol line 1139.
+A malicious user can exploit this in the following way:
+A malicious user deposits, for example, two times the value oftype(uint96).maxunderlying assets into the Vault; calling the functionVault.deposit()two times. They can’t deposit more in a single transaction becausetype(uint96).maxis the maximum value to deposit.Then, the malicious user callsVault.withdraw()with a higher value of assets to withdraw more thantype(uint96).max. For example, they withdraw (2 * type(uint96).max), which is the total amount of assets they deposited before.Now what happens, is the Vault.sol contract only burnstype(uint96).maxshares for the user, but transfers2 * type(uint96).maxunderlying assets to the malicious user, which is the total amount they deposited before.This happens becauseVault._burn()only burnsuint96(shares)shares of the malicious users - see Vault.sol line 1155.Now, the malicious user has still vault shares left but they withdrew the total amount of their deposited assets.Now, the vault transferred the total amount of the malicious user’s assets back to them and the malicious user still has shares left to withdraw; with even more assets that are now being stolen from assets deposited by other users.Or, if the malicious user was the first depositor, they wait until another user deposits and the malicious user can now withdraw the other users deposited assets since the malicious user still has Vault shares left.Or, if the malicious user is not the first depositor, they use aflashLoanorflashMintto deposit multiple timestype(uint96).maxassets into the vault. Then, they can withdraw their deposit, pay back theflashLoanorflashMintand they will still have enough vault shares left to steal all other users assets by withdrawing them.
+In this way, other user’s deposited assets can be stolen, as explained above.
+Proof of Concept
+Here is a POC, where the problem is illustrated:
+https://gist.github.com/zzzitron/397790302ca95aa3fbf05694ae1497ab
+Recommended Mitigation Steps
+Consider adjusting theVault._burnfunction to not convert fromuint256touint96when burning shares.
+Assessed type
+Math
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Added SafeCastPR:https://github.com/GenerationSoftware/pt-v5-vault/pull/9
+Status: Mitigation confirmed. Full details in reports fromdirk_y,rvierdiievand0xStalin.

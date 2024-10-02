@@ -1,0 +1,17 @@
+[H-01]forceUnsponsor()may open a window for attackers to manipulate the_totalSharesand freeze users’ funds at a certain deposit amount
+Submitted by WatchPug
+https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L390-L401
+if(_force&&sponsorAmount>totalUnderlying()) {sponsorToTransfer=totalUnderlying();}elseif(!_force) {require(sponsorToTransfer<=totalUnderlying(),"Vault: not enough funds to unsponsor");}totalSponsored-=sponsorAmount;underlying.safeTransfer(_to,sponsorToTransfer);
+WhensponsorAmount > totalUnderlying(), the contract will transfertotalUnderlying()tosponsorToTransfer, even if there are other depositors andtotalShares> 0.
+After that, and before others despoiting into the Vault, the Attacker can send1 weiunderlying token, then caldeposit()with 0.1 * 1e18 , sincenewShares = (_amount * _totalShares) / _totalUnderlyingMinusSponsoredand_totalUnderlyingMinusSponsoredis1, with a tiny amount of underlying token,newShareswill become extremly large.
+As we stated in issue#166, when the value oftotalSharesis manipulated precisely, the attacker can plant a bomb, and the contract will not work when the deposit/withdraw amount reaches a certain value, freezing the user’s funds.
+However, this issue is not caused by lack of reentrancy protection, therefore it cant be solved by the same solution in issue#166.
+Recommendation
+Consider adding a minimum balance reserve (eg. 1e18 Wei) that cannot be withdrawn by anyone in any case. It can be transferred in alongside with the deployment by the deployer.
+This should make it safe or at least make it extremely hard or expensive for the attacker to initiate such an attack.
+naps62 (Sandclock) confirmed and commented:
+@gabrielpoca @ryuheimat is this new?
+ryuheimat (Sandclock) commented:
+it’s new
+gabrielpoca (Sandclock) commented:
+yap, it’s interesting. The sponsor really is an issue

@@ -1,0 +1,14 @@
+[H-01] Oracle price does not compound
+Submitted by cmichel
+ScalingPriceOracle.sol#L136ScalingPriceOracle.sol#L113
+The oracle does not correctly compound the monthly APRs - it resets onfulfill.Note that theoraclePricestorage variableis only set in_updateCPIDataas part of the oraclefulfillcallback.It’s set to the old price (price from 1 month ago) plus the interpolation fromstartTimeto now.However,startTimeisresetinrequestCPIDatadue to theafterTimeInitmodifier, and therefore when Chainlink callsfulfillin response to the CPI request, thetimeDelta = block.timestamp - startTimeis close to zero again andoraclePriceis updated to itself again.
+This breaks the core functionality of the protocol as the oracle does not track the CPI, it always resets to1.0after everyfulfillinstead of compounding it.In addition, there should also be a way for an attacker to profit from the sudden drop of the oracle price to1.0again.
+Proof of Concept
+As an example, assumeoraclePrice = 1.0 (1e18),monthlyAPR = 10%. The time elapsed is 14 days. CallinggetCurrentOraclePrice()now would return1.0 + 14/28 * 10% = 1.05.
+It’s now the 15th of the month and one can triggerrequestCPIData.This resetsstartTime = now.CallinggetCurrentOraclePrice()now would return1.0again astimeDelta(andpriceDelta) is zero:oraclePriceInt + priceDelta = oraclePriceInt = 1.0.Whenfulfillis called it setsoraclePrice = getCurrentOraclePrice()which will be close to1.0as thetimeDeltais tiny.
+Recommended Mitigation Steps
+TheoraclePriceshould be updated inrequestCPIData()not infulfill.Cover this scenario of multi-month accumulation in tests.
+ElliotFriedman (Volt) commented:
+Oracle price does compound per this line of code:https://github.com/code-423n4/2022-03-volt/blob/f1210bf3151095e4d371c9e9d7682d9031860bbd/contracts/oracle/ScalingPriceOracle.sol#L197-L198
+ElliotFriedman (Volt) confirmed and commented:
+This is the only valid critical finding we have seen so far! Great work cmichel!

@@ -1,0 +1,76 @@
+[H-01] Conviction scoring fails to initialize and bootstrap
+Conviction scores for new addresses/users fail to initialize+bootstrap inERC20ConvictionScore’s_updateConvictionScore()because a new user’snumCheckpointswill be zero and never gets initialized.
+This effectively means that FairSide conviction scoring fails to bootstrap at all, leading to the failure of the protocol’s pivotal feature.
+When Alice transfers FSD tokens to Bob for the first time,_beforeTokenTransfer(Alice, Bob, 100)is triggered which calls_updateConvictionScore(Bob, 100)on Line55 of ERC20ConvictionScore.sol.
+In function_updateConvictionScore(), given that this is the first time Bob is receiving FSD tokens,numCheckpoints[Bob]will be 0 (Line116) which will makets = 0(Line120), and Bob’s FSD balance will also be zero (Bob never has got FSD tokens prior to this) which makesconvictionDelta = 0(Line122) and not let control go past Line129.
+This means that a new checkpoint never gets written, i.e., conviction score never gets initialized, for Bob or for any user for that matter.
+FairSide’s adjustment of Compound’s conviction scoring is based on time and therefore needs an initialization to take place vs Compound’s implementation. Therefore, a new checkpoint needs to be created+initialized for a new user during token transfer.
+fairside-core (FairSide) confirmed:
+Fixed inPR#18.
+[H-02] Locked funds are debited twice from the user during tokenization leading to fund loss
+During tokenization of conviction scores, the user can optionally provide FSDs to be locked to let it continue conviction accrual. However, the amount of FSDs specified for locking are debited from the user twice, leading to fund loss.
+This, in effect, forces the user to unknowingly and unintentionally lock twice the amount of FSD tokens, leading to a loss of the specified ‘locked’ number of tokens.
+Alice decides to tokenize her conviction score into an NFT and specifies 100 FSD tokens to be locked in her call totokenizeConviction(100). 100 FSD tokens are transferred from her FSD balance toFairSideConvictioncontract on Line282 ofERC20ConvictionScore.sol. However, inFairSideConviction.createConvictionNFT(), the specified locked amount is transferred again from Alice to the contract on Line50 ofFairSideConviction.sol.
+The impact is that Alice wanted to lock only 100 FSD tokens, but the FairSide protocol has debited 200 tokens from her balance leading to a loss of 100 FSD tokens.
+Recommend removing the redundant transfer of FSD tokens on Line282 intokenizeConviction()ofERC20ConvictionScore.sol.
+[H-03] Locked funds from tokenization are credited twice to user leading to protocol fund loss
+The tokens optionally locked during tokenization are released twice on acquiring conviction back from an NFT. (The incorrect double debit of locked funds during tokenization has been filed as a separate finding because it is not necessarily related and occurs in different parts of the code.)
+When a user wants to acquire back the conviction score captured by an NFT, the FSD tokens locked, if any, are released to the user as well. However, this is incorrectly done twice. Released amount is transferred once on Line123 in_release()(viaacquireConviction->burn) of FairSideConviction.sol and again immediately after the burn on Line316 inacquireConviction()ofERC20ConvictionScore.sol.
+This leads to loss of protocol funds.
+Alice tokenizes her conviction score into an NFT and locks 100 FSDs. Bob buys the NFT from Alice and acquires the conviction score back from the NFT. But instead of 100 FSDs that were supposed to be locked with the NFT, Bob receives 100+100 = 200 FSDs from FairSide protocol.
+Recommend removing the redundant transfer of FSD tokens from protocol to the user on Line316 inacquireConviction()ofERC20ConvictionScore.sol.
+fairside-core (FairSide) questioned:
+This is directly related to #29 as it refers to the same workflow, as seen in #74 as a single submission. I believe splitting this into two findings is unfair for the first party, and secondly, it does not make sense because there is a valid argument for disagreeing with the severity seen on #74. Can we close this and merge it with #29?
+fairside-core (FairSide) commented:
+Fixed inPR#3.
+cemozerr (Judge) commented:
+Labeling issues #29 and #30 as separate issues because they both pose major issues, which lead to temporary loss of funds, in two different workflows. One when tokenizing convictions and another when acquiring convictions.
+[H-04]ERC20ConvictionScore’sgovernanceDeltashould be subtracted when user is not a governor anymore
+TheTOTAL_GOVERNANCE_SCOREis supposed to track the sum of the credit scores of all governors.
+InERC20ConvictionScore._updateConvictionScore, when the user does not fulfill the governance criteria anymore and is therefore removed, thegovernanceDeltashould be negative, but it’s positive.
+isGovernance[user] =false;governanceDelta=getPriorConvictionScore(user,block.number-1);
+It then gets added to the new total:
+uint224totalGCSNew=add224(totalGCSOld,governanceDelta,"ERC20ConvictionScore::_updateConvictionTotals: conviction score amount overflows");
+TheTOTAL_GOVERNANCE_SCOREtracks wrong data leading to issues throughout all contracts like wrongFairSideDAO.totalVotesdata, which can then be used by anyone to pass proposals in the worst case.
+OrtotalVotescan be arbitrarily inflated and break the voting mechanism as no proposals can reach the quorum (percentage oftotalVotes) anymore.
+Recommend returning a negative signed integer for this case and adding it to the new total.
+fairside-core (FairSide) confirmed:
+Fixed inPR#14.
+[H-05]Withdrawable.withdrawdoes not decreasependingWithdrawals
+The namependingWithdrawalsindicates that this storage variable tracks the withdrawals that need yet to be paid out. Furthermore, this matches the behavior in_increaseWithdrawal. As such, it should be decreased when withdrawing inwithdraw, but it is not.
+ThegetReserveBalancefunction consistently under-reports the actual reserve balance, which leads to the wrong mint amounts being used in theFSD.mintcalculation.
+Recommend decreasingpendingWithdrawalsby the withdrawn amount.
+fairside-core (FairSide) confirmed (in duplicate issue #72)
+One of two easter eggs!
+Fixed in PR#5.
+[H-06] Incorrect type conversion in the contractABCmakes users unable to burn FSD tokens
+The function_calculateDeltaOfFSDof contractABCincorrectly converts anint256type parameter,_reserveDelta, touint256by explicit conversion, which in general results in an extremely large number when the provided parameter is negative. The extremely large number could cause a SafeMath operationsubat line 43 to revert, and thus the FSD tokens cannot be burned as_reserveDeltais negative when burning FSD tokens.
+Simply callingfsd.burnafter a successfulfsd.mintwill trigger this bug.
+Recommend using the solidity functionabsto get the_reserveDeltaabsolute value.
+fairside-core (FairSide) confirmed:
+Fixed inPR#1.
+[H-07]ERC20ConvictionScore._updateConvictionScoreuses stale credit score forgovernanceDelta
+InERC20ConvictionScore._updateConvictionScore, when the user does not fulfill the governance criteria anymore, thegovernanceDeltais the old conviction score of the previous block.
+isGovernance[user] =false;governanceDelta=getPriorConvictionScore(user,block.number-1);
+The user could increase their conviction/governance score first (in the same block) and then lose their status in a second transaction. After which, the total governance conviction score would only be reduced by the previous score.
+** Example:**
+Block n - 10000: User is a governor and has a credit score of 1000, which was also contributed to theTOTAL_GOVERNANCE_SCOREBlock n:
+User updates their own conviction score using the publicupdateConvictionScorefunction, which increases the credit score by 5000 based on the accumulated time. The total governance credit score increased by 5000, making the user contribute 6000 credit score to governance in total.User transfers their whole balance away, the balance drops belowgovernanceMinimumBalance, and the user is not a governor anymore. ThegovernanceDeltaupdate of the transfer should be 6000 (user’s whole credit score), but it’s only1000because it takes the snapshot of block n - 1.
+In this way, theTOTAL_GOVERNANCE_SCOREscore can be inflated and, in the worst case, break the voting mechanism, as no proposals can reach the quorum (percentage oftotalVotes) anymore.
+Recommend using the current conviction store which should begovernanceDelta = checkpoints[user][userCheckpointsLength - 1].convictionScore.
+fairside-core (FairSide) confirmed but disagreed with severity:
+As with the other governance-related issues, this would once again cause dilution of all users and would not really be a viable attack vector. As such, I believe it is better suited for a medium severity (2) label.
+fairside-core (FairSide) disputed:
+This issue is actually quite deeper. When a transaction occurs in the same block, the logic paths within theifblock will not execute (due to time elapsed being 0), meaning that the conviction score will not be properly accounted for if I have a single normal transaction where I am still governance and consequently lose my governance in a second transaction. As such, the code needs to be adjusted to check governance eligibility outside of the if block as well (if no time has passed -> same block transaction).The code highlighted in the finding is actuallycorrect. The conviction score should be reduced by the previous blocks as the newly accrued conviction score was never accounted for in governance. The proposed solution would lead to more conviction being reduced than it should. However, the finding did point out something wrong, so not sure whether it should be nullified or not.I believe it should be awarded as it was on the right track to find the underlying issue!
+fairside-core (FairSide) re-confirmed:
+Fixed inPR#13.
+cemozerr (Judge) commented:
+Labeling this issue as valid because although it wasn’t 100% right on suggesting where the code was problematic, it did point out that the users could wrongfully transfer their whole balance and update their conviction score in the same block to keep their conviction score high, and then potentially do harmful things to the protocol by using their wrong conviction scores.
+[H-08] Incorrect implementation of arctan in the contractFairSideFormula
+The current implementation of the arctan formula in the contractFairSideFormulais inconsistent with the referenced paper and could cause incorrect results when the input parameter is negative. The erroneous formula affects the functioncalculateDeltaOfFSDand the number of FSD tokens minted or burned.
+The function_arctanmisses twoabson the variable `a’. The correct implementation should be:
+function_arctan(bytes16a)privatepurereturns(bytes16) {returna.mul(PI_4).sub(a.mul(a.abs().sub(ONE)).mul(APPROX_A.add(APPROX_B.mul(a.abs()))));}
+Notice that_arctanis called byarctan, andarctanis called byarcswithONE.sub(arcInner)provided as the input parameter. SincearcInner = MULTIPLIER_INNER_ARCTAN.mul(x).div(fS3_4)can be a large number (recall thatxis the capital pool), it is possible that the parameterais negative.
+Recommend modifying the_arctanfunction as above.
+fairside-core (FairSide) confirmed:
+Fixed inPR#4.

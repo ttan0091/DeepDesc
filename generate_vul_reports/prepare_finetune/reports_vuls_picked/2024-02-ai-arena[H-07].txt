@@ -1,0 +1,16 @@
+Type of vulnerability: Uninitialized State Variable
+Cause of vulnerability: The `numElements` mapping is only initialized for Generation 0 in the constructor, and not for subsequent generations, leading to uninitialized values (defaulting to 0) for other generations.
+Execution process: When a new fighter is created for a generation other than Generation 0, the `numElements[generation[fighterType]]` will be 0, causing a modulo operation by 0, which results in a panic error and transaction revert.
+Vulnerable code: 
+```solidity
+/// @notice Creates the base attributes for the fighter.
+/// @param dna The dna of the fighter.
+/// @param fighterType The type of the fighter.
+/// @return Attributes of the new fighter: element, weight, and dna.
+function _createFighterBase(uint256 dna, uint8 fighterType) private view returns (uint256, uint256, uint256) {
+    => uint256 element = dna % numElements[generation[fighterType]]; // numElements is 0 when generation[fighterType] != 0.
+    uint256 weight = dna % 31 + 65;
+    uint256 newDna = fighterType == 0 ? dna : uint256(fighterType);
+    return (element, weight, newDna);
+}
+```

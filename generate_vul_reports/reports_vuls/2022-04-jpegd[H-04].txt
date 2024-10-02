@@ -1,0 +1,13 @@
+[H-04] Reentrancy issue inyVault.deposit
+Submitted by cmichel
+yVault.sol#L144-L145
+Indeposit, the balance is cached and then atoken.transferFromis triggered which can lead to exploits if thetokenis a token that gives control to the sender, like ERC777 tokens.
+Proof of Concept
+Initial state:balance() = 1000, sharessupply = 1000.
+Depositing 1000 amount should mint 1000 supply, but one can split the 1000 amounts into two 500 deposits and use re-entrancy to profit.
+Outerdeposit(500):balanceBefore = 1000. Control is given to attacker …Innerdeposit(500):balanceBefore = 1000.shares = (_amount * supply) / balanceBefore = 500 * 1000 / 1000 = 500shares are minted …Outerdeposit(500)continues with the mint:shares = (_amount * supply) / balanceBefore = 500 * 1500 / 1000 = 750are minted.Withdrawing the500 + 750 = 1250shares viawithdraw(1250), the attacker receivesbackingTokens = (balance() * _shares) / supply = 2000 * 1250 / 2250 = 1111.111111111. The attacker makes a profit of1111 - 1000 = 111tokens.They repeat the attack until the vault is drained.
+Recommended Mitigation Steps
+ThesafeTransferFromshould be the last call indeposit.
+spaghettieth (JPEG’d) confirmed
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#19.

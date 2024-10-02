@@ -1,0 +1,28 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Improper handling of the `_dontMint` parameter leading to unrecorded credits for the user.
+Execution process: A user makes a payment with `_dontMint` set to `true`, expecting their `creditsOf[]` balance to be updated. However, the function immediately returns without updating the credits, causing the user's funds to be lost.
+Vulnerable code: 
+```solidity
+function _processPayment(JBDidPayData calldata _data) internal override {
+    // Keep a reference to the amount of credits the beneficiary already has.
+    uint256 _credits = creditsOf[_data.beneficiary];
+    ...
+    if (_data.metadata.length > 36 && bytes4(_data.metadata[32:36]) == type(IJB721Delegate).interfaceId) {
+        ...
+        // Don't mint if not desired.
+        if (_dontMint) return;
+        ...
+    }
+    ...
+    // If there are funds leftover, mint the best available with it.
+    if (_leftoverAmount != 0) {
+        _leftoverAmount = _mintBestAvailableTier(_leftoverAmount, _data.beneficiary, _expectMintFromExtraFunds);
+        if (_leftoverAmount != 0) {
+            // Make sure there are no leftover funds after minting if not expected.
+            if (_dontOverspend) revert OVERSPENDING();
+            // Increment the leftover amount.
+            creditsOf[_data.beneficiary] = _leftoverAmount;
+        } else if (_credits != 0) creditsOf[_data.beneficiary] = 0;
+    } else if (_credits != 0) creditsOf[_data.beneficiary] = 0;
+}
+```

@@ -1,0 +1,11 @@
+Type of contract: Re-Entrancy Vulnerability
+
+Working process:
+1. The `ValueTrader` contract is used to swap tokens for ETH.
+2. An attacker creates a malicious contract with a fallback function that calls `recipient.send` (or `recipient.transfer`) without taking any fee.
+3. The attacker initiates a trade from the malicious contract by invoking `ValueTrader.buyEther`, passing the malicious contract's address as the withdrawal destination.
+4. The `ValueTrader` collateralizes the trade with a `spaToken` transfer to minimize price slippage, making sure users get a good rate on ETH from their SPA.
+5. The `ValueTrader` contract sends ETH to the malicious contract using the EVM call method.
+6. The malicious contract's fallback function is called, transferring the ETH to _borrowed before the actual ETH transfer happens in the SPA contract, which is exploitable.
+7. The SPA contract tries to send ETH to the original recipient, but since the ETH was quickly transferred out in step 6, the recipient receives less than expected.
+8. The attacker receives the tokens and refunds their SPAs, now carrying the user's debt.

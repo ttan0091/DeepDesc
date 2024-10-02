@@ -1,0 +1,30 @@
+Type of vulnerability: Improper Input Validation
+
+Cause of vulnerability: The `_validateOrder` function does not check that `makerFee` and `takerFee` are set to zero, allowing a malicious manager to set `makerFee` to the amount the maker receives, effectively burning treasury tokens without cost to the order taker.
+
+Execution process: A malicious treasury manager can create an order where `makerFee` is set to the amount the maker receives, ensuring the treasury manager contract receives zero tokens. This order is then executed, resulting in the treasury tokens being burned without any compensation to the treasury.
+
+Vulnerable code: 
+```solidity
+function _validateOrder(bytes memory order) private view {
+    (address makerToken, address takerToken, address feeRecipient, uint256 makerAmount, uint256 takerAmount) = _extractOrderInfo(order);
+    // No fee recipient allowed
+    require(feeRecipient == address(0), "no fee recipient allowed");
+    // MakerToken should never be WETH
+    require(makerToken != address(WETH), "maker token must not be WETH");
+    // TakerToken (proceeds) should always be WETH
+    require(takerToken == address(WETH), "taker token must be WETH");
+    address priceOracle = priceOracles[makerToken];
+    // Price oracle not defined
+    require(priceOracle != address(0), "price oracle not defined");
+    uint256 slippageLimit = slippageLimits[makerToken];
+    // Slippage limit not defined
+    require(slippageLimit != 0, "slippage limit not defined");
+    uint256 oraclePrice = _toUint(AggregatorV2V3Interface(priceOracle).latestAnswer());
+    uint256 priceFloor = (oraclePrice * slippageLimit) / SLIPPAGE_LIMIT_PRECISION;
+    uint256 makerDecimals = 10**ERC20(makerToken).decimals();
+    // makerPrice = takerAmount / makerAmount
+    uint256 makerPrice = (takerAmount * makerDecimals) / makerAmount;
+    require(makerPrice >= priceFloor, "slippage is too high");
+}
+```

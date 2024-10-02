@@ -1,0 +1,13 @@
+[H-05] Insurance slippage reimbursement can be used to steal insurance fund
+Submitted by cmichel
+TheLiquidationcontract allows the liquidator to submit “bad” trade orders and the insurance reimburses them from the insurance fund, seeLiquidation.claimReceipt.
+The function can be called with anordersarray, which does not check for duplicate orders.
+An attacker can abuse this to make a profit by liquidating themselves, making a small bad trade and repeatedly submitting this bad trade for slippage reimbursement.
+Example:
+Attacker uses two accounts, one as the liquidator and one as the liquidatee.They run some high-leverage trades such that the liquidatee gets liquidated with the next price update. (If not cash out and make a profit this way through trading, and try again.)Liquidator liquidates liquidateeThey now do two trades:One “good” trade at the market price that fills 99% of the liquidation amount. The slippage protection should not kick in for this tradeOne “bad” trade at a horrible market price that fills only 1% of the liquidation amount. This way the slippage protection kicks in for this tradeThe liquidator now callsclaimReceipt(orders)whereordersis an array that contains many duplicates of the “bad” trade, for example 100 times. ThecalcUnitsSoldfunction will returnunitsSold = receipt.amountLiquidatedand a badavgPrice. They are now reimbursed the price difference on the full liquidation amount (instead of only on 1% of it) making an overall profit
+This can be repeated until the insurance fund is drained.
+The attacker has an incentive to do this attack as it’s profitable and the insurance fund will be completely drained.
+Recommend disallowing duplicate orders in theordersargument ofclaimReceipt. This should make the attack at least unprofitable, but it could still be a griefing attack.
+A quick way to ensure thatordersdoes not contain duplicates is by having liquidators submit the orders in a sorted way (by order ID) and then checking in thecalcUnitsSoldforloop that the current order ID is strictly greater than the previous one.
+BenjaminPatch (Tracer) confirmed:
+Valid issue. The recommended mitigation step would also work.

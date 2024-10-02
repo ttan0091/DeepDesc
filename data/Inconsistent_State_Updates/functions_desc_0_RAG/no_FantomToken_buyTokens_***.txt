@@ -1,0 +1,32 @@
+[Execution Flow]:
+This code defines a private function named buyTokens, which handles the process of purchasing tokens within a smart contract. The function is private, meaning it can only be called within the contract itself. Here’s a detailed explanation of how this function works:
+
+1. Preliminary Checks:
+    The function starts by calling require(isMain()); to ensure that the function is being executed in the main phase.
+    It then checks if the value sent with the transaction (msg.value) is greater than or equal to MINIMUM_CONTRIBUTION using require(msg.value >= MINIMUM_CONTRIBUTION);.
+    It also checks if the sender (msg.sender) is whitelisted using require(whitelist[msg.sender]);.
+
+2. Token Availability Calculation:
+    The function calculates the number of tokens available for purchase by subtracting the already issued tokens (tokensMain) from the main cap (TOKEN_MAIN_CAP). This is stored in tokens_available.
+    If the function is being executed on the first day of the main phase (isMainFirstDay()), it further adjusts tokens_available to ensure that the number of tokens does not exceed the first day's limit. This is done by comparing tokens_available with tokens_available_first_day (which is calculated by subtracting the sender's current balance from the first day's token limit) and setting tokens_available to the smaller value.
+
+3. Token Purchase Logic:
+    The function then checks if there are any tokens available for purchase using require(tokens_available > 0);.
+    It calculates the number of tokens requested by the sender based on the amount of Ether sent (msg.value) using the ethToTokens function and stores this in tokens_requested.
+    It initializes tokens_issued to tokens_requested and eth_contributed to msg.value.
+
+4. Handling Excess Token Requests:
+    If the number of tokens requested exceeds the available tokens (tokens_requested > tokens_available), the function adjusts tokens_issued to tokens_available and calculates the excess Ether to be returned to the sender using the tokensToEth function. This excess Ether is stored in eth_returned, and eth_contributed is adjusted accordingly.
+
+5. Updating Balances and Totals:
+    The function updates the sender's token balance (balances[msg.sender]), their main balance (balancesMain[msg.sender]), and the total tokens issued (tokensMain and tokensIssuedTotal).
+    It also updates the sender's Ether contribution (ethContributed[msg.sender]) and the total Ether contributed (totalEthContributed).
+
+6. Ether Transfers:
+    If any Ether needs to be returned (eth_returned > 0), it is transferred back to the sender using msg.sender.transfer(eth_returned);.
+    The contributed Ether is then transferred to a designated wallet using wallet.transfer(eth_contributed);.
+
+7. Event Logging:
+    The function emits two events: Transfer to log the token transfer from 0x0 to the sender, and RegisterContribution to log the details of the contribution, including the number of tokens issued, the Ether contributed, and the Ether returned.
+
+This function ensures that token purchases are handled correctly, including checks for eligibility, availability, and proper accounting of tokens and Ether. It also handles the scenario where the requested tokens exceed the available tokens by returning the excess Ether to the sender.

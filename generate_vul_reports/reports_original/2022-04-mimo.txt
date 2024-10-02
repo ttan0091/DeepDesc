@@ -1,0 +1,46 @@
+[H-01] User can call liquidate() and steal all collateral due to arbitrary router call
+Submitted by 0xDjango
+https://github.com/code-423n4/2022-04-mimo/blob/b18670f44d595483df2c0f76d1c57a7bfbfbc083/core/contracts/liquidityMining/v2/PARMinerV2.sol#L126
+https://github.com/Uniswap/v2-periphery/blob/2efa12e0f2d808d9b49737927f0e416fafa5af68/contracts/UniswapV2Router02.sol#L299
+https://github.com/Uniswap/solidity-lib/blob/c01640b0f0f1d8a85cba8de378cc48469fcfd9a6/contracts/libraries/TransferHelper.sol#L47-L50
+A malicious user is able to steal all collateral of an unhealthy position inPARMinerV2.sol. The code for theliquidate()function is written so that the following steps are followed:
+User callsPARMinerV2.liquidate()PARMinerV2 performs the liquidation with_a.parallel().core().liquidatePartial()PARMinerV2 receives the liquidated collateralAn arbitrary router function is called to swap the collateral to PARFinally,PARMinerV2.liquidate()checks that PARMinerV2’s PAR balance is higher than the balance at the beginning of the function call.
+The exploit occurs with the arbitrary router call. The malicious user is able to supply thedexTxnDataparameter which dictates the function call to the router. If the user supplied a function such as UniswapV2Router’sswapExactTokenForETH(), then control flow will be given to the user, allowing them to perform the exploit.
+Note: The Mimo developers have stated that the routers used by the protocol will be DEX Aggregators such as 1inch and Paraswap, but this submission will be referring to UniswapV2Router for simplicity. It can be assumed that the dex aggregators currently allow swapping tokens for ETH.
+Continuing the exploit, once the attacker has gained control due to the ETH transfer, they are able to swap the ETH for PAR. Finally, they deposit the PAR withPARMinerV2.deposit(). This will cause the final check ofliquidate()to pass because PARMinerV2’s PAR balance will be larger than the start of the liquidation call.
+The attacker is able to steal all collateral from every unhealthy position that they liquidate. In the most extreme case, the attacker is able to open their own risky positions with the hope that the position becomes unhealthy. They will borrow the PAR and then liquidate themselves to take back the collateral. Thus effectively stealing PAR.
+Proof of Concept
+Steps for exploit:
+Attacker monitors unhealthy positions. Finds a position to liquidate.Attacker callsPARMinerV2.liquidate()Position liquidated. Collateral transferred back toPARMinerV2In theliquidate()function, attacker supplies bytes forUniswapV2Router.swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline). Forto, they supply the attacker contract.swapExactTokensForETH()firstly swaps the collateral for ETH and then transfers the ETH to the user withTransferHelper.safeTransferETH(to, amounts[amounts.length - 1]);TransferHelper.safeTransferETH()contains a call to the receiver via(bool success, ) = to.call{value: value}(new bytes(0));Therefore, the attacker contract will indeed gain control of execution.
+The attacker contract will then perform the following steps:
+Swap the received ETH to PAR.Deposit the PAR inPARMinerV2Withdraw the deposited PAR.
+Recommended Mitigation Steps
+The arbitrary call to the router contracts is risky because of the various functions that they can contain. Perhaps a solution is to only allow certain calls such as swapping tokens to tokens, not ETH. This would require frequently updated knowledge of the router’s functions, though would be beneficial for security.
+Also, adding a check that the_totalStakevariable has not increased during the liquidation call will mitigate the risk of the attacker depositing the PAR to increase the contract’s balance. The attacker would have no option but to transfer the PAR to PARMinerV2 as is intended.
+m19 (Mimo Defi) disagreed with severity and commented:
+We believe in theory this attack is actually possible, but highly unlikely to happen. It also begs the question of whether it’s really worth it for an attacker to do this because they could just call VaultsCore.liquidate() themselves (for example with a flashloan) and stake all the PAR they profit that way directly.
+m19 (Mimo DeFi) confirmed and commented:
+We misunderstood this exploit wrong and we confirm it. Basically, if the attacker was liquidating a 10,000 PAR position, he could potentially end up with a 10,000 PAR stake + liquidation profits. Our previous understanding was that he could only end up with the profits.At the very least we’ll implement a check thattotalStakehasn’t changed, we will carefully consider if more changes are needed.
+
+[H-02] Fund loss or theft by attacker with creating a flash loan and setting SuperVault as receiver so executeOperation() will be get called by lendingPool but with attackers specified params
+Submitted by unforgiven, also found by Picodes
+According to Aave documentation, when requesting flash-loan, it’s possible to specify areceiver, so functionexecuteOperation()of thatreceiverwill be called bylendingPool.https://docs.aave.com/developers/v/2.0/guides/flash-loansIn theSuperVaultthere is no check to prevent this attack so attacker can use this and performgriefing attackand make miner contract lose all its funds. or he can create specifically craftedparamsso whenexecuteOperation()is called bylendingPool, attacker could steal vault’s user funds.
+Proof of Concept
+To exploit this attacker will do this steps:
+will callAave lendingPoolto get a flash-loan and specifySuperVaultasreceiverof flash-loan. and also create a specificparamsthat invokeOperation.REBALANCEaction to change user vault’s collateral.lendingPoolwill callexecuteOperation()ofSuperVaultwith attacker specified data.executeOperation()will checkmsg.senderand will process the function call which will cause some dummy exchanges that will cost user exchange fee and flash-loan fee.attacker will repeat this attack until user losses all his funds.
+function executeOperation(address[] calldata assets,uint256[] calldata amounts,uint256[] calldata premiums,address,bytes calldata params) external returns (bool) {require(msg.sender == address(lendingPool), "SV002");(Operation operation, bytes memory operationParams) = abi.decode(params, (Operation, bytes));IERC20 asset = IERC20(assets[0]);uint256 flashloanRepayAmount = amounts[0] + premiums[0];if (operation == Operation.LEVERAGE) {leverageOperation(asset, flashloanRepayAmount, operationParams);}if (operation == Operation.REBALANCE) {rebalanceOperation(asset, amounts[0], flashloanRepayAmount, operationParams);}if (operation == Operation.EMPTY) {emptyVaultOperation(asset, amounts[0], flashloanRepayAmount, operationParams);}asset.approve(address(lendingPool), flashloanRepayAmount);return true;}
+To steal user fund inSupperVaultattacker needs more steps. in all these actions (Operation.REBALANCE,Operation.LEVERAGE,Operation.EMPTY) contract will callaggregatorSwap()with data that are controlled by attacker.
+function aggregatorSwap(uint256 dexIndex,IERC20 token,uint256 amount,bytes memory dexTxData) internal {(address proxy, address router) = _dexAP.dexMapping(dexIndex);require(proxy != address(0) && router != address(0), "SV201");token.approve(proxy, amount);router.call(dexTxData);}
+Attacker can put special data indexTxDatathat make contract to do an exchange with bad price. To do this, attacker will create a smart contract that will do this steps:
+manipulate price in exchange with flash loan.make a call toexecuteOperation()byAave flash-loanwithreceiverand specificparamsso thatSuperVaultwill make calls to manipulated exchange for exchanging.do the reverse of #1 and pay the flash-loan and steal the user fund.
+The details are:
+Attacker can manipulate swapping pool price with flash-loan, then Attacker will create specificparamsand perform steps 1 to 4. so contract will try to exchange tokens and because of attacker price manipulation and specificdexTxData, contract will have bad deals.
+After that, attacker can reverse the process of swap manipulation and get his  flash-loan tokens and some ofSuperVaultfunds and. then pay the flash-loan.
+Tools Used
+VIM
+Recommended Mitigation Steps
+There should be some state variable which stores the fact thatSuperVaultimitated flash-loan.
+When contract tries to start flash-loan, it sets theisFlashtoTrueandexecuteOperation()only accepts calls ifisFlashisTrue. and after the flash loan code will setisFlashtoFalse.
+m19 (Mimo DeFi) confirmed and commented:
+We definitely confirm this issue and intend to fix it.
+

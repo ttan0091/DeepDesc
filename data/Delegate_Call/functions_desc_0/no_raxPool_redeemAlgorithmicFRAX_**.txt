@@ -1,0 +1,33 @@
+This code defines an external function named redeemAlgorithmicFRAX, which is used to redeem FRAX tokens for FXS tokens in an algorithmic stablecoin system. The function takes two parameters: FRAX_amount, which is the amount of FRAX tokens to be redeemed, and FXS_out_min, which is the minimum amount of FXS tokens that the user is willing to accept to prevent slippage. The function also includes a modifier notRedeemPaused, which ensures that the redemption process is not paused.
+
+Here’s a detailed explanation of how this function works:
+
+1. Fetching Prices and Ratios:
+    uint256 fxs_price = FRAX.fxs_price(); retrieves the current price of FXS tokens.
+    uint256 global_collateral_ratio = FRAX.global_collateral_ratio(); fetches the global collateral ratio of the FRAX system.
+
+2. Validation Check:
+    require(global_collateral_ratio == 0, "Collateral ratio must be 0"); ensures that the global collateral ratio is zero, meaning the system is purely algorithmic and not collateralized. This is a critical check because the redemption logic depends on the system being fully algorithmic.
+
+3. Calculating FXS Dollar Value:
+    uint256 fxs_dollar_value_d18 = FRAX_amount; initializes the FXS dollar value with the amount of FRAX tokens to be redeemed.
+    The redemption fee is then applied to this value: fxs_dollar_value_d18 = fxs_dollar_value_d18.sub((fxs_dollar_value_d18.mul(redemption_fee)).div(PRICE_PRECISION));. This reduces the FXS dollar value by the redemption fee percentage.
+
+4. Calculating FXS Amount:
+    uint256 fxs_amount = fxs_dollar_value_d18.mul(PRICE_PRECISION).div(fxs_price); calculates the actual amount of FXS tokens that will be issued based on the adjusted FXS dollar value and the current FXS price.
+
+5. Updating Balances:
+    redeemFXSBalances[msg.sender] = redeemFXSBalances[msg.sender].add(fxs_amount); updates the redeem FXS balances for the sender.
+    unclaimedPoolFXS = unclaimedPoolFXS.add(fxs_amount); updates the unclaimed pool FXS balance.
+
+6. Recording Last Redemption:
+    lastRedeemed[msg.sender] = block.number; records the block number of the last redemption for the sender.
+
+7. Slippage Check:
+    require(FXS_out_min <= fxs_amount, "Slippage limit reached"); ensures that the actual amount of FXS tokens issued is not less than the minimum amount specified by the user to prevent excessive slippage.
+
+8. Executing Token Transfers:
+    FRAX.pool_burn_from(msg.sender, FRAX_amount); burns the specified amount of FRAX tokens from the sender's balance.
+    FXS.pool_mint(address(this), fxs_amount); mints the calculated amount of FXS tokens to the contract's address.
+
+This function is crucial for the redemption mechanism of an algorithmic stablecoin system, ensuring that users can redeem their FRAX tokens for FXS tokens while accounting for fees and preventing excessive slippage.

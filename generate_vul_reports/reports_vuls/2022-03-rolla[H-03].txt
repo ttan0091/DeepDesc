@@ -1,0 +1,22 @@
+[H-03]  Wrong implementation ofEIP712MetaTransaction
+Submitted by WatchPug
+EIP712MetaTransactionis a utils contract that intended to be inherited by concrete (actual) contracts, therefore. it’s initializer function should not use theinitializermodifier, instead, it should useonlyInitializingmodifier. See the implementation ofopenzeppelinEIP712Upgradeableinitializer function.
+EIP712MetaTransaction.sol#L102-L114
+/// @notice initialize method for EIP712Upgradeable/// @dev called once after initial deployment and every upgrade./// @param _name the user readable name of the signing domain for EIP712/// @param _version the current major version of the signing domain for EIP712functioninitializeEIP712(stringmemory_name,stringmemory_version)publicinitializer{name=_name;version=_version;__EIP712_init(_name,_version);}
+Otherwise, when the concrete contract’s initializer function (with ainitializermodifier) is calling EIP712MetaTransaction’s initializer function, it will be mistok as reentered and so that it will be reverted (unless in the context of a constructor, e.g. Using @openzeppelin/hardhat-upgradesdeployProxy()to initialize).
+https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/blob/v4.5.1/contracts/proxy/utils/Initializable.sol#L50-L53
+/***@devModifier to protect an initializer function from being invoked twice.*/modifierinitializer() {// If the contract is initializing we ignore whether _initialized is set in order to support multiple// inheritance patterns, but we only do this in the context of a constructor, because in other contexts the// contract may have been reentered.require(_initializing?_isConstructor() : !_initialized,"Initializable: contract is already initialized");boolisTopLevelCall= !_initializing;if(isTopLevelCall) {_initializing=true;_initialized=true;}_;if(isTopLevelCall) {_initializing=false;}}
+See also:https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/releases/tag/v4.4.1
+initializercan only be called once, it can not be “called once after every upgrade”.
+EIP712MetaTransaction.sol#L102-L114
+/// @notice initialize method for EIP712Upgradeable/// @dev called once after initial deployment and every upgrade./// @param _name the user readable name of the signing domain for EIP712/// @param _version the current major version of the signing domain for EIP712functioninitializeEIP712(stringmemory_name,stringmemory_version)publicinitializer{name=_name;version=_version;__EIP712_init(_name,_version);}
+A utils contract that is not expected to be deployed as a standalone contract should be declared asabstract. It’sinitializerfunction should beinternal.
+See the implementation ofopenzeppelinEIP712Upgradeable.
+https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/blob/v4.5.1/contracts/utils/cryptography/draft-EIP712Upgradeable.sol#L28
+abstractcontractEIP712UpgradeableisInitializable{// ...}
+Recommended Mitigation Steps
+Change to:
+abstractcontractEIP712MetaTransactionisEIP712Upgradeable{// ...}
+/// @notice initialize method for EIP712Upgradeable/// @dev called once after initial deployment./// @param _name the user readable name of the signing domain for EIP712/// @param _version the current major version of the signing domain for EIP712function__EIP712MetaTransaction_init(stringmemory_name,stringmemory_version)internalonlyInitializing{name=_name;version=_version;__EIP712_init(_name,_version);}
+0xca11 (Rolla) confirmed, resolved, and commented:
+Resolved inRollaProject/quant-protocol@25112fa, but upgradeability was later removed as perRollaProject/quant-protocol#90.

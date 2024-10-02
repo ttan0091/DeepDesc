@@ -1,0 +1,17 @@
+[H-07]Vault.balance()mixes normalized and standard amounts
+Submitted by cmichel
+TheVault.balancefunction uses thebalanceOfThisfunction which scales (“normalizes”) all balances to 18 decimals.
+for(uint8i;i<_tokens.length;i++) {address_token=_tokens[i];// everything is padded to 18 decimals_balance=_balance.add(_normalizeDecimals(_token,IERC20(_token).balanceOf(address(this))));}
+Note thatbalance()’s second termIController(manager.controllers(address(this))).balanceOf()is not normalized.
+The code is adding a non-normalized amount (for example 6 decimals only for USDC) to a normalized (18 decimals).
+Impact
+The result is that thebalance()will be under-reported.
+This leads to receiving wrong shares whendepositing tokens, and a wrong amount when redeemingtokens.
+Recommended Mitigation Steps
+The second termIController(manager.controllers(address(this))).balanceOf()must also be normalized before adding it.IController(manager.controllers(address(this))).balanceOf()uses_vaultDetails[msg.sender].balancewhich directly uses the raw token amounts which are not normalized.
+GainsGoblin (yAxis) acknowledged
+GalloDaSballo (judge) commented:
+balanceandbalanceOfThismixes the usage of decimals by alternatingly using_normalizeDecimalsThis can break accounting as well as create opportunities for abuse
+A consistent usage of_normalizeDecimalswould mitigate
+BobbyYaxis (yAxis) noted:
+Mitigated in PR 114:https://github.com/yaxis-project/metavault/pull/114/commits/b3c0405640719aa7d43560f4b4b910b7ba88170b

@@ -1,0 +1,14 @@
+Type of vulnerability: Unchecked return value of ecrecover
+Cause of vulnerability: The function `ecrecover` is used to recover the address associated with a signature, but the return value of 0 (indicating an error) is not checked. This allows for invalid signatures to pass the verification if `o.maker` is set to 0.
+Execution process: An attacker can supply invalid input parameters to the `Sig.recover` function, which will return 0. If `o.maker` is also set to 0, this will match the invalid return value, allowing the transaction to proceed with an invalid signature.
+Vulnerable code: 
+```solidity
+function validOrderHash(Hash.Order calldata o, Sig.Components calldata c) internal view returns(bytes32) {
+    require(o.maker == Sig.recover(Hash.message(domain, hash), c), 'invalid signature');
+    return hash;
+}
+
+function recover(bytes32 h, Components calldata c) internal pure returns(address) {
+    return ecrecover(h, c.v, c.r, c.s);
+}
+```

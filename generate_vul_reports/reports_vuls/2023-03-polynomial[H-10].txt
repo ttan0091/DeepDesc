@@ -1,0 +1,15 @@
+[H-10] FunctionhedgePositionsis incorrect, because it missed thequeuedPerpSizein the calculation
+Submitted byKIntern_NA
+FunctionhedgePositionsis incorrect, leads to the hedging will not work as expected, andLiquidityPoolcan lose funds without expectation.
+Proof of concept
+Let’s see functionhedgePositionsinLiquidtyPoolcontract:
+functionhedgePositions()externaloverriderequiresAuthnonReentrant{int256currentPosition=_getTotalPerpPosition();int256skew=_getSkew();uint256delta=_getDelta();int256requiredPosition=wadMul(skew,int256(delta));int256newPosition=requiredPosition-currentPosition;int256marginDelta=int256(_calculateMargin(newPosition));if(requiredPosition.abs() <currentPosition.abs()) {marginDelta= -marginDelta;}usedFunds+=marginDelta;perpMarket.transferMargin(marginDelta);_placeDelayedOrder(newPosition,false);emitHedgePositions(currentPosition,requiredPosition,marginDelta);}
+currentPositionis the sum of: the current position size ofLiquidityPoolin Synthetix and the delta size of the current delayed order which was submitted into Synthetix perp market.
+function_getTotalPerpPosition()internalviewreturns(int256positionSize) {IPerpsV2MarketBaseTypes.Positionmemoryposition=perpMarket.positions(address(this));IPerpsV2MarketBaseTypes.DelayedOrdermemorydelayedOrder=perpMarket.delayedOrders(address(this));positionSize=position.size+delayedOrder.sizeDelta;}
+However,currentPositionmissed the variablequeuedPerpSize, is the total amount of pending size delta (waiting to be submitted).
+Then_placeDelayedOrderwill be called with the wrongnewPosition, leads to the position size of pool can get a large deviation. The hedging will not be safe anymore.
+Scenario:
+_getTotalPerpPosition= 0,requiredPosition= 1000,queuedPerpSize= 1000newPositionis calculated incorrectly to be 1000 (since it missedqueuedPerpSize)It calls_placeDelayedOrder(1000, false), thenqueuedPerpSizeincrease to be 2000After executing all delayed orders, position size of LiquidityPool = 2000 (incorrect hedging)newPositionshould be -1000 in this case
+Recommended Mitigation Steps
+currentPositionshould be_getTotalPerpPosition()+queuedPerpSizein functionhedgePositions.
+mubaris (Polynomial) confirmed

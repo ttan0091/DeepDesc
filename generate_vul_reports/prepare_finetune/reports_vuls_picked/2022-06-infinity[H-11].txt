@@ -1,0 +1,24 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Failure to follow the Checks-Effects-Interactions pattern
+Execution process: A malicious user can re-enter the contract and re-fulfill the order using `takeOrders` due to the nonce being updated only after tokens are transferred.
+Vulnerable code:
+```solidity
+function matchOneToManyOrders(OrderTypes.MakerOrder calldata makerOrder, OrderTypes.MakerOrder[] calldata manyMakerOrders) external {
+    ...
+    if (makerOrder.isSellOrder) {
+        for (uint256 i = 0; i < ordersLength; ) {
+            ...
+            _matchOneMakerSellToManyMakerBuys(...); // @audit will transfer tokens in here
+        }
+        //@audit setting nonce to be used only here
+        isUserOrderNonceExecutedOrCancelled[makerOrder.signer][makerOrder.constraints[5]] = true;
+    } else {
+        for (uint256 i = 0; i < ordersLength; ) {
+            protocolFee += _matchOneMakerBuyToManyMakerSells(...); // @audit will transfer tokens in here
+        }
+        //@audit setting nonce to be used only here
+        isUserOrderNonceExecutedOrCancelled[makerOrder.signer][makerOrder.constraints[5]] = true;
+        ...
+    }
+}
+```

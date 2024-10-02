@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The function `settleAuction()` calls `withdrawBounty()` before setting `auctionOngoing = false`, allowing for reentrancy attacks.
+Execution process:
+1. The malicious publisher proposes a new valid index and bonds the auction.
+2. The publisher adds a bounty of an ERC20 contract with a malicious `transfer()` function.
+3. The publisher calls `settleAuction()` with the correct parameters and the malicious bounty id.
+4. `settleAuction()` calls `withdrawBounty()`, which in turn calls the malicious ERC20 contract's `transfer()`.
+5. The malicious contract re-enters `settleAuction()` with empty parameters, which completes successfully due to the previous call's state changes.
+6. The malicious contract sets new pending weights and calls `publishNewIndex()` with malicious weights.
+7. The original `settleAuction()` resumes with the malicious weights, setting them in the basket.
+8. The publisher burns all his shares, transferring all the tokens to himself.
+
+Vulnerable code: The vulnerable code involves the function `settleAuction()` where `withdrawBounty()` is called before setting `auctionOngoing = false`.

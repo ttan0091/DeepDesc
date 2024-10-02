@@ -1,0 +1,15 @@
+Type of vulnerability: Signature Verification Bypass and Uninitialized Mapping State
+
+Cause of vulnerability: 
+1. Lack of validation for the signer address in the `verify()` function, allowing `address(0)` to pass as a valid signer.
+2. Uninitialized state of the `idToOwner` mapping, which defaults to `address(0)` for unminted NFTs.
+
+Execution process: 
+1. An attacker sets the `maker` to `address(0)` and provides any signature.
+2. The `verify()` function returns true because `ecrecover` returns `address(0)` when the signature does not match, and the function does not check for `address(0)`.
+3. The `tradeValid()` function is called with `maker` set to `address(0)` and `makerIds` set to unminted NFT IDs.
+4. Due to the uninitialized `idToOwner` mapping, these unminted NFTs are assumed to have an owner of `address(0)`, causing `tradeValid()` to erroneously return true.
+
+Vulnerable code: 
+1. `Beebots.verify()` does not include a check for `signer != address(0)`.
+2. `Beebots.tradeValid()` does not include a check for `maker != address(0)`.

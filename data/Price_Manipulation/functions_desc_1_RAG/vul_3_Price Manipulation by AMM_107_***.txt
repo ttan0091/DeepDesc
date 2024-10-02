@@ -1,0 +1,37 @@
+This code defines an external function named deleverToZeroBorrowBalance, which is designed to reduce the borrow balance of a given SetToken to zero by redeeming collateral and repaying the borrowed asset. The function is part of a smart contract that manages leveraged positions in a decentralized finance (DeFi) context. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Modifiers:
+    _setToken: An instance of ISetToken, representing the tokenized portfolio.
+    _collateralAsset: An instance of IERC20, representing the collateral asset.
+    _repayAsset: An instance of IERC20, representing the asset to be repaid.
+    _redeemQuantity: The quantity of collateral to redeem.
+    _tradeAdapterName: The name of the trade adapter to be used for trading.
+    _tradeData: Additional data required for the trade execution.
+    The function is marked as external, meaning it can be called from outside the contract.
+    The function is marked as nonReentrant to prevent reentrancy attacks.
+    The function is restricted to be called only by a manager and a valid SetToken using the onlyManagerAndValidSet modifier.
+
+2. Calculating Notional Quantities:
+    notionalRedeemQuantity: This is calculated by multiplying _redeemQuantity with the total supply of _setToken using the preciseMul function. This represents the total amount of collateral to be redeemed in the context of the SetToken's total supply.
+    notionalRepayQuantity: This is obtained by calling borrowBalanceCurrent on the Compound token (cToken) corresponding to the _repayAsset. This represents the current borrow balance of the SetToken.
+
+3. Creating and Validating Action Info:
+    ActionInfo memory deleverInfo: This structure is created and validated using the _createAndValidateActionInfoNotional function. This function likely populates deleverInfo with various details required for the deleveraging process, such as the SetToken, collateral and repay assets, quantities, and the trade adapter.
+
+4. Redeeming Collateral:
+    _redeemUnderlying: This function is called to redeem the collateral from the Compound protocol. It uses the deleverInfo.collateralCTokenAsset and deleverInfo.notionalSendQuantity to perform the redemption.
+
+5. Executing the Trade:
+    _executeTrade: This function executes the trade using the trade adapter specified in deleverInfo. It trades the redeemed collateral for the repay asset using the provided _tradeData.
+
+6. Repaying the Borrow:
+    _repayBorrow: This function repays the borrowed asset using the deleverInfo.borrowCTTokenAsset and notionalRepayQuantity.
+
+7. Updating Positions:
+    _setToken.calculateAndEditDefaultPosition: This function updates the default position of the SetToken for the repay asset.
+    _updateLeverPositions: This function updates the leverage positions based on the deleveraging action.
+
+8. Emitting Event:
+    emit LeverageDecreased: This event is emitted to log the deleveraging action, including the SetToken, collateral and repay assets, trade adapter, quantities, and protocol fee (which is set to 0 in this case).
+
+This function is crucial for managing leveraged positions in a DeFi context, ensuring that the borrow balance is reduced to zero by redeeming collateral and repaying the borrowed asset through a series of welldefined steps. The use of modifiers and nonreentrant guards ensures the security and integrity of the function execution.

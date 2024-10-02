@@ -1,0 +1,19 @@
+[H-01] Re-balancing the vault allocation may always revert when distributing profits: resulting of a massive system DOS
+Submitted by0xBeirao, also found bybin2chen
+updateRewardSumfunction call_computeRewardsPerUnitStakedwith_debtToOffsetset to 0. Meaning that the assignmentL531will revert iflastLUSDLossError_Offset != 0(which is likely the case) because we try to assign a negative value to anuint.
+Impact
+_rebalance()will be definitely DOS if the profit is greater than theyieldClainThreshold⇒vars.profit != 0.
+Because they call_rebalance()all these functions will be DOS :
+InBorrowerOperations100% DOS
+openTrovecloseTrove_adjustTroveaddColl, withdrawCollwithdrawLUSD, repayLUSD
+InTroveManager80% DOS
+liquidateTrovesbatchLiquidateTrovesredeemCloseTrove
+Proof of Concept
+Context : the vault has compound enough profit to withdraw. (here)
+Alice initiates a trove liquidation.offset()inStabilityPoolis called to cancels out the trove debt against the LUSD contained in the Stability Pool.
+A floor division errors occur so nowlastLUSDLossError_Offsetis not null.
+Now, every time_rebalance()is called the transaction will revert.
+Recommended Mitigation
+InStabilityPool.sol#L504-L544, just skip the floor division errors calculation if_debtToOffset == 0
+if(_debtToOffset!=0){[StabilityPool.sol#L526-L538](https://github.com/code-423n4/2023-02-ethos/blob/73687f32b934c9d697b97745356cdf8a1f264955/Ethos-Core/contracts/StabilityPool.sol#L526-L538)}
+tess3rac7 (Ethos Reserve) confirmed

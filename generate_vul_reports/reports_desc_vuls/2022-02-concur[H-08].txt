@@ -1,0 +1,23 @@
+Type of vulnerability: Logical Flaw
+Cause of vulnerability: The deposit function does not transfer the deposit tokens to the MasterChef contract, causing the balance check to always fail.
+Execution process: When a user attempts to deposit tokens and receive rewards, the deposit function records the amount but does not transfer the tokens. As a result, the `updatePool` function always finds the balance of deposit tokens in the MasterChef contract to be zero, causing it to return without updating rewards.
+Vulnerable code: 
+```solidity
+function updatePool(uint _pid) public {
+    PoolInfo storage pool = poolInfo[_pid];
+    if (block.number <= pool.lastRewardBlock) { return; }
+    uint lpSupply = pool.depositToken.balanceOf(address(this));
+    if (lpSupply == 0 || pool.allocPoint == 0) {
+        pool.lastRewardBlock = block.number;
+        return;
+    }
+    if (block.number >= endBlock) {
+        pool.lastRewardBlock = block.number;
+        return;
+    }
+    uint multiplier = getMultiplier(pool.lastRewardBlock, block.number);
+    uint concurReward = multiplier.mul(concurPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
+    pool.accConcurPerShare = pool.accConcurPerShare.add(concurReward.mul(_concurShareMultiplier).div(lpSupply));
+    pool.lastRewardBlock = block.number;
+}
+```

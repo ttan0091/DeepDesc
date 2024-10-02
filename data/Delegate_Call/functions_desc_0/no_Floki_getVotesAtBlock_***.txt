@@ -1,0 +1,28 @@
+This code defines a public view function named getVotesAtBlock, which is designed to retrieve the voting power of a given account at a specific historical block number. The function takes two parameters: an Ethereum address account and a block number blockNumber. The function returns a uint224 value representing the number of votes.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function begins with a require statement that checks if the blockNumber is less than the current block number (block.number). If the blockNumber is not less than the current block number, it means the function is being asked to retrieve data from a future block, which is not possible. In such a case, the function throws an error with the message "FLOKI:getVotesAtBlock:FUTURE_BLOCK: Cannot get votes at a block in the future."
+
+2. Checkpoints Initialization:
+    The function then retrieves the number of checkpoints (nCheckpoints) associated with the account from the numCheckpoints mapping. Checkpoints are records that store the voting power of an account at specific block numbers.
+
+3. Edge Case Handling:
+    If there are no checkpoints (nCheckpoints == 0), it means the account has never had any voting power, so the function returns 0.
+
+4. Recent Balance Check:
+    The function checks if the most recent checkpoint's block number (checkpoints[account][nCheckpoints  1].blockNumber) is less than or equal to the blockNumber. If true, it returns the votes from the most recent checkpoint (checkpoints[account][nCheckpoints  1].votes).
+
+5. Implicit Zero Balance Check:
+    If the first checkpoint's block number (checkpoints[account][0].blockNumber) is greater than the blockNumber, it indicates that the account had no voting power at or before that block, so the function returns 0.
+
+6. Binary Search for Historical Data:
+    If the above conditions are not met, the function performs a binary search on the checkpoints to find the exact or closest historical voting power. It initializes two variables, lowerBound and upperBound, to the start and end of the checkpoints array, respectively.
+    The binary search iteratively narrows down the range by adjusting lowerBound and upperBound based on comparisons between the checkpoint block numbers and the blockNumber.
+    During each iteration, the function calculates the midpoint (center) of the current range and retrieves the checkpoint at that position. If the checkpoint's block number matches the blockNumber, it returns the corresponding votes. If the checkpoint's block number is less than the blockNumber, it adjusts the lowerBound to center. Otherwise, it adjusts the upperBound to center  1.
+
+7. Final Check:
+    If no exact match is found during the binary search, the function returns the votes from the last known checkpoint before the blockNumber (checkpoints[account][lowerBound].votes).
+
+This function efficiently retrieves historical voting power data by leveraging checkpoints and a binary search algorithm, ensuring both accuracy and performance.

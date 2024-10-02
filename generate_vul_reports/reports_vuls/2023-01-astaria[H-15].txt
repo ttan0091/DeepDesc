@@ -1,0 +1,15 @@
+[H-15] Wrong starting price when listing on Seaport for assets that has less than 18 decimals
+Submitted byKoolex
+According to Astaria’s docs:https://docs.astaria.xyz/docs/protocol-mechanics/loanterms
+Liquidation initial ask: Should the NFT go into liquidation, the initial price of the auction will be set to this value. Note that this set as a starting point for a dutch auction, and the price will decrease over the liquidation period. This figure is should also be specified in 10^18 format.
+The liquidation initial ask is specified in 18 decimals. This is then used as a starting price when the NFT goes under auction on OpenSea. However, if the asset has less than 18 decimals, then the starting price goes wrong to Seaport.
+This results in listing the NFT with too high price that makes it unlikely to be sold.
+Proof of Concept
+The starting price is set to the liquidation initial ask:
+listedOrder = s.COLLATERAL_TOKEN.auctionVault(ICollateralToken.AuctionVaultParams({settlementToken: stack[position].lien.token,collateralId: stack[position].lien.collateralId,maxDuration: auctionWindowMax,startingPrice: stack[0].lien.details.liquidationInitialAsk,endingPrice: 1_000 wei}));
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/AstariaRouter.sol#L639-L647
+Let’s assume the asset is USDC which has 6 decimals:
+Strategist signs a strategy with liquidationInitialAsk1000e18.Following the docs, this means the starting price is supposed to be1000USDCThe NFT is being liquidated1000e18 is passed to Seaport along with asset USDCSeaport lists the NFT, and the price will be too high as1000e18 will be1000000000000000USDC
+Recommended Mitigation Steps
+Either fetch the asset’s decimals on-chain or add it as a part of the strategy.Convert liquidationInitialAsk to the asset’s decimals before passing it as a starting price.
+SantiagoGregory (Astaria) confirmed

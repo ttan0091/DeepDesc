@@ -1,0 +1,28 @@
+This code defines a public view function named historicalVotingPowerAtNonce, which is designed to retrieve the historical voting power of a given address at a specific nonce. The function uses a binary search algorithm to efficiently find the correct historical voting power based on the provided nonce.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address owner: The address of the account for which the historical voting power is being queried.
+    uint256 nonce: A unique identifier (nonce) that represents a specific point in time or event sequence for which the voting power is being queried.
+
+2. Preconditions and Validation:
+    The function starts by checking two conditions using the require statement:
+      nonce <= votingPowerChangeNonce: Ensures that the provided nonce is less than or equal to the current nonce tracking voting power changes.
+      nonce < (1 << 64): Ensures that the nonce does not exceed the maximum value that can be represented by 64 bits, which is a practical limit to prevent overflow and ensure the nonce fits within the expected storage format.
+
+3. Binary Search Setup:
+    uint256 start = 0: Initializes the start of the search range to the beginning of the voting power changes for the owner.
+    uint256 end = votingPowerChangeCount[owner]: Sets the end of the search range to the total number of voting power changes recorded for the owner.
+
+4. Binary Search Execution:
+    The function enters a loop that continues as long as start is less than end.
+    Inside the loop, the midpoint (mid) of the current search range is calculated using the formula (start + end + 1) / 2. This formula ensures that the midpoint calculation does not lead to an infinite loop by always rounding up.
+    The function then checks if the nonce associated with the voting power change at index mid (extracted from the upper 64 bits of _votingPower[owner][mid]) is greater than the provided nonce:
+      If true, it means the current midpoint's nonce is too high, so the search range is adjusted to exclude the upper half by setting end = mid  1.
+      If false, it means the current midpoint's nonce is less than or equal to the provided nonce, so the search range is adjusted to include the midpoint and continue searching in the upper half by setting start = mid.
+
+5. Return of Result:
+    Once the loop exits (when start equals end), the function calls historicalVotingPowerAtIndex(owner, start) to retrieve and return the historical voting power at the determined index.
+
+This function is crucial for systems where historical voting power needs to be accurately and efficiently queried, especially in scenarios involving decentralized governance or similar mechanisms where voting rights can change over time. The use of binary search optimizes the lookup process, making it much faster than a linear search, especially when dealing with a large number of voting power changes.

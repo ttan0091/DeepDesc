@@ -1,0 +1,16 @@
+[H-18] Attacker can claim more IL by manipulating pool price thenremoveLiquidity
+Submitted by gzeon
+Impact
+Vader reimburse user IL immediately when user withdraw from the pool (VaderRouterV2.sol:L227), an attacker can therefore manipulate the pool balance causing a high IL, remove liquidity and restore the pool balance such that he will receive a larger IL reimbursement.
+Proof of Concept
+Let’s assume our attacker own 100% of FOO-VADER
+Attacker add 100 FOO and 100 VADER to the Poolwait some block, or 1 year for max IL protectionIn 1 transaction, attackerSwap 9900 FOO to 99 VaderPool now have 10000 FOO and 1 VADERBy VaderMath.sol:L84 the loss is 100*1/10000+100-2 = 98.01 VADERRemove liquidity and receive 10000 FOO and 99.01 VADERRestore the pool balanceSuch that the attacker will gain 98.01 VADER without risk
+The profit is constrained by gas cost, pool fee, % of pool controlled by the attacker and % of IL protection.
+Recommended Mitigation Steps
+Use twap price to determine P1 in VaderMath.sol:L84 when calculating IL to reduce risk of manipulation
+SamSteinGG (Vader) commented:
+Duplicate of #2
+alcueca (judge) commented:
+Doesn’t seem like a duplicate to me, @SamSteinGG?
+SamSteinGG (Vader) commented:
+@alcueca The stated trade cannot occur as trades are inherently limited by the CLP design of the protocol to one third of the available pair liquidity. As such, the illustrated pair would actually result in almost zero units retrieved back.

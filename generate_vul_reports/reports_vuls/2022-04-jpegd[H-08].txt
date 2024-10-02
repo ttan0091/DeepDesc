@@ -1,0 +1,21 @@
+[H-08]StrategyPUSDConvex.balanceOfJPEGuses incorrect function signature while callingextraReward.earned, causing the function to unexpectedly revert everytime
+Submitted by rayn
+StrategyPUSDConvex.sol#L234
+As specified in ConvexBaseRewardPool.solandVirtualRewardPool.sol, the function signature ofearnedisearned(address). However,balanceOfJPEGdid not pass any arguments toearned, which would causebalanceOfJPEGto always revert.
+This bug will propagate throughControllerandYVaultuntil finally reaching the source of the call inYVaultLPFarming ._computeUpdate, and render the entire farming contract unuseable.
+Proof of Concept
+BothBaseRewardPool.earnedandVirtualBalanceRewardPool.earnedtakes an address as argument
+function earned(address account) public view returns (uint256) {returnbalanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);}function earned(address account) public view returns (uint256) {returnbalanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);}
+ButbalanceOfJPEGdoes not pass any address toextraReward.earned, causing the entire function to revert when called
+function balanceOfJPEG() external view returns (uint256) {uint256 availableBalance = jpeg.balanceOf(address(this));IBaseRewardPool baseRewardPool = convexConfig.baseRewardPool;uint256 length = baseRewardPool.extraRewardsLength();for (uint256 i = 0; i < length; i++) {IBaseRewardPool extraReward = IBaseRewardPool(baseRewardPool.extraRewards(i));if (address(jpeg) == extraReward.rewardToken()) {availableBalance += extraReward.earned();//we found jpeg, no need to continue the loopbreak;}}return availableBalance;}
+Tools Used
+vim, ganache-cli
+Recommended Mitigation Steps
+Passaddress(this)as argument ofearned.
+Notice how we modify the fetching of reward. This is reported in a separate bug report, but for completeness, the entire fix is shown in both report entries.
+function balanceOfJPEG() external view returns (uint256) {uint256 availableBalance = jpeg.balanceOf(address(this));IBaseRewardPool baseRewardPool = convexConfig.baseRewardPool;availableBalance += baseRewardPool.earned(address(this));uint256 length = baseRewardPool.extraRewardsLength();for (uint256 i = 0; i < length; i++) {IBaseRewardPool extraReward = IBaseRewardPool(baseRewardPool.extraRewards(i));if (address(jpeg) == extraReward.rewardToken()) {availableBalance += extraReward.earned(address(this));}}return availableBalance;}
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#15.
+LSDan (judge) commented:
+Leaving this as high risk. The issue would cause a loss of funds.

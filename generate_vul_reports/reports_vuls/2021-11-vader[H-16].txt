@@ -1,0 +1,13 @@
+[H-16]VaderRouter.calculateOutGivenIncalculates wrong swap
+Submitted by cmichel
+The 3-path hop inVaderRouter.calculateOutGivenInis supposed to first swapforeignassets to native assetsin pool0, and then the received native assets to different foreign assets againin pool1.
+The first argument ofVaderMath.calculateSwap(amountIn, reserveIn, reserveOut)must refer to the same token as the second argumentreserveIn.
+The code however mixes these positions up and first performs a swap inpool1instead ofpool0:
+functioncalculateOutGivenIn(uint256amountIn,address[]calldatapath)externalviewreturns(uint256amountOut){if(...) {}else{returnVaderMath.calculateSwap(VaderMath.calculateSwap(// @audit the inner trade should not be in pool1 for a forward swap. amountIn foreign => next param should be foreignReserve0amountIn,nativeReserve1,foreignReserve1),foreignReserve0,nativeReserve0);}/** @audit instead should first be trading in pool0!VaderMath.calculateSwap(VaderMath.calculateSwap(amountIn,foreignReserve0,nativeReserve0),nativeReserve1,foreignReserve1);*/
+Impact
+All 3-path swaps computations throughVaderRouter.calculateOutGivenInwill return the wrong result.
+Smart contracts or off-chain scripts/frontends that rely on this value to trade will have their transaction reverted, or in the worst case lose funds.
+Recommended Mitigation Steps
+Return the following code instead which first trades inpool0and then inpool1:
+returnVaderMath.calculateSwap(VaderMath.calculateSwap(amountIn,foreignReserve0,nativeReserve0),nativeReserve1,foreignReserve1);
+SamSteinGG (Vader) confirmed

@@ -1,0 +1,21 @@
+[H-02] currentLoanOwner can manipulate loanInfo when any lenders try to buyout
+Submitted by rayn
+NFTLoanFacilitator.sol#L205-L208NFTLoanFacilitator.sol#L215-L218
+If an attacker already callslend()to lend to a loan, the attacker can manipulateloanInfoby reentrancy attack when any lenders try to buyout. The attacker can set bad values oflendInfo(e.g. very long duration, and 0 interest rate) that the lender who wants to buyout don’t expect.
+Proof of Concept
+An attacker lends a loan, andloanAssetContractAddressinloanInfois ERC777 which is suffering from reentrancy attack. When a lender (victim) try to buyout the loan of the attacker:
+The victim calledlend().Inlend(), it always callERC20(loanAssetContractAddress).safeTransferto sendaccumulatedInterest + previousLoanAmounttocurrentLoanOwner(attacker).ThetransferofloanAssetContractAddressERC777 will call_callTokensReceivedso that the attacker can calllend()again in reentrancy with parameters:loanId: same loan IdinterestRate: set to bad value (e.g. 0)amount: same amountdurationSeconds: set to bad value (e.g. a long durationSeconds)sendLendTicketTo: same address of the attacker (currentLoanOwner)Now the variables inloanInfoare changed to bad value, and the victim will get the lend ticket but the loan term is manipulated, and can not set it back (because it requires a better term).
+Tools Used
+vim
+Recommended Mitigation Steps
+UsenonReentrantmodifier onlend()to prevent reentrancy attack:OpenZeppelin/ReentrancyGuard.sol
+wilsoncusack (Backed Protocol) acknowledged, but disagreed with High severity and commented:
+We should mitigate, but will think on this.
+wilsoncusack (Backed Protocol) confirmed and commented:
+Not sure whether this should be Medium or High risk.
+wilsoncusack (Backed Protocol) commented:
+Thinking more, again we should definitely mitigate, but I think this is less severe because I do not think ERC777 tokens will work with our contract? The on received call will revert? So this would need to be a malicious ERC20 designed just for this.
+wilsoncusack (Backed Protocol) resolved and commented:
+er erc777 does work because reception ack is not needed in the normal case.
+gzeon (judge) commented:
+Sponsor confirmed with fix.

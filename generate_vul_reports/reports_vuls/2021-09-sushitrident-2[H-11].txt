@@ -1,0 +1,12 @@
+[H-11] ConcentratedLiquidityPool: incorrectfeeGrowthGlobalaccounting when crossing ticks
+Submitted by hickuphh3
+Impact
+Swap fees are taken from the output. Hence, if swapping token0 for token1 (zeroForOneis true), then fees are taken in token1. We see this to be the case in the initialization offeeGrowthGlobalin the swap cache
+feeGrowthGlobal = zeroForOne ? feeGrowthGlobal1 : feeGrowthGlobal0;
+and in_updateFees().
+However, looking atTicks.cross(), the logic is the reverse, which causes wrong fee accounting.
+if(zeroForOne) {...ticks[nextTickToCross].feeGrowthOutside0=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside0;}else{...ticks[nextTickToCross].feeGrowthOutside1=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside1;}
+Recommended Mitigation Steps
+Switch the0and1inTicks.cross().
+if(zeroForOne) {...// `feeGrowthGlobal` = feeGrowthGlobal1ticks[nextTickToCross].feeGrowthOutside1=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside1;}else{...// feeGrowthGlobal = feeGrowthGlobal0ticks[nextTickToCross].feeGrowthOutside0=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside0;}
+sarangparikh22 (Sushi) confirmed

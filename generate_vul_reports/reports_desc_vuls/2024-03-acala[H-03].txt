@@ -1,0 +1,10 @@
+Type of vulnerability: Math/Rounding Error
+Cause of vulnerability: The calculation of `move_balance` is rounded down, leading to situations where the receiving account's reward debt is not increased, allowing the receiver to claim rewards that were already claimed.
+Execution process: An attacker can exploit this by transferring a small fraction of their shares to another account, ensuring that `balance * move_share` is lower than `share`. This results in `move_balance` being 0, meaning the new account receives shares but no reward debt, allowing them to claim rewards multiple times.
+Vulnerable code: 
+```rust
+let move_balance = U256::from(balance.to_owned().saturated_into::<u128>()) * U256::from(move_share.to_owned().saturated_into::<u128>()) / U256::from(share.to_owned().saturated_into::<u128>());
+increased_rewards.entry(*reward_currency).and_modify(|increased_reward| {
+    *increased_reward = increased_reward.saturating_add(move_balance);
+});
+```

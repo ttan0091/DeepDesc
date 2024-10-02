@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The function `postIncomingMessages` calls `_callReceiverContract` before updating the `incomingMessageCounter`, allowing an attacker to re-enter the function and submit the same messages again.
+Execution process: An attacker can submit two cross-chain messages to be executed. The first message transfers 1000 USDC to an attacker-controlled contract, which can re-enter the `postIncomingMessages` function and receive 1000 USDC a second time.
+Vulnerable code: 
+```solidity
+for(uint256 i = 0; i < messages.length; i++) {
+    // @audit re-entrant, can submit same postIncomingMessages again
+    _callReceiverContract(fromChainHash, messages[i], startingCounter + 1);
+}
+connectedChains[fromChainHash].incomingMessageCounter += messages.length;
+```

@@ -1,0 +1,19 @@
+Type of vulnerability: Incorrect Reward Calculation and Slashing Mechanism
+Cause of vulnerability: The contract uses the full duration of the stake instead of the actual 14-day cycle duration for calculating expected rewards and slashing amounts.
+Execution process: A node operator stakes for a long duration, and if they miss rewards in any 14-day cycle, they are slashed based on the full duration of their stake, leading to an unfairly large slashing amount.
+Vulnerable code: 
+```solidity
+File: MinipoolManager.sol
+557: function getExpectedAVAXRewardsAmt(uint256 duration, uint256 avaxAmt) public view returns (uint256) {
+558:     ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
+559:     uint256 rate = dao.getExpectedAVAXRewardsRate();
+560:     return (avaxAmt.mulWadDown(rate) * duration) / 365 days; // full duration used when calculating expected reward
+561: }
+...
+670: function slash(int256 index) private {
+...
+673:     uint256 duration = getUint(keccak256(abi.encodePacked("minipool.item", index, ".duration")));
+674:     uint256 avaxLiquidStakerAmt = getUint(keccak256(abi.encodePacked("minipool.item", index, ".avaxLiquidStakerAmt")));
+675:     uint256 expectedAVAXRewardsAmt = getExpectedAVAXRewardsAmt(duration, avaxLiquidStakerAmt); // full duration
+676:     uint256 slashGGPAmt = calculateGGPSlashAmt(expectedAVAXRewardsAmt);
+```

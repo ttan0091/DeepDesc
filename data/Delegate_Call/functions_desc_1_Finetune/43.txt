@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy or Reflection Attack
+Cause of vulnerability: The Escrow.claim function allows the executing address to be manipulated by a malicious token contract during the transfer operation, leading to unauthorized withdrawals.
+Working process of the attack: 
+1. A malicious token contract calls Escrow.claim to withdraw deposited funds.
+2. During the execution of msg.sender.call.value(balance)(), the msg.sender is set to the token contract's address.
+3. The malicious token contract (updated with _setReflectedTokenBalance to control f and r) manipulates the reflected and token balances.
+4. The transfer operation portion of ERC20._transfer sends a call to TerminableERC20.burn to burn tokens from the user, leading to ETH reward tokens being minted within manualReflection mode.
+5. The recursive call from the malicious token contract to Escrow.claim leads to multiple rebate tokens being minted, which then drain the balance of the Escrow contract.
+6. The remaining tokens in the contract's unresolved profits account (ura) and internalLedger are then exhausted, leading to the ability to deposit the equivalent in profitTokens.
+7. The updateHistory call triggers a transfer of ETH to the attacker.
+8. Repeating the attack leads to the ETH balance of the contract going negative, effectively DoSing the contract.

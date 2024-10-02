@@ -1,0 +1,20 @@
+Type of vulnerability: Front-running/Sandwich Attack
+Cause of vulnerability: The use of spot price from Uniswap pools without a time-weighted average price (TWAP) mechanism allows for price manipulation by front-runners or MEV bots.
+Execution process: An attacker observes a pending transaction to stake ETH via rETH on Uniswap. The attacker then executes two transactions: first, swapping a large amount of ETH for rETH to increase the price, then allowing the victim's transaction to execute at an inflated price, and finally, swapping the rETH back to ETH at a profit.
+Vulnerable code: 
+```solidity
+// SafEth/derivatives/Reth.sol
+function deposit() external payable returns (uint256) {
+    uint256 minOut = (rethPerEth * msg.value) * (1 - maxSlippage);
+    // Swap ETH for rETH
+    uint256 amountOut = swapEthForReth(msg.value, minOut);
+    return amountOut;
+}
+
+function swapEthForReth(uint256 _amount, uint256 _minOut) internal returns (uint256) {
+    // Perform swap on Uniswap
+    // Assuming the swap function from Uniswap is used here
+    uint256 amountOut = uniswapSwap(_amount, _minOut);
+    return amountOut;
+}
+```

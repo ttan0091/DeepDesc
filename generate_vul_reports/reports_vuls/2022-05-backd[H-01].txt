@@ -1,0 +1,23 @@
+[H-01]Minter.sol#startInflation()can be bypassed.
+Submitted by WatchPug, also found by 0x52
+https://github.com/code-423n4/2022-05-backd/blob/2a5664d35cde5b036074edef3c1369b984d10010/protocol/contracts/tokenomics/Minter.sol#L104-L108
+functionstartInflation()externaloverrideonlyGovernance{require(lastEvent==0,"Inflation has already started.");lastEvent=block.timestamp;lastInflationDecay=block.timestamp;}
+AslastEventandlastInflationDecayare not initialized in theconstructor(), they will remain to the default value of0.
+However, the permissionlessexecuteInflationRateUpdate()method does not check the value oflastEventandlastInflationDecayand used them directly.
+As a result, ifexecuteInflationRateUpdate()is called beforestartInflation():
+L190, the check of if_INFLATION_DECAY_PERIODhas passed sincelastInflationDecaywill betrue, andinitialPeriodEndedwill be set totrueright away;L188, since thelastEventintotalAvailableToNow += (currentTotalInflation * (block.timestamp - lastEvent));is0, thetotalAvailableToNowwill be set tototalAvailableToNow ≈ currentTotalInflation * 52 years, which renders the constrains oftotalAvailableToNowincorrect and useless.
+https://github.com/code-423n4/2022-05-backd/blob/2a5664d35cde5b036074edef3c1369b984d10010/protocol/contracts/tokenomics/Minter.sol#L115-L117
+functionexecuteInflationRateUpdate()externaloverridereturns(bool) {return_executeInflationRateUpdate();}
+https://github.com/code-423n4/2022-05-backd/blob/2a5664d35cde5b036074edef3c1369b984d10010/protocol/contracts/tokenomics/Minter.sol#L187-L215
+function_executeInflationRateUpdate()internalreturns(bool) {totalAvailableToNow+= (currentTotalInflation* (block.timestamp-lastEvent));lastEvent=block.timestamp;if(block.timestamp>=lastInflationDecay+_INFLATION_DECAY_PERIOD) {currentInflationAmountLp=currentInflationAmountLp.scaledMul(annualInflationDecayLp);if(initialPeriodEnded) {currentInflationAmountKeeper=currentInflationAmountKeeper.scaledMul(annualInflationDecayKeeper);currentInflationAmountAmm=currentInflationAmountAmm.scaledMul(annualInflationDecayAmm);}else{currentInflationAmountKeeper=initialAnnualInflationRateKeeper/_INFLATION_DECAY_PERIOD;currentInflationAmountAmm=initialAnnualInflationRateAmm/_INFLATION_DECAY_PERIOD;initialPeriodEnded=true;}currentTotalInflation=currentInflationAmountLp+currentInflationAmountKeeper+currentInflationAmountAmm;controller.inflationManager().checkpointAllGauges();lastInflationDecay=block.timestamp;}returntrue;}
+https://github.com/code-423n4/2022-05-backd/blob/2a5664d35cde5b036074edef3c1369b984d10010/protocol/contracts/tokenomics/Minter.sol#L50-L51
+// Used for final safety check to ensure inflation is not exceededuint256publictotalAvailableToNow;
+https://github.com/code-423n4/2022-05-backd/blob/2a5664d35cde5b036074edef3c1369b984d10010/protocol/contracts/tokenomics/Minter.sol#L217-L227
+function_mint(addressbeneficiary,uint256amount)internalreturns(bool) {totalAvailableToNow+= ((block.timestamp-lastEvent) *currentTotalInflation);uint256newTotalMintedToNow=totalMintedToNow+amount;require(newTotalMintedToNow<=totalAvailableToNow,"Mintable amount exceeded");totalMintedToNow=newTotalMintedToNow;lastEvent=block.timestamp;token.mint(beneficiary,amount);_executeInflationRateUpdate();emitTokensMinted(beneficiary,amount);returntrue;}
+Recommendation
+Consider initializinglastEvent,lastInflationDecayinconstructor().
+or
+Consider addingrequire(lastEvent != 0 && lastInflationDecay != 0, "...")toexecuteInflationRateUpdate().
+danhper (Backd) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown howstartInflationcan be bypassed, breaking the Access Control as well as the Sponsor Goal for Emissions.Because of this I believe High Severity to be appropriate.The sponsor has mitigated in a subsequent PR

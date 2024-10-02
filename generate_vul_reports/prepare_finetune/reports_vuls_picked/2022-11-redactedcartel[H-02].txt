@@ -1,0 +1,31 @@
+Type of vulnerability: Reward Distribution Miscalculation
+Cause of vulnerability: The contract does not account for dynamic emission rates of rewards, leading to incorrect distribution of rewards based on varying emission rates over time.
+Execution process: Users accrue rewards based on a fixed calculation that does not adjust for changes in emission rates. When users claim their rewards, the distribution is based on a ratio that does not accurately reflect the actual rewards they should receive due to dynamic emission rates.
+Vulnerable code: 
+```solidity
+function _globalAccrue(GlobalState storage globalState, ERC20 producerToken) internal {
+    uint256 totalSupply = producerToken.totalSupply();
+    uint256 lastUpdate = globalState.lastUpdate;
+    uint256 lastSupply = globalState.lastSupply;
+    if (block.timestamp != lastUpdate || totalSupply != lastSupply) {
+        uint256 rewards = globalState.rewards + (block.timestamp - lastUpdate) * lastSupply;
+        globalState.lastUpdate = block.timestamp.safeCastTo32();
+        globalState.lastSupply = totalSupply.safeCastTo224();
+        globalState.rewards = rewards;
+    }
+}
+
+function userAccrue(ERC20 producerToken, address user) public {
+    UserState storage u = producerTokens[producerToken].userStates[user];
+    uint256 balance = producerToken.balanceOf(user);
+    uint256 rewards = u.rewards + u.lastBalance * (block.timestamp - u.lastUpdate);
+    u.lastUpdate = block.timestamp.safeCastTo32();
+    u.lastBalance = balance.safeCastTo224();
+    u.rewards = rewards;
+}
+
+function claim(ERC20 producerToken, address user) external {
+    uint256 rewardState = p.rewardStates[rewardToken];
+    uint256 amount = (rewardState * userRewards) / globalRewards;
+}
+```

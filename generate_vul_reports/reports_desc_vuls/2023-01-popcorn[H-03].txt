@@ -1,0 +1,27 @@
+Type of vulnerability: Incorrect Reward Calculation
+
+Cause of vulnerability: The new end time for rewards is calculated based on the balance of the reward token owned by the contract, which does not account for rewards already owed to users who have not collected their rewards yet.
+
+Execution process: 
+1. A user deposits tokens and earns rewards.
+2. The reward speed is changed, affecting the end time calculation.
+3. Another user deposits tokens after the reward speed change.
+4. The second user receives more rewards than expected because the end time calculation was incorrect.
+
+Vulnerable code: 
+```solidity
+function changeRewardSpeed(IERC20 rewardsToken, uint160 rewardsPerSecond) public {
+    RewardInfo storage rewards = rewardInfo[rewardsToken];
+    require(rewards.rewardsPerSecond > 0, "No rewards for token");
+
+    uint256 currentTime = block.timestamp;
+    uint256 elapsedTime = currentTime - rewards.lastUpdatedTimestamp;
+    uint256 rewardsAccrued = elapsedTime * rewards.rewardsPerSecond;
+
+    rewards.rewardsPerSecond = rewardsPerSecond;
+    rewards.lastUpdatedTimestamp = currentTime;
+    rewards.rewardsEndTimestamp = currentTime + (rewards.rewardBalance / rewardsPerSecond);
+
+    emit RewardInfoUpdate(rewardsToken, rewardsPerSecond, rewards.rewardsEndTimestamp);
+}
+```

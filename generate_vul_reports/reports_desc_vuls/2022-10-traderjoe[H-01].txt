@@ -1,0 +1,25 @@
+Type of vulnerability: Balance Duplication / Reentrancy-like Vulnerability
+
+Cause of vulnerability: The use of temporary variables to update balances allows `_toBalance` to overwrite `_fromBalance`, especially when `_from` is equal to `_to`.
+
+Execution process: An attacker calls the `safeTransferFrom` function to transfer funds to themselves. Due to the lack of a check ensuring `_from` is not equal to `_to`, the balance of the attacker is incorrectly doubled. This process can be repeated multiple times to inflate the balance indefinitely.
+
+Vulnerable code:
+```solidity
+function _transfer(
+    address _from,
+    address _to,
+    uint256 _id,
+    uint256 _amount
+) internal virtual {
+    uint256 _fromBalance = _balances[_id][_from];
+    ...
+    uint256 _toBalance = _balances[_id][_to];
+    ...
+    unchecked {
+        _balances[_id][_from] = _fromBalance - _amount;
+        _balances[_id][_to] = _toBalance + _amount; // @audit: if _from == _to : rekt
+    }
+    ...
+}
+```

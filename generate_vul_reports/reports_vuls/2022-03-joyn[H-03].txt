@@ -1,0 +1,17 @@
+[H-03] DoS:claimForAllWindows()May Be Made Unusable By An Attacker
+Submitted by kirk-baird, also found by hyh and Ruhum
+When the value ofcurrentWindowis raised sufficiently highSplitter.claimForAllWindows()will not be able to be called due to the block gas limit.
+currentWindowcan only ever be incremented and thus will always increase. This value will naturally increase as royalties are paid into the contract.
+Furthermore, an attacker can continually incrementcurrentWindowby callingincrementWindow(). An attacker can impersonate aIRoyaltyVaultand send 1 WEI worth of WETH to pass the required checks.
+Proof of Concept
+Excerpt fromSplitter.claimForAllWindows()demonstrating the for loop overcurrentWindowthat will grow indefinitely.
+for (uint256 i = 0; i < currentWindow; i++) {if (!isClaimed(msg.sender, i)) {setClaimed(msg.sender, i);amount += scaleAmountByPercentage(balanceForWindow[i],percentageAllocation);}}
+Splitter.incrementWindow()may be called by an attacker increasingcurrentWindow.
+function incrementWindow(uint256 royaltyAmount) public returns (bool) {uint256 wethBalance;require(IRoyaltyVault(msg.sender).supportsInterface(IID_IROYALTY),"Royalty Vault not supported");require(IRoyaltyVault(msg.sender).getSplitter() == address(this),"Unauthorised to increment window");wethBalance = IERC20(splitAsset).balanceOf(address(this));require(wethBalance >= royaltyAmount, "Insufficient funds");require(royaltyAmount > 0, "No additional funds for window");balanceForWindow.push(royaltyAmount);currentWindow += 1;emit WindowIncremented(currentWindow, royaltyAmount);return true;}
+Recommended Mitigation Steps
+Consider modifying the functionclaimForAllWindows()to instead claim for range of windows. Pass the function astartWindowandendWindowand only iterate through windows in that range. Ensure thatendWindow < currentWindow.
+sofianeOuafir (Joyn) confirmed, disagreed with severity and commented:
+In my opinion, the severity level should be 3 (High Risk) instead of 2 (Med Risk)
+duplicate of #3
+deluca-mike (judge) increased severity to High and commented:
+While similar, I believe these issues are separate.Issue 3 indicates that the check thatmsg.senderis an authorizedRoyaltyVaultis faulty, since any contract can implement the interface and return theSplitterfromgetSplitter. While this should be fixed, as the warden suggested in the Recommended Mitigation Steps in #3, the issue raised in this issue can still occur when enough authorizedRoyaltyVaultcontracts callincrementWindow.claimForAllWindowscan remain, but as this warden suggests, aclaimForWindows(uint256 startWindow, uint256 endWindow, uint256 percentageAllocation, bytes32[] calldata merkleProof)should exist, in caseclaimForAllWindowsbecomes prohibitively expensive, even organically (i.e.currentWindowis made very high due to sufficient authorizedincrementWindowcalls).

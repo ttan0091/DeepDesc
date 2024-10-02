@@ -1,0 +1,42 @@
+This code defines an external function named transferWithPermit, which allows a token transfer to be executed using a signed permit message. This function is particularly useful for scenarios where the token owner cannot directly call the transfer function due to limitations such as offchain or hardware wallet usage.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address target: The address of the token owner who is authorizing the transfer.
+    address to: The recipient address where the tokens will be transferred.
+    uint256 value: The amount of tokens to be transferred.
+    uint256 deadline: The timestamp until which the permit is valid.
+    uint8 v: The recovery ID of the ECDSA signature.
+    bytes32 r: The R component of the ECDSA signature.
+    bytes32 s: The S component of the ECDSA signature.
+
+2. Expiry Check:
+    The function first checks if the current block timestamp (block.timestamp) is less than or equal to the deadline. If the permit has expired, the function reverts with the message "WERC10: Expired permit".
+
+3. Hash Calculation:
+    The function calculates a hash (hashStruct) of the structured data that includes the transfer details. This is done using keccak256 on the encoded data which includes:
+      TRANSFER_TYPEHASH: A constant hash defining the type of the data being hashed.
+      target: The token owner's address.
+      to: The recipient's address.
+      value: The transfer amount.
+      nonces[target]++: A nonce to prevent replay attacks, incremented after use.
+      deadline: The permit validity deadline.
+
+4. Signature Verification:
+    The function verifies the signature using two methods: verifyEIP712 and verifyPersonalSign. It checks if either verification method passes. If neither verification method confirms the signature, the function reverts.
+
+5. Recipient Address Validation:
+    The function ensures that the recipient address (to) is not the zero address (address(0)) or the contract itself (address(this)). If the recipient address is invalid, the function reverts.
+
+6. Balance Check and Transfer:
+    The function retrieves the balance of the token owner (balanceOf[target]) and checks if it is sufficient to cover the transfer amount (value). If the balance is insufficient, the function reverts with the message "WERC10: transfer amount exceeds balance".
+    If the balance is sufficient, the function updates the balances: deducts the transfer amount from the token owner's balance and adds it to the recipient's balance.
+
+7. Event Emission:
+    The function emits a Transfer event to log the transfer details, which includes the sender (target), the recipient (to), and the transfer amount (value).
+
+8. Return Value:
+    Finally, the function returns true to indicate that the transfer was successful.
+
+This function leverages EIP712 structured data hashing and signing to securely permit token transfers without the need for the token owner to be online or have gas to execute the transaction directly.

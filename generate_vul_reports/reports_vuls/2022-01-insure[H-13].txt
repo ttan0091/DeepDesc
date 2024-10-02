@@ -1,0 +1,19 @@
+[H-13] Admin of the index pool canwithdrawCredit()afterapplyCover()to avoid taking loss for the compensation paid for a certain pool
+Submitted by WatchPug
+In the current implementation, when an incident is reported for a certain pool, the index pool can stillwithdrawCredit()from the pool, which in the best interest of an index pool, the admin of the index pool is preferred to do so.
+This allows the index pool to escape from the responsibility for the risks of invested pools.
+Making the LPs of the pool take an unfair share of the responsibility.
+Proof of Concept
+Pool AtotalCredit= 10,000Pool ArewardPerCredit= 1[Index Pool 1] allocates 1,000 credits to PoolA:totalCredit= 11,000indicies[Index Pool 1] = 1,000After a while, Pool ArewardPerCredithas grown to1.1, andapplyCover()has been called, [Index Pool 1] callwithdrawCredit()get 100 premiumtotalCredit= 10,000indicies[Index Pool 1] = 0AfterpendingEnd, the poolresume(),[ Index Pool 1] will not be paying for the compensation sincecreditis 0.
+In our case, [Index Pool 1] earned premium without paying for a part of the compensation.
+Recommendation
+Change to:
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/PoolTemplate.sol#L416-L421
+functionwithdrawCredit(uint256_credit)externaloverridereturns(uint256_pending){require(marketStatus==MarketStatus.Trading,"ERROR: WITHDRAW_CREDIT_BAD_CONDITIONS");IndexInfostorage_index=indicies[msg.sender];
+oishun1112 (Insure) confirmed and disagreed with severity:
+to call PoolTemplate: withdrawCredit(), someone has to call IndexTemplate: withdraw(), set(), and adjustAlloc().set() is onlyOwner, so we assume it’s fine()
+adjustAlloc() is public. this clean up and flatten the credit distribution.
+withdraw() is public. this reduce totalCredit to distribute. when exceed upperSlack, call adjustAlloc().We should lock the credit control when pool is in payout status.
+This implementation, still allows small amount of withdraw, for users who were requested Withdraw.
+oishun1112 (Insure) commented:
+We have fixed with PVE02 (Peckshield audit) issue together.

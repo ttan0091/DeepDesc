@@ -1,0 +1,21 @@
+Type of vulnerability: Functionality Implementation Error
+Cause of vulnerability: Missing calls to the FSD token contract's corresponding functions for claiming staking and governance tributes.
+Execution process: When a beneficiary calls `claimTribute` or `claimGovernanceTribute`, the contract transfers the accrued rewards from the beneficiary's vested token balance without replenishing it from the FSD token contract, leading to incorrect internal accounting and potential loss of rewards.
+Vulnerable code: 
+```solidity
+function claimTribute(uint256 num) external onlyBeneficiary {
+    uint256 tribute = fsd.availableTribute(num);
+    require(tribute != 0, "FSDVesting::claimTribute: No tribute to claim");
+    fsd.claimTribute(num); // This line is missing in the actual implementation
+    fsd.safeTransfer(msg.sender, tribute);
+    emit TributeClaimed(msg.sender, tribute);
+}
+
+function claimGovernanceTribute(uint256 num) external onlyBeneficiary {
+    uint256 tribute = fsd.availableGovernanceTribute(num);
+    require(tribute != 0, "FSDVesting::claimGovernanceTribute: No governance tribute to claim");
+    fsd.claimGovernanceTribute(num); // This line is missing in the actual implementation
+    fsd.safeTransfer(msg.sender, tribute);
+    emit GovernanceTributeClaimed(msg.sender, tribute);
+}
+```

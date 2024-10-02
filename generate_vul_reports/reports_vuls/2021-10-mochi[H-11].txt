@@ -1,0 +1,13 @@
+[H-11]treasuryShareis Overwritten inFeePoolV0._shareMochi()
+Submitted by leastwood
+Impact
+TheFeePoolV0.solcontract accrues fees upon the liquidation of undercollaterised positions. These fees are split between treasury andvMochicontracts. However, whendistributeMochi()is called to distributemochitokens toveCRVholders, bothmochiShareandtreasuryShareis flushed from the contract when there are stillusdmtokens in the contract.
+Proof of Concept
+Consider the following scenario:
+TheFeePoolV0.solcontract contains 100usdmtokens at an exchange rate of 1:1 withmochitokens.updateReserve()is called to set the split ofusdmtokens such thattreasurySharehas claim on 20usdmtokens andmochiSharehas claim on the other 80 tokens.AveCRVholder seeks to increase their earnings by callingdistributeMochi()beforesendToTreasury()has been called.As a result, 80usdmtokens are converted tomochitokens and  locked in a curve rewards pool.Consequently,mochiShareandtreasuryShareis set to0(aka flushed).The same user callsupdateReserve()to split the leftover 20usdmtokens betweentreasuryShareandmochiShare.mochiShareis now set to 16usdmtokens.The above process is repeated to distributemochitokens toveCRVholders again and again.The end result is thatveCRVholders have been able to receive all tokens that were intended to be distributed to the treasury.
+FeePoolV0.solL94
+Tools Used
+Manual code reviewDiscussions with the Mochi team.
+Recommended Mitigation Steps
+Consider removing the line inFeePoolV0.sol(mentioned above), wheretreasuryShareis flushed.
+ryuheimat (Mochi) confirmed

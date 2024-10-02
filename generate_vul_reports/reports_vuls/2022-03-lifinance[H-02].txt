@@ -1,0 +1,14 @@
+[H-02] All swapping functions lack checks for returned tokens
+Submitted by 0xDjango, also found by GeekyLumberjack and pmerkleplant
+GenericSwapFacet.sol#L23-L30LibSwap.sol#L48
+Every function that stems from theGenericSwapFacetlacks checks to ensure that some tokens have been returned via the swaps. InLibSwap.solin theswap()function, the swap call is sent to the target DEX. A return of success is required, otherwise the operation will revert.
+Each “inner” swap viaLibSwap.sollacks output checks and also the “outer”swapTokensGeneric()viaGenericSwapFacet.sollacks a final check as well.
+There is a possibility that the calldata is accidently populated with a function in the target router that is not actually performing any swapping functionality,getAmountsOut()for example. The function will return true, but no new returned tokens will be present in the contract. Meanwhile, the contract has already received the user’sfromTokensdirectly.
+Recommended Mitigation Steps
+This would be a potential use case of using function signature whitelists as opposed to contract address whitelists, as noted as a possibility by the LiFi team.
+Otherwise, the followingrequirestatement inswapTokensGeneric()would ensure that at least a single token was received:
+require(LibAsset.getOwnBalance(_swapData.receivingAssetId) - toAmount) > 0, "No tokens received")
+H3xept (Li.Fi) resolved and commented:
+Fixed in lifinance/lifi-contracts@3a42484dda8bafcfd122c8aa3b61d3766d545bf9
+gzeon (judge) commented:
+Sponsor confirmed with fix.

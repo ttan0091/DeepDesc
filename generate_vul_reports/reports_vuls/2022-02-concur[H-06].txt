@@ -1,0 +1,20 @@
+[H-06]ConvexStakingWrapper.sol#_calcRewardIntegralWrong implementation can disrupt rewards calculation and distribution
+Submitted by WatchPug, also found by cmichel, harleythedog, hickuphh3, kirk-baird, and leastwood
+ConvexStakingWrapper.sol#L175-L204
+uint256bal=IERC20(reward.token).balanceOf(address(this));uint256d_reward=bal-reward.remaining;// send 20 % of cvx / crv reward to treasuryif(reward.token==cvx||reward.token==crv) {IERC20(reward.token).transfer(treasury,d_reward/5);d_reward= (d_reward*4) /5;}IERC20(reward.token).transfer(address(claimContract),d_reward);if(_supply>0&&d_reward>0) {reward.integral=reward.integral+uint128((d_reward*1e20) /_supply);}//update user integralsuint256userI=userReward[_pid][_index][_account].integral;if(userI<reward.integral) {userReward[_pid][_index][_account].integral=reward.integral;claimContract.pushReward(_account,reward.token,(_balance* (reward.integral-userI)) /1e20);}//update remaining reward here since balance could have changed if claimingif(bal!=reward.remaining) {reward.remaining=uint128(bal);}
+The problems in the current implementation:
+reward.remainingis not a global state; thereward.remainingof otherrewards with the same rewardToken are not updated;balshould be refreshed beforereward.remaining = uint128(bal);;L175 should not usebalanceOfbut take the diff before and aftergetReward().
+Proof of Concept
+convexPool[1] is incentivized with CRV as the reward token,1000 lpTokencan get10 CRVper day;convexPool[2] is incentivized with CRV as the reward token,1000 lpTokencan get20 CRVper day.Alice deposits1,000lpToken to_pid=11 day later, Alice deposits500lpToken to_pid=1convexPoolgetReward()sends10 CRVas reward to contractd_reward= 10,2 CRVsends totreasury,8 CRVsend toclaimContractrewards[1][0].remaining= 100.5 day later, Alice deposits500lpToken to_pid=1, and the tx will fail:convexPoolgetReward()sends7.5 CRVas reward to contractreward.remaining= 10bal= 7.5bal - reward.remainingwill fail due to underflow0.5 day later, Alice deposits500lpToken to_pid=1, most of the reward tokens will be left in the contract:convexPoolgetReward()sends15 CRVas reward to the contract;d_reward = bal - reward.remaining= 51 CRVgot sent totreasury,4 CRVsent toclaimContract,10 CRVleft in the contract;rewards[1][0].remaining= 15
+Expected Results:
+All the15 CRVget distributed:3 CRVto thetreasury, and12 CRVtoclaimContract.
+Actual Results:
+Only5 CRVgot distributed. The other10 CRVgot left in the contract which can be frozen in the contract, see below for the details:
+Bob deposits1,000lpToken to_pid=2convexPoolgetReward()sends0 CRVas reward to the contractd_reward = bal - reward.remaining= 102 CRVsent totreasury,8 CRVsent toclaimContractwithout callingpushReward(), so the8 CRVare now frozen inclaimContract;rewards[2][0].remaining= 10
+Impact
+The two most important methods:deposit()andwithdraw()will frequently fail as the tx will revert at_calcRewardIntegral();Rewards distributed to users can often be fewer than expected;If there are different pools that use the same token as rewards, part of the rewards can be frozen atclaimContractand no one can claim them.
+Recommended Mitigation Steps
+Consider comparing thebalanceOfreward token before and aftergetReward()to get the actual rewarded amount, andreward.remainingshould be removed.
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how_calcRewardIntegralcan be broken in multiple ways.While I believe a set of similar findings have been reported, this one is extremely well written so I think this can stand on it’s own.Because_calRewardIntegralis a core functionality of the contract (giving out reward) and the warden has shown how it can be broken, I agree with High Severity.

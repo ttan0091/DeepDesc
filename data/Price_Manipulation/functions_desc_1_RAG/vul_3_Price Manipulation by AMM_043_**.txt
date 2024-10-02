@@ -1,0 +1,27 @@
+This code defines an external function named redeemZcToken, which is part of a smart contract designed to handle the redemption of zerocoupon tokens (zcTokens) in a financial market. The function is restricted to be called only by a specific address (referred to as swivel) using the onlySwivel modifier. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Initial Setup:
+    address u: The address of the underlying asset in the market.
+    uint256 m: The identifier of the market.
+    address t: The address of the token holder who is redeeming the zcTokens.
+    uint256 a: The amount of zcTokens to be redeemed.
+
+2. Market and Maturity Status Retrieval:
+    The function retrieves the market details from the markets mapping using the underlying asset address u and the market identifier m, storing these details in a Market memory struct named mkt.
+    It also checks the maturity status of the market by accessing the mature mapping with the same keys, storing the result in the boolean variable matured.
+
+3. Market Maturity Check and Enforcement:
+    If the market is not yet matured (!matured), the function calls matureMarket(u, m) to ensure the market is matured. This function call is crucial as it ensures that the market conditions are appropriate for redemption. If the market fails to mature, the function will revert with the message 'failed to mature the market'.
+
+4. Burning zcTokens:
+    The function then proceeds to burn the specified amount a of zcTokens from the token holder's address t using the burn function of the zcToken contract at mkt.zcTokenAddr. This operation is essential as it reduces the token holder's balance and effectively redeems the tokens. If the burning operation fails, the function will revert with the message 'could not burn'.
+
+5. Event Emission:
+    After successfully burning the tokens, the function emits a RedeemZcToken event, which includes the underlying asset address u, the market identifier m, the token holder's address t, and the amount a of zcTokens redeemed. This event is useful for offchain monitoring and logging of redemption activities.
+
+6. Return Value Calculation:
+    Depending on whether the market was initially mature or not, the function calculates the return value differently:
+      If the market was not mature initially (!matured), the function simply returns the amount a of zcTokens redeemed.
+      If the market was already mature (matured), the function calls calculateReturn(u, m, a) to compute the return, which includes the original amount plus any marginal floating interest accrued.
+
+This function is designed to ensure that zcTokens are redeemed correctly, taking into account the maturity status of the market and handling the necessary token burning and interest calculations. The use of require statements and the onlySwivel modifier ensures that the function operates securely and within the intended constraints.

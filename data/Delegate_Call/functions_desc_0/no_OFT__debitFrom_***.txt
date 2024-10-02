@@ -1,0 +1,32 @@
+This code defines an internal function named _debitFrom, which is designed to handle the debiting of tokens from a specified address for crosschain transfers. The function is marked with override indicating that it overrides a function from a base contract, and whenNotPaused which ensures the function can only be executed if the contract is not paused.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    _from: The address from which tokens are to be debited.
+    _dstChainId: The destination chain ID where the tokens will be sent.
+    _toAddress: The address on the destination chain to which the tokens will be sent.
+    _amount: The amount of tokens to be debited.
+
+2. Calling Super Function:
+    The function first calls super._debitFrom(_from, _dstChainId, _toAddress, _amount) to perform the base debit operation. This is likely defined in a parent contract and handles the basic token debit logic. The result is stored in the variable amount.
+
+3. Whitelist Check:
+    If the _from address is in the whitelist, the function immediately returns the amount without further checks. This suggests that whitelisted addresses are exempt from any additional constraints or limits.
+
+4. Token Sending Logic:
+    The function then calculates sentTokenAmount, which represents the total amount of tokens sent to the destination chain within the current day.
+    It retrieves the lastSentTimestamp for the _dstChainId from chainIdToLastSentTimestamp and the current timestamp using block.timestamp.
+    It checks if the current day (based on timestamps divided by 1 day) is different from the day recorded in lastSentTimestamp. If it is a new day, sentTokenAmount is set to amount. Otherwise, it adds amount to the existing chainIdToSentTokenAmount[_dstChainId].
+
+5. Outbound Cap Check:
+    The function retrieves the outboundCap for the _dstChainId from chainIdToOutboundCap.
+    If sentTokenAmount exceeds outboundCap, the function reverts the transaction with an error message ExceedOutboundCap(outboundCap, sentTokenAmount), indicating that the outbound cap has been exceeded.
+
+6. Updating State Variables:
+    If the outbound cap is not exceeded, the function updates chainIdToSentTokenAmount[_dstChainId] and chainIdToLastSentTimestamp[_dstChainId] with the new sentTokenAmount and currTimestamp, respectively.
+
+7. Return Value:
+    Finally, the function returns the amount of tokens that were debited.
+
+This function is crucial for managing crosschain token transfers, ensuring that they do not exceed predefined caps and are tracked correctly per chain and per day.

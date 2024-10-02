@@ -1,0 +1,17 @@
+[H-02]ERC20Rewardsreturns wrong rewards if no tokens initially exist
+Submitted by cmichel
+TheERC20Rewards._updateRewardsPerTokenfunction exits without updatingrewardsPerToken_.lastUpdatediftotalSupplyis zero, i.e., if there are no tokens initially.
+This leads to an error if there is an active rewards period but no tokens have been minted yet.
+Example:rewardsPeriod.start: 1 month ago,rewardsPeriod.end: in 1 month,totalSupply == 0.
+The first mint leads to the user (mintee) receiving all rewards for the past period (50% of the total rewards in this case).
+_mintis called, calls_updateRewardsPerTokenwhich short-circuits.rewardsPerToken.lastUpdatedis still set torewardsPeriod.startfrom the constructor. Then_updateUserRewardsis called and does not currently yield any rewards. (because both balance and the index diff are zero). User has now minted the tokens,totalSupplyincreases and user balance is set.User performs aclaim:_updateRewardsPerTokenis called andtimeSinceLastUpdated = end - rewardsPerToken_.lastUpdated = block.timestamp - rewardsPeriod.start = 1 month. Contract “issues” rewards for the past month. The first mintee receives all of it.
+The first mintee receives all pending rewards when they should not receive any past rewards.
+This can easily happen if the token is new, the reward period has already been initialized and is running, but the protocol has not officially launched yet.
+Note thatsetRewardsalso allows setting a date in the past which would also be fatal in this case.
+Recommend that therewardsPerToken_.lastUpdatedfield must always be updated in_updateRewardsPerTokento the current time (orend) even if_totalSupply == 0. Don’t return early.
+alcueca (Yield) confirmed:
+You are right, that’s a great finding. For the record, I think that this is whatthis line in Unipool.soldoes:
+functionrewardPerToken()publicviewreturns(uint256) {if(totalSupply() ==0) {returnrewardPerTokenStored;}
+I’ll apply the mitigation step suggested, with a conditional to not do therewardsPerToken_.accumulatedmath that would revert.Now I know the feeling of the devs that fork a known project and leave a pesky conditional out, thanks again :D
+alcueca (Yield) patched:
+Fix

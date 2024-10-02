@@ -1,0 +1,12 @@
+Type of vulnerability: Underflow/overflow affecting the ppt_peg_balance variable
+Cause of vulnerability: A complex interaction between precisiondraining conversions, the initial underflow due to overpricing in percentageOutputs, and lack of configurable breakpoints
+Explanation of working process:
+1. The protocol starts with an initialized ppt_peg_balance of 2256  2197 in the setup phase.
+2. During the first week, the percentageOutput reverts to 1e18 due to an underflow, leading to a large conversion factor that drains precision.
+3. The ownership is claimed with the drained balance, confirming that pptmax is fully owned (except for fractions under 1e18).
+4. The price is set to a minimum percentageOutput above this unclaimably small balance via buySellTokensInPeg. After this, the only reasonable price changes to other currencies can only decrease the existing multiplier (further confirming the unclaimability of any newly created piece).
+5. postComputeFarmPegBalance shows that if the previous weekly ppt_peg_balance is >0, it will be used to update the tobalances. However, updates are capped at min(2256  1/percentOutputs, _expectedPricing.outputs).
+6. Without needing to exceed 2256  2197, the new ppt_peg_balance will be established at 2256  1/percentOutputs, where it remains stuck for good until a system update occurs.
+7. The PPT peg balance will be used for both improving the shareprice of Uniswap sharesd through buySellSharesInPeg, and to pay out the pegbalance/farmbalance. Each of these calls might be subject to brokenness.
+8. A claimPeg call seems almost destined to lead to a stuck contract; not because any particular sum can't be payed, but because of the approach of capping the update at balances[address(this)].getLastKnownTransferredPegBalance (periodNumber).
+9. This means a corrupted ppt_peg_balance will become completely frozen until a new version of the contract fixes the bug or the system is socialized to a new one.

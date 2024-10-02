@@ -1,0 +1,133 @@
+[H-01]RewardThrottle.checkRewardUnderflow()might track the cumulativeAPRs wrongly.
+Submitted byhansfriese
+https://github.com/code-423n4/2023-02-malt/blob/main/contracts/RewardSystem/RewardThrottle.sol#L445-L455
+https://github.com/code-423n4/2023-02-malt/blob/main/contracts/RewardSystem/RewardThrottle.sol#L576
+Impact
+RewardThrottle.checkRewardUnderflow()might calculate the cumulativeAPRs for epochs wrongly.
+As a result,cashflowAverageAprwill be calculated incorrectly inupdateDesiredAPR(), andtargetAPRwould be changed unexpectedly.
+Proof of Concept
+IncheckRewardUnderflow(), it calls a_sendToDistributor()function to update cumulativeAPRs after requesting some capitals from the overflow pool.
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol445:if(epoch>_activeEpoch) {446:for(uint256i=_activeEpoch;i<epoch; ++i) {447:uint256underflow=_getRewardUnderflow(i);448:449:if(underflow>0) {450:uint256balance=overflowPool.requestCapital(underflow);451:452:_sendToDistributor(balance,i);//@audit cumulative apr will be tracked wrongly when epoch > _activeEpoch + 1453:         }454:       }455:     }
+The main reason for this issue is that_sendToDistributor()doesn’t update the cumulativeAPRs whenamount == 0and the below scenario would be possible.
+Let’s assumeactiveEpoch = 100andepoch = 103. It’s possible if the active epoch wasn’t updated for 2 epochs.After that, thecheckRewardUnderflow()function will call_fillInEpochGaps()and the cumulativeAPRs will be settled accordingly.And it will try to request capitals from theoverflowPooland increase the rewards for epochs.At epoch 100, it requests some positivebalancefromoverflowPooland increases the cumulativeAPRs for epoch 101 correctly in_sendToDistributor().
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol611:state[epoch].rewarded=state[epoch].rewarded+rewarded;612:state[epoch+1].cumulativeCashflowApr=613:state[epoch].cumulativeCashflowApr+614:epochCashflowAPR(epoch);615:state[epoch+1].cumulativeApr=616:state[epoch].cumulativeApr+617:epochAPR(epoch);618:state[epoch].bondedValue=bonding.averageBondedValue(epoch);
+After that, theoverflowPooldoesn’t have any remaining funds and thebalance(At L450)will be 0 for epochs 101, 102.So_sendToDistributor()will be terminated right away and won’t increase the cumulativeAPRs of epoch 102 according to epoch 101 and this value won’t be changed anymore because theactiveEpochis 103 already.
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol575:function_sendToDistributor(uint256amount,uint256epoch)internal{576:if(amount==0) {577:return;578:     }
+As a result, the cumulativeAPRs will save smaller values from epoch 102 andcashflowAverageAprwill be smaller also if thesmoothingPeriodcontains such epochs inupdateDesiredAPR().
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol139:uint256cashflowAverageApr=averageCashflowAPR(smoothingPeriod);
+So theupdateDesiredAPR()function will change thetargetAPRusing the smaller average value and the smoothing logic wouldn’t work as expected.
+Recommended Mitigation Steps
+I think_sendToDistributor()should update the cumulativeAPRs as well whenamount == 0.
+function_sendToDistributor(uint256amount,uint256epoch)internal{if(amount==0) {state[epoch+1].cumulativeCashflowApr=state[epoch].cumulativeCashflowApr+epochCashflowAPR(epoch);state[epoch+1].cumulativeApr=state[epoch].cumulativeApr+epochAPR(epoch);state[epoch].bondedValue=bonding.averageBondedValue(epoch);return;}
+0xScotch (Malt) confirmed and commented:
+Interesting finding. It’s valid but the bug would actually result in the protocol retaining more capital due to reporting lower APRs than it should.
+
+[H-02] RewardThrottle: If an epoch does not have any profit, then there may not be rewards for that epoch at the start of the next epoch.
+Submitted bycccz, also found byhansfriese
+In RewardThrottle, both checkRewardUnderflow and fillInEpochGaps call\_fillInEpochGapsto fill the state of the previous epoch without profit, the difference being that checkRewardUnderflow will request the reward from the overflowPool and distribute the reward, whereas fillInEpochGaps does not.
+functioncheckRewardUnderflow()publiconlyActive{uint256epoch=timekeeper.epoch();uint256_activeEpoch=activeEpoch;// gas// Fill in gaps so we have a fresh foundation to calculate from_fillInEpochGaps(epoch);if(epoch>_activeEpoch) {for(uint256i=_activeEpoch;i<epoch; ++i) {uint256underflow=_getRewardUnderflow(i);if(underflow>0) {uint256balance=overflowPool.requestCapital(underflow);_sendToDistributor(balance,i);}}}}functionfillInEpochGaps()external{uint256epoch=timekeeper.epoch();_fillInEpochGaps(epoch);}
+This results in that when an epoch does not have any profit, then at the start of the next epoch that epoch will have a reward if checkRewardUnderflow is called, and no reward iffillInEpochGapsis called.
+According to the documentation, when an epoch is not profitable enough, the reward should be requested from the overflowPool, so checkRewardUnderflow should be called. And iffillInEpochGapsis called first, the epoch will lose its reward.
+Note: populateFromPreviousThrottle will also cause epochs without any profit to lose their rewards
+functionpopulateFromPreviousThrottle(addresspreviousThrottle,uint256epoch)externalonlyRoleMalt(ADMIN_ROLE,"Only admin role"){RewardThrottleprevious=RewardThrottle(previousThrottle);uint256_activeEpoch=activeEpoch;// gasfor(uint256i=_activeEpoch;i<epoch; ++i) {(uint256profit,uint256rewarded,uint256bondedValue,uint256desiredAPR,uint256epochsPerYear,uint256cumulativeCashflowApr,uint256cumulativeApr) =previous.epochData(i);state[i].bondedValue=bondedValue;state[i].profit=profit;state[i].rewarded=rewarded;state[i].epochsPerYear=epochsPerYear;state[i].desiredAPR=desiredAPR;state[i].cumulativeCashflowApr=cumulativeCashflowApr;state[i].cumulativeApr=cumulativeApr;}activeEpoch=epoch;}
+Proof of Concept
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/RewardSystem/RewardThrottle.sol#L437-L462
+Recommended Mitigation Steps
+Consider removing thefillInEpochGapsfunction, or only allowing it to be called when the contract is not active.
+0xScotch (Malt) confirmed and commented:
+We will be removing both implementations offillInEpochGaps.
+
+[H-03] Manipulation oflivePriceto receivedefaultIncentivein 2 consecutive blocks
+Submitted byminhquanym
+In StabilizerNode, the default behaviour when twap is below the lower peg threshold, all transfers to the amm pool are blocked. However whenusePrimedWindow = true, it will only block transfers forprimedWindow = 10blocks. After 10 blocks, the block automatically stops and allows free market trading.
+The first call to start this priming will receivedefaultIncentiveMalt and setprimedBlockto start the priming. However, function_validateSwingTraderTrigger()which is used to validate and start the priming usinglivePriceis easy to be manipulated. Attacker can manipulate it to receivedefaultIncentivein 2 consecutive blocks.
+Proof of Concept
+Consider the scenario:
+Block i, twap is below the value returned frommaltDataLab.getSwingTraderEntryPrice(), attacker callstabilize()and receivedefaultIncentive.primedBlock = block.number.Block i+1, call to_validateSwingTraderTrigger()returntrueand trigger swing trader to bring the price back to peg. It’s also resetprimedBlock = 0(stop blocking transfer to AMM pool)Since only 1 block pass, let’s assume twap is still below the value returned frommaltDataLab.getSwingTraderEntryPrice()(because twap moves slowly and will not change immediately to current price)Now attacker can use flash loan to manipulate thelivePriceto be larger thanentryPrice(tranfer to AMM is not blocked) and callstabilize()to receive incentive again then repay the flash loan.
+Attacker cost is only flash loan fee, since his call will start an auction but not trigger swing trader so the state of AMM pool when he repays the flash loan is still the same (only added flash loan fee).
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/StabilizerNode.sol#L312-L334
+function_validateSwingTraderTrigger(uint256livePrice,uint256entryPrice)internalreturns(bool){if(usePrimedWindow) {if(livePrice>entryPrice) {returnfalse;}if(block.number>primedBlock+primedWindow) {primedBlock=block.number;malt.mint(msg.sender,defaultIncentive* (10**malt.decimals()));emitMintMalt(defaultIncentive* (10**malt.decimals()));returnfalse;}if(primedBlock==block.number) {returnfalse;}}returntrue;}
+Recommended Mitigation Steps
+Consider not giving incentives for caller or reset theprimedBlockat least afterprimedWindowblocks.
+0xScotch (Malt) commented:
+I’m kinda skeptical of this but I think its possible in theory.However:stabilizecan only be called via EOA due tomsg.sender == tx.origincheck (inonlyEOAmodifier)Size of flashloan required is proportional to the size of the pool (as you have to manipulate price of that pool) while the incentive is fixed. So it seems like this would quickly become unprofitableI would be very curious to see a real PoC of this rather than just a theoretical threat.
+Picodes (judge) commented:
+Regarding the previous comment:TheonlyEOAcheck can be bypassed using a sandwich attack instead of a flashloan so the possibility of a MEV attack still existsWe should consider that the cost of capital within a block is 0. For example, Euler already proposes feeless flashloans of up to their TVL. Seehttps://twitter.com/euler_mab/status/1595725665868910595. However there would still be the cost of using the AMM to manipulate the price.
+Picodes (judge) commented:
+Although the possibility of this being implemented depends on the size of the incentives and the cost of manipulating the AMM, it does not seem so unlikely. It could lead to a significant loss for the protocol, so I agree that high severity is appropriate.
+0xScotch (Malt) acknowledged
+
+[H-04] SwingTraderManager.addSwingTrader will push traderId withactive = falseto activeTraders
+Submitted bycccz, also found byhansfriese
+In SwingTraderManager.addSwingTrader, ifactive = false, the traderId is also pushed to activeTraders.
+functionaddSwingTrader(uint256traderId,address_swingTrader,boolactive,stringcalldataname)externalonlyRoleMalt(ADMIN_ROLE,"Must have admin privs") {SwingTraderDatastoragetrader=swingTraders[traderId];require(traderId>2&&trader.id==0,"TraderId already used");require(_swingTrader!=address(0),"addr(0)");swingTraders[traderId] =SwingTraderData({id:traderId,index:activeTraders.length,traderContract:_swingTrader,name:name,active:active});activeTraders.push(traderId);emitAddSwingTrader(traderId,name,active,_swingTrader);}
+Afterwards, if toggleTraderActive is called on the traderId, the traderId will be pushed to activeTraders again.
+functiontoggleTraderActive(uint256traderId)externalonlyRoleMalt(ADMIN_ROLE,"Must have admin privs"){SwingTraderDatastoragetrader=swingTraders[traderId];require(trader.id==traderId,"Unknown trader");boolactive= !trader.active;trader.active=active;if(active) {// setting it to active so add to activeTraderstrader.index=activeTraders.length;activeTraders.push(traderId);}else{
+This means that ingetTokenBalances()/calculateSwingTraderMaltRatio(), since there are two identical traderIds in activeTraders, the data in this trader will be calculated twice.
+WronggetTokenBalances()will result in wrong data whensyncGlobalCollateral().
+functiongetTokenBalances()externalviewreturns(uint256maltBalance,uint256collateralBalance){uint256[]memorytraderIds=activeTraders;uint256length=traderIds.length;for(uint256i;i<length; ++i) {SwingTraderDatamemorytrader=swingTraders[activeTraders[i]];maltBalance+=malt.balanceOf(trader.traderContract);collateralBalance+=collateralToken.balanceOf(trader.traderContract);}}
+WrongcalculateSwingTraderMaltRatio()will causeMaltDataLab.getRealBurnBudget()/getSwingTraderEntryPrice()to be wrong.
+functioncalculateSwingTraderMaltRatio()publicviewreturns(uint256maltRatio){uint256[]memorytraderIds=activeTraders;uint256length=traderIds.length;uint256decimals=collateralToken.decimals();uint256maltDecimals=malt.decimals();uint256totalMaltBalance;uint256totalCollateralBalance;for(uint256i;i<length; ++i) {SwingTraderDatamemorytrader=swingTraders[activeTraders[i]];totalMaltBalance+=malt.balanceOf(trader.traderContract);totalCollateralBalance+=collateralToken.balanceOf(trader.traderContract);}totalMaltBalance=maltDataLab.maltToRewardDecimals(totalMaltBalance);uint256stMaltValue= ((totalMaltBalance*maltDataLab.priceTarget()) /(10**decimals));uint256netBalance=totalCollateralBalance+stMaltValue;if(netBalance>0) {maltRatio= ((stMaltValue* (10**decimals)) /netBalance);}else{maltRatio=0;}}
+What’s more serious is that even if toggleTraderActive is called again, only one traderId will pop up from activeTraders, and the other traderId cannot be popped up.
+}else{// Becoming inactive so remove from activePoolsuint256index=trader.index;uint256lastTrader=activeTraders[activeTraders.length-1];activeTraders[index] =lastTrader;activeTraders.pop();swingTraders[lastTrader].index=index;trader.index=0;}
+This causes the trade to participate in the calculation ofgetTokenBalances()/calculateSwingTraderMaltRatio()even if the trade is deactive.
+Considering that the active parameter is likely to be false when addSwingTrader is called and cannot be recovered, this vulnerability should be High risk.
+Proof of Concept
+functiontestAddSwingTrader(addressnewSwingTrader)public{_setupContract();vm.assume(newSwingTrader!=address(0));vm.prank(admin);swingTraderManager.addSwingTrader(3,newSwingTrader,false,"Test");(uint256id,uint256index,addresstraderContract,stringmemoryname,boolactive) =swingTraderManager.swingTraders(3);assertEq(id,3);assertEq(index,2);assertEq(traderContract,newSwingTrader);assertEq(name,"Test");assertEq(active,false);vm.prank(admin);swingTraderManager.toggleTraderActive(3);assertEq(swingTraderManager.activeTraders(2),3);assertEq(swingTraderManager.activeTraders(3),3);// @audit:activeTraders[2] = activeTraders[3] = 3vm.prank(admin);swingTraderManager.toggleTraderActive(3);assertEq(swingTraderManager.activeTraders(2),3);}
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/SwingTraderManager.sol#L397-L447
+Recommended Mitigation Steps
+Change to:
+function addSwingTrader(uint256 traderId,address _swingTrader,bool active,string calldata name) external onlyRoleMalt(ADMIN_ROLE, "Must have admin privs") {SwingTraderData storage trader = swingTraders[traderId];require(traderId > 2 && trader.id == 0, "TraderId already used");require(_swingTrader != address(0), "addr(0)");swingTraders[traderId] = SwingTraderData({id: traderId,-     index: activeTraders.length,+     index: active ? activeTraders.length : 0,traderContract: _swingTrader,name: name,active: active});+  if(active) activeTraders.push(traderId);-   activeTraders.push(traderId);emit AddSwingTrader(traderId, name, active, _swingTrader);}
+0xScotch (Malt) confirmed
+
+[H-05]_distributeProfitwill use the staleglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio(), which will result in incorrect profit distribution
+Submitted bycccz
+The\_distributeProfit()(called by handleProfit()) will useglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio()when distributing profits, and the latestglobalIC.swingTraderCollateralDeficit()/swingTraderCollateralRatio()needs to be used to ensure that profits are distributed correctly.
+uint256globalSwingTraderDeficit= (maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralDeficit()) *maltDataLab.priceTarget()) / (10**collateralToken.decimals());// this is already in collateralToken.decimals()uint256lpCut;uint256swingTraderCut;if(globalSwingTraderDeficit==0) {lpCut=distributeCut;}else{uint256runwayDeficit=rewardThrottle.runwayDeficit();if(runwayDeficit==0) {swingTraderCut=distributeCut;}else{uint256totalDeficit=runwayDeficit+globalSwingTraderDeficit;
+However, the two calls to handleProfit in the contract do not call syncGlobalCollateral to synchronize the data in globalIC.
+syncGlobalCollateral will use the data ingetCollateralizedMalt(), including the collateralToken balance in overflowPool/swingTraderManager/liquidityExtension and the malt balance in swingTraderManager.
+function syncGlobalCollateral() public onlyActive {globalIC.sync(getCollateralizedMalt());}function getCollateralizedMalt() public view returns (PoolCollateral memory) {uint256 target = maltDataLab.priceTarget(); // 是否选用  getActualPriceTarget()uint256 unity = 10**collateralToken.decimals();// Convert all balances to be denominated in units of Malt target priceuint256 overflowBalance = maltDataLab.rewardToMaltDecimals((collateralToken.balanceOf(address(overflowPool)) * unity) / target);uint256 liquidityExtensionBalance = (collateralToken.balanceOf(address(liquidityExtension)) * unity) / target;(uint256 swingTraderMaltBalance,uint256 swingTraderBalance) = swingTraderManager.getTokenBalances();swingTraderBalance = (swingTraderBalance * unity) / target;
+Before handleProfit is called by StabilizerNode.stabilize.
+profitDistributor.handleProfit(rewards);
+a. checkAuctionFinalization is called to liquidityExtension.allocateBurnBudget, which transfers the collateralToken from liquidityExtension to swingTrader. The increase of collateralToken in swingTrader will make the data in globalIC stale.
+functionallocateBurnBudget(uint256amount)externalonlyRoleMalt(AUCTION_ROLE,"Must have auction privs")onlyActivereturns(uint256purchased){// Send the burnable amount to the swing trader so it can be used to burn more malt if requiredrequire(collateralToken.balanceOf(address(this)) >=amount,"LE: Insufficient balance");collateralToken.safeTransfer(address(swingTrader),amount);emitAllocateBurnBudget(amount);}
+b. swingTraderManager.sellMalt will exchange malt for collateralToken, and the increase of collateralToken in swingTrader will also make the data in globalIC stale.
+uint256swingAmount=swingTraderManager.sellMalt(tradeSize);
+Before SwingTrader.sellMalt is called to handleProfit.
+function_handleProfitDistribution(uint256profit)internalvirtual{if(profit!=0) {collateralToken.safeTransfer(address(profitDistributor),profit);profitDistributor.handleProfit(profit);}}
+a. dexHandler.sellMalt will exchange malt for collateralToken, and the increase of collateralToken in swingTrader will also make the data in globalIC stale.
+malt.safeTransfer(address(dexHandler),maxAmount);uint256rewards=dexHandler.sellMalt(maxAmount,10000);
+One obvious effect is that as the collateralToken in swingTrader increases, collateral.swingTrade will be smaller than it actually is, and the result ofglobalIC.swingTraderCollateralDeficit()will be larger than it should be.
+functionswingTraderCollateralDeficit()publicviewreturns(uint256) {// Note that collateral.swingTrader is already denominated in malt.decimals()uint256maltSupply=malt.totalSupply();uint256collateral=collateral.swingTrader;// gasif(collateral>=maltSupply) {return0;}returnmaltSupply-collateral;}
+thus making lpCut larger:
+uint256globalSwingTraderDeficit= (maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralDeficit()) *maltDataLab.priceTarget()) / (10**collateralToken.decimals());// this is already in collateralToken.decimals()uint256lpCut;uint256swingTraderCut;if(globalSwingTraderDeficit==0) {lpCut=distributeCut;}else{uint256runwayDeficit=rewardThrottle.runwayDeficit();if(runwayDeficit==0) {swingTraderCut=distributeCut;}else{uint256totalDeficit=runwayDeficit+globalSwingTraderDeficit;uint256globalSwingTraderRatio=maltDataLab.maltToRewardDecimals(globalIC.swingTraderCollateralRatio());// Already in collateralToken.decimalsuint256poolSwingTraderRatio=impliedCollateralService.swingTraderCollateralRatio();if(poolSwingTraderRatio<globalSwingTraderRatio) {swingTraderCut= (distributeCut*swingTraderPreferenceBps) /10000;lpCut=distributeCut-swingTraderCut;}else{lpCut=(((distributeCut*runwayDeficit) /totalDeficit) *(10000-lpThrottleBps)) /10000;
+Proof of Concept
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/ProfitDistributor.sol#L164-L184
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/StabilizerNode.sol#L423-L424
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/SwingTrader.sol#L176-L181
+Recommended Mitigation Steps
+Call syncGlobalCollateral to synchronize the data in globalIC before calling handleProfit.
+0xScotch (Malt) confirmed
+
+[H-06] StabilizerNode.stabilize uses stale GlobalImpliedCollateralService data, which will make stabilize incorrect
+Submitted bycccz
+In StabilizerNode.stabilize,impliedCollateralService.syncGlobalCollateral()is called only at the end of the function to synchronize the GlobalImpliedCollateralService data.
+if(!_shouldAdjustSupply(exchangeRate,stabilizeToPeg)) {lastStabilize=block.timestamp;impliedCollateralService.syncGlobalCollateral();return;}...if(trackAfterStabilize) {maltDataLab.trackPool();}impliedCollateralService.syncGlobalCollateral();lastStabilize=block.timestamp;}
+syncGlobalCollateral will use the data ingetCollateralizedMalt(), which includes the collateralToken balance in overflowPool/swingTraderManager/liquidityExtension and the malt balance in swingTraderManager.
+functionsyncGlobalCollateral()publiconlyActive{globalIC.sync(getCollateralizedMalt());}...functiongetCollateralizedMalt()publicviewreturns(PoolCollateralmemory) {uint256target=maltDataLab.priceTarget();uint256unity=10**collateralToken.decimals();// Convert all balances to be denominated in units of Malt target priceuint256overflowBalance=maltDataLab.rewardToMaltDecimals((collateralToken.balanceOf(address(overflowPool)) *unity) /target);uint256liquidityExtensionBalance= (collateralToken.balanceOf(address(liquidityExtension)) *unity) /target;(uint256swingTraderMaltBalance,uint256swingTraderBalance) =swingTraderManager.getTokenBalances();swingTraderBalance= (swingTraderBalance*unity) /target;
+Since StabilizerNode.stabilize will use the results of maltDataLab.getActualPriceTarget/getSwingTraderEntryPrice to stabilize, and maltDataLab.getActualPriceTarget/getSwingTraderEntryPrice will useGlobalImpliedCollateralService.collateralRatio, to ensure correct stabilization, the data in GlobalServiceImpliedCollateralService should be the latest.
+functiongetActualPriceTarget()externalviewreturns(uint256) {uint256unity=10**collateralToken.decimals();uint256icTotal=maltToRewardDecimals(globalIC.collateralRatio());...functiongetSwingTraderEntryPrice()externalviewreturns(uint256stEntryPrice){uint256unity=10**collateralToken.decimals();uint256icTotal=maltToRewardDecimals(globalIC.collateralRatio());
+But sinceimpliedCollateralService.syncGlobalCollateral()is not called before StabilizerNode.stabilize calls maltDataLab.getActualPriceTarget/getSwingTraderEntryPrice, this will cause StabilizerNode.stabilize to use stale GlobalImpliedCollateralService data, which will make stabilize incorrect.
+A simple example would be:
+impliedCollateralService.syncGlobalCollateral()is called to synchronize the latest dataSwingTraderManager.delegateCapital is called, and the collateralToken is taken out from SwingTrader, which will make theGlobalImpliedCollateralService.collateralRatiolarger than the actual collateralRatio.
+functiondelegateCapital(uint256amount,addressdestination)externalonlyRoleMalt(CAPITAL_DELEGATE_ROLE,"Must have capital delegation privs")onlyActive{collateralToken.safeTransfer(destination,amount);emitDelegation(amount,destination,msg.sender);}...functioncollateralRatio()publicviewreturns(uint256) {uint256decimals=malt.decimals();uint256totalSupply=malt.totalSupply();if(totalSupply==0) {return0;}return(collateral.total* (10**decimals)) /totalSupply;// @audit: collateral.total is larger than the actual}
+When StabilizerNode.stabilize is called, it will use the stale collateralRatio for calculation. If the collateralRatio is too large, the results of maltDataLab.getActualPriceTarget/getSwingTraderEntryPrice will be incorrect, thus making stabilize incorrect.
+Since stabilize is a core function of the protocol, stabilizing with the wrong data is likely to cause malt to be depegged, so the vulnerability should be High risk.
+Proof of Concept
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/StabilizerNode.sol#L161-L237
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/ImpliedCollateralService.sol#L89-L131
+Recommended Mitigation Steps
+CallimpliedCollateralService.syncGlobalCollateral()before StabilizerNode.stabilize calls maltDataLab.getActualPriceTarget.
+function stabilize() external nonReentrant onlyEOA onlyActive whenNotPaused {// Ensure data consistencymaltDataLab.trackPool();// Finalize auction if possible before potentially starting a new oneauction.checkAuctionFinalization();+  impliedCollateralService.syncGlobalCollateral();require(block.timestamp >= stabilizeWindowEnd || _stabilityWindowOverride(),"Can't call stabilize");stabilizeWindowEnd = block.timestamp + stabilizeBackoffPeriod;// used in 3 location.uint256 exchangeRate = maltDataLab.maltPriceAverage(priceAveragePeriod);bool stabilizeToPeg = onlyStabilizeToPeg; // gasif (!_shouldAdjustSupply(exchangeRate, stabilizeToPeg)) {lastStabilize = block.timestamp;impliedCollateralService.syncGlobalCollateral();return;}emit Stabilize(block.timestamp, exchangeRate);(uint256 livePrice, ) = dexHandler.maltMarketPrice();uint256 priceTarget = maltDataLab.getActualPriceTarget();
+0xScotch (Malt) confirmed
+

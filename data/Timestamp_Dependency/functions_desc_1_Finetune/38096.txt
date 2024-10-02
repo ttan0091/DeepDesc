@@ -1,0 +1,17 @@
+Type of vulnerability: Reentrancy
+
+Cause of vulnerability: 
+The `Sale` contract is underfunded, and there is a portion of the funds in `auraPowerSale` and `lockInUnsoldTokens` that is debited to the `Sale` contract that is not allocated. If the `auraPower` sale manages to sell only part of its inventory, the remaining funds are locked in `lockInUnsoldTokens`. If this inventory is vast compared to the ethers for sale in the `Sale` contract, then an attack could lead to the revert of all `pseudosale` transactions without the refunds being invoked at the previous balance of ether of the `Sale` contract.
+
+Expanded working process:
+1. Initialize the `Sale` contract with a `cap`, `end` time, and an initial `live` state.
+2. If the `live` state is true, it allows ETH to be sent to the contract until either the `end` time or the `cap` is reached.
+3. If the `live` state is false, it toggles the `live` state to true if the contract receives ETH, indicating a new attempted sale, or toggles it to false if the `end` time or `cap` is exceeded.
+4. The contract relies on the rival's `fallback` function to handle the received ETH.
+5. If the contract is live, the rival sale can revert, and in this case, the pseudosale buyers want their funds returned.
+6. If ethers are returned but only in part, the remaining `order` needs to have its owner refunded the remaining Eth.
+7. If the non-pseudosale fails after clearing other pseudosale refunds, it needs to track which refunds it has anticipated.
+8. If the non-pseudosale fails, track refunds, and fallen short of the pseudosale refund, funds in `lockInUnsoldTokens` need to be sent.
+9. `lockInUnsoldTokens` is in `auraPowerSale`.
+10. If the rival sale has cleared all refunds and remained at the same ETH balance, it can simply indicate backends `notIntendedState`.
+11. Handle potential rounds of reverts by saving the states of the refunded `order` and refunded backward competitor reflections.

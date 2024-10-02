@@ -1,0 +1,43 @@
+This code defines a Solidity smart contract named Helper_ModifiableStorage. The contract includes a mapping called target, which maps addresses to other addresses. It also defines a modifier and several functions to manage and utilize this mapping.
+
+Here’s a detailed explanation of how this contract works:
+
+1. Mapping Definition:
+   solidity
+   mapping (address => address) private target;
+   
+   This line declares a private mapping named target. This mapping associates each address with another address. The mapping is private, meaning it can only be accessed within this contract.
+
+2. Modifier Definition:
+   solidity
+   modifier onlyOwner(){
+       require(target[address(this)] != 0);
+       _;
+   }
+   
+   This modifier named onlyOwner checks if the target mapping for the contract's own address (address(this)) is not zero. If the condition is met, the function body that uses this modifier will execute (_;). This modifier is intended to restrict certain functions to be callable only if the contract's own target is set.
+
+3. Function add:
+   solidity
+   function add(address _target) onlyOwner {
+       target[address(this)] = _target;
+   }
+   
+   This function allows setting the target for the contract's own address. It uses the onlyOwner modifier, which means it can only be executed if the target for the contract's own address is already set. The function takes an address _target as an argument and sets it as the target for the contract's own address in the target mapping.
+
+4. Function store:
+   solidity
+   function store(address addr) public {
+       target[addr] = target[address(this)];
+       target[addr].delegatecall(msg.data);
+   }
+   
+   This function takes an address addr as an argument. It first sets the target for the provided address addr to be the same as the target for the contract's own address. Then, it performs a delegatecall to the target address associated with addr, passing the current call's data (msg.data). This allows the code at the target address to be executed in the context of the calling contract, which can be a powerful but risky operation due to potential state changes and security implications.
+
+### Summary of the Contract's Functionality:
+ The contract maintains a mapping of addresses to other addresses.
+ It uses a modifier to restrict certain functions based on the state of this mapping.
+ The add function allows setting the target for the contract's own address, but only if a target is already set (using the onlyOwner modifier).
+ The store function updates the target for a given address and then executes a delegatecall to the updated target, potentially allowing external code to be executed within the context of this contract.
+
+This contract design is complex and involves advanced and potentially risky features like delegatecall, which should be used with caution to avoid security vulnerabilities such as reentrancy attacks or unintended state changes.

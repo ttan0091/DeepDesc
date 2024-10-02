@@ -1,0 +1,12 @@
+[H-02] Hedging during liquidation is incorrect
+Submitted byKIntern_NA
+Hedging will not work as expected, and LiquidityPool will lose funds without expectation.
+Proof of concept
+When a short position is liquidated in contract Exchange, function_liquidatewill be triggered. It will burn the power perp tokens and reduce the short position amount accordingly.
+function_liquidate(uint256positionId,uint256debtRepaying)internal{...uint256finalPosition=position.shortAmount-debtRepaying;uint256finalCollateralAmount=position.collateralAmount-totalCollateralReturned;shortToken.adjustPosition(positionId,user,position.collateral,finalPosition,finalCollateralAmount);pool.liquidate(debtRepaying);powerPerp.burn(msg.sender,debtRepaying);...
+As you can see, it will decrease the size of short position bydebtRepaying, and burndebtRepayingpower perp tokens. Because of the same amount, the skew ofLiquidityPoolwill not change.Howerver,pool.liquidatewill be called, andLiquidityPoolwill be hedged withdebtRepayingamount.
+functionliquidate(uint256amount)externaloverrideonlyExchangenonReentrant{(uint256markPrice,boolisInvalid) =getMarkPrice();require(!isInvalid);uint256hedgingFees=_hedge(int256(amount),true);usedFunds+=int256(hedgingFees);emitLiquidate(markPrice,amount);}
+Therefore, LiquidityPool will be hedged more than it needs, and the position ofLiquidityPoolin the Perp Market will be incorrect (compared with what it should be for hedging).
+Recommended Mitigation Steps
+Should not hedge the LiquidityPool during liquidation.
+mubaris (Polynomial) confirmed

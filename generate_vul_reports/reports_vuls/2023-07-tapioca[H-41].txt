@@ -1,0 +1,17 @@
+[H-41] Rewards compounded in AaveStrategy are unredeemable
+Submitted byAck, also found bykadenandrvierdiiev
+The AaveStrategy contract is designed to:
+Receive depositor’s ERC20 tokens from yieldBoxDeposit those tokens into an AAVE lending poolAllow anyone to callcompound(), which:
+a. Claims AAVE rewards from theincentivesControllerb. Claims staking rewards from thestakingRewardToken(stkAAVE)
+c. Redeeming staking rewards is only possible within a certain cooldown window that is set by AAVE governance. The function resets the cooldown if either 12 days have passed since the cooldown was last initiated, or if the strategy has a stakedRewardToken balance
+d. Swaps any receivedrewardToken($AAVE) forwrappedNativee. Deposits thewrappedNativereceived in the swap into the lending pool
+There are several issues with this flow, but this vulnerability report is specific to redeeming staked rewards. The incentives controller specified in themainnet.envfile is at address 0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5 (proxy). ItsclaimRewardsfunction stakes tokens directly:
+function _claimRewards(...) internal returns (uint256) {...uint256 accruedRewards = _claimRewards(user, userState);...STAKE_TOKEN.stake(to, amountToClaim); //@audit claimed rewards are staked immediately...}
+The only way to retrieve tokens once staked is via a call tostakingRewardToken#redeem(), which is not present in the AaveStrategy contract. As a result, any rewards accumulated via the incentiveController would not be claimable.
+Impact
+High - Loss of funds
+Proof of concept
+This is unfortunately difficult to PoC as the AAVE incentive/staking rewards do not accumulate properly in the fork tests, and the mocks do not exhibit the same behavior.
+Recommended Mitigation Steps
+Include a call to redeem incompound().
+0xRektora (Tapioca) confirmed via duplicate issue 243

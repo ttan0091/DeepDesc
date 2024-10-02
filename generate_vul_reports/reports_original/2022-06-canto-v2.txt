@@ -1,0 +1,115 @@
+[H-01] Total supply can be incorrect inERC20
+Submitted by Picodes
+https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/ERC20.sol#L33https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/ERC20.sol#L95
+_totalSupplycan be initialized to something different than 0, which would lead to an inaccurate total supply, and could easily break integrations, computations of market cap, etc.
+Proof of Concept
+If the constructor is called with _initialSupply = 1000, thetotalSupplywill be initialized to 1000.
+As all the others computations are correct, there will be for ever a discrepancy of 1000 between the real total supply and the one of the contract.
+Recommended Mitigation Steps
+Remove_initialSupply.
+nivasan1 (Canto) acknowledged
+Alex the Entreprenerd (judge) commented:
+Same bug as from Canto V1.
+Recommend the sponsor to just set to 0 and remove the assignment from the constructorSee:https://github.com/code-423n4/2022-06-canto-findings/issues/108
+Please note: the following additional discussions took place after judging and awarding were finalized. As such, this report will leave this finding in its originally assessed risk category as it simply reflects a snapshot in time.
+shung (warden) commented:
+In the provided contracts, v2 repo is included:https://github.com/code-423n4/2022-06-canto-v2However, in this submission, the second line of code provided links to the v1 repo. The described issue only exists in v1 version. In v2 version the issue does not exist because msg.sender balance is updated along with the total supply:https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/ERC20.sol#L34Therefore this finding seems invalid.
+Alex the Entreprenerd (judge) commented:
+@shung - You’re right, I must have missed the line with the mitigation.The current code will update the_totalSupplyand will give the balance to the deployer.This is a mistake on my part and the finding should have been closed as invalid as it was mitigated in the V2 code in scope.
+Alex the Entreprenerd (judge) commented:
+While a nitpick I’d recommend changing the code to use_mintas it the code in scope will not emit an event which may cause issues if you’re tracking via theGraph or similar.Either way I made a mistake here, sorry about that.
+
+[H-02] Deny of service inCNote.doTransferOut
+Submitted by 0x1f8b, also found by Lambda
+https://github.dev/Plex-Engineer/lending-market-v2/blob/2646a7676b721db8a7754bf5503dcd712eab2f8a/contracts/CNote.sol#L148
+TheCNote.doTransferOutmethod is susceptible to denial of service.
+Proof of Concept
+The logic of thedoTransferOutmethod inCNoteis as follows:
+functiondoTransferOut(addresspayableto,uintamount)virtualoverrideinternal{require(address(_accountant) !=address(0));EIP20Interfacetoken=EIP20Interface(underlying);if(to!=address(_accountant)) {uinterr=_accountant.supplyMarket(amount);if(err!=0) {revertAccountantRedeemError(amount); }}token.transfer(to,amount);boolsuccess;assembly{switchreturndatasize()case0{ success :=not(0) }case32{returndatacopy(0,0,32)success :=mload(0)}default{revert(0,0) }}require(success,"TOKEN_TRANSFER_OUT_FAILED");require(token.balanceOf(address(this)) ==0,"cNote::doTransferOut: TransferOut Failed");// <-- ERROR}
+ThedoTransferOutmethod receives anamountwhich is transferred toto, after it the balance of the contract token is checked to be equal to zero or the transaction will be reverted.
+In the following cases a denial of service will occur:
+In the case that is used anamountdifferent than the balance, the transaction will be reverted.In the case that an attacker front-runs the transaction and sends one token more than the established by the_accountant.In case of increasing balance tokens likemDaithat constantly change their balance, the established by the_accountantwill be different when the transaction is persisted.
+Recommended Mitigation Steps
+Use balance differences instead of the 0 check.
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, anyone, via a simple transfer ofunderlyingcan deny the functionality ofdoTransferOut.Because the function is used in multiple functions inherited fromCToken, and the griefing can be easily run by anyone, I believe High Severity to be appropriate.
+
+[H-03] Underlying asset price oracle forCTokeninBaseV1-peripheryis inaccurate
+Submitted by ladboy233
+https://github.com/Plex-Engineer/lending-market-v2/blob/443a8c0fed3c5018e95f3881a31b81a555c42b2d/contracts/Stableswap/BaseV1-periphery.sol#L489
+Underlying asset price oracle for CToken in BaseV1-periphery is inaccurate.
+Proof of Concept
+function getUnderlyingPrice(CToken ctoken) external override view returns(uint price) {IBaseV1Pair pair;uint8 stable;bool stablePair;address underlying;if (compareStrings(ctoken.symbol(), "cCANTO")) {stable = 0;underlying = address(wcanto);}//set price statically to 1 when the Comptroller is retrieving Priceelse if (compareStrings(ctoken.symbol(), "cNOTE") && msg.sender == Comptroller) {return 1; // Note price is fixed to 1}
+We should not be return 1. 1 is 1 wei. We should be 10 ** 18
+Tools Used
+VIM
+Recommended Mitigation Steps
+We can return 10 ** 18
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown what probably is a developer mistake, which will scale down the price of the cNOTE token to 1.The sponsor confirms.It should be noted that if cNOTE always returns 1e18 then the math fordiffwill always be zero, meaning the interest will exclusively be dictated bybaseRatePerYear.Because the sponsor confirms, and because the comments point to values “scaled by 1e18” I believe the finding to be valid, and since the “math is wrong”, I do agree with High Severity.
+
+[H-04] OracleperiodSizeis very low allowing the TWAP price to be easily manipulated
+Submitted by 0x52, also found by __141345__, Chom, csanuragjain, and ladboy233
+https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/Stableswap/BaseV1-core.sol#L72
+TWAP oracle easily manipulated.
+Proof of Concept
+periodSize is set to 0 meaning that the oracle will take a new observation every single block, which would allow an attacker to easily flood the TWAP oracle and manipulate the price.
+Recommended Mitigation Steps
+Increase periodSize to be greater than 0, 1800 is typically standard.
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a constant set to zero for the time in between TWAP observations.Because the code change:Is a mistake (evidenced by the comments)Causes the TWAP (already put into question in previous contest) to become a Spot OracleThere’s no way to remediate as the variable is constantThe change will end up resulting in a manipulatablequotewhich will impactgetUnderlyingPriceI agree with High Severity.
+
+[H-05] The LP pair underlying price quote could be manipulated
+Submitted by __141345__
+https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/Stableswap/BaseV1-periphery.sol#L522-L526https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/Stableswap/BaseV1-periphery.sol#L198-L217
+The underlying price for LP pool pair can be manipulated. This kind of price mainpulation happened before, can be found here:Warp Fincance event.
+Which may lead to the exploit of the pool by a malicious user.
+Proof of Concept
+file: lending-market-v2/contracts/Stableswap/BaseV1-periphery.sol522-526， 198-217:
+uint price0 = (token0 != USDC) ? IBaseV1Pair(pairFor(USDC, token0, stable0)).quote(token0, 1, 8) : 1;uint price1 = (token1 != USDC) ? IBaseV1Pair(pairFor(USDC, token1, stable1)).quote(token1, 1, 8) : 1;// how much of each asset is 1 LP token redeemable for(uint amt0, uint amt1) = quoteRemoveLiquidity(token0, token1, stablePair, 1);price = amt0 * price0 + amt1 * price1;function quoteRemoveLiquidity(address tokenA,address tokenB,bool stable,uint liquidity) public view returns (uint amountA, uint amountB) {// create the pair if it doesn"t exist yetaddress _pair = IBaseV1Factory(factory).getPair(tokenA, tokenB, stable);if (_pair == address(0)) {return (0,0);}(uint reserveA, uint reserveB) = getReserves(tokenA, tokenB, stable);uint _totalSupply = erc20(_pair).totalSupply();amountA = liquidity * reserveA / _totalSupply; // using balances ensures pro-rata distributionamountB = liquidity * reserveB / _totalSupply; // using balances ensures pro-rata distribution}
+The price of the LP pair is determined by the TVL of the pool, given by:amt0 * price0 + amt1 * price1. However, when a malicious user dumps large amount of any token into the pool, the whole TVL will be significantly increased, which leads to inproper calculation of the price.
+Recommended Mitigation Steps
+A differenct approach to calculate the LP price can be foundhere.
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how the LP Token Pricing math is incorrect, this is a mispricing that historically has resulted in total loss of funds and the subject is well known.Remediation can be attained by following the guide linked:https://cmichel.io/pricing-lp-tokens/Because the:Math is incorrectExploit allows anyone to inflate prices within 1 block (no risk)High Severity is appropriate.
+
+[H-06]getBorrowRatereturns rate per year instead of per block
+Submitted by Lambda, also found by Chom
+https://github.com/Plex-Engineer/lending-market-v2/blob/2646a7676b721db8a7754bf5503dcd712eab2f8a/contracts/NoteInterest.sol#L118https://github.com/Plex-Engineer/lending-market-v2/blob/2646a7676b721db8a7754bf5503dcd712eab2f8a/contracts/CToken.sol#L209
+According to the documentation inInterestRateModel,getBorrowRatehas to return the borrow rate per block and the functionborrowRatePerBlockinCTokendirectly returns the value ofgetBorrowRate. However, the rate per year is returned forNoteInterest. Therefore, usingNoteInterestas an interest model will result in completely wrong values.
+Recommended Mitigation Steps
+ReturnbaseRatePerBlock.
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown that the borrowRate is returning per-year values instead of per-block values.The effect of this is that the accounting will be magnified massively.While impact should be mostly loss of value to interest and incorrect yield, due to the math being wrong I do agree with High Severity.
+
+[H-07] Deny of service inAccountantDelegate.sweepInterest
+Submitted by 0x1f8b, also found by Critical
+https://github.dev/Plex-Engineer/lending-market-v2/blob/2646a7676b721db8a7754bf5503dcd712eab2f8a/contracts/Accountant/AccountantDelegate.sol#L101
+ThesweepInterestmethod is susceptible to denial of service.
+Proof of Concept
+The logic of thesweepInterestmethod relative to thetreasuryis as follows:
+boolsuccess=cnote.transfer(treasury,amtToSweep);if(!success) {revertSweepError(treasury,amtToSweep); }TreasuryInterfaceTreas=TreasuryInterface(treasury);Treas.redeem(address(cnote),amtToSweep);require(cnote.balanceOf(treasury) ==0,"AccountantDelegate::sweepInterestError");
+As you can see,amtToSweepis passed to it andredeemthat amount. Later it is checked that the balance ofcnotein thetreasuryaddress must be 0. However, all calculations related toamtToSweepcome out of the balance ofaddress(this)so if a third party sends a single tokencnoteto the address oftreasurythe method will be denied.
+Recommended Mitigation Steps
+Check that the balance is the same after and before thebool success = cnote.transfer(treasury, amtToSweep);
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to an incorrect invariant (treasury having zero cNote), any griefer can permanently brick thesweepInterestfunction.The finding shows how a loss of yield can be achieved, so Medium Severity would be in order.However, because:an invariant was brokenthe tokens cannot be withdrawn via an alternative methodI believe High Severity to be more appropriate.
+
+[H-08] AccountantDelegate: The sweepInterest function sweeps an incorrect number of cnote
+Submitted by cccz, also found by Critical
+In the sweepInterest function of the AccountantDelegate contract, the number of cnote sent to treasury should be cNoteToSweep instead of amtToSweep, as amtToSweep will normally be smaller than cNoteToSweep, which will cause the interest to be locked in the in the contract.
+uint amtToSweep = sub_(cNoteAmt, noteDiff); // amount to sweep in Note,uint cNoteToSweep = div_(amtToSweep, exRate); // amount of cNote to sweep = amtToSweep(Note) / exRatecNoteToSweep = (cNoteToSweep > cNoteBal) ? cNoteBal :  cNoteToSweep;bool success = cnote.transfer(treasury, amtToSweep);if (!success) {revert  SweepError(treasury , amtToSweep); //handles if transfer of tokens is not successful}TreasuryInterface Treas = TreasuryInterface(treasury);Treas.redeem(address(cnote),amtToSweep);
+Proof of Concept
+https://github.com/Plex-Engineer/lending-market-v2/blob/ea5840de72eab58bec837bb51986ac73712fcfde/contracts/Accountant/AccountantDelegate.sol#L80-L99
+Recommended Mitigation Steps
+uint amtToSweep = sub_(cNoteAmt, noteDiff); // amount to sweep in Note,uint cNoteToSweep = div_(amtToSweep, exRate); // amount of cNote to sweep = amtToSweep(Note) / exRatecNoteToSweep = (cNoteToSweep > cNoteBal) ? cNoteBal :  cNoteToSweep;-		bool success = cnote.transfer(treasury, amtToSweep);+               bool success = cnote.transfer(treasury, cNoteToSweep);if (!success) {-			revert  SweepError(treasury , amtToSweep); //handles if transfer of tokens is not successful+                       revert  SweepError(treasury , cNoteToSweep); //handles if transfer of tokens is not successful}TreasuryInterface Treas = TreasuryInterface(treasury);-		Treas.redeem(address(cnote),amtToSweep);+               Treas.redeem(address(cnote),cNoteToSweep);
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown that the wrong variable is being used as the transferAmount.BecausecNoteToSweep<<amtToSweepthere will be many instances in which the function will revert.Because the finding shows incorrect functionality, which can leave the tokens stuck indefinitely, I agree with High Severity.
+

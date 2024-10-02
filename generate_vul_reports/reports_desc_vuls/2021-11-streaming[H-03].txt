@@ -1,0 +1,16 @@
+Type of vulnerability: Incorrect Token Balance Calculation
+Cause of vulnerability: The `rewardTokenAmount` variable only increases when rewards are added but never decreases when rewards are claimed, leading to an inaccurate representation of the contract's actual reward token balance.
+Execution process: When a user claims their rewards, the contract transfers out the reward tokens, but the `rewardTokenAmount` remains unchanged. Subsequently, if someone attempts to recover tokens using the `recoverTokens` function, the incorrect calculation of `excess` due to the outdated `rewardTokenAmount` prevents the recovery of any additional tokens sent to the contract.
+Vulnerable code: 
+```solidity
+function recoverTokens(address token, address recipient) public lock {
+    if (token == rewardToken) {
+        require(block.timestamp > endRewardLock, "time");
+        uint256 excess = ERC20(token).balanceOf(address(this)) - (rewardTokenAmount + rewardTokenFeeAmount);
+        ERC20(token).safeTransfer(recipient, excess);
+        emit RecoveredTokens(token, recipient, excess);
+        return;
+    }
+    // ...
+}
+```

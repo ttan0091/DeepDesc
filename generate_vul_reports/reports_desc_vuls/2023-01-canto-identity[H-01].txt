@@ -1,0 +1,26 @@
+Type of vulnerability: Frontrunning Attack
+Cause of vulnerability: Lack of validation that the `add()` function is being called on the CidNFT that was just minted by the user.
+Execution process: An attacker frontruns a victim's transaction to mint a CidNFT and set the victim as approved for that token. The victim's transaction then executes, but their `add()` call mistakenly attaches their SubprotocolNFT to the attacker's CidNFT, allowing the attacker to steal the NFT.
+Vulnerable code: 
+```solidity
+function mint(bytes[] calldata _addList) external {
+    _mint(msg.sender, ++numMinted);
+    bytes4 addSelector = this.add.selector;
+    for (uint256 i = 0; i < _addList.length; ++i) {
+        (bool success /*bytes memory result*/, ) = address(this).delegatecall(abi.encodePacked(addSelector, _addList[i]));
+        if (!success) revert AddCallAfterMintingFailed(i);
+    }
+}
+
+function add(uint256 _cidNFTID, // No guarantee that this is the CidNFT id that was just minted by the user
+             string calldata _subprotocolName,
+             uint256 _key,
+             uint256 _nftIDToAdd,
+             AssociationType _type) external {
+    // ...
+    if (cidNFTOwner != msg.sender &&
+        getApproved[_cidNFTID] != msg.sender &&
+        !isApprovedForAll[cidNFTOwner][msg.sender]) revert NotAuthorizedForCIDNFT(msg.sender, _cidNFTID, cidNFTOwner);
+    // ...
+}
+```

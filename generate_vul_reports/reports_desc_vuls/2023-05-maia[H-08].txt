@@ -1,0 +1,33 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: Inadequate checks on the deposit nonce allowing an attacker to call the function with an invalid deposit nonce.
+Execution process: An attacker calls `retrieveDeposit` with an invalid deposit nonce, causing the `executionHistory` for that nonce to be updated to true on the Root chain. When a legitimate user is assigned the same deposit nonce, their deposit fails on the Root chain as the nonce is already marked as executed.
+Vulnerable code: 
+```solidity
+function retrieveDeposit(uint32 _depositNonce) external payable lock requiresFallbackGas {
+    // Encode Data for cross-chain call.
+    bytes memory packedData = abi.encodePacked(bytes1(0x08), _depositNonce, msg.value.toUint128(), uint128(0));
+    // Update State and Perform Call
+    _sendRetrieveOrRetry(packedData);
+}
+
+function anyExecute(bytes calldata data) {
+    ...
+    // DEPOSIT FLAG: 8 (retrieveDeposit)
+    else if (flag == 0x08) {
+        // Get nonce
+        uint32 nonce = uint32(bytes4(data[1:5]));
+        // Check if tx has already been executed
+        if (!executionHistory[fromChainId][uint32(bytes4(data[1:5]))]) {
+            // Toggle Nonce as executed
+            executionHistory[fromChainId][nonce] = true;
+            // Retry failed fallback
+            (success, result) = (false, "");
+        } else {
+            _forceRevert();
+            // Return true to avoid triggering anyFallback in case of `_forceRevert()` failure
+            return (true, "already executed tx");
+        }
+    }
+    ...
+}
+```

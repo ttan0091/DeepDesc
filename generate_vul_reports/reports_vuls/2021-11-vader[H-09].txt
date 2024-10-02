@@ -1,0 +1,20 @@
+[H-09] VaderPoolV2 incorrectly calculates the amount of IL protection to send to LPs
+Submitted by TomFrenchBlockchain
+Impact
+TheVaderReservepays out IL fromVaderPoolV2LPs expressed in USDV with VADER (assuming a 1:1 exchange rate)
+Proof of Concept
+From the TwapOracle, it can be seen thatVaderPoolV2is intended to be deployed with USDV as itsnativeAsset:
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/twap/TwapOracle.sol#L281-L296https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/dex-v2/pool/BasePoolV2.sol#L58-L59
+All the pairs inVaderPoolV2are then USDV:TKN where TKN is some other token, exactly which is irrelevant in this case.
+VaderPoolV2offers IL protection where any IL is refunded from theVaderReserve
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/dex-v2/pool/VaderPoolV2.sol#L258-L268
+TheVaderReserveholds a balance of VADER tokens which will be used to pay out this protection.
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/reserve/VaderReserve.sol#L76-L90
+The IL experienced by the LP is calculated inVaderMath.calculateLoss
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/dex/math/VaderMath.sol#L73-L93
+This is the core of the issue. From the variable names it’s clear that this is written with the assumption that it is work on units of VADER whereas it is provided amounts in terms of USDV. CheckingVaderRouterV2we can see that we pass the output of this calculation directly to the reserve in order to claim VADER.
+If an LP experienced 100 USDV worth of IL, instead of claiming the equivalent amount of VADER they would receive exactly 100 VADER as there’s no handling of the exchange rate between USDV and VADER.
+As VADER and USDV are very unlikely to trade at parity LPs could get sustantially more or less than the amount of IL they experienced.
+Recommended Mitigation Steps
+Add handling for the conversion rate between VADER and USDV using a tamper resistant oracle (TwapOracle could potentially fulfil this role).
+SamSteinGG (Vader) confirmed

@@ -1,0 +1,17 @@
+[H-04] TwapOracle doesn’t calculate VADER:USDV exchange rate correctly
+Submitted by TomFrenchBlockchain
+Impact
+Detailed description of the impact of this finding.
+Proof of Concept
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/twap/TwapOracle.sol#L156
+On L156 ofTwapOraclewe perform the calculation:
+result = ((sumUSD * IERC20Metadata(token).decimals()) / sumNative);
+This seems extremely odd as for an 18 decimal token we’re then calculating
+result = ((sumUSD * 18) / sumNative);
+This is just plain weird. I expect what was meant is to replace this line with the below so we’re properly scaling fortoken’s number of decimals.
+uint256 scalingFactor = 10 ** IERC20Metadata(token).decimals()result = (sumUSD * scalingFactor) / sumNative;
+Marked as high severity as this exchange rate appears to be used insome form of minting mechanismand correctness of the oracle is listed as one of the key focuses of the audit.
+Recommended Mitigation Steps
+As above.
+SamSteinGG (Vader) confirmed
+The TWAP oracle module has been completely removed and redesigned from scratch as LBTwap that is subject of the new audit.

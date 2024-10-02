@@ -1,0 +1,16 @@
+[H-08] Attacker can steal the amount collected so far in the GroupBuy for NFT purchase.
+Submitted byTrust, also found byIllIllIandLambda
+purchase()in GroupBuy.sol executes the purchase call for the group. After safety checks, the NFT is bought with\_market’sexecute()function. Supposedly it deploys a vault which owns the NFT. The code makes sure the vault is the new owner of the NFT and exits.
+// Executes purchase order transaction through market buyer contract and deploys new vaultaddress vault = IMarketBuyer(_market).execute{value: _price}(_purchaseOrder);// Checks if NFT contract supports ERC165 and interface ID of ERC721 tokensif (ERC165Checker.supportsInterface(_nftContract, _INTERFACE_ID_ERC721)) {// Verifes vault is owner of ERC-721 tokenif (IERC721(_nftContract).ownerOf(_tokenId) != vault) revert UnsuccessfulPurchase();} else {// Verifies vault is owner of CryptoPunk tokenif (ICryptoPunk(_nftContract).punkIndexToAddress(_tokenId) != vault)revert UnsuccessfulPurchase();}// Stores mapping value of poolId to newly deployed vaultpoolToVault[_poolId] = vault;// Sets pool state to successfulpoolInfo[_poolId].success = true;// Emits event for purchasing NFT at given priceemit Purchase(_poolId, vault, _nftContract, _tokenId, _price);
+The issue is that\_marketuser-supplied variable is not validated at all. Attacker can pass their malicious contract, which uses the passed funds to buy the NFT and store it in attacker’s wallet. It will return the NFT-holding wallet so the checks will pass. As a result, attacker has the NFT while they could have contributed nothing to the GroupBuy. Attacker can also just steal the supplied ETH and return the current address which holds the NFT.
+Impact
+Attacker can steal the amount collected so far in the GroupBuy for NFT purchase.
+Proof of Concept
+Group assembles and raises funds to buy NFT XAttacker callspurchase()and supplies their malicious contract in\_market, as described.Attacker receives raised funds totallingminReservePrices[_poolId] * filledQuantities[_poolId], as checked in line 182.
+Recommended Mitigation Steps
+\_marketshould be whitelisted, or supplied in createPool stage and able to be scrutinized.
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Solution is to check that thevaultdeployed from the MarketBuyer is actually registered through theVaultRegistry. This would confirm that the vault is not a user address
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/201
+Status:Mitigation not confirmed.  Full details inreport from gzeon, and also included in the Mitigation Review section below.

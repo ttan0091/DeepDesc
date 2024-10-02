@@ -1,0 +1,47 @@
+Type of vulnerability: Access Control and Logic Error
+
+Cause of vulnerability: The `stakedAt` timestamp is not reset when a user is issued an irrevocable token, allowing the user to claim a revocable token without having any XVS staked.
+
+Execution process:
+1. A user stakes XVS tokens.
+2. The user is issued an irrevocable Prime token.
+3. The user withdraws all staked XVS tokens.
+4. The user's irrevocable token is later burned due to inactivity.
+5. The user calls the `claim` function after the staking period, bypassing the eligibility check since `stakedAt` was not reset.
+
+Vulnerable code:
+```solidity
+function issue(bool isIrrevocable, address[] calldata users) external {
+    _checkAccessAllowed("issue(bool,address[])");
+    if (isIrrevocable) {
+        for (uint256 i = 0; i < users.length; ) {
+            Token storage userToken = tokens[users[i]];
+            if (userToken.exists && !userToken.isIrrevocable) {
+                _upgrade(users[i]);
+            } else {
+                // We don't reset here.
+                _mint(true, users[i]);
+                _initializeMarkets(users[i]);
+            }
+            unchecked { i++; }
+        }
+    } else {
+        for (uint256 i = 0; i < users.length; ) {
+            _mint(false, users[i]);
+            _initializeMarkets(users[i]);
+            // We reset stakedAt here
+            delete stakedAt[users[i]];
+            unchecked { i++; }
+        }
+    }
+}
+
+function claim() external {
+    if (stakedAt[msg.sender] == 0) revert IneligibleToClaim();
+    if (block.timestamp - stakedAt[msg.sender] < STAKING_PERIOD) revert WaitMoreTime();
+    // We reset stakedAt here
+    stakedAt[msg.sender] = 0;
+    _mint(false, msg.sender);
+    _initializeMarkets(msg.sender);
+}
+```

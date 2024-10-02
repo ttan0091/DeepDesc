@@ -1,0 +1,18 @@
+[H-05] Aave’s share tokens are rebasing breaking current strategy code
+Submitted by cmichel, also found by WatchPug and leastwood
+When depositing into Aave through theAaveYield.lockTokenscontract strategy, one receives thesharesReceivedamount corresponding to the diff ofaTokenbalance, which is just always the deposited amount as aave is a rebasing token and1.0 aToken = 1.0 underlyingat each deposit / withdrawal.
+Note that thissharesReceived(the underlying deposit amount) is cached in abalanceInSharesmap inSavingsAccount.depositwhich makes this sharestaticand not dynamically rebasing anymore:
+functiondeposit(uint256_amount,address_token,address_strategy,address_to)externalpayableoverridenonReentrantreturns(uint256) {require(_to!=address(0),'SavingsAccount::deposit receiver address should not be zero address');uint256_sharesReceived=_deposit(_amount,_token,_strategy);balanceInShares[_to][_token][_strategy] =balanceInShares[_to][_token][_strategy].add(_sharesReceived);emitDeposited(_to,_sharesReceived,_token,_strategy);return_sharesReceived;}functiongetTokensForShares(uint256shares,addressasset)publicviewoverridereturns(uint256amount) {if(shares==0)return0;addressaToken=liquidityToken(asset);(, , , , , , ,uint256liquidityIndex, , ) =IProtocolDataProvider(protocolDataProvider).getReserveData(asset);// @audit-info tries to do (user shares / total shares) * underlying amount where underlying amount = scaledBalance * liquidityIndexamount=IScaledBalanceToken(aToken).scaledBalanceOf(address(this)).mul(liquidityIndex).mul(shares).div(IERC20(aToken).balanceOf(address(this)));}
+However, thegetTokensForSharesfunction uses a rebasing total share supply ofIERC20(aToken).balanceOf(this).
+POC
+SavingsAccount deposits 1000 DAI for user and user receives 1000 aDAI as shares. These shares are cached inbalanceInShares[user][dai][aave].Time passes, Aave accrues interest for lenders, and the initial 1000 aTokens balance has rebased to 1200 aTokensSavingsAccountwithdraws 1000 aDAI shares for user which callsAaveYield.unlockTokens. The user receives only 1000 DAI. The interest owed to the user is not paid out.Note thatgetTokensForSharesalso returns the wrong amount as1200 * 1000 / 1200 = 1000
+Impact
+Interest is not paid out to users.
+Pool collateral is measured without the interest accrued as it usesgetTokensForShareswhich will lead to early liquidations and further loss.
+Recommended Mitigation Steps
+If the user shares are not rebasing, you cannot have the “total shares supply” (the shares in the contract) be rebasing as ingetTokensForShares. Also withdrawing the share amount directly from Aave as in_withdrawERCdoes not withdraw the yield.
+A fix could be to create anon-rebasingwrapper LP token that is paid out to the user proportional to the current strategy TVL at time of user deposit.
+ritik99 (Sublime) acknowledged:
+We’ve been aware of this issue for some time.. ended up including the AaveYield file in the scope by mistake! We do not plan to include the Aave strategy in our launch (we maintain a strategy registry that allows us to add/drop yield strategies), and as noted in #128, we will be utilizingwrapper contractsthat mimics behaviour of non-rebasing LP tokens
+0xean (judge) commented:
+going to side with the warden since they believed the contract to be in scope and it’s a valid concern.

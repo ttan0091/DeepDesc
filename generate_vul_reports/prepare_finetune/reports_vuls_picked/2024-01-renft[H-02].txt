@@ -1,0 +1,18 @@
+Type of vulnerability: Access Control Vulnerability
+
+Cause of vulnerability: The Guard contract does not validate the address supplied to the `setFallbackHandler(address handler)` function, allowing an attacker to set the fallback handler to the address of a rented ERC721 or ERC1155 token.
+
+Execution process:
+1. The attacker sets the fallback handler address of the safe to the address of the rented token they want to hijack.
+2. The attacker sends a `transferFrom(from, to, tokenId)` call to the Gnosis Safe contract with parameters:
+   - `from`: the address of the rental safe holding the token.
+   - `to`: the address of the attacker.
+   - `tokenId`: the ID of the token they want to hijack.
+3. The Gnosis Safe contract forwards the call to the fallback handler address, which is the rented token contract.
+4. The rented token contract transfers the token to the attacker.
+
+Vulnerable code:
+```solidity
+function setFallbackHandler(address handler) external;
+```
+This function in the Guard contract does not include any checks to ensure that the `handler` address is not an address of an actively rented ERC721/1155 token.

@@ -1,0 +1,27 @@
+Type of vulnerability: Reward Distribution Inconsistency
+Cause of vulnerability: Inconsistency in handling epochs without profit between `checkRewardUnderflow` and `fillInEpochGaps` functions.
+Execution process: If `fillInEpochGaps` is called before `checkRewardUnderflow` for an epoch without profit, the epoch will not receive any rewards, contrary to the expected behavior of requesting rewards from the overflow pool.
+Vulnerable code: 
+```solidity
+function checkRewardUnderflow() public onlyActive {
+    uint256 epoch = timekeeper.epoch();
+    uint256 _activeEpoch = activeEpoch;
+    // gas
+    // Fill in gaps so we have a fresh foundation to calculate from
+    _fillInEpochGaps(epoch);
+    if (epoch > _activeEpoch) {
+        for (uint256 i = _activeEpoch; i < epoch; ++i) {
+            uint256 underflow = _getRewardUnderflow(i);
+            if (underflow > 0) {
+                uint256 balance = overflowPool.requestCapital(underflow);
+                _sendToDistributor(balance, i);
+            }
+        }
+    }
+}
+
+function fillInEpochGaps() external {
+    uint256 epoch = timekeeper.epoch();
+    _fillInEpochGaps(epoch);
+}
+```

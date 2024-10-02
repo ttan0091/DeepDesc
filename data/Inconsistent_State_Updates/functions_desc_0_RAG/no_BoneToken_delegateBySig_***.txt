@@ -1,0 +1,24 @@
+[Execution Flow]:
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signed message. The function accepts six parameters: delegatee (the address to delegate voting rights to), nonce (a unique value used to prevent replay attacks), expiry (the timestamp until which the signature is valid), v, r, and s (components of the ECDSA signature). Here’s a detailed explanation of how this function works:
+
+1. Domain Separator Calculation:
+    The function starts by calculating the domainSeparator using the keccak256 hash function. This involves encoding several pieces of data: DOMAIN_TYPEHASH (a constant defining the domain type), the hash of the contract's name (obtained via the name() function), the chain ID (obtained via the getChainId() function), and the address of the contract itself.
+
+2. Struct Hash Calculation:
+    Next, the function calculates the structHash using the keccak256 hash function. This involves encoding the DELEGATION_TYPEHASH (a constant defining the delegation type), the delegatee address, the nonce, and the expiry timestamp.
+
+3. Digest Calculation:
+    The function then calculates the digest by encoding the EIP191 prefix (\x19\x01), the domainSeparator, and the structHash using the abi.encodePacked function and hashing the result with keccak256.
+
+4. Signature Recovery:
+    The function uses the ecrecover function to recover the address of the signatory from the digest, v, r, and s components of the ECDSA signature.
+
+5. Validation Checks:
+    The function performs several validation checks:
+      It ensures that the recovered signatory address is not the zero address, indicating an invalid signature.
+      It checks that the provided nonce matches the current nonce for the signatory and then increments the nonce to prevent replay attacks.
+      It verifies that the current timestamp is less than or equal to the expiry timestamp, ensuring that the signature has not expired.
+
+6. Delegation Execution:
+    If all validation checks pass, the function calls the internal _delegate function, passing the signatory and delegatee addresses to execute the delegation.
+

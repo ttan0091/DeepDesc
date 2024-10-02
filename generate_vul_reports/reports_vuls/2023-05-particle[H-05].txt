@@ -1,0 +1,18 @@
+[H-05] withdrawNftWithInterest() possible take away other Lien’s NFT
+Submitted bybin2chen, also found byrbserver,d3e4, andminhquanym
+Proof of Concept
+withdrawNftWithInterest()is used to retrieve NFT. The only current restriction is if you can transfer out of NFT, it means an inactive loan.
+functionwithdrawNftWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {if(msg.sender!=lien.lender) {revertErrors.Unauthorized();}// delete liendeleteliens[lienId];// transfer NFT back to lender/// @dev can withdraw means NFT is currently in contract without active loan,/// @dev the interest (if any) is already accured to lender at NFT acquiring timeIERC721(lien.collection).safeTransferFrom(address(this),msg.sender,lien.tokenId);...
+However, the current protocol does not restrict the existence of only one Lien in the same NFT.
+For example, the following scenario.
+Alice transfers NFT_A and supply Lien[1].Bob executessellNftToMarket().Jack buys NFT_A from the market.Jack transfers NFT_A and supply Lien[2].Alice executingwithdrawNftWithInterest(1)is able to get NFTA successfully (because step 4 NFTA is already in the contract). This results in the deletion of lien[1], and Lien[2]‘s NFT_A is transferred away.
+The result is: Jack’s NFT is lost and Bob’s funds are also lost.
+Recommended Mitigation Steps
+Need to determine whether there is a Loan
+functionwithdrawNftWithInterest(Liencalldatalien,uint256lienId)externaloverridevalidateLien(lien,lienId) {if(msg.sender!=lien.lender) {revertErrors.Unauthorized();}+require(lien.loanStartTime==0,"Active Loan");
+Assessed type
+Context
+adriro (warden) commented:
+Nice finding
+wukong-particle (Particle) confirmed and commented:
+Fixed.

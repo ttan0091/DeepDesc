@@ -1,0 +1,21 @@
+[H-01] Challenges can be frontrun with de-leveraging to cause lossses for challengers
+Submitted bycarrotsmuggler, also found bymov,bin2chen,juancito,KIntern_NA,Ace-30,cccz,Nyx,nobody2018, andmahdikarimi
+Challenges, once created, cannot be closed. Thus once a challenge is created, the challenger has already transferred in a collateral amount and is thus open for losing their collateral to a bidding war which will most likely close below market price, since otherwise buying from the market would be cheaper for bidders.
+Position owners can take advantage of this fact and frontrun alaunchChallengetransaction with anadjustPricetransaction. TheadjustPricefunction lets the user lower the price of the position, and can pass the collateral check by sending collateral tokens externally.
+As a worst case scenario, consider a case where a position is open with 1 ETH collateral and 1500 ZCHF minted. A challenger challenges the position and the owner frontruns the challenger by sending the contract 1500 ZCHF and callingrepay()and then callingadjustPricewith value 0, all in one transaction with a contract. Now, the price in the contract is set to 0, and the collateral check passes since the outstanding minted amount is 0. The challenger’s transaction gets included next, and they are now bidding away their collateral, since any amount of bid will pass the avert collateral check.
+The position owner themselves can backrun the same transaction with a bid of 1 wei and take all the challenger’s collateral, since every bid checks for thetryAvertChallengecondition.
+if(_bidAmountZCHF*ONE_DEC18>=price*_collateralAmount)
+Since price is set to 0, any bid passes this check. This sandwich attack causes immense losses to all challengers in the system, baiting them with bad positions and then sandwiching their challenges.
+Since sandwich attacks are extremely commonplace, this is classified as high severity.
+Proof of Concept
+The attack can be performed the following steps.
+Have an undercollateralized position. This can be caused naturally due to market movements.Frontrun challenger’s transaction with a repayment andadjustPricecall lowering the price.Challenger’s call gets included, where they now put up collateral for bids.Backrun challenger’s call with a bid such that it triggers the avert.Attacker just claimed the challenger’s collateral at their specified bid price, which can be as little as 1 wei if price is 0.
+Recommended Mitigation Steps
+When launching a challenge, ask for aexpectedPriceargument. If the actual price does not match this expected price, that means that transaction was frontrun and should be reverted. This acts like a slippage check for challenges.
+0xA5DF (lookout) commented:
+I have some doubts about severity, since the auction’s final bid is expected to be at about the worth of the collateral.
+So the challenger isn’t expected to lose anything but the challenge reward.
+luziusmeisser (Frankencoin) confirmed and commented:
+This is actually a high risk issue as the challenge is ended early as soon as the highest bid reaches the liquidation price.I would even say that this is one of the most valuable findings I’ve seen so far!The fix is to add front-running protection to the launchChallenge function:function launchChallenge(address _positionAddr, uint256 _collateralAmount, uint256 expectedPrice) external validPos(_positionAddr) returns (uint256) {IPosition position = IPosition(_positionAddr);if (position.price() != expectedPrice) revert UnexpectedPrice();
+hansfriese (judge) commented:
+Since the owner lowers the price of the position, the collateral for a challenge is worth nothing, and the challengers might lose their collateral. So I agree with the sponsor.

@@ -1,0 +1,24 @@
+[H-09]Vaultis not compatible with some ERC4626 vaults
+Submitted byrvierdiiev, also found byBrenzee
+Depositors can lose funds.
+Proof of Concept
+Anyone can buildVaultwith an underlying vault inside, which should earn yields. When a user deposits/withdraws then the_convertToSharesfunction is usedto determine amount of shares the user will receive for the provided assets amount. This functioncalls_currentExchangeRateto find out current rate.
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L1168-L1187
+function_currentExchangeRate()internalviewreturns(uint256) {uint256_totalSupplyAmount=_totalSupply();uint256_totalSupplyToAssets=_convertToAssets(_totalSupplyAmount,_lastRecordedExchangeRate,Math.Rounding.Down);uint256_withdrawableAssets=_yieldVault.maxWithdraw(address(this));if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}return_assetUnit;}
+As you can see, in order to find the current exchange rate, function_yieldVault.maxWithdraw(address(this))is used. In this case, if this value (which is supposed to be a full amount of deposits + yields inside_yieldVault) is less than_totalSupplyAmount(which is the total supply_lastRecordedExchangeRate), then the rate will be decreased. Which means that the vault lost funds and users should receive less when they withdraw. Later, this new_currentExchangeRatewill be stored as_lastRecordedExchangeRate.
+Now, when I explained how rate is changed, I can also explain the problem with some ERC4626 vaults.
+There are some ERC4626 vaults asDnGmxSeniorVault, that collect deposited funds and borrow them. When youcallmaxWithdrawfor such vaults, if not enough funds are present (due to some borrowing percentages on the vault), then the amount returned can be less than real balance of caller.
+In case a such wrong value is returned, then depositors of thePoolvault will face losses, as their exchange rate will be less than 1.DnGmxSeniorVaultwill again have enough balance (when the debt is repaid byjnvault), and the exchange rate will be 1.
+Another problem ERC4626 vaults can create are vaults that have a withdraw limit. In that case, if thePoolvault has balance inside the yield vault that is bigger than the borrow limit, depositors will face the same problem, which leads to a loss of funds.
+Tools Used
+VsCode
+Recommended Mitigation Steps
+You need to consider cases where some vaults can’t be used as yield vaults and be aware of vault creators for that.
+Assessed type
+Error
+asselstine (PoolTogether) confirmed
+asselstine (PoolTogether) commented:
+This is more of a general warning about the possible incompatibilities of 4626 vaults.
+PoolTogether mitigated:
+Fixed undercollateralized redemption while providing an exit.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/37
+Status: Not fully mitigated. Full details in reports from0xStalinandrvierdiiev, and in theMitigation Reviewsection below.

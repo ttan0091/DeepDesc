@@ -1,0 +1,34 @@
+Type of vulnerability: JSON injection attack
+Cause of vulnerability: Lack of input sanitization in `CultureIndex.createPiece()` for `metadata.image` and `metadata.animationUrl`
+Execution process: An attacker submits malicious metadata containing JSON injection strings during the creation of an art piece. This malicious metadata is then used in the `VerbsToken.tokenURI()` function, leading to the injection of arbitrary JSON objects into the token URI, which can be exploited by the front-end application.
+Vulnerable code: 
+```solidity
+function createPiece(
+    ArtPieceMetadata calldata metadata,
+    CreatorBps[] calldata creatorArray
+) public returns (uint256) {
+    uint256 creatorArrayLength = validateCreatorsArray(creatorArray);
+    validateMediaType(metadata);
+    uint256 pieceId = _currentPieceId++;
+    maxHeap.insert(pieceId, 0);
+    ArtPiece storage newPiece = pieces[pieceId];
+    newPiece.pieceId = pieceId;
+    newPiece.totalVotesSupply = _calculateVoteWeight(
+        erc20VotingToken.totalSupply(),
+        erc721VotingToken.totalSupply()
+    );
+    newPiece.totalERC20Supply = erc20VotingToken.totalSupply();
+    newPiece.metadata = metadata; // Vulnerable line
+    newPiece.sponsor = msg.sender;
+    newPiece.creationBlock = block.number;
+    newPiece.quorumVotes = (quorumVotesBPS * newPiece.totalVotesSupply) / 10_000;
+    for (uint i; i < creatorArrayLength; i++) {
+        newPiece.creators.push(creatorArray[i]);
+    }
+    emit PieceCreated(pieceId, msg.sender, metadata, newPiece.quorumVotes, newPiece.totalVotesSupply);
+    for (uint i; i < creatorArrayLength; i++) {
+        emit PieceCreatorAdded(pieceId, creatorArray[i].creator, msg.sender, creatorArray[i].bps);
+    }
+    return newPiece.pieceId;
+}
+```

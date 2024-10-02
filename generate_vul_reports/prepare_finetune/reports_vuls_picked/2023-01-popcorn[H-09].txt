@@ -1,0 +1,30 @@
+Type of vulnerability: Access Control and Logic Error
+
+Cause of vulnerability: The contract allows any user to deploy a Vault that uses any existing Staking contract, and there are no checks to limit how high `rewardsPerSecond` can be when changing reward speed. Additionally, the calculation for `rewardsEndTimestamp` is faulty, allowing more rewards to be claimed than intended.
+
+Execution process:
+1. An attacker deploys a Vault using a target Staking contract.
+2. The attacker calls `changeStakingRewardsSpeeds` to modify the `rewardSpeeds` of any reward tokens in the target Staking contract.
+3. The attacker sets an absurdly large `rewardsPerSecond` value.
+4. The attacker waits for a short period (e.g., 12 seconds) and then claims rewards.
+5. The attacker drains 99% of the balance of the reward token from the Staking contract.
+
+Vulnerable code:
+- Allowing any user to deploy a Vault with any Staking contract:
+  ```solidity
+  function deployVault() public returns (address) {
+      // Code to deploy a Vault
+  }
+  ```
+- No checks for limits on `rewardsPerSecond` value in `changeRewardSpeed`:
+  ```solidity
+  function changeRewardSpeed(address rewardToken, uint256 rewardsPerSecond) public {
+      // Code to change reward speed
+  }
+  ```
+- Faulty calculation in `_calcRewardsEnd`:
+  ```solidity
+  function _calcRewardsEnd(uint256 rewardsPerSecond) internal view returns (uint256) {
+      // Faulty calculation for rewardsEndTimestamp
+  }
+  ```

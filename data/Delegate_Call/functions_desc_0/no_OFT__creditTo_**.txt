@@ -1,0 +1,32 @@
+This code defines an internal function named _creditTo, which is designed to handle the crediting of tokens from a source chain to a destination address on the current chain. The function is marked as override indicating that it overrides a function with the same signature in a base contract, and whenNotPaused ensures that the function can only be executed if the contract is not paused.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Return Value:
+    _srcChainId: The ID of the source chain from which tokens are being credited.
+    _toAddress: The address on the current chain where the tokens are to be credited.
+    _amount: The amount of tokens being credited.
+    The function returns the amount of tokens credited, which is of type uint256.
+
+2. Calling the Superclass Function:
+    The function first calls super._creditTo(_srcChainId, _toAddress, _amount), which is the implementation of the same function in the base contract. This call handles the basic crediting of tokens and returns the amount credited.
+
+3. Whitelist Check:
+    If the destination address _toAddress is in the whitelist, the function immediately returns the credited amount. This suggests that whitelisted addresses are exempt from further checks or limitations.
+
+4. Daily Reset Check:
+    The function checks if the current day (based on block.timestamp divided by 1 day) is different from the last recorded day (lastReceivedTimestamp divided by 1 day). This is used to determine if a new day has started.
+    If a new day has started, receivedTokenAmount is set to the credited amount, effectively resetting the daily tally.
+    If it's still the same day, receivedTokenAmount is updated by adding the current credited amount to the previous tally stored in chainIdToReceivedTokenAmount[_srcChainId].
+
+5. Inbound Cap Check:
+    The function retrieves the inbound cap for the source chain from chainIdToInboundCap[_srcChainId].
+    If the receivedTokenAmount exceeds this cap, the function reverts with an error message ExceedInboundCap(inboundCap, receivedTokenAmount), indicating that the cap has been exceeded.
+
+6. Updating State Variables:
+    If the cap is not exceeded, the function updates chainIdToReceivedTokenAmount[_srcChainId] with the new receivedTokenAmount and chainIdToLastReceivedTimestamp[_srcChainId] with the current timestamp.
+
+7. Return Statement:
+    Finally, the function returns the credited amount.
+
+This function is crucial for managing crosschain token transfers, ensuring that they do not exceed predefined caps on a daily basis, and handling special cases for whitelisted addresses.

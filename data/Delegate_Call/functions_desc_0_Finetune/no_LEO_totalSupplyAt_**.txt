@@ -1,0 +1,14 @@
+Type of code: Token Logic
+Standard/RFC: Dividend Paying Token (DPT)
+General overview: The DPT contract pays out dividends proportionally to token holders based on how many tokens they hold in a checkpoint. The contract records snapshots of token holdings at specific block numbers to track the change in token supply.
+Key functions and their roles:
+1. totalSupplyAt(uint _blockNumber): Returns the total token supply at a specific block number. It first checks if no snapshots exist or if the requested block number is before the first snapshot. If so, it returns the total supply of the parent token at the specified block number. Otherwise, it returns the total supply at the given block number based on available snapshots.
+2. balanceOfAt(address _owner, uint _blockNumber): Returns the balance of a token holder at a specific block number. It first checks if the balance history is empty or if the requested block number is before the first balance snapshot. If so, it returns the balance of the parent token at the specified block number. Otherwise, it returns the balance at the given block number based on available snapshots.
+3. updateValueAtNow(DSValue storage _val) (internal): Updates the current snapshot value based on the current total supply. This is used before every statechanging operation.
+4. createCheckPoint(): Creates a new snapshot of the current balances and increments the totalSupplyHistory with the current total supply.
+5. changeParentToken(IERC20 _newParentToken, uint8 _v, bytes32 _r, bytes32 _s): Selfexplanatory; changes the parent token and updates the snapshot if a new checkpoint is needed.
+6. addDividends(uint dividend) (internal): Adds dividends and makes sure a snapshot for the current block exists.
+7. balanceOf(address _owner): Calls balanceOfAt internally with the current block number and returns the current balance of the owner.
+8. _transfer(address _from, address _to, uint _value): Overridden transfer function that ensures the receiver's balance is updated using updateValueAtNow before modifying the balances.
+
+Strange or dangerous constructs: The contract is complex in its handling of snapshots and depends on updateValueAtNow(DSValue storage _val) to ensure the latest snapshot is up to date. Imprecise handling of default return values in functions like totalSupplyAt could lead to unexpected results if not used with caution.

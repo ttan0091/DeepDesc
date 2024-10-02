@@ -1,0 +1,50 @@
+This code defines a public function named deposit, which allows users to deposit a specified amount of tokens into a pool and receive corresponding shares in return. Here’s a detailed explanation of how this function works:
+
+1. Retrieve the Current Pool Balance:
+   solidity
+   uint256 _pool = balance();
+   
+   The function starts by calling the balance() function to get the current balance of the pool. This balance represents the total amount of tokens currently in the pool.
+
+2. Record the Token Balance Before the Transfer:
+   solidity
+   uint256 _before = token.balanceOf(address(this));
+   
+   The function then records the balance of tokens in the contract before the transfer. This is done to ensure that the actual amount of tokens received is accurately calculated, especially in cases where tokens might be deflationary (i.e., they might burn a small percentage of the transferred amount).
+
+3. Transfer Tokens from the Sender to the Contract:
+   solidity
+   token.safeTransferFrom(msg.sender, address(this), _amount);
+   
+   The function uses safeTransferFrom to transfer the specified amount of tokens from the sender (msg.sender) to the contract itself (address(this)). This method ensures that the transfer is secure and handles any potential edge cases.
+
+4. Record the Token Balance After the Transfer:
+   solidity
+   uint256 _after = token.balanceOf(address(this));
+   
+   After the transfer, the function records the balance of tokens in the contract again. This is used to calculate the actual amount of tokens received.
+
+5. Calculate the Actual Amount of Tokens Received:
+   solidity
+   _amount = _after.sub(_before); // Additional check for deflationary tokens
+   
+   The function calculates the actual amount of tokens received by subtracting the balance before the transfer (_before) from the balance after the transfer (_after). This step is crucial for handling deflationary tokens correctly.
+
+6. Determine the Number of Shares to Mint:
+   solidity
+   uint256 shares = 0;
+   if (totalSupply() == 0) {
+       shares = _amount;
+   } else {
+       shares = (_amount.mul(totalSupply())).div(_pool);
+   }
+   
+   The function then calculates the number of shares to mint for the depositor. If the total supply of shares is zero (i.e., this is the first deposit), the number of shares is equal to the amount of tokens deposited. Otherwise, the number of shares is calculated proportionally based on the ratio of the deposited amount to the total pool balance.
+
+7. Mint the Shares for the Sender:
+   solidity
+   _mint(msg.sender, shares);
+   
+   Finally, the function mints the calculated number of shares and assigns them to the sender (msg.sender). This is done using the _mint function, which increases the total supply of shares and assigns the new shares to the specified address.
+
+In summary, the deposit function allows users to deposit tokens into a pool and receive shares in return. It ensures that the actual amount of tokens received is accurately calculated, especially for deflationary tokens, and that the number of shares minted is proportional to the deposited amount relative to the total pool balance.

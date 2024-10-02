@@ -1,0 +1,23 @@
+Type of vulnerability: Incorrect Hedging During Liquidation
+Cause of vulnerability: The LiquidityPool is being hedged with an amount that does not account for the reduction in short position and the burning of power perp tokens, leading to an incorrect position in the Perp Market.
+Execution process: When a short position is liquidated, the `_liquidate` function is triggered, which reduces the short position by `debtRepaying` and burns `debtRepaying` power perp tokens. Subsequently, the `liquidate` function of the LiquidityPool is called, which hedges the pool with `debtRepaying` amount, resulting in excessive hedging.
+Vulnerable code: 
+```solidity
+function _liquidate(uint256 positionId, uint256 debtRepaying) internal {
+    ...
+    uint256 finalPosition = position.shortAmount - debtRepaying;
+    uint256 finalCollateralAmount = position.collateralAmount - totalCollateralReturned;
+    shortToken.adjustPosition(positionId, user, position.collateral, finalPosition, finalCollateralAmount);
+    pool.liquidate(debtRepaying);
+    powerPerp.burn(msg.sender, debtRepaying);
+    ...
+}
+
+function liquidate(uint256 amount) external override onlyExchange nonReentrant {
+    (uint256 markPrice, bool isInvalid) = getMarkPrice();
+    require(!isInvalid);
+    uint256 hedgingFees = _hedge(int256(amount), true);
+    usedFunds += int256(hedgingFees);
+    emit Liquidate(markPrice, amount);
+}
+```

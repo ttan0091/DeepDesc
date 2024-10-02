@@ -1,0 +1,46 @@
+This code defines an internal function named _upgradeToAndCallSecure, which is designed to securely upgrade the implementation of a contract and optionally call a function on the new implementation. This function is part of the ERC1967Upgrade standard, which provides a mechanism for upgrading contract implementations in a secure manner.
+
+Here’s a detailed explanation of how this function works:
+
+1. Retrieve the Current Implementation:
+   solidity
+   address oldImplementation = _getImplementation();
+   
+   This line retrieves the current implementation address of the contract. The function _getImplementation() is typically a view function that returns the address of the current contract implementation stored in a specific storage slot.
+
+2. Set the New Implementation:
+   solidity
+   _setImplementation(newImplementation);
+   
+   This line sets the new implementation address. The function _setImplementation(newImplementation) updates the storage slot with the address of the new implementation.
+
+3. Optional Function Call on New Implementation:
+   solidity
+   if (data.length > 0 || forceCall) {
+       Address.functionDelegateCall(newImplementation, data);
+   }
+   
+   This block checks if there is any data provided for a function call or if the forceCall flag is set to true. If either condition is met, it performs a delegate call to the new implementation using the provided data. The Address.functionDelegateCall function is used to make a lowlevel delegate call to the new implementation, ensuring that the call is executed in the context of the calling contract.
+
+4. Rollback Test:
+   solidity
+   StorageSlot.BooleanSlot storage rollbackTesting = StorageSlot.getBooleanSlot(_ROLLBACK_SLOT);
+   if (!rollbackTesting.value) {
+       rollbackTesting.value = true;
+       Address.functionDelegateCall(
+           newImplementation,
+           abi.encodeWithSignature("upgradeTo(address)", oldImplementation)
+       );
+       rollbackTesting.value = false;
+       require(oldImplementation == _getImplementation(), "ERC1967Upgrade: upgrade breaks further upgrades");
+       _upgradeTo(newImplementation);
+   }
+   
+   This block performs a rollback test to ensure that the upgrade is reversible. It checks if a rollback test is not already in progress by reading a boolean value from a specific storage slot (_ROLLBACK_SLOT). If no rollback test is in progress:
+    It sets the rollback test flag to true.
+    It performs a delegate call to the new implementation, invoking the upgradeTo function with the old implementation address. This simulates a rollback to the old implementation.
+    It resets the rollback test flag to false.
+    It checks if the rollback was effective by comparing the current implementation address with the old implementation address. If they are not the same, it means the upgrade is not reversible, and the function reverts with an error message.
+    Finally, it resets the implementation to the new implementation using _upgradeTo(newImplementation).
+
+This function ensures that the contract implementation can be upgraded securely, with the ability to test for reversibility and prevent irreversible upgrades that could break further upgrades.

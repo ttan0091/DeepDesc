@@ -1,0 +1,275 @@
+[H-01] Unsafe cast inConcentratedLiquidityPool.burnleads to attack
+Submitted by cmichel, also found by broccoli
+TheConcentratedLiquidityPool.burnfunction performs an unsafe cast of auint128type to asignedinteger.
+(uint256amount0fees,uint256amount1fees) =_updatePosition(msg.sender,lower,upper, -int128(amount));
+Note thatamountis chosen by the caller and when choosingamount = 2**128 - 1, this is interpreted as0xFFFFFFFFF... = -1as a signed integer. Thus-(-1)=1adds 1 liquidity unit to the position
+This allows an attacker to not only mint LP tokens for free but as this is theburnfunction it also redeems token0/1 amounts according to the unmodifieduint128amountwhich is an extremely large value.
+POC
+I created this POC that implements a hardhat test and shows how to steal the pool tokens.
+Choosing the correctamountof liquidity to burn andlower, upperticks is not straight-forward because of two competing constraints:
+the-int128(amount)must be less thanMAX_TICK_LIQUIDITY(see_updatePosition). This drives the theamountup to its max value (as the maxuint128value is -1 => -(-1)=1 is very low)The redeemedamount0, amount1values must be less than the current pool balance as the transfers would otherwise fail. This drives theamountdown. However, by choosing a smartloweranduppertick range we can redeem fewer tokens for the same liquidity.
+This exampleshows how to steal 99% of thetoken0pool reserves:
+Impact
+An attacker can steal the pool tokens.
+Recommended Mitigation Steps
+Even though Solidity 0.8.x is used, type casts do not throw an error.
+ASafeCastlibrarymust be used everywhere a typecast is done.
+sarangparikh22 (Sushi) confirmed
+[H-02] Wrong usage ofpositionIdinConcentratedLiquidityPoolManager
+Submitted by broccoli, also found by 0xsanson, cmichel, hickuphh3, and pauliax
+Impact
+In thesubscribefunction ofConcentratedLiquidityPoolManager, theincentiveto subscribed is determined as follows:
+Incentivememoryincentive=incentives[pool][positionId];
+However,positionIdshould beincentiveId, a counter that increases by one whenever a new incentive is added to the pool. The usage ofpositionIdcould cause the wrong incentive to be used, and in general, the incentive is not found, and the transaction reverts (the conditionblock.timestamp < incentive.endTimeis not met). ThegetRewardandclaimRewardfunctions have the bug of misusingpositionIdas the index of incentives.
+Proof of Concept
+Referenced code:
+ConcentratedLiquidityPoolManager.sol#L68ConcentratedLiquidityPoolManager.sol#L87ConcentratedLiquidityPoolManager.sol#L105
+Recommended Mitigation Steps
+ChangepositionIdtoincentiveIdin the referenced lines of code.
+sarangparikh22 (Sushi) confirmed but disagreed with severity
+[H-03]ConcentratedLiquidityPoolManager’s incentives can be stolen
+Submitted by cmichel, also found by broccoli, hickuphh3, pauliax, and WatchPug
+TheConcentratedLiquidityPoolManagerkeeps all tokens for all incentives in the same contract. ThereclaimIncentivefunction does not reduce theincentive.rewardsUnclaimedfield and thus one can reclaim tokens several times.
+This allows anyone to steal all tokens from all incentives by creating an incentive themself, and once it’s expired, repeatedly claim the unclaimed rewards until the token balance is empty.
+POC
+Attacker creates an incentive for a non-existent pool using a random address forpool(This is done such that no other user can claim rewards as we need a non-zerorewardsUnclaimedbalance for expiry). They choose theincentive.tokento be the token they want to steal from other incentives. (for example,WETH,USDC, orSUSHI) They choose thestartTime, endTime, expirysuch that the checks pass, i.e., starting and ending in a few seconds from now, expiring in 5 weeks. Then they choose a non-zerorewardsUnclaimedand transfer theincentive.tokento thePoolManager.Attacker waits for 5 weeks until the incentive is expiredAttacker can now callreclaimIncentive(pool, incentiveId, amount=incentive.rewardsUnclaimed, attacker, false)to withdrawincentive.rewardsUnclaimedofincentive.tokenfrom the pool manager.As theincentive.rewardsUnclaimedvariable has not been decreased, they can keep callingreclaimIncentiveuntil the pool is drained.
+Impact
+An attacker can steal all tokens in thePoolManager.
+Recommended Mitigation Steps
+InreclaimIncentive, reduceincentive.rewardsUnclaimedby the withdrawnamount.
+sarangparikh22 (Sushi) confirmed
+[H-04] Overflow in themintfunction ofConcentratedLiquidityPoolcauses LPs’ funds to be stolen
+Submitted by broccoli
+Impact
+Similar to a previous finding in theIndexPoolcontract, themintfunction ofConcentratedLiquidityPoolallows integer overflows when checking the balance is larger or equal to the received amount of token plus the reserve. As a result, the attacker could get a large amount of liquidity but only provide a small number of tokens to the pool, effectively stealing other LPs’ funds when burning his liquidity.
+Notice that this bug is independent of another bug of incorrect castinguint256type touint128in the_getAmountsForLiquidityfunction. Even if the previously mentioned bug does not exist, the attacker could still steal the funds in the pool by exploiting this bug.
+Proof of Concept
+Suppose that the current price is at the tick500000, an attacker calls themintfunction with the following parameters:
+mintParams.lower=100000mintParams.upper=500000mintParams.amount1Desired= (1<<128) -47541305835#acarefullychosennumbermintParams.amount0Desired=0
+Since the current price is equal to the upper price, we have
+_liquidity=mintParams.amount1Desired* (1<<96)// (priceUpper - priceLower)=4731732988155153573010127839
+The amounts oftoken0andtoken1that the attacker has to pay is
+amount0Actual=0amount1Actual=uint128(DyDxMath.getDy(_liquidity,priceLower,priceUpper,true))=uint128(_liquidity* (priceUpper-priceLower)// (1 << 96)) # round up=uint128(340282366920938463463374607384226905622)=340282366920938463463374607384226905622= (1<<128) -47541305834
+As long asreserve1is greater than47541305834, the additionamount1Actual + reserve1overflows to a small number, causing the attacker to pass the balance check.
+Referenced code:
+ConcentratedLiquidityPool.sol#L204ConcentratedLiquidityPool.sol#L209
+Recommended Mitigation Steps
+Consider removing theuncheckedstatement to check for integer overflow or casting bothamount1Actualandreserve1to typeuint256before adding them and comparing to the_balance(token).
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.
+[H-05] Incorrect usage of typecasting in_getAmountsForLiquiditylets an attacker steal funds from the pool
+Submitted by broccoli
+Impact
+The_getAmountsForLiquidityfunction ofConcentratedLiquidityPoolexplicitly converts the result ofDyDxMath.getDyandDyDxMath.getDxfrom typeuint256to typeuint128. The explicit casting without checking whether the integer exceeds the maximum number (i.e.,type(uint128).max) could cause incorrect results being used. Specifically, an attacker could exploit this bug to mint a large amount of liquidity but only pay a little oftoken0ortoken1to the pool and effectively steal other’s funds when burning his liquidity.
+Proof of Concept
+Suppose that the current price is at the tick500000, an attacker calls themintfunction with the following parameters:
+mintParams.lower=100000mintParams.upper=500000mintParams.amount1Desired= (1<<128) +71914955423#acarefullychosennumbermintParams.amount0Desired=0
+Since the current price is equal to the upper price, we have
+_liquidity=mintParams.amount1Desired* (1<<96)// (priceUpper - priceLower)=4731732988155153573010127840
+The amounts oftoken0andtoken1that the attacker has to pay is
+amount0Actual=0amount1Actual=uint128(DyDxMath.getDy(_liquidity,priceLower,priceUpper,true))=uint128(_liquidity* (priceUpper-priceLower)// (1 << 96)) # round up=uint128(340282366920938463463374607456141861046)             #exceedthemax=24373649590#truncated
+The attacker only pays24373649590oftoken1to get4731732988155153573010127840of the liquidity, which he could burn to get moretoken1. As a result, the attacker is stealing the funds from the pool and could potentially drain it.
+Referenced code:
+ConcentratedLiquidityPool.sol#L480concentratedPool/DyDxMath.sol#L15concentratedPool/DyDxMath.sol#L30
+Recommended Mitigation Steps
+Check whether the result ofDyDxMath.getDyorDyDxMath.getDxexceedstype(uint128).maxor not. If so, then revert the transaction. Or consider using theSafeCastlibraryfrom OpenZeppelin instead.
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), could you confirm whether the casting to uint128 is known to be safe? Are you unconvinced of the issue?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) I can confirm casting to uint128 is not safe, and will lead to overflow. However, the example mentioned is wrong.
+alcueca (judge) commented:
+Understood. I will uphold the severity 3 because the overflow happens in a critical function for the management of funds and an incorrect execution will likely lead to loss of funds.
+[H-06]ConcentratedLiquidityPosition.sol#collect()Users may get double the amount of yield when they callcollect()beforeburn()
+Submitted by WatchPug
+When a user callsConcentratedLiquidityPosition.sol#collect()to collect their yield, it calcuates the yield based onposition.pool.rangeFeeGrowth()andposition.feeGrowthInside0, position.feeGrowthInside1:
+ConcentratedLiquidityPosition.sol#L75L101
+When there are enough tokens inbento.balanceOf, it will not callposition.pool.collect()to collect fees from the pool.
+This makes the user whocollect()their yield when there is enough balance to get double yield when they callburn()to remove liquidity. Becauseburn()will automatically collect fees on the pool contract.
+Impact
+The yield belongs to other users will be diluted.
+Recommended Mitigation Steps
+Consider makingConcentratedLiquidityPosition.sol#burn()callposition.pool.collect()beforeposition.pool.burn(). User will need to callConcentratedLiquidityPosition.sol#collect()to collect unclaimed fees afterburn().
+OrConcentratedLiquidityPosition.sol#collect()can be changed into apublicmethod andConcentratedLiquidityPosition.sol#burn()can call it afterposition.pool.burn().
+sarangparikh22 (Sushi) confirmed
+[H-07]ConcentratedLiquidityPosition.sol#burn()Wrong implementation allows attackers to steal yield
+Submitted by WatchPug
+When a user callsConcentratedLiquidityPosition.sol#burn()to burn their liquidity, it callsConcentratedLiquidityPool.sol#burn()->_updatePosition():
+ConcentratedLiquidityPool.sol#L525L553
+The_updatePosition()function will returnamount0feesandamount1feesof the whole position with theloweranduppertick and send them to therecipientalongside the burned liquidity amounts.
+Proof of Concept
+Alice minted $10000 worth of liquidity withloweranduppertick set to 99 and 199;Alice accumulated $1000 worth of fee in token0 and token1;The attacker can mint a small amount ($1 worth) of liquidity using the sameloweranduppertick;The attacker callsConcentratedLiquidityPosition.sol#burn()to steal all the unclaimed yield with the ticks of (99, 199) include the $1000 worth of yield from Alice.
+Recommended Mitigation Steps
+Consider makingConcentratedLiquidityPosition.sol#burn()always useaddress(this)asrecipientin:
+position.pool.burn(abi.encode(position.lower,position.upper,amount,recipient,unwrapBento));
+and transfer proper amounts to the user.
+sarangparikh22 (Sushi) confirmed
+[H-08] Wrong inequality when adding/removing liquidity in current price range
+Submitted by cmichel
+TheConcentratedLiquidityPool.mint/burnfunctions add/removeliquiditywhen(priceLower < currentPrice && currentPrice < priceUpper).
+Shouldn’t it also be changed ifpriceLower == currentPrice?
+Impact
+Pools that mint/burn liquidity at a time where thecurrentPriceis right at the lower price range do not work correctly and will lead to wrong swap amounts.
+Recommended Mitigation Steps
+Change the inequalities toif (priceLower <= currentPrice && currentPrice < priceUpper).
+sarangparikh22 (Sushi) disputed:
+You shouldn’t be able to reach this, can you produce a POC?
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), could you please elaborate on why this is not reachable?
+sarangparikh22 (Sushi) confirmed:
+I confused this with another similar issue, my apologies, took a look at this, and this a valid issue, we should probably even bump the severity to Sev 3, not sure if I am allowed to do so haha, I created a PoC in which users can actually loose funds, when they add liquidity in that specific range. @alcueca (judge)
+alcueca (judge) commented:
+Sponsors are allowed to bump up severity, and I’ve done it myself in my past as a sponsor as well.
+[H-09] range fee growth underflow
+Submitted by broccoli
+Impact
+The functionRangeFeeGrowth(ConcentratedLiquidityPool.sol#L601-L633) would revert the transaction in some cases.
+When a pool cross a tick, it only updates eitherfeeGrowthOutside0orfeeGrowthOutside1.Ticks.sol#L23-L53
+RangeFeeGrowthcalculates the fee as follow:
+feeGrowthInside0=_feeGrowthGlobal0-feeGrowthBelow0-feeGrowthAbove0;feeGrowthInside1=_feeGrowthGlobal1-feeGrowthBelow1-feeGrowthAbove1;
+feeGrowthBelow + feeGrowthAboveis not necessary smaller than_feeGrowthGlobal. Please seePOC.
+Users can not provide liquidity or burn liquidity. Fund will get stocked in the contract. I consider this is a high-risk issue.
+Proof of Concept
+# This is the wrapper.# def add_liquidity(pool, amount, lower, upper)# def swap(pool, buy, amount)add_liquidity(pool, deposit_amount, -800,500)add_liquidity(pool, deposit_amount,400,700)# We cross the tick here to trigger the bug.swap(pool,False, deposit_amount)# Only tick 700's feeGrowthOutside1 is updatedswap(pool,True, deposit_amount)# Only tick 500's feeGrowthOutside0 is updated# current tick at -800# this would revert# feeGrowthBelow1 = feeGrowthGlobal1# feeGrowthGlobal1 - feeGrowthBelow1 - feeGrowthAbove1 would revert# user would not be able to mint/withdraw/cross this tick. The pool is brokenadd_liquidity(pool, deposit_amount,400,700)
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+It’s either modify the tick’s algo orRangeFeeGrowth. The quick-fix I come up with is to deal with the fee inRangeFeeGrowth. However, I recommend the team to go through tick’s logic again.
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), is the example invalid, or the whole issue? Is this something that you would consider fixing?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) The example is invalid, but the issue is valid, the fix is to swap the condition of feeGrowthGlobal
+[H-10]ConcentratedLiquidityPool.burn()Wrong implementation
+Submitted by WatchPug
+The reserves should be updated once LP tokens are burned to match the actual total bento shares hold by the pool.
+However, the current implementation only updated reserves with the fees subtracted.
+Makes thereserve0andreserve1smaller than the currentbalance0andbalance1.
+Impact
+As a result, many essential features of the contract will malfunction, includesswap()andmint().
+Recommended Mitigation Steps
+ConcentratedLiquidityPool.sol#L263L267Change:
+unchecked{reserve0-=uint128(amount0fees);reserve1-=uint128(amount1fees);}
+to:
+unchecked{reserve0-=uint128(amount0);reserve1-=uint128(amount1);}
+sarangparikh22 (Sushi) confirmed
+[H-11] ConcentratedLiquidityPool: incorrectfeeGrowthGlobalaccounting when crossing ticks
+Submitted by hickuphh3
+Impact
+Swap fees are taken from the output. Hence, if swapping token0 for token1 (zeroForOneis true), then fees are taken in token1. We see this to be the case in the initialization offeeGrowthGlobalin the swap cache
+feeGrowthGlobal = zeroForOne ? feeGrowthGlobal1 : feeGrowthGlobal0;
+and in_updateFees().
+However, looking atTicks.cross(), the logic is the reverse, which causes wrong fee accounting.
+if(zeroForOne) {...ticks[nextTickToCross].feeGrowthOutside0=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside0;}else{...ticks[nextTickToCross].feeGrowthOutside1=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside1;}
+Recommended Mitigation Steps
+Switch the0and1inTicks.cross().
+if(zeroForOne) {...// `feeGrowthGlobal` = feeGrowthGlobal1ticks[nextTickToCross].feeGrowthOutside1=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside1;}else{...// feeGrowthGlobal = feeGrowthGlobal0ticks[nextTickToCross].feeGrowthOutside0=feeGrowthGlobal-ticks[nextTickToCross].feeGrowthOutside0;}
+sarangparikh22 (Sushi) confirmed
+[H-12]ConcentratedLiquidityPool:secondsPerLiquidityshould be modified whenever pool liquidity changes
+Submitted by hickuphh3
+Impact
+secondsPerLiquidityis updated as such:secondsPerLiquidity += uint160((diff << 128) / liquidity);wherediff = timestamp - uint256(lastObservation). Hence, whenever liquidity changes,secondsPerLiquidityshould be updated prior to the change.
+In particular, this affects themint()andburn()functions, in the case where liquidity changes whenlowerTick <= currentTick < upperTick.
+In fact, the latestsecondsPerLiquidityvalue should be calculated and used inTicks.insert(). For comparison, notice how UniswapV3 fetches the latest value by callingobservations.observeSingle()in its_updatePosition()function.
+Recommended Mitigation Steps
+ThesecondsPerLiquidityincrement logic should be applied prior to liquidity addition inmint()and removal inburn().
+// insert logic before these lines in mint()unchecked{if(priceLower<currentPrice&&currentPrice<priceUpper)liquidity+=uint128(_liquidity);}nearestTick=Ticks.insert(ticks,feeGrowthGlobal0,feeGrowthGlobal1,secondsPerLiquidity,// should calculate and use latest secondsPerLiquidity value...);// insert logic before before these lines in burn()unchecked{if(priceLower<currentPrice&&currentPrice<priceUpper)liquidity-=amount;}
+sarangparikh22 (Sushi) disputed:
+The secondsPerLiquidity is same, changing the order of that will not affect anything, since it is not getting calculated at the mint or burn function.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), could you please elaborate on why this isn’t an issue?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) my apologies, this is an issue. I could confirm this.
+[H-13] Burning does not update reserves
+Submitted by cmichel, also found by 0xsanson, broccoli, and pauliax
+TheConcentratedLiquidityPool.burnfunction sends outamount0/amount1tokens but only updates the reserves by decreasing it by thefees of these amounts.
+unchecked{// @audit decreases by fees only, not by amount0/amount1reserve0-=uint128(amount0fees);reserve1-=uint128(amount1fees);}
+This leads to the pool having wrong reserves after anyburnaction.
+The pool’s balance will be much lower than the reserve variables.
+Impact
+As the pool’s actual balance will be much lower than the reserve variables,minting andswaping will not work correctly either.
+This is because of theamount0Actual + reserve0 <= _balance(token0)check inmintusing a much higherreserve0amount than the actual balance (already including the transferred assets from the user). An LP provider will have to make up for the missing reserve decrease fromburnand pay more tokens.
+The same holds true forswapwhich performs the same check in_updateReserves.
+The pool essentially becomes unusable after aburnas LPs / traders need to pay more tokens.
+Recommended Mitigation Steps
+The reserve should be decreased by what is transferred out. Inburn’s case this isamount0/amount1.
+sarangparikh22 (Sushi) confirmed
+[H-14]ConcentratedLiquidityPool:rangeFeeGrowthandsecondsPerLiquiditymath needs to be unchecked
+Submitted by hickuphh3
+Impact
+The fee growth mechanism, and by extension,secondsPerLiquiditymechanism of Uniswap V3 has the ability to underflow. It is therefore a necessity for the math to (ironically) be unsafe / unchecked.
+Proof of Concept
+Assume the following scenario and initial conditions:
+Price at parity (nearestTick is 0)tickSpacing of 10Swaps only increase the price (nearestTick moves up only)feeGrowthGlobalinitializes with 0, increases by 1 for every tick moved for simplicityExisting positions that provide enough liquidity and enable nearestTick to be set to values in the exampleEvery tick initialized in the example is ≤ nearestTick, so that itsfeeGrowthOutside=feeGrowthGlobalWhen nearestTick is at 40, Alice creates a position for uninitialised ticks [-20, 30]. The ticks are initialized, resulting in theirfeeGrowthOutsidevalues to be set to 40.nearestTick moves to 50. Bob creates a position with ticks [20, 30] (tick 20 is uninitialised, 30 was initialized from Alice’s mint). tick 20 will therefore have afeeGrowthOutsideof 50.Let us calculaterangeFeeGrowth(20,30).lowerTick = 20, upperTick = 30feeGrowthBelow = 50 (lowerTick’sfeeGrowthOutside) since lowerTick < currentTickfeeGrowthAbove = 50 - 40 = 10 (feeGrowthGlobal - upperTick’sfeeGrowthOutside) since upperTick < currentTickfeeGrowthInside= feeGrowthGlobal - feeGrowthBelow - feeGrowthAbove= 50 - 50 - 10= -10
+We therefore have negativefeeGrowthInside.
+This behaviour is actually acceptable, because the important thing about this mechanism is the relative values to each other, not the absolute values themselves.
+Recommended Mitigation Steps
+rangeFeeGrowth()andrangeSecondsInside()has to be unchecked. In addition, the subtraction offeeGrowthInsidevalues should also be unchecked in_updatePosition()andConcentratedLiquidityPosition#collect().
+The same also applies for the subtraction ofpool.rangeSecondsInsideandstake.secondsInsideLastinclaimReward()andgetReward()of theConcentratedLiquidityPoolManagercontract.
+sarangparikh22 (Sushi) disputed:
+Can you give more elaborate example.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), I find the example quite elaborate. It shows an specific example in which underflow is desired, by comparing with other platform using similar mechanics. It explains that with your current implementation you can’t have negativefeeGrowthInside, which is a possible and acceptable scenario. Could you please elaborate on what your grounds are for disputing this finding?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) Yes this a valid issue.
+[H-15]ConcentratedLiquidityPool:initialPriceshould be checked to be within allowable range
+Submitted by hickuphh3
+Impact
+No check is performed for the initial price. This means that it can be set to be below theMIN_SQRT_RATIOor aboveMAX_SQRT_RATIO(Eg. zero value), which will prevent the usability of all other functions (minting, swapping, burning).
+For example,Ticks.insert()would fail when attempting to calculateactualNearestTick = TickMath.getTickAtSqrtRatio(currentPrice);, which means no one will be able to mint positions.
+Recommended Mitigation Steps
+Check theinitialPriceis within the acceptable range, ie.MIN_SQRT_RATIO <= initialPrice <= MAX_SQRT_RATIO
+sarangparikh22 (Sushi) confirmed
+[H-16] Possible attacks on Seconds * Liquidity calculation
+This is a possible line of attack on the staking contract, in particular theclaimReward()function:ConcentratedLiquidityPoolManager.sol#L90L94
+A user with some spare capital mints a liquidity position with a very tight range (1-2 ticks wide) at the current price. Because the range is so small, his position.liquidity on his NFT is large (DyDxMath.sol).The user then sets up a bot to frontrun any price changes that someone else tries to do, burning his position after claiming rewards. He then mints a new liquidity position at the new price after the other persons trades go through.Rinse and repeat this process. If done correctly, no funds are at risk from the bot owner, he doesn’t pay any fees for burning/minting either.
+So what you have left is a sequence of positions with high position.liquidity and in the correct price range all the time, without taking on any risk. Thereby stealing incentive funds.
+The lines below reward the bot owner with a large amount of the token:
+ConcentratedLiquidityPoolManager.sol#L90L94Recommendation:
+Lock the positions during a set time while they are staked.
+sarangparikh22 (Sushi) disputed:
+This seems very unlikely to happen and does not affect the pool, it’s equivalent to just re balancing your position.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), Isn’t the warden describing a Just In Time liquidity pattern?
+sarangparikh22 (Sushi) acknowledged:
+@alcueca (judge) yes exactly, even done right, the bot would still face huge IL. We don’t intend to solve this.
+[H-17] Understanding the fee growth mechanism (whynearestTickis unsuitable)
+Submitted by hickuphh3
+Introduction
+Uniswap V3’s whitepaper describes the fee growth mechanism, but the intuition behind it is not explained well (IMO). I’ve not been able to find any material that tries to describe it, so allow me the luxury of doing so. It is crucial to understand how it works, so that other issues regarding the fee growth variables (and by extension, secondsPerLiquidity) raised by fellow wardens / auditors are better understood by readers.
+Objective
+We want a way to accurately track the fees accumulated by a position. Fees should only be given to the position it is active (the current tick / price is within the lower and upper ticks of the position).
+feeGrowthGlobal
+Defined as the total amount of fees that would have been earned by 1 unit of unbounded liquidity that was deposited when the contract was first initialized. For simplicity, we can take this to be the range betweenMIN_TICKandMAX_TICK. We represent it visually like this:
+// <-------------------------------------------------------------------------->// MIN_TICK                                                               MAX_TICK
+feeGrowthOutside
+The fee growth per unit of liquidity on theotherside of this tick (relative to the current tick). What does this mean?
+As defined, it is the fee growthrelativeto the current tick. Based on the convention, we define 2 cases:
+Case 1: initialized tick ≤ pool tickCase 2: Initialized tick > pool tick
+Visually, the feeGrowthOutside will look like this:
+// CASE 1// <--------------------|--------------------|// MIN_TICK         INIT_TICK            POOL_TICK// <-----------------------------------------|// MIN_TICK                        INIT_TICK = POOL_TICK// CASE 2//                                           |--------------------|---------------->//                                       POOL_TICK           INIT_TICK          MAX_TICK
+Hence, regardless of whether the tick to initialize is either a lower or upper tick of a position, thefeeGrowthOutsidevalue that it is referring to isrelatveto the pool tick.
+In other words, if initialized tick ≤ pool tick, then itsfeeGrowthOutsideis towardsMIN_TICK. Otherwise, itsfeeGrowthOutsideis towardsMAX_TICK.
+Initialization
+By convention, when a tick is initialized, all fee growth is assumed to happen below it. Hence, the feeGrowthOutside is initialized to the following values:
+Case 1: tick’s feeGrowthOutside = feeGrowthGlobalCase 2: tick’s feeGrowthOtuside = 0
+Implications
+One should now understand why thefeeGrowthOutsidevalue is being flipped when crossing a tick, ie.tick.feeGrowthOutside = feeGrowthGlobal - tick.feeGrowthOutsideinTick.cross(), because it needs to follow the definition. (Case 1 becomes case 2 and vice versa).
+It should hopefully become clear whyusingnearestTickas the reference point for fee growth calculations instead of the pool tick might not a wise choice.(Case 1 and 2 becomes rather ambiguous).
+Range fee growth / feeGrowthInside
+Going back to our objective of calculating the fee growth accumulated for a position, we can break it down into 3 cases (take caution with the boundary cases), and understand how their values are calculated. In general, we take it to be feeGrowthGlobal - fee growth below lower tick - fee growth above upper tick (see illustrations), although it can be simplified further.
+pool tick < lower tick// ---------------------|---------------------|-----------------|-----------------//                  POOL_TICK            LOWER_TICK          UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->//       LOWER_TICK.feeGrowthOutside (CASE 2) |---------------------------------->//                         UPPER_TICK.feeGrowthOutside (CASE 2) |---------------->// we want the range between LOWER_TICK and UPPER_TICK// = LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutside// alternatively, following the general formula, it is// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGlobal - (feeGrowthGlobal - LOWER_TICK.feeGrowthOutside) - UPPER_TICK.feeGrowthOtuside// = LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutsidelower tick ≤ pool tick < upper tick// ---------------------|---------------------|-----------------|-----------------//                  LOWER_TICK            POOL_TICK        UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->// <--------------------| LOWER_TICK's feeGrowthOutside (CASE 1)//                       UPPER_TICK's feeGrowthOutside (CASE 2) |---------------->// we want the range between LOWER_TICK and UPPER_TICK// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGLobal - LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutsideupper tick ≤ pool tick// ---------------------|---------------------|-----------------|-----------------//                  LOWER_TICK            POOL_TICK        UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->// <--------------------| LOWER_TICK's feeGrowthOutside (CASE 1)// <------------------------------------------------------------| UPPER_TICK's feeGrowthOutside (CASE 1)// we want the range between LOWER_TICK and UPPER_TICK// = UPPER_TICK.feeGrowthOutside - LOWER_TICK.feeGrowthOutside// alternatively, following the general formula, it is// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGLobal - LOWER_TICK.feeGrowthOutside - (feeGrowthGlobal - UPPER_TICK.feeGrowthOutside)// = UPPER_TICK.feeGrowthOutside - LOWER_TICK.feeGrowthOutside
+Handling The Boundary Case
+An under appreciated, but very critical line of Uniswap V3’s pool contract is the following:
+state.tick = zeroForOne ? step.tickNext - 1 : step.tickNext;
+It serves a dual purpose:
+Because of how Tick Bitmap works, the tick needs to be manually decremented by 1 so that the next tick to be found is in the next word.More importantly, it handles the boundary case, wherezeroForOneis true (pool tick goes down). In this scenario, case 1 becomes case 2 when the tick is crossed. However, should the poolTick after the swap be equal tostep.tickNext, then when calculating fee growth inside a position that so happens to havestep.tickNextas one of its ticks, it will be treated as case 1 (poolTick = lowerTick / upperTick) when it is required to be treated as case 2.
+Impact
+Hopefully, this writeup helps readers understand the fee growth mechanism and its workings. More importantly, I hope it helps the team to understand why usingnearestTickas the reference point for fee growth mechanism is unsuitable. Specifically, we have 2 high severity issues:
+Wrong initialization value offeeGrowthOutsidein the case either the lower or upper tick becomes thenearestTickupon insertion of a new tick.You are (in a sense) crossing the old nearestTick, so itssecondsPerLiquidityOutsidehas to be flippedThe lower / upper tick’sfeeGrowthOutsideis incorrectly initialized to be0when it should befeeGrowthOutsideCase 1 and 2 becomes ambiguous. When a position is modified with either tick beingnearestTick, it is treated to be case 1 when in fact there are times it should be treated as case 2.
+Recommended Mitigation Steps
+Having a pool tick counter that closely matches the current pool price is rather critical for fee growth and seconds per liquidity initializations / calculations.
+Where relevant, thenearestTickshould be replaced bypoolTick.
+sarangparikh22 (Sushi) acknowledged

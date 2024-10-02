@@ -1,0 +1,117 @@
+[H-01] Fee is being deducted when Put is expired and not when it is exercised.
+Submitted by zishansami, also found by 0x52, 0xsanson, auditor0517, berndartmueller, csanuragjain, and zzzitron
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L495-L503
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L451
+Impact
+Fee is being deducted when Put is expired and not when it is exercised inPuttyV2.sol.
+Comment section of thesetFee()function mentions"fee rate that is applied on exercise"which signifies that the fee amount is meant to be deducted from strike only when a position is being exercised (or has been exercised).
+But, in functionwithdraw()atPuttyV2.solL#495-L503the fee is being deducted even when the Put position is not exercised and has expired.
+Also, in functionexercise()there is no fee deduction from theorder.strikewhen the Put position is exercised and the strike is being transferred to the caller (PuttyV2.solL#451).
+This unintended deduction from assets of Put Shorter and the absence of fee deduction from strike when Put is exercised are directly impacting the assets and therefore marked as Medium Risk.
+Proof of Concept
+ifcondition present atPuttyV2.solL#495passes iforder.isCallisfalseandisExercisedis false.
+feeAmountbecomes positive iffee > 0and it gets deducted from theorder.strikewhich gets transferred tomsg.senderat line numberPuttyV2.solL#503.
+Recommended Mitigation Steps
+Updateifcondition atPuttyV2.sol#L498with(fee > 0 && order.isCall && isExercised)Add feeAmount calculation and deduction after put is exercised and strike is transferred atPuttyV2.sol#L451as follows:
+uint256feeAmount=0;if(fee>0) {feeAmount= (order.strike*fee) /1000;ERC20(order.baseAsset).safeTransfer(owner(),feeAmount);}ERC20(order.baseAsset).safeTransfer(msg.sender,order.strike-feeAmount);
+outdoteth (Putty Finance) confirmed and commented:
+Report: Fees are only applied on puts if they are expired.
+HickupHH3 (judge) increased severity to High and commented:
+Due to incorrect logic, there are 2 consequences of separate severities:Expired put option being charged the admin fee. As @berndartmueller mentioned in#380, the fee should be charged on the premium (actually this is another issue, see#373). Since it is possible for the fee amount to be greater than expected, I consider this to be a loss of assets and therefore given a high severity rating.Put option not being charged fee upon exercising it. This can be considered to the “protocol leaked value” and thus be given a medium severity rating.Issues that mention (1) or both (1) and (2) will be given a high severity rating, those that mention only (2) will be given a medium.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/4.
+hyh (warden) reviewed mitigation:
+Fixed by changing the fee base to beorder.premiumPR#4, which is now paid uniformly for all option types on order filling. Utilizingorder.strikeas the fee base was the root cause forM-04,M-06,M-11,M-15, so the change toorder.premiumwas a shared mitigation for all of them.
+
+[H-02]acceptCounterOffer()May Result In Both Orders Being Filled
+Submitted by kirk-baird, also found by csanuragjain, hansfriese, Lambda, and minhquanym
+When a user is attempting to accept a counter offer they call the functionacceptCounterOffer()with both theoriginalOrderto be cancelled and the neworderto fill. It is possible for an attacker (or any other user who happens to callfillOrder()at the same time) to fill theoriginalOrderbeforeacceptCounterOffer()cancels it.
+The impact is that bothoriginalOrderandorderare filled. Themsg.senderofacceptCounterOffer()is twice as leveraged as they intended to be if the required token transfers succeed.
+Proof of Concept
+acceptCounterOffer()callscancel()on the original order, however it will not revert if the order has already been filled.
+functionacceptCounterOffer(Ordermemoryorder,bytescalldatasignature,OrdermemoryoriginalOrder)publicpayablereturns(uint256positionId) {// cancel the original ordercancel(originalOrder);// accept the counter offeruint256[]memoryfloorAssetTokenIds=newuint256[](0);positionId=fillOrder(order,signature,floorAssetTokenIds);}
+cancel()does not revert if an order has already been filled it only prevents futurefillOrder()transactions from succeeding.
+functioncancel(Ordermemoryorder)public{require(msg.sender==order.maker,"Not your order");bytes32orderHash=hashOrder(order);// mark the order as cancelledcancelledOrders[orderHash] =true;emitCancelledOrder(orderHash,order);}
+Therefore any user may front-run theacceptCounterOffer()transaction with afillOrder()transaction that fills the original order. As a result the user ends up filling bothorderandoriginalOrder. ThenacceptCounterOffer()cancels theoriginalOrderwhich is essentially a no-op since it’s been filled and continues to fill the neworderresulting in both orders being filled.
+Recommended Mitigation Steps
+Consider havingcancel()revert if an order has already been filled. This can be done by adding the following linerequire(_ownerOf[uint256(orderHash)] == 0).
+outdoteth (Putty Finance) confirmed and commented:
+Report: It’s possible to fill an order twice by accepting a counter offer for an already filled order.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/2.
+hyh (warden) reviewed mitigation:
+Fixed by requiring that order can’t be in the filled state on cancel. This fully adheres to the original logic, but wasn’t controlled for before.
+
+[H-03] Create a short call order with non empty floor makes the option impossible to exercise and withdraw
+Submitted by zzzitron, also found by danb, Kenshin, Metatron, minhquanym, and PwnedNoMore
+HIGH- assets can be lost
+If a short call order is created with non empty floorTokens array, the taker cannot exercise. Also, the maker cannot withdraw after the expiration. The maker will still get premium when the order is filled. If the non empty floorTokens array was included as an accident, it is a loss for both parties: the taker loses premium without possible exercise, the maker loses the locked ERC20s and ERC721s.
+This bug is not suitable for exploitation to get a ‘free’ premium by creating not exercisable options, because the maker will lose the ERC20s and ERC721s without getting any strike. In that sense it is similar but different issue to theCreate a short put order with zero tokenAmount makes the option impossible to exercise, therefore reported separately.
+Proof of Concept
+proof of conceptreference case
+The proof of concept shows a scenario where babe makes an short call order with non emptyfloorTokensarray. Bob filled the order, and now he has long call option NFT. He wants to exercise his option and callsexercise. There are two cases.
+case 1: he calls exercise with emptyfloorAssetTokenIdsarraycase 2: he calls exercise with non-emptyfloorAssetTokenIdsarray with matching length to theorders.floorTokens
+In the case1,the inputfloorAssetTokenIdswere checked to be empty for put orders, and his call passes this requirement. But eventually_transferFloorsInwas called and he getsIndex out of boundserror, becausefloorTokensis not emptywhich does not match with emptyfloorAssetTokenIds.
+// case 1// PuttyV2.sol: _transferFloorsIn called by exercise// The floorTokens and floorTokenIds do not match the lenghts// floorTokens.length is not zero, while floorTokenIds.length is zeroERC721(floorTokens[i]).safeTransferFrom(from,address(this),floorTokenIds[i]);
+In the case2,the inputfloorAssetTokenIdswere checked to be empty for put orders, but it is not empty. So it reverts.
+// case2// PuttyV2.sol: exercise// non empty floorAssetTokenIds array is passed for put option, it will revert!order.isCall? require(floorAssetTokenIds.length == order.floorTokens.length, "Wrong amount of floor tokenIds"): require(floorAssetTokenIds.length == 0, "Invalid floor tokenIds length");
+After the option is expired, the maker - babe is trying to withdraw but fails due to thesame issue with the case1.
+// maker trying to withdraw// PuttyV2.sol: withdraw_transferFloorsOut(order.floorTokens,positionFloorAssetTokenIds[floorPositionId]);
+Note on the PoC:
+Thetest for case1 is commented outbecause foundry could not catch the revert. But by running the test with un-commenting these lines will show that the call reverts withIndex out of bounds.For the same reason thewithdrawalso is commented outThe reference case just shows that it works as intended when the order does not contain non-emptyfloorTokens.
+Tools Used
+Foundry.
+Recommended Mitigation Steps
+It happens because thefillOrderdoes not ensuretheorder.floorTokensto be empty when the order is short call.
+STYJ (warden) commented:
+Note that it is possible to cause loss of funds for others through this.Assume that maker (A) creates a long call and taker (B) fills it, transferring floor tokens (XYZ) into putty.If maker (C) creates a short call with floorTokens (XYZ), taker (D) is able to fill and exercise his long call since XYZ already resides on Putty. This will however invalidate the options pair that was created between A and B since A cannot exercise and B cannot withdraw.
+outdoteth (Putty Finance) commented:
+Agree that this should be marked as high severity given the exploit scenario provided by @STYJ above.
+outdoteth (Putty Finance) confirmed and commented:
+Report: Short call with floorTokens will result in a revert when exercising.
+HickupHH3 (judge) commented:
+Agreed, all wardens gave the same scenario that leads to a direct loss of NFTs and premium, but @STYJ’s exploit scenario raises the gravity of the situation since users can be griefed.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/1.
+hyh (warden) reviewed mitigation:
+Fixed by prohibiting non-emptyorder.floorTokensfor short calls.Other option types do needfloorTokens: long calls’ taker provides floor tokens on filling, while long put owner brings in the floor tokens on exercise, taking the strike. Short put owner can thereafter retrieve the tokens on withdraw.
+
+[H-04] Zero strike call options can be systemically used to steal premium from the taker
+Submitted by hyh, also found by hansfriese
+Some non-malicious ERC20 do not allow for zero amount transfers and order.baseAsset can be such an asset. Zero strike calls are valid and common enough derivative type. However, the zero strike calls with such baseAsset will not be able to be exercised, allowing maker to steal from the taker as a malicious maker can just wait for expiry and withdraw the assets, effectively collecting the premium for free. The premium of zero strike calls are usually substantial.
+Marking this as high severity as in such cases malicious maker knowing this specifics can steal from taker the whole premium amount. I.e. such orders will be fully valid for a taker from all perspectives as inability to exercise is a peculiarity of the system which taker in the most cases will not know beforehand.
+Proof of Concept
+Currently system do not check the strike value, unconditionally attempting to transfer it:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L435-L437
+}else{ERC20(order.baseAsset).safeTransferFrom(msg.sender,address(this),order.strike);}
+As a part of call exercise logic:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L422-L443
+functionexercise(Ordermemoryorder,uint256[]calldatafloorAssetTokenIds)publicpayable{...if(order.isCall) {// -- exercising a call option// transfer strike from exerciser to putty// handle the case where the taker uses native ETH instead of WETH to pay the strikeif(weth==order.baseAsset&&msg.value>0) {// check enough ETH was sent to cover the strikerequire(msg.value==order.strike,"Incorrect ETH amount sent");// convert ETH to WETH// we convert the strike ETH to WETH so that the logic in withdraw() works// - because withdraw() assumes an ERC20 interface on the base asset.IWETH(weth).deposit{value:msg.value}();}else{ERC20(order.baseAsset).safeTransferFrom(msg.sender,address(this),order.strike);}// transfer assets from putty to exerciser_transferERC20sOut(order.erc20Assets);_transferERC721sOut(order.erc721Assets);_transferFloorsOut(order.floorTokens,positionFloorAssetTokenIds[uint256(orderHash)]);}
+Some tokens do not allow zero amount transfers:
+https://github.com/d-xo/weird-erc20#revert-on-zero-value-transfers
+This way for such a token and zero strike option the maker can create short call order, receive the premium:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L327-L339
+if(weth==order.baseAsset&&msg.value>0) {// check enough ETH was sent to cover the premiumrequire(msg.value==order.premium,"Incorrect ETH amount sent");// convert ETH to WETH and send premium to maker// converting to WETH instead of forwarding native ETH to the maker has two benefits;// 1) active market makers will mostly be using WETH not native ETH// 2) attack surface for re-entrancy is reducedIWETH(weth).deposit{value:msg.value}();IWETH(weth).transfer(order.maker,msg.value);}else{ERC20(order.baseAsset).safeTransferFrom(msg.sender,order.maker,order.premium);}
+Transfer in the assets:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L366-L371
+// filling short call: transfer assets from maker to contractif(!order.isLong&&order.isCall) {_transferERC20sIn(order.erc20Assets,order.maker);_transferERC721sIn(order.erc721Assets,order.maker);returnpositionId;}
+And wait for expiration, knowing that all attempts to exercise will revert:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L435-L437
+}else{ERC20(order.baseAsset).safeTransferFrom(msg.sender,address(this),order.strike);}
+Then recover her assets:
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L508-L519
+// transfer assets from putty to owner if put is exercised or call is expiredif((order.isCall&& !isExercised) || (!order.isCall&&isExercised)) {_transferERC20sOut(order.erc20Assets);_transferERC721sOut(order.erc721Assets);// for call options the floor token ids are saved in the long position in fillOrder(),// and for put options the floor tokens ids are saved in the short position in exercise()uint256floorPositionId=order.isCall?longPositionId:uint256(orderHash);_transferFloorsOut(order.floorTokens,positionFloorAssetTokenIds[floorPositionId]);return;}
+Recommended Mitigation Steps
+Consider checking that strike is positive before transfer in all the cases, for example:
+}else{+if(order.strike>0) {ERC20(order.baseAsset).safeTransferFrom(msg.sender,address(this),order.strike);+               }}
+Alex the Entreprenerd (warden) commented:
+Seems contingent on token implementation, however certain ERC20 do revert on 0 transfer and there would be no way to exercise the contract in that case.
+outdoteth (Putty Finance) confirmed and commented:
+Report: Cannot exercise call contract if strike is 0 and baseAsset reverts on 0 transfers.
+HickupHH3 (judge) commented:
+There is a pre-requisite for the ERC20 token to revert on 0 amount transfers. However, the warden raised a key point: zero strike calls are common, and their premium is substantial. The information asymmetry of the ERC20 token between the maker and taker is another aggravating factor.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/3.
+hyh (warden) reviewed mitigation:
+Fixed by conditioning call’s logic onorder.strike > 0. There is no use case for zero strike puts and so this case remains unconditioned, i.e. still always require successfulorder.striketransfer.
+

@@ -1,0 +1,15 @@
+[H-39]AaveStrategy.sol: Changing swapper breaks the contract
+Submitted bycarrotsmuggler, also found by0xfuje,Vagner,kaden,rvierdiiev, andladboy233
+The contractAaveStrategy.solmanages wETH tokens and deposits them to the aave lending pool, and collects rewards. These rewards are then swapped into WETH again to compound on the WETH being managed by the contract. this is done in thecompoundfunction.
+uint256calcAmount=swapper.getOutputAmount(swapData,"");uint256minAmount=calcAmount- (calcAmount*50) /10_000;//0.5%swapper.swap(swapData,minAmount,address(this),"");
+To carry out these operations, the swapper contract needs to be given approval to use the tokens being stored in the strategy contract. This is required since the swapper contract calls transferFrom on the tokens to pull it out of the strategy contract. This allowance is set in the constructor.
+rewardToken.approve(_multiSwapper,type(uint256).max);
+The issue arises when the swapper contract is changed. The change is done via thesetMultiSwapperfunction. This function however does not give approval to the new swapper contract. Thus if the swapper is upgraded/changed, the approval is not transferred to the new swapper contract, which makes the swappers dysfunctional.
+Since the swapper is critical to the system, andcompoundis called before withdrawals, a broken swapper will break the withdraw functionality of the contract. Thus this is classified as a high severity issue.
+Proof of Concept
+The bug is due to the absence ofapprovecalls in thesetMultiSwapperfunction. This can be seen from the implementation of the function.
+functionsetMultiSwapper(address_swapper)externalonlyOwner{emitMultiSwapper(address(swapper),_swapper);swapper=ISwapper(_swapper);}
+Recommended Mitigation Steps
+In thesetMultiSwapperfunction, remove approval from the old swapper and add approval to the new swapper. The same function has the proper implementation in theConvexTricryptoStrategy.solcontract which can be used here as well.
+functionsetMultiSwapper(address_swapper)externalonlyOwner{emitMultiSwapper(address(swapper),_swapper);rewardToken.approve(address(swapper),0);swapper=ISwapper(_swapper);rewardToken.approve(_swapper,type(uint256).max);}
+0xRektora (Tapioca) confirmed via duplicate issue 222

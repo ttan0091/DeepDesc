@@ -1,0 +1,30 @@
+Type of vulnerability: Arithmetic/Logic Error
+Cause of vulnerability: Mismatch between the amount routers pay and the amount routers receive due to slippage during asset swaps.
+Execution process: An attacker could exploit this by initiating a transaction with a certain amount, which then gets swapped and results in a different amount due to slippage. The routers would pay based on the original amount, but receive reimbursement based on the swapped amount, leading to potential financial loss for the routers.
+Vulnerable code: 
+```solidity
+function xcall(XCallArgs calldata _args) external payable whenNotPaused nonReentrant returns (bytes32) {
+    // ...
+    (uint256 bridgedAmt, address bridged) = AssetLogic.swapToLocalAssetIfNeeded(canonical, transactingAssetId, amount, _args.params.slippageTol);
+    message = _formatMessage(_args, bridged, transferId, bridgedAmt);
+    // ...
+}
+
+function _reconcile(uint32 _origin, bytes memory _message) internal {
+    // ...
+    uint256 amount = action.amnt();
+    address[] memory routers = s.routedTransfers[transferId];
+    uint256 routerAmt = toDistribute / pathLen;
+    for (uint256 i; i < pathLen; ) {
+        s.routerBalances[routers[i]][token] += routerAmt;
+        unchecked { i++; }
+    }
+    // ...
+}
+
+function _handleExecuteLiquidity(bytes32 _transferId, bool _isFast, ExecuteArgs calldata _args) private returns (uint256, address) {
+    // ...
+    toSwap = _getFastTransferAmount(_args.amount, s.LIQUIDITY_FEE_NUMERATOR, s.LIQUIDITY_FEE_DENOMINATOR);
+    // ...
+}
+```

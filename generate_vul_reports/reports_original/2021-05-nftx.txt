@@ -1,0 +1,35 @@
+[H-01] Missing overflow check inflashLoan
+ERC20FlashMintUpgradeable.flashLoandoes not check for an overflow when adding the fees to theflashloanamount.
+The functionality might have been copied fromhttps://eips.ethereum.org/EIPS/eip-3156but this one already has overflow checks as it uses solidity 0.8.0. This leads to an issue where the attacker does not need to pay back theflashloanas they will burn 0 tokens:
+_burn(address(receiver),amount+fee);
+They end up with a huge profit. (Luckily, this is currently not exploitable as the fee is set to 0 so there’s no possibility to overflow. However, if governance decides to change the flashloan fee, flashloans can be taken without having to repay them). Recommend usingSafeMath.
+0xKiwi (NFTX) confirmed:
+Upgraded to 0.8.x.
+[H-02]distributeDoS on missingreceiveRewardsimplementation
+NFTXEligiblityManager._sendForReceivershould checkreturnData.length == 1before decoding. Otherwise, if it returns no return data, theabi.decodecall will revert and with it the wholedistributefunction .
+A single poorly implementedfeeReceivercan break the wholedistributefunction and allow a denial of service by reverting the transaction.
+Recommend changing to:bool tokensReceived = returnData.length == 1 && abi.decode(returnData, (bool));.
+0xKiwi (NFTX) confirmed:
+cemozer (Judge) commented:
+Marking this as high risk because one nefarious feeReceiver can in fact deny other users to receive their fees
+[H-03]getRandomTokenIdFromFundyields wrong probabilities for ERC1155
+NFTXVaultUpgradeable.getRandomTokenIdFromFunddoes not work with ERC1155 as it does not take the depositedquantity1155into account.
+AssumetokenId0has a count of 100, andtokenId1has a count of 1.
+ThengetRandomIdwould have a pseudo-random 1:1 chance for token 0 and 1 when in reality it should be 100:1.
+This might make it easier for an attacker to redeem more valuable NFTs as the probabilities are off.
+Recommend taking the quantities of each token into account (quantity1155) which probably requires a design change as it is currently hard to do without iterating over all tokens.
+0xKiwi (NFTX) acknowledged
+cemozer (Judge) commented:
+Marking this as high risk as an attacker can weed out high-value NFTs from a vault putting other users funds at risk
+[H-04]NFTXLPStakingIs Subject To A Flash Loan Attack That Can Steal Nearly All Rewards/Fees That Have Accrued For A Particular Vault
+The LPStaking contract does not require that a stake be locked for any period of time. The LPStaking contract also does not track how long your stake has been locked. So an attacker Alice can stake, claim rewards, and unstake, all in one transaction. If Alice utilizes a flash loan, then she can claim nearly all of the rewards for herself, leaving very little left for the legitimate stakers.
+The fact that theNFTXVaultUpgradeablecontract contains a nativeflashLoanfunction makes this attack that much easier, although it would still be possible even without that due to flashloans on Uniswap, or wherever else the nftX token is found.
+Since a flash loan will easily dwarf all of the legitimate stakers’ size of stake, the contract will erroneously award nearly all of the rewards to Alice.
+Wait until an NFTX vault has accrued any significant amount of fees/rewardsFlashLoanBorrowa lot of ETH using any generic flash loan providerFlashLoanBorrowa lot of nftx-vault-token usingNFTXVaultUpgradeable.flashLoan()Deposit the ETH and nftx-vault-token’s into Uniswap for Uniswap LP tokens by callingUniswap.addLiquidity()Stake the Uniswap LP tokens inNFTXLPStakingby callingNFTXLPStaking.deposit()Claim nearly all of the rewards that have accrued for this vault due to how large the flashLoaned deposit is relative to all of the legitimate stakes by callingNFTXLPStaking.claimRewards()Remove LP tokens fromNFTXLPStakingby callingNFTXLPStaking.exit();Withdraw ETH and nftx-vault-token’s by callingUniswap.removeLiquidity();Pay back nftx-vault-token flash loanPay back ETH flash loan
+SeeGitHub issue pagefor an in-depth  example.
+Recommend requiring that staked LP tokens be staked for a particular period of time before they can be removed. Although a very short time frame (a few blocks) would avoid flash loan attacks, this attack could still be performed over the course of a few blocks less efficiently. Ideally, you would want the rewards to reflect the product of the amount staked and the duration that they’ve been staked, as well as having a minimum time staked.
+Alternatively, if you really want to allow people to have the ability to remove their stake immediately, then only allow rewards to be claimed for stakes that have been staked for a certain period of time. Users would still be able to remove their LP tokens, but they could no longer siphon off rewards immediately.
+0xKiwi (NFTX) disputed:
+After looking at the code, this is not possible. The dividend token code takes into consideration the current unclaimed rewards and when a deposit is made that value is deducted.
+cemozer (Judge) commented:
+@0xKiwi do you mind showing where in code that occurs?

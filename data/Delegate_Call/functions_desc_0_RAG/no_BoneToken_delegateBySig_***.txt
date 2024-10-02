@@ -1,0 +1,63 @@
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signature instead of directly calling the function. This is particularly useful for scenarios where the user might not be able to perform the transaction themselves, such as when their private key is stored in cold storage.
+
+Here’s a detailed explanation of how this function works:
+
+1. Domain Separator Calculation:
+   solidity
+   bytes32 domainSeparator = keccak256(
+       abi.encode(
+           DOMAIN_TYPEHASH,
+           keccak256(bytes(name())),
+           getChainId(),
+           address(this)
+       )
+   );
+   
+    This line calculates the domain separator, which is used to prevent crosschain replay attacks and to specify the context in which the signature is valid. The DOMAIN_TYPEHASH is a constant that defines the structure of the domain separator. The name() function returns the name of the token, getChainId() returns the chain ID of the blockchain, and address(this) is the address of the smart contract itself.
+
+2. Struct Hash Calculation:
+   solidity
+   bytes32 structHash = keccak256(
+       abi.encode(
+           DELEGATION_TYPEHASH,
+           delegatee,
+           nonce,
+           expiry
+       )
+   );
+   
+    This line calculates the hash of the delegation struct. The DELEGATION_TYPEHASH is a constant that defines the structure of the delegation message. The delegatee is the address to which voting rights are being delegated, nonce is a unique number used to prevent replay attacks, and expiry is the timestamp after which the signature is no longer valid.
+
+3. Digest Calculation:
+   solidity
+   bytes32 digest = keccak256(
+       abi.encodePacked(
+           "\x19\x01",
+           domainSeparator,
+           structHash
+       )
+   );
+   
+    This line calculates the final digest, which is the hash that the user signs. The prefix \x19\x01 is a standard prefix for EIP712 typed data signatures.
+
+4. Signature Recovery:
+   solidity
+   address signatory = ecrecover(digest, v, r, s);
+   require(signatory != address(0), "BONE::delegateBySig: invalid signature");
+   
+    This line recovers the address of the signer using the ecrecover function, which takes the digest and the signature components v, r, and s. If the recovered address is the zero address, it means the signature is invalid, and the function reverts with an error message.
+
+5. Nonce and Expiry Checks:
+   solidity
+   require(nonce == nonces[signatory]++, "BONE::delegateBySig: invalid nonce");
+   require(now <= expiry, "BONE::delegateBySig: signature expired");
+   
+    These lines check that the provided nonce matches the current nonce of the signatory and that the current timestamp is before the expiry time. If either check fails, the function reverts with an appropriate error message.
+
+6. Delegation Execution:
+   solidity
+   return _delegate(signatory, delegatee);
+   
+    Finally, the function calls the internal _delegate function, passing the signatory (the address that signed the message) and the delegatee (the address to which voting rights are being delegated). This function handles the actual delegation of voting rights.
+
+In summary, the delegateBySig function allows a user to delegate their voting rights to another address by providing a signature that proves their intent. The function performs several checks to ensure the validity of the signature and the nonce, and it ultimately delegates the voting rights if all checks pass.

@@ -1,0 +1,46 @@
+[H-32] Incorrectly reading the offset from the received data parameter to get thedepositNoncein theBranchBridgeAgent::anyFallback()function
+Submitted by0xStalin
+Not reading the correct offset where thedepositNonceis located can lead to setting the status of the wrong deposit to “Failed” when the_clearDeposit() functionis called.
+The consequences of setting the incorrectdepositNonceto False can be:
+The deposits are getting stuck from the realdepositNoncethat is sent to theanyFallback()because thatdepositNoncewon’t be marked as “Failed”.Causing troubles to otherdepositNoncesthat should not be marked as “Failed”.
+Proof of Concept
+The structure of the data was encoded depending on the type of operation. That means, thedepositNoncewill be located at a different offset depending on the flag. To see where exactly thedepositNonceis located, it is required to check the corresponding operation where the data was packed. Depending on the type of operation (flag), it will be the function we’ll need to analyze to determine the correct offset where thedepositNoncewas packed.
+Let’s analyze the encoded data, flag by flag, to determine the correct offset of thedepositNoncefor each flag:
+flag == 0x00- Whenencoding the data for the flag 0x00, we can see that thedepositNonceis located at thedata[1:5].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x00),depositNonce,_params,gasToBridgeOut,_remoteExecutionGas);// data[0]    ==> flag === 0x00// data[1:5]  ==> depositNonce
+flag == 0x01- Whenencoding the data for the flag 0x01, we can see that thedepositNonceis located at thedata[1:5].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x01),depositNonce,_params,_gasToBridgeOut,_remoteExecutionGas);// data[0]    ==> flag === 0x01// data[1:5]  ==> depositNonce
+flag == 0x02- Whenencoding the data for the flag 0x02, we can see that thedepositNonceis located at thedata[1:5].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x02),depositNonce,_dParams.hToken,_dParams.token,_dParams.amount,_normalizeDecimals(_dParams.deposit,ERC20(_dParams.token).decimals()),_dParams.toChain,_params,_gasToBridgeOut,_remoteExecutionGas);// data[0]    ==> flag === 0x02// data[1:5]  ==> depositNonce
+flag == 0x03- Whenencoding the data for the flag 0x03, we can see that thedepositNonceis located at thedata[2:6].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x03),uint8(_dParams.hTokens.length),depositNonce,_dParams.hTokens,_dParams.tokens,_dParams.amounts,deposits,_dParams.toChain,_params,_gasToBridgeOut,_remoteExecutionGas);// data[0]    ==> flag === 0x03// data[1]    ==> hTones.length// data[2:6]  ==> depositNonce
+flag == 0x04- Whenencoding the data for the flag 0x04, we can see that thedepositNonceis located at thedata[21:25].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x04),msg.sender,depositNonce,_params,msg.value.toUint128(),_remoteExecutionGas);// data[0]    ==> flag === 0x04// data[1:21] ==> msg.sender// data[21:25]  ==> depositNonce
+flag == 0x05- Whenencoding the data for the flag 0x05, we can see that thedepositNonceis located at thedata[21:25].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x05),msg.sender,depositNonce,_dParams.hToken,_dParams.token,_dParams.amount,_normalizeDecimals(_dParams.deposit,ERC20(_dParams.token).decimals()),_dParams.toChain,_params,msg.value.toUint128(),_remoteExecutionGas);// data[0]    ==> flag === 0x05// data[1:21] ==> msg.sender// data[21:25]  ==> depositNonce
+flag == 0x06- Whenencoding the data for the flag 0x06, we can see that thedepositNonceis located at thedata[22:26].
+bytesmemorypackedData=abi.encodePacked(bytes1(0x06),msg.sender,uint8(_dParams.hTokens.length),depositNonce,_dParams.hTokens,_dParams.tokens,_dParams.amounts,_deposits,_dParams.toChain,_params,msg.value.toUint128(),_remoteExecutionGas);// data[0]     ==> flag === 0x06// data[1:21]  ==> msg.sender// data[21]    ==> hTokens.length// data[22:26] ==> depositNonce
+At this point now, we know the exact offset where thedepositNonceis located at for all the possible deposit options. Now, it is time to analyze the offsets that are been read, depending on the flag in theanyFallback()and validate that the correct offset is been read.
+Forflags 0x00, 0x01 and 0x02, thedepositNonceis been read from the offsetdata[PARAMS_START:PARAMS_TKN_START], which is the same asdata[1:5](PARAMS_START == 1andPARAMSTKNSTART == 5). These 3 flags read thedepositNoncecorrectly.Forflag 0x03, thedepositNonceis been read from the offsetdata[PARAMS_START + PARAMS_START:PARAMS_TKN_START + PARAMS_START], which is the same asdata[2:6](PARAMS_START == 1andPARAMSTKNSTART == 5). This flag also reads thedepositNoncecorrectly.Forflag 0x04 and 0x05, thedepositNonceis been read from the offsetdata[PARAMS_START_SIGNED:PARAMS_START_SIGNED + PARAMS_TKN_START], which is the same asdata[21:26](PARAMSSTARTSIGNED == 21andPARAMSTKNSTART == 5). These flags are reading thedepositNonceINCORRECTLY.
+From the above analysis to detect where thedepositNonceis located at, forflags 0x04 and 0x05, thedepositNonceis located at the offsetdata[21:25].
+The PoC below demonstrates the correct offset of thedepositNoncewhen data is encoded similar to howflags 0x04 and 0x05encodes it (see the above analysis for more details).
+Call thegenerateData()function and copy+paste the generated bytes on the rest of the functions.Notice how thereadNonce()returns the correct value of the nonce and is reading the offsetdata[21:25]:
+pragmasolidity0.8.18;contractoffset{uint32nonce=3;functiongenerateData()externalviewreturns(bytesmemory) {bytesmemorypackedData=abi.encodePacked(bytes1(0x01),msg.sender,nonce);returnpackedData;}functionreadFlag(bytescalldatadata)externalviewreturns(bytes1) {returndata[0];}functionreadMsgSender(bytescalldatadata)externalviewreturns(address) {returnaddress(uint160(bytes20(data[1:21])));}functionreadNonce(bytescalldatadata)externalviewreturns(uint32) {returnuint32(bytes4(data[21:25]));}}
+Forflag 0x06, thedepositNonceis been read from the offsetdata[PARAMS_START_SIGNED + PARAMS_START:PARAMS_START_SIGNED + PARAMS_TKN_START + PARAMS_START], which is the same asdata[22:27](PARAMSSTARTSIGNED == 21,PARAMS_START == 1andPARAMSTKNSTART == 5). This flag is also reading thedepositNonceINCORRECTLY.
+From the above analysis to detect where thedepositNonceis located at, forflag 0x06, thedepositNonceis located at the offsetdata[22:26].
+The PoC below demonstrates the correct offset of thedepositNoncewhen data is encoded similar to howflag 0x06encodes it (see the above analysis for more details).
+Call thegenerateData()function and copy+paste the generated bytes on the rest of the functions.Notice how thereadNonce()returns the correct value of the nonce and is reading the offsetdata[22:26]:
+pragmasolidity0.8.18;contractoffset{uint32nonce=3;functiongenerateData()externalviewreturns(bytesmemory) {bytesmemorypackedData=abi.encodePacked(bytes1(0x01),msg.sender,uint8(1),nonce);returnpackedData;}functionreadFlag(bytescalldatadata)externalviewreturns(bytes1) {returndata[0];}functionreadMsgSender(bytescalldatadata)externalviewreturns(address) {returnaddress(uint160(bytes20(data[1:21])));}functionreadThirdParameter(bytescalldatadata)externalviewreturns(uint8) {returnuint8(bytes1(data[21]));}functionreadNonce(bytescalldatadata)externalviewreturns(uint32) {returnuint32(bytes4(data[22:26]));}}
+Recommended Mitigation Steps
+Make sure to read thedepositNoncefrom the correct offset. Depending on the flag, it will be the offset wheredepositNonceis located at:
+Forflags 0x04 & 0x05, read the offset as follows, either of the two options are correct:
+depositNonceis located at:data[21:25]
+_depositNonce=uint32(bytes4(data[PARAMS_START_SIGNED:PARAMS_START_SIGNED]));_depositNonce=uint32(bytes4(data[21:25]));
+Forflag 0x06, read the offset as follows, either of the two options are correct:
+depositNonceis located at:data[22:26]
+_depositNonce=uint32(bytes4(data[PARAMS_START_SIGNED+PARAMS_START:PARAMS_START_SIGNED+PARAMS_TKN_START]));_depositNonce=uint32(bytes4(data[22:26]));
+Assessed type
+en/de-code
+0xBugsy (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

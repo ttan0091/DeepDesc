@@ -1,0 +1,31 @@
+Type of vulnerability: Arithmetic Underflow
+
+Cause of vulnerability: The `repayAavePortal` function allows the `amountIn` value to be user-specified when the local asset is the same as the adopted asset, and this value is subtracted from `routerBalances` in an `unchecked` block, leading to an underflow.
+
+Execution process:
+1. An attacker calls `repayAavePortal` with `_backingAmount + _feeAmount > s.routerBalances[msg.sender][_local]` and `_maxIn > s.routerBalances[msg.sender][_local]`.
+2. The function calls `AssetLogic.swapFromLocalAssetIfNeededForExactOut` with `_local` set to the same value as the adopted asset.
+3. This triggers the edge case where `amountIn` is set to `totalAmount`, which is `_backingAmount + _feeAmount`.
+4. The `unchecked` block subtracts `amountIn` from `routerBalances`, causing an underflow and arbitrarily increasing the attacker's balance.
+
+Vulnerable code:
+```solidity
+function repayAavePortal(address _local, uint256 _backingAmount, uint256 _feeAmount, uint256 _maxIn, bytes32 _transferId) external {
+    uint256 totalAmount = _backingAmount + _feeAmount; // in adopted
+    uint256 routerBalance = s.routerBalances[msg.sender][_local]; // in local
+    // Sanity check: has that much to spend
+    if (routerBalance < _maxIn) revert PortalFacet__repayAavePortal_insufficientFunds();
+    // Need to swap into adopted asset or asset that was backing the loan
+    // The router will always be holding collateral in the local asset while the loaned asset
+    // is the adopted asset
+    // Swap for exact `totalRepayAmount` of adopted asset to repay aave
+    (bool success, uint256 amountIn, address adopted) = AssetLogic.swapFromLocalAssetIfNeededForExactOut(_local, totalAmount, _maxIn);
+    if (!success) revert PortalFacet__repayAavePortal_swapFailed();
+    // decrement router balances
+    unchecked {
+        s.routerBalances[msg.sender][_local] -= amountIn;
+    }
+    // back loan
+    _backLoan(_local, _backingAmount, _feeAmount, _transferId);
+}
+```

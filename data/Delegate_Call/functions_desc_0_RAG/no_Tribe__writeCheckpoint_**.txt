@@ -1,0 +1,55 @@
+This code defines an internal function named _writeCheckpoint, which is used to update the voting checkpoints for a given delegatee. The function takes four parameters: delegatee (the address of the delegate), nCheckpoints (the current number of checkpoints for the delegatee), oldVotes (the previous number of votes the delegatee had), and newVotes (the new number of votes the delegatee has).
+
+Here’s a detailed explanation of how this function works:
+
+1. Block Number Calculation:
+    The function starts by calculating the current block number using safe32(block.number, "Tribe: block number exceeds 32 bits"). This ensures that the block number is safely cast to a uint32 type, and it throws an error if the block number exceeds 32 bits.
+
+2. Checkpoint Update Logic:
+    The function then checks if the number of checkpoints (nCheckpoints) is greater than zero and if the block number of the last checkpoint (checkpoints[delegatee][nCheckpoints  1].fromBlock) is equal to the current block number.
+    If both conditions are true, it means that a checkpoint for the current block already exists, so the function updates the votes of the last checkpoint to newVotes.
+    If the conditions are not met, it means that a new checkpoint needs to be created. The function then creates a new checkpoint with the current block number and newVotes, and increments the number of checkpoints for the delegatee by one.
+
+3. Event Emission:
+    Finally, the function emits a DelegateVotesChanged event with the delegatee, oldVotes, and newVotes parameters. This event is used to notify external parties about the change in the delegatee's votes.
+
+### Detailed Breakdown of the Code:
+
+ Function Signature:
+  solidity
+  function _writeCheckpoint(address delegatee, uint32 nCheckpoints, uint96 oldVotes, uint96 newVotes) internal
+  
+   delegatee: The address of the delegate whose votes are being updated.
+   nCheckpoints: The current number of checkpoints for the delegatee.
+   oldVotes: The previous number of votes the delegatee had.
+   newVotes: The new number of votes the delegatee has.
+
+ Block Number Calculation:
+  solidity
+  uint32 blockNumber = safe32(block.number, "Tribe: block number exceeds 32 bits");
+  
+   This line ensures that the block number is within the uint32 range and throws an error if it exceeds 32 bits.
+
+ Checkpoint Update Logic:
+  solidity
+  if (nCheckpoints > 0 && checkpoints[delegatee][nCheckpoints  1].fromBlock == blockNumber) {
+      checkpoints[delegatee][nCheckpoints  1].votes = newVotes;
+  } else {
+      checkpoints[delegatee][nCheckpoints] = Checkpoint(blockNumber, newVotes);
+      numCheckpoints[delegatee] = nCheckpoints + 1;
+  }
+  
+   If a checkpoint for the current block already exists, it updates the votes.
+   Otherwise, it creates a new checkpoint and increments the count.
+
+ Event Emission:
+  solidity
+  emit DelegateVotesChanged(delegatee, oldVotes, newVotes);
+  
+   This line emits an event to notify external parties about the change in votes.
+
+### Potential Vulnerabilities:
+
+Based on the provided reference vulnerability report about privilege escalation due to inadequate state checks, it's important to note that this function does not inherently suffer from such vulnerabilities as it only updates the checkpoints and votes for a delegatee. However, if this function is part of a larger system, it's crucial to ensure that the overall system design includes proper access controls and state checks to prevent unauthorized modifications.
+
+In summary, the _writeCheckpoint function is a welldefined internal function that efficiently updates the voting checkpoints for a delegatee, ensuring that the state is correctly maintained and changes are appropriately logged via events.

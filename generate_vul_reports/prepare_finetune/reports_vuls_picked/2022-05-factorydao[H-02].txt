@@ -1,0 +1,16 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: A blacklisted user or a user unable to receive transfers can prevent the `withdraw()` function from being called, which in turn blocks the `withdrawExcessRewards()` function.
+Execution process: A malicious user deliberately gets themselves blacklisted or ensures they cannot receive transfers, thereby preventing the `withdraw()` function for themselves and blocking the `withdrawExcessRewards()` function for the contract owner.
+Vulnerable code: 
+```solidity
+for(uint i=0; i<rewards.length; i++) {
+    pool.rewardsWeiClaimed[i] += rewards[i];
+    pool.rewardFunding[i] -= rewards[i];
+    uint tax = (pool.taxPerCapita * rewards[i]) / 1000;
+    uint transferAmount = rewards[i] - tax;
+    taxes[poolId][i] += tax;
+    success = success && IERC20(pool.rewardTokens[i]).transfer(receipt.owner, transferAmount);
+}
+success = success && IERC20(pool.depositToken).transfer(receipt.owner, receipt.amountDepositedWei);
+require(success, 'Token transfer failed');
+```

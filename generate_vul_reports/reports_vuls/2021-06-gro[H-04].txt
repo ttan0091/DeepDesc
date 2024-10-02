@@ -1,0 +1,13 @@
+[H-04]sortVaultsByDeltadoesn’t work as expected
+Submitted by gpersoon, also found by shw
+The functionsortVaultsByDeltadoesn’t always work as expected.
+Suppose all the delta’s are positive, and delta1 >= delta2 >= delta3 > 0. ThenmaxIndex = 0. And(delta < minDelta (==0) )is never true, sominIndex = 0.
+Then (assumingbigFirst==true):
+vaultIndexes[0] =maxIndex=0vaultIndexes[2] =minIndex=0vaultIndexes[1] =N_COINS-maxIndex-minIndex=3-0-0=3
+This is clearly not what is wanted, allvaultIndexesshould be different and should be in the range [0..2]. This is due to the fact thatmaxDeltaandminDeltaare initialized with the value 0. This all could results in withdrawing from the wrong vaults and reverts (becausevaultIndexes[1]  is out of range).
+Exposure.solL178:
+functionsortVaultsByDelta(boolbigFirst,uint256unifiedTotalAssets,uint256[N_COINS]calldataunifiedAssets,uint256[N_COINS]calldatatargetPercents)externalpureoverridereturns(uint256[N_COINS]memoryvaultIndexes) {uint256maxIndex;uint256minIndex;int256maxDelta;int256minDelta;for(uint256i=0;i<N_COINS;i++) {// Get difference between vault current assets and vault targetint256delta=int256(unifiedAssets[i] -unifiedTotalAssets.mul(targetPercents[i]).div(PERCENTAGE_DECIMAL_FACTOR));// Establish orderif(delta>maxDelta) {maxDelta=delta;maxIndex=i;}elseif(delta<minDelta) {minDelta=delta;minIndex=i;}}if(bigFirst) {vaultIndexes[0] =maxIndex;vaultIndexes[2] =minIndex;}else{vaultIndexes[0] =minIndex;vaultIndexes[2] =maxIndex;}vaultIndexes[1] =N_COINS-maxIndex-minIndex;}
+Recommend the following
+InitializingmaxDeltaandminDelta:int256maxDelta= -2**255;// or type(int256).min when using a newer solidity versionint256minDelta=2**255;// or type(int256).max when using a newer solidity versionCheck thatmaxIndexandminIndexare not the samerequire (maxIndex!=minIndex);
+kristian-gro (Gro) confirmed:
+Confirmed and Fix has been implemented in release version.

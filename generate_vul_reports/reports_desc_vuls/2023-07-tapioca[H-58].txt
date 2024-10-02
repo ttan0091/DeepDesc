@@ -1,0 +1,20 @@
+Type of vulnerability: Allowance Mismanagement
+
+Cause of vulnerability: The `TapiocaOFT.sol` contract does not correctly manage the allowance of ERC20 tokens when wrapping them into OFTV2 tokens. Specifically, it does not decrement the allowance of the user after transferring the tokens, allowing the user to repeatedly use the same allowance to transfer more tokens than intended.
+
+Execution process: 
+1. An owner of ERC20 tokens approves the `TapiocaOFT` contract to spend their tokens.
+2. The owner also approves another user (Bob) to spend a certain amount of their `TapiocaOFT` tokens.
+3. Bob calls the `wrap` function with the owner's address as the `_fromAddress`, his own address as the `_toAddress`, and an amount less than or equal to the allowance given by the owner.
+4. Bob can repeatedly call the `wrap` function using the same allowance, effectively draining all of the owner's underlying ERC20 tokens.
+
+Vulnerable code:
+```solidity
+function _wrap(address _fromAddress, address _toAddress, uint256 _amount) internal virtual {
+    if (_fromAddress != msg.sender) {
+        require(allowance(_fromAddress, msg.sender) >= _amount, "TOFT_allowed");
+    }
+    IERC20(erc20).safeTransferFrom(_fromAddress, address(this), _amount);
+    _mint(_toAddress, _amount);
+}
+```

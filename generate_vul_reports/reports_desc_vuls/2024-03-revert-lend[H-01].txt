@@ -1,0 +1,13 @@
+Type of vulnerability: Signature Replay Attack
+Cause of vulnerability: Lack of token address validation in permit signature processing
+Execution process: An attacker crafts a permit signature using any ERC20 token, which is accepted by the Vault as USDC due to the absence of token validation. The Vault then processes this as a valid USDC transfer, allowing the attacker to steal USDC from the vault.
+Vulnerable code: 
+```solidity
+if(params.permitData.length>0) {
+    (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory signature) = abi.decode(params.permitData, (ISignatureTransfer.PermitTransferFrom, bytes));
+    permit2.permitTransferFrom(permit, ISignatureTransfer.SignatureTransferDetails(address(this), state.liquidatorCost), msg.sender, signature);
+} else {
+    // take value from liquidator
+    SafeERC20.safeTransferFrom(IERC20(asset), msg.sender, address(this), state.liquidatorCost);
+}
+```

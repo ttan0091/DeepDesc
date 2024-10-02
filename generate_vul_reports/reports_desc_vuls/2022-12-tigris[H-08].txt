@@ -1,0 +1,23 @@
+Type of vulnerability: Incorrect Assumption of Stablecoin Market Stability
+Cause of vulnerability: The contract assumes a 1-to-1 exchange ratio between different stablecoins, despite their varying market prices.
+Execution process: An attacker can deposit a less valuable stablecoin (e.g., USDC) and withdraw a more valuable one (e.g., USDT) due to the contract's incorrect assumption of equal value, then sell the withdrawn stablecoin for the deposited one, profiting from the price difference.
+Vulnerable code: 
+```solidity
+// StableVault.sol lines 39-51
+function deposit(address _token, uint256 _amount) external returns (uint256) {
+    require(stableMap[_token], "Token not supported");
+    IERC20(_token).transferFrom(msg.sender, address(this), _amount);
+    uint256 amount = _amount * decimals / IERC20(_token).decimals();
+    _mint(msg.sender, amount);
+    return amount;
+}
+
+// StableVault.sol lines 60-72
+function withdraw(address _token, uint256 _amount) external returns (uint256) {
+    require(stableMap[_token], "Token not supported");
+    uint256 amount = _amount * IERC20(_token).decimals() / decimals;
+    _burn(msg.sender, _amount);
+    IERC20(_token).transfer(msg.sender, amount);
+    return amount;
+}
+```

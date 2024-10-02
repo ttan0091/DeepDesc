@@ -1,0 +1,25 @@
+This code defines an internal function named _executeTrade, which is designed to facilitate a trade between two ERC20 tokens on a specified exchange. The function takes several parameters including trade details, the tokens involved, and additional data for the trade. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Initial Setup:
+    _actionInfo: A memory struct containing details about the trade, including the SetToken instance, the quantity of tokens to send, and the minimum quantity of tokens to receive.
+    _sendToken and _receiveToken: Instances of the ERC20 tokens to be traded.
+    _data: Additional data required for the trade, possibly containing parameters specific to the exchange or trade type.
+
+2. Approval for Token Transfer:
+    The function starts by calling invokeApprove on the setToken instance. This method approves the exchange adapter (specified in _actionInfo) to spend notionalSendQuantity amount of _sendToken on behalf of the setToken. This is a prerequisite for many decentralized exchanges to ensure that the tokens can be transferred.
+
+3. Preparing Trade Execution Data:
+    The function then retrieves the necessary data to execute the trade from the exchange adapter:
+      targetExchange: The address of the exchange where the trade will be executed.
+      callValue: The amount of Ether (if any) to be sent with the trade call.
+      methodData: The encoded calldata required to execute the trade on the exchange.
+
+4. Executing the Trade:
+    The function calls invoke on the setToken instance, sending the callValue and methodData to the targetExchange. This step actually executes the trade on the specified exchange.
+
+5. PostTrade Validation and Return:
+    After the trade, the function checks the balance of _receiveToken held by the setToken to determine the actual amount received (receiveTokenQuantity).
+    It then verifies that receiveTokenQuantity is at least as much as _actionInfo.minNotionalReceiveQuantity to ensure that the trade did not slip below the acceptable minimum. If the received quantity is too low, the function reverts with an error message "Slippage too high".
+    Finally, the function returns the actual quantity of _receiveToken received from the trade.
+
+This function is critical for ensuring that trades are executed correctly and that the outcome meets the predefined criteria, safeguarding against excessive slippage and ensuring that the trade aligns with the expectations set by the trader.

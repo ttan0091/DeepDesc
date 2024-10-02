@@ -1,0 +1,37 @@
+[H-03] Registry.sol fails to deliver expected functionality
+Submitted by byndooa, also found by arcoun, cccz, Lambda, and thebensams
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyFactory.sol#L40-L58
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyRegistry.sol#L39-L59
+Impact
+The description of Registry.sol is following:
+/// Deploys new proxies via the factory and keeps a registry of owners to proxies. Owners can only
+/// have one proxy at a time.
+But it is not.
+There are multiple problems:
+Proxy owner can change and will not be registeredThere many ways for an owner to have many proxies:A few other proxy owners transferOwnership() to one address.Registry tracks last deployments and does not guarantee ownership.Factory.sol allows calling deployFor() to anyone, without any checks and registrations.
+Proof of Concept
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyFactory.sol#L40-L58
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyRegistry.sol#L39-L59
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+DeleteProxy.transfetOwnership().
+Disallow anyone to calldeploy()anddeployFor()inFactory().
+RnkSngh (Mimo) confirmed and commented:
+We agree that this is an issue and intend to fix this.
+gzeoneth (judge) increased severity to High and commented:
+I believe this is High Risk due to the unexpected ownership behavior.
+m19 (Mimo) commented:
+While the Registry indeed does not work as advertised, I am not sure if high risk is the correct here? As perthe definition“Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).” I don’t think that applies here.We also see no wayProxy owner can change and will not be registeredactually can happen which would be the only scenario there is a loss of funds.
+gzeoneth (judge) commented:
+I am quite sure asset can be lost if the owner cannot do owner stuff and a non-owner can do owner stuff. Also see related PoC in e.g.#154,#67,#69
+m19 (Mimo) commented:
+@gzeoneth Thanks, I get it now,#154describes it much better. Yes, this is definitely a high-risk issue then.
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved
+Finding:Wardens identified that bothMIMOProxyandMIMOProxyRegistrystored proxy ownership data, but ownership transfers were not propagated fromMIMOProxyto theMIMOProxyRegistry. This would cause new owners to lose access to vault funds and old owners to retain privileged access to automation configuration.
+What changed:The Mimo team removed theownerstate variable andtransferOwnerfunction fromMIMOProxy. Additionally, they removedMIMOProxyRegistryaltogether and moved its functionality toMIMOProxyFactory. Ownership data is now stored only inMIMOProxyFactory, and all ownership transfers must now be performed by callingMIMOProxyFactory#transferOwnershiprather than interacting withMIMOProxy.
+MIMOProxyFactorynow storesa mappingof proxy address toProxyState, a struct that includes the current owner address. TheclaimOwnershipfunction updates boththe owner addressand thecurrent proxywhen a new user accepts ownership. Aunit testdemonstrates this behavior.
+Anintegration testdemonstrates that proxy permissions are cleared after ownership transfers.
+In its authorization check in theexecutefunction,MIMOProxyreads from the proxy factoryto determine thecurrent owner address. Client contractsMIMOEmptyVault,MIMOLeverage,MIMORebalance,MIMOAutoAction, andMIMOManagedActionnow read the current proxy fromMIMOProxyFactory.
+Why it works:SinceMIMOProxyFactoryis now the single source of truth forMIMOProxyownership, this data cannot fall out of sync across contracts. Since client contracts callMIMOProxyFactory#getCurrentProxy, they will correctly read the current proxy address.

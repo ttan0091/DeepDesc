@@ -1,0 +1,16 @@
+[H-01] Unchecked ERC20 transfers can cause lock up
+Submitted byaxic, also found bygpersoon,pauliax, [Jmukesh](https://twitter.com/MukeshJeth),a_delamo,s1m0,cmichel, andshw_
+Some major tokens went live before ERC20 was finalized, resulting in a discrepancy whether the transfer functions should (A) return a boolean or (B) revert/fail on error. The current best practice is that they should revert, but return “true” on success. However, not every token claiming ERC20-compatibility is doing this — some only return true/false; some revert, but do not return anything on success. This is a well known issue, heavily discussed since mid-2018.
+Today many tools, including OpenZeppelin, offera wrapper for “safe ERC20 transfer”:
+RealityCards is not using such a wrapper, but instead tries to ensure successful transfers via thebalancedBooksmodifier:
+modifierbalancedBooks{_;// using >= not == in case anyone sends tokens direct to contractrequire(erc20.balanceOf(address(this)) >=totalDeposits+marketBalance+totalMarketPots,"Books are unbalanced!");}
+This modifier is present on most functions, but is missing ontopupMarketBalance:
+functiontopupMarketBalance(uint256_amount)externaloverride{erc20.transferFrom(msgSender(),address(this),_amount);if(_amount>marketBalanceDiscrepancy) {marketBalanceDiscrepancy=0;}else{marketBalanceDiscrepancy-=_amount;}marketBalance+=_amount;}
+In the case where an ERC20 token which is not reverting on failures is used, a malicious actor could calltopupMarketBalancewith a failing transfer, but also move the value ofmarketBalanceabove the actual holdings. After this,deposit,withdrawDeposit,payRent,payout,sponsor, etc. could be locked up and always failing with “Books are unbalanced”.
+Anyone can calltopupMarketBalancewith some unrealistically large number, so thatmarketBalancedoes not overflow, but is above the actually helping balances. This is only possible if the underlying ERC20 used is not reverting on failures, but is returning “false” instead.
+Recommended Steps:
+Use something like OpenZeppelin’sSafeERC20Set up an allow list for tokens, which are knowingly safeConsider a different approach to thebalancedBooksmodifier
+Splidge (Reality Cards) confirmed:
+The particular ERC20 contracts we are using don’t have this issue. However for futureproofing in the event we change ERC20 tokens we will implement the recommended mitigation 1 and start using OpenZeppelin’s SafeERC20.
+Splidge (Reality Cards) resolved:
+Fix implementedhere

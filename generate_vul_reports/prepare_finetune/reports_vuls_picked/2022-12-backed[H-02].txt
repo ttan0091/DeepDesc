@@ -1,0 +1,34 @@
+Type of vulnerability: Reentrancy Attack
+
+Cause of vulnerability: Lack of reentrancy guards in the functions `removeCollateral`, `startLiquidationAuction`, and `purchaseLiquidationAuctionNFT`, allowing an attacker to repeatedly call these functions within a single transaction, manipulating the state of the contract to their advantage.
+
+Execution process:
+1. Attacker deploys a malicious contract (`BobContract`) and takes a flash loan.
+2. `BobContract` buys NFTs and adds them as collateral.
+3. `BobContract` borrows the maximum allowed amount of `PaprToken`.
+4. `BobContract` calls `removeCollateral` to remove NFTs, exploiting the reentrancy vulnerability to repeatedly remove NFTs and manipulate the collateral count.
+5. In the last callback, `BobContract` calls `startLiquidationAuction` to auction the last NFT.
+6. `BobContract` purchases the auctioned NFT at a high price, further manipulating the debt calculations.
+7. The debt is set to zero due to the manipulated state, allowing `BobContract` to profit.
+
+Vulnerable code:
+- `removeCollateral` function:
+  ```solidity
+  function removeCollateral(address sendTo, Collateral[] calldata collateralArr, OracleInfo calldata oracleInfo) external {
+      for (uint256 i = 0; i < collateralArr.length; ++i) {
+          _removeCollateral(sendTo, collateralArr[i]);
+      }
+  }
+  ```
+- `startLiquidationAuction` function:
+  ```solidity
+  function startLiquidationAuction(address account, Collateral calldata collateral, OracleInfo calldata oracleInfo) external returns (Auction memory auction) {
+      // Auction logic
+  }
+  ```
+- `purchaseLiquidationAuctionNFT` function:
+  ```solidity
+  function purchaseLiquidationAuctionNFT(Auction calldata auction, uint256 maxPrice, address sendTo, OracleInfo calldata oracleInfo) external {
+      // Purchase logic
+  }
+  ```

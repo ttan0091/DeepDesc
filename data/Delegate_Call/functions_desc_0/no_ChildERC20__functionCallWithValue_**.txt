@@ -1,0 +1,45 @@
+This code defines a private function named _functionCallWithValue, which is designed to execute a lowlevel call to another contract with a specified amount of Ether (weiValue) and data payload. This function is typically used in scenarios where direct interaction with another contract is required, such as in proxy contracts or in contracts that manage interactions with multiple external contracts.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address target: The address of the contract to which the call is being made.
+    bytes memory data: The payload of the call, typically ABIencoded function calls and parameters.
+    uint256 weiValue: The amount of Ether (in wei) to send with the call.
+    string memory errorMessage: A custom error message to revert with if the call fails.
+
+2. Contract Check:
+    The function begins by checking if the target address is indeed a contract using the isContract function. This is crucial to ensure that the call is not made to an EOA (Externally Owned Account) or an invalid address, which could lead to unintended behavior or security risks.
+   solidity
+   require(isContract(target), "Address: call to noncontract");
+   
+
+3. LowLevel Call Execution:
+    The function then proceeds to execute a lowlevel call using the call method, which is a lowlevel interface provided by Solidity for making calls to other contracts. This call includes sending the specified weiValue along with the data payload.
+   solidity
+   (bool success, bytes memory returndata) = target.call{ value: weiValue }(data);
+   
+
+4. Handling the Call Result:
+    If the call is successful (success is true), the function returns the data returned by the call (returndata).
+   solidity
+   if (success) {
+       return returndata;
+   }
+   
+
+5. Error Handling:
+    If the call is not successful, the function checks if there is any return data (returndata.length > 0). If there is return data, it is assumed to contain a revert reason from the called contract.
+    The function uses inline assembly to extract the revert reason from the returndata and revert the transaction with this reason, effectively bubbling up the revert reason from the called contract.
+   solidity
+   assembly {
+       let returndata_size := mload(returndata)
+       revert(add(32, returndata), returndata_size)
+   }
+   
+    If there is no return data, the function reverts with the provided errorMessage.
+   solidity
+   revert(errorMessage);
+   
+
+This function is a robust utility for making lowlevel calls in Solidity, ensuring that any errors or reverts from the called contract are properly handled and communicated back to the caller. It is particularly useful in complex contract architectures where error handling and communication of errors across contract boundaries are critical.

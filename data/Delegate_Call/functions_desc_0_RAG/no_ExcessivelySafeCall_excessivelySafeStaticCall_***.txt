@@ -1,0 +1,33 @@
+This code defines an internal function named excessivelySafeStaticCall, which is designed to perform a static call to a specified target address with a controlled amount of gas and a maximum limit on the amount of data to be copied from the return data. This function is particularly useful for safely interacting with external contracts without risking excessive memory usage, which could be exploited by malicious contracts.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    _target: The address of the contract to which the static call will be made.
+    _gas: The amount of gas to be provided for the call.
+    _maxCopy: The maximum number of bytes to copy from the return data.
+    _calldata: The data to be sent with the call, typically including the function selector and its parameters.
+
+2. Local Variables Initialization:
+    _toCopy: A variable to store the number of bytes to be copied from the return data.
+    _success: A boolean to indicate whether the call was successful.
+    _returnData: A bytes array to store the return data from the call, initialized with a size of _maxCopy.
+
+3. Assembly Block:
+    The function uses inline assembly to perform the static call. This is done to avoid potential issues with memory copying large return data, which could be exploited.
+    staticcall: This assembly instruction is used to perform the static call to the _target address. It takes several parameters:
+      _gas: The gas limit for the call.
+      _target: The address to call.
+      add(_calldata, 0x20): The location in memory where the calldata starts (skipping the length prefix).
+      mload(_calldata): The length of the calldata.
+      0: The output location in memory (not used here since we are only interested in the return data size and not storing the result).
+      0: The output length (not used for the same reason as above).
+    _success: This variable is set to the result of the staticcall, indicating whether the call was successful.
+    _toCopy: This is set to the size of the return data (returndatasize()). If this size exceeds _maxCopy, it is capped at _maxCopy to prevent excessive memory usage.
+    mstore(_returnData, _toCopy): This stores the length of the copied bytes at the start of the _returnData array.
+    returndatacopy(add(_returnData, 0x20), 0, _toCopy): This copies the return data bytes from the call result into the _returnData array, starting from the position add(_returnData, 0x20) (skipping the length prefix).
+
+4. Return Values:
+    The function returns a tuple containing _success (indicating whether the call was successful) and _returnData (the return data from the call, capped at _maxCopy bytes).
+
+This function is designed to be robust against potential attacks that might exploit large return data sizes, ensuring that the contract's memory usage remains under control.

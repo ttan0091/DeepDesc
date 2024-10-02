@@ -1,0 +1,18 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: Lack of functionality to remove malfunctioning or compromised derivatives
+Execution process: A user attempts to unstake their tokens, but the process fails due to a malfunctioning or compromised derivative, causing the entire unstake function to revert.
+Vulnerable code: 
+```solidity
+function unstake(uint256 _safEthAmount) external {
+    require(pauseUnstaking == false, "unstaking is paused");
+    uint256 safEthTotalSupply = totalSupply();
+    uint256 ethAmountBefore = address(this).balance;
+    for (uint256 i = 0; i < derivativeCount; i++) {
+        // withdraw a percentage of each asset based on the amount of safETH
+        uint256 derivativeAmount = (derivatives[i].balance() * _safEthAmount) / safEthTotalSupply;
+        if (derivativeAmount == 0) continue; // if derivative empty ignore
+        derivatives[i].withdraw(derivativeAmount);
+    }
+    ...
+}
+```

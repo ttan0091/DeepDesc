@@ -1,0 +1,26 @@
+Type of vulnerability: Incorrect Calculation of Redemption Amounts
+Cause of vulnerability: The `totalBurned` storage variable for the given epoch is not updated to account for refunds, leading to incorrect calculations in subsequent calls to `completeRedemptions`.
+Execution process: The manager processes redemptions and refunds in multiple calls to `completeRedemptions` for a given epoch. Each call calculates the effective amount of CASH burned using the initial `totalBurned` value without considering previous refunds, leading to users receiving less collateral tokens than they should.
+Vulnerable code: 
+```solidity
+function completeRedemptions(
+    address[] calldata redeemers,
+    address[] calldata refundees,
+    uint256 collateralAmountToDist,
+    uint256 epochToService,
+    uint256 fees
+) external override updateEpoch onlyRole(MANAGER_ADMIN) {
+    _checkAddressesKYC(redeemers);
+    _checkAddressesKYC(refundees);
+    if (epochToService >= currentEpoch) {
+        revert MustServicePastEpoch();
+    }
+    // Calculate the total quantity of shares tokens burned w/n an epoch
+    uint256 refundedAmt = _processRefund(refundees, epochToService);
+    uint256 quantityBurned = redemptionInfoPerEpoch[epochToService].totalBurned - refundedAmt;
+    uint256 amountToDist = collateralAmountToDist - fees;
+    _processRedemption(redeemers, amountToDist, quantityBurned, epochToService);
+    collateral.safeTransferFrom(assetSender, feeRecipient, fees);
+    emit RedemptionFeesCollected(feeRecipient, fees, epochToService);
+}
+```

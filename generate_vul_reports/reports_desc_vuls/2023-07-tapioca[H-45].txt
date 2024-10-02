@@ -1,0 +1,17 @@
+Type of vulnerability: Arithmetic Over/Underflow and Incorrect Calculation
+
+Cause of vulnerability: The vulnerability arises from an incorrect calculation of collateral amounts due to improper handling of exchange rates and collateralization rates before converting shares to asset amounts. This leads to an overestimation of collateral, falsely indicating solvency.
+
+Execution process: An attacker can exploit this vulnerability by adding a small amount of collateral share that translates to zero collateral amount. Due to the incorrect calculation, the system will incorrectly consider the position solvent, allowing the attacker to borrow assets without sufficient collateral.
+
+Vulnerable code:
+```solidity
+// Incorrect calculation in Market::_isSolvent
+return yieldBox.toAmount(collateralId, collateralShare * (EXCHANGE_RATE_PRECISION / FEE_PRECISION) * collateralizationRate, false) >=
+
+// Incorrect calculation in Market::_computeMaxBorrowableAmount
+return yieldBox.toAmount(collateralId, collateralShare * (EXCHANGE_RATE_PRECISION / FEE_PRECISION) * collateralizationRate, false) >=
+
+// Incorrect calculation in SGLLiquidation::_computeAssetAmountToSolvency
+uint256 collateralAmountInAsset = yieldBox.toAmount(collateralId, (collateralShare * (EXCHANGE_RATE_PRECISION / FEE_PRECISION) * lqCollateralizationRate), false) / _exchangeRate;
+```

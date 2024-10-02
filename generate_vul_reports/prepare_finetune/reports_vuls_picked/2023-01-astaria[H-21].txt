@@ -1,0 +1,23 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Incorrect authorization checks in the `_validateCommitment` function
+Execution process: An attacker (User X) can bypass the authorization checks by setting the `receiver` parameter to the owner of the collateral (User Y), thereby causing the `if` condition to fail and allowing the loan to be issued without the owner's consent.
+Vulnerable code: 
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    uint256 collateralId = params.tokenContract.computeId(params.tokenId);
+    ERC721 CT = ERC721(address(COLLATERAL_TOKEN()));
+    address holder = CT.ownerOf(collateralId);
+    address operator = CT.getApproved(collateralId);
+    if (msg.sender != holder &&
+        receiver != holder &&
+        receiver != operator &&
+        !CT.isApprovedForAll(holder, msg.sender)) {
+        revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);
+    }
+    VIData storage s = _loadVISlot();
+    address recovered = ecrecover(keccak256(_encodeStrategyData(s, params.lienRequest.strategy, params.lienRequest.merkle.root)), params.lienRequest.v, params.lienRequest.r, params.lienRequest.s);
+    if ((recovered != owner() && recovered != s.delegate) || recovered == address(0)) {
+        revert IVaultImplementation.InvalidRequest(InvalidRequestReason.INVALID_SIGNATURE);
+    }
+}
+```

@@ -1,0 +1,19 @@
+Type of vulnerability: Incomplete Removal of Dependent Components
+
+Cause of vulnerability: The `removeBribeFlywheel` function in the `BaseV2Gauge` contract does not remove the associated reward token from the `multiRewardsDepot`, leading to a state where the same reward token cannot be reused in a new Flywheel.
+
+Execution process:
+1. A project adds a `BribeFlywheel` to a `Gauge` using `BaseV2Gauge::addBribeFlywheel`, which adds the reward token to the `multiRewardsDepot`.
+2. The project decides to remove the old `BribeFlywheel` using `BaseV2Gauge::removeBribeFlywheel`, but this function does not remove the reward token from the `multiRewardsDepot`.
+3. When attempting to add a new `BribeFlywheel` with the same reward token, the `addAsset` call in `MultiRewardsDepot` reverts because the token already exists in the `multiRewardsDepot`.
+
+Vulnerable code:
+```solidity
+function removeBribeFlywheel(FlywheelCore bribeFlywheel) external onlyOwner {
+    /// @dev Can only remove active flywheels
+    if(!isActive[bribeFlywheel]) revert FlywheelNotActive();
+    /// @dev This is permanent; can't be re-added
+    delete isActive[bribeFlywheel];
+    emit RemoveBribeFlywheel(bribeFlywheel);
+}
+```

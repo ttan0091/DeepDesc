@@ -1,0 +1,38 @@
+[H-01] Wrong shortfall calculation
+Submitted by kenzo
+Every time an account is settled, if shortfall is created, due to a wrong calculation shortfall will double in size and add the new shortfall.
+Impact
+Loss of funds: users won’t be able to withdraw the correct amount of funds. Somebody would have to donate funds to resolve the wrong shortfall.
+Proof of Concept
+We can see in thesettleAccountofOptimisticLedgerthatself.shortfallends up beingself.shortfall+self.shortfall+newShortfall:(Code ref)
+functionsettleAccount(OptimisticLedgerstorageself,addressaccount,Fixed18amount)internalreturns(UFixed18shortfall) {Fixed18newBalance=Fixed18Lib.from(self.balances[account]).add(amount);if(newBalance.sign() == -1) {shortfall=self.shortfall.add(newBalance.abs());newBalance=Fixed18Lib.ZERO;}self.balances[account] =newBalance.abs();self.shortfall=self.shortfall.add(shortfall);}
+Additionally, you can add the following line to the “shortfall reverts if depleted” test inCollateral.test.js, line 190:
+awaitcollateral.connect(productSigner).settleAccount(userB.address, -50)
+Previously the test product had 50 shortfall. Now we added 50 more, but the test will print that the actual shortfall is 150, and not 100 as it should be.
+Recommended Mitigation Steps
+Move the setting ofself.shortfallto inside the if function and change the line to:
+self.shortfall = shortfall
+kbrizzle (Perennial) confirmed:
+Excellent find 🙏
+Alex the Entreprenerd (judge) commented:
+Agree with the findingshortfall = self.shortfall.add(newBalance.abs());is already shortfal + newBalance.abs()
+So performing line73self.shortfall = self.shortfall.add(shortfall);is addingshortfallagain
+[H-02]withdrawToDoes Not Sync Before Checking A Position’s Margin Requirements
+Submitted by leastwood
+Impact
+ThemaintenanceInvariantmodifier inCollateralaims to check if a user meets the margin requirements to withdraw collateral by checking its current and next maintenance.maintenanceInvariantinevitably callsAccountPosition.maintenancewhich uses the oracle’s price to calculate the margin requirements for a given position. Hence, if the oracle has not synced in a long time,maintenanceInvariantmay end up utilising an outdated price for a withdrawal. This may allow a user to withdraw collateral on an undercollaterized position.
+Proof of Concept
+https://github.com/code-423n4/2021-12-perennial/blob/main/protocol/contracts/collateral/Collateral.sol#L67-L76
+functionwithdrawTo(addressaccount,IProductproduct,UFixed18amount)notPausedcollateralInvariant(msg.sender,product)maintenanceInvariant(msg.sender,product)external{_products[product].debitAccount(msg.sender,amount);token.push(account,amount);emitWithdrawal(msg.sender,product,amount);}
+https://github.com/code-423n4/2021-12-perennial/blob/main/protocol/contracts/collateral/Collateral.sol#L233-L241
+modifiermaintenanceInvariant(addressaccount,IProductproduct) {_;UFixed18maintenance=product.maintenance(account);UFixed18maintenanceNext=product.maintenanceNext(account);if(UFixed18Lib.max(maintenance,maintenanceNext).gt(collateral(account,product)))revertCollateralInsufficientCollateralError();}
+https://github.com/code-423n4/2021-12-perennial/blob/main/protocol/contracts/product/types/position/AccountPosition.sol#L71-L75
+functionmaintenanceInternal(Positionmemoryposition,IProductProviderprovider)privateviewreturns(UFixed18) {Fixed18oraclePrice=provider.priceAtVersion(provider.currentVersion());UFixed18notionalMax=Fixed18Lib.from(position.max()).mul(oraclePrice).abs();returnnotionalMax.mul(provider.maintenance());}
+Tools Used
+Manual code review.
+Recommended Mitigation Steps
+Consider addingsettleForAccount(msg.sender)to theCollateral.withdrawTofunction to ensure the most up to date oracle price is used when assessing an account’s margin requirements.
+kbrizzle (Perennial) confirmed:
+Great catch 🙏
+Alex the Entreprenerd (judge) commented:
+With most onChain protocols where there is potential for undercollateralized positions and liquidations, it is very important to accrue a user position before making any changes to their balance.The warden identified a potential way for a user to withdraw funds while their account is below margin requirements.Because this impacts the core functionality functionality of the protocol (accounting), I’m raising the severity to highMitigation seems to be straightforward

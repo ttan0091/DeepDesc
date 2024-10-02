@@ -1,0 +1,13 @@
+Type of vulnerability: Precision Loss or Rounding Error
+Cause of vulnerability: The calculation of user rewards based on the ratio of `userRewards` and `globalRewards` can result in zero due to rounding issues in Solidity when the user's share is too small compared to the total supply.
+Execution process: A user with a small balance of pxGMX relative to the total supply calls the `PirexRewards.claim` function. The calculation `(rewardState * userRewards) / globalRewards` results in zero due to rounding down, leading to the user's accrued rewards being cleared and lost.
+Vulnerable code: 
+```solidity
+uint256 amount = (rewardState * userRewards) / globalRewards;
+if (amount != 0) {
+    // Update reward state (i.e. amount) to reflect reward tokens transferred out
+    p.rewardStates[rewardToken] = rewardState - amount;
+    producer.claimUserReward(address(rewardToken), amount, recipient);
+}
+p.userStates[user].rewards = 0; // Line 391: Clearing user's accrued rewards
+```

@@ -1,0 +1,23 @@
+[H-07] DOS ofcompleteQueuedWithdrawalwhen ERC20 buffer is filled
+Submitted byAymen0909, also found by tapir (1,2,3),crypticdefense,gjaldon,eeshenggoh,gumgumzum,0x73696d616f,LessDupes,GoatedAudits, andpauliax
+https://github.com/code-423n4/2024-04-renzo/blob/main/contracts/Delegation/OperatorDelegator.sol#L299-L303
+https://github.com/code-423n4/2024-04-renzo/blob/main/contracts/Deposits/DepositQueue.sol#L134-L137
+Issue Description
+When theOperatorDelegator::completeQueuedWithdrawalfunction is invoked to finalize a withdrawal from EL, it attempts to utilize the accumulated ERC20 tokens to fill the ERC20 withdrawal buffer, as demonstrated in the code snippet below:
+functioncompleteQueuedWithdrawal(IDelegationManager.Withdrawalcalldatawithdrawal,IERC20[]calldatatokens,uint256middlewareTimesIndex)externalnonReentrantonlyNativeEthRestakeAdmin{uint256gasBefore=gasleft();if(tokens.length!=withdrawal.strategies.length)revertMismatchedArrayLengths();// Complete the queued withdrawal from EigenLayer with receiveAsToken set to truedelegationManager.completeQueuedWithdrawal(withdrawal,tokens,middlewareTimesIndex,true);IWithdrawQueuewithdrawQueue=restakeManager.depositQueue().withdrawQueue();for(uint256i;i<tokens.length; ) {if(address(tokens[i]) ==address(0))revertInvalidZeroInput();// Deduct queued shares for tracking TVLqueuedShares[address(tokens[i])] -=withdrawal.shares[i];// Check if the token is not Native ETHif(address(tokens[i]) !=IS_NATIVE) {// Check the withdrawal buffer and fill if below buffer targetuint256bufferToFill=withdrawQueue.getBufferDeficit(address(tokens[i]));// Get the balance of this contractuint256balanceOfToken=tokens[i].balanceOf(address(this));if(bufferToFill>0) {bufferToFill= (balanceOfToken<=bufferToFill) ?balanceOfToken:bufferToFill;// Update the amount to send to the operator DelegatorbalanceOfToken-=bufferToFill;// Safely approve for depositQueuetokens[i].safeApprove(address(restakeManager.depositQueue()),bufferToFill);// Fill the Withdraw Buffer via depositQueuerestakeManager.depositQueue().fillERC20withdrawBuffer(address(tokens[i]),bufferToFill);}// Deposit remaining tokens back to EigenLayerif(balanceOfToken>0) {_deposit(tokens[i],balanceOfToken);}}unchecked{++i;}}// Emit the Withdraw Completed event with withdrawalRootemitWithdrawCompleted(delegationManager.calculateWithdrawalRoot(withdrawal),withdrawal.strategies,withdrawal.shares);// Record the current spent gas_recordGas(gasBefore);}
+The function iterates over the withdrawn tokens array and, for each token, checks if the withdrawal buffer needs filling. If required, the function attempts to call thedepositQueue::fillERC20withdrawBufferfunction, which is responsible for directing the ERC20 to the withdrawal queue contract to fill the buffer.
+The issue arises because thedepositQueue::fillERC20withdrawBufferfunction can only be accessed by theRestakeManagercontract, as it enforces theonlyRestakeManagermodifier, as depicted below:
+/// @dev Allows only the RestakeManager address to call functionsmodifieronlyRestakeManager() {if(msg.sender!=address(restakeManager))revertNotRestakeManager();_;}functionfillERC20withdrawBuffer(address_asset,uint256_amount)externalnonReentrantonlyRestakeManager{...}
+Consequently, when thecompleteQueuedWithdrawalfunction attempts this call, it reverts becauseOperatorDelegatorlacks access to thedepositQueue::fillERC20withdrawBufferfunction. This results in the entire withdrawal completion call reverting, rendering it impossible for the admin to retrieve funds from EL.
+In summary, this issue triggers a persistent DOS of theOperatorDelegator::completeQueuedWithdrawalfunction, preventing the protocol and users from withdrawing funds from EL and resulting in a loss of funds.
+Impact
+Persistent DOS of theOperatorDelegator::completeQueuedWithdrawalfunction, preventing the protocol from withdrawing funds from EL and leading to fund losses for the protocol and users.
+Tools Used
+VS Code
+Recommended Mitigation
+The simplest resolution is to grant access to thedepositQueue::fillERC20withdrawBufferfunction to everyone by removing theonlyRestakeManagermodifier. This adjustment introduces no vulnerabilities to the protocol since any user calling it effectively donates funds to the protocol (to the withdrawal queue).
+Assessed type
+DoS
+jatinj615 (Renzo) confirmed
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.

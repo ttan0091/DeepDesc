@@ -1,0 +1,97 @@
+[H-01] Untyped data signing
+Submitted by Lambda, also found by 0x1f8b, 0x52, horsefacts, vlad_bochok, and wastewa
+Community.sol#L175Community.sol#L213Community.sol#L530Disputes.sol#L91Project.sol#L142Project.sol#L167Project.sol#L235Project.sol#L286Project.sol#L346Project.sol#L402Project.sol#L499
+In many places of the project (see affected code), untyped application data is directly hashed and signed. This is strongly disencouraged, as it enables different attacks (that each could be considered their own issue / vulnerability, but I submitted it as one, as they have all the same root cause):
+1.) Signature reuse across different Rigor projects:While some signature contain the project address, not all do. For instance,updateProjectHashonly contains a_hashand a_nonce. Therefore, we can have the following scenario: Bob is the owner of project A and signs / submitupdateProjectHashwith nonce 0 and some hash. Then, a project B that also has Bob as the owner is created. Attacker Charlie can simply take the_dataand_signaturethat Bob previously submitted to project A and send it to project B. As this project will have a nonce of 0 (fresh created), it will accept it.updateTaskHashis also affected by this.2.) Signature reuse across different chains:Because the chain ID is not included in the data, all signatures are also valid when the project is launched on a chain with another chain ID. For instance, let’s say it is also launched on Polygon. An attacker can now use all of the Ethereum signatures there. Because the Polygon addresses of user’s (and potentially contracts, when the nonces for creating are the same) are often identical, there can be situations where the payload is meaningful on both chains.3.) Signature reuse across Rigor functions:Some functions accept and decode data / signatures that were intended for other functions. For instance, see this example of providing the data & signature that was intended forinviteContractortosetComplete:
+diff --git a/test/utils/projectTests.ts b/test/utils/projectTests.tsindex ae9e202..752e01f 100644--- a/test/utils/projectTests.ts+++ b/test/utils/projectTests.ts@@ -441,7 +441,7 @@ export const projectTests = async ({}});-  it('should be able to invite contractor', async () => {+  it.only('should be able to invite contractor', async () => {expect(await project.contractor()).to.equal(ethers.constants.AddressZero);const data = {types: ['address', 'address'],@@ -452,6 +452,7 @@ export const projectTests = async ({signers[1],]);const tx = await project.inviteContractor(encodedData, signature);+    const tx2 = await project.setComplete(encodedData, signature);await expect(tx).to.emit(project, 'ContractorInvited').withArgs(signers[1].address);
+While this reverts because there is no task that corresponds to the address that is signed there, this is not always the case.4.) Signature reuse from different Ethereum projects & phishingBecause the payload of these signatures is very generic (two addresses, a byte and two uints), there might be situations where a user has already signed data with the same format for a completely different Ethereum application. Furthermore, an attacker could set up a DApp that uses the same format and trick someone into signing the data. Even a very security-conscious owner that has audited the contract of this DApp (that does not have any vulnerabilities and is not malicious, it simply consumes signatures that happen to have the same format) might be willing to sign data for this DApp, as he does not anticipate that this puts his Rigor project in danger.
+Recommended Mitigation Steps
+I strongly recommend to followEIP-712and not implement your own standard / solution. While this also improves the user experience, this topic is very complex and not easy to get right, so it is recommended to use a battle-tested approach that people have thought in detail about. All of the mentioned attacks are not possible with EIP-712:1.) There is always a domain separator that includes the contract address.2.) The chain ID is included in the domain separator3.) There is a type hash (of the function name / parameters)4.) The domain separator does not allow reuse across different projects, phishing with an innocent DApp is no longer possible (it would be shown to the user that he is signing data for Rigor, which he would off course not do on a different site)
+parv3213 (Rigor) confirmed
+
+[H-02] Builder can halve the interest paid to a community owner due to arithmetic rounding
+Submitted by scaraven, also found by 0x52, auditor0517, Deivitto, hansfriese, Lambda, rbserver, simon135, smiling_heretic, sseefried, and TrungOre
+Community.sol#L685-L686
+Due to arithmetic rounding inreturnToLender(), a builder can halve the APR paid to a community owner by paying every 1.9999 days. This allows a builder to drastically decrease the amount of interest paid to a community owner, which in turn allows them to advertise very high APR rates to secure funding, most of which they will not pay.
+This issue occurs in the calculation ofnoOfDaysinreturnToLender()which calculates the number of days since interest has last been calculated. If a builder repays a very small amount of tokens every 1.9999 days, then thenoOfDayswill be rounded down to1 dayshoweverlastTimestampis updated to the current timestamp anyway, so the builder essentially accumulates only 1 day of interest after 2 days.
+I believe this is high severity because a community owner can have a drastic decrease in interest gained from a loan which counts as lost rewards. Additionally, this problem does not require a malicious builder because if a builder pays at a wrong time, the loaner receives less interest anyway.
+Proof of Concept
+A community owner provides a loan of 500_000 tokens to a builder with an APR of 10% (ignoring treasury fees)Therefore, the community owner will expect an interest of 136.9 tokens per day (273.9 per 2 days)A builder repays 0.000001 tokens atlastTimestamp + 2*86400 - 1noOfDaysrounds down to 1 thereby accumulating500_000 * 100 * 1 / 365000 = 136tokens for 2 daysTherefore, the community owner only receives 5% APR with negligible expenses for the builder
+Tools Used
+VS Code
+Recommended Mitigation Steps
+There are two possible mitigations:
+Add a scalar tonoOfDaysso that any rounding which occurs is negligible
+i.e.
+uint256_noOfDays= (block.timestamp-_communityProject.lastTimestamp) *SCALAR/86400;// 24*60*60/// Interest formula = (principal * APR * days) / (365 * 1000)// prettier-ignoreuint256_unclaimedInterest=_lentAmount*_communities[_communityID].projectDetails[_project].apr*_noOfDays/365000/SCALAR;
+Remove thenoOfDayscalculation and calculate interest in one equation which reduces arithmetic rounding
+uint256_unclaimedInterest=_lentAmount*_communities[_communityID].projectDetails[_project].apr*(block.timestamp-_communityProject.lastTimestamp) /365000/86400;
+zgorizzo69 (Rigor) confirmed
+
+[H-03] Builder can callCommunity.escrowagain to reduce debt further using same signatures
+Submitted by sseefried, also found by 0xA5DF, Bahurum, bin2chen, byndooa, cccz, GalloDaSballo, hyh, kankodu, Lambda, and minhquanym
+Community.sol#L509
+Since there is no nonce in the data decoded at the beginning of functionescrow, a builder can call the function multiple times reducing their debt as much as they wish.
+Proof of Concept
+A builder has a debt of $50,000A lender, a builder, and an escrow agent allenter a barsign a message that will reduce the debt of the builder by $5,000, upon receipt of physical cash.Functionescrowis called and debt is reduced to $45,000.The builder, using the same_dataand_signaturethen callsescrowa further 9 times reducing their debt to zero.
+Recommended Mitigation Steps
+Similar to functionpublishProject, add a new field into theProjectDetailsstruct calledescrowNonce.Modify functionescrowto check this nonce and update it after the debt has been reduced.
+See the diff below for full changes.
+diff --git a/contracts/Community.sol b/contracts/Community.solindex 1585670..b834d0e 100644--- a/contracts/Community.sol+++ b/contracts/Community.sol@@ -15,7 +15,7 @@ import {SignatureDecoder} from "./libraries/SignatureDecoder.sol";/*** @title Community Contract for HomeFi v2.5.0-+* @notice Module for coordinating lending groups on HomeFi protocol*/contract Community is@@ -520,10 +520,11 @@ contract Community isaddress _agent,address _project,uint256 _repayAmount,+            uint256 _escrowNonce,bytes memory _details) = abi.decode(_data,-                (uint256, address, address, address, address, uint256, bytes)+                (uint256, address, address, address, address, uint256, uint256, bytes));// Compute hash from bytes@@ -540,6 +541,12 @@ contract Community is_lender == _communities[_communityID].owner,"Community::!Owner");+        ProjectDetails storage _communityProject =+          _communities[_communityID].projectDetails[_project];+        require(+            _escrowNonce == _communityProject.escrowNonce,+            "Community::invalid escrowNonce"+        );// check signaturescheckSignatureValidity(_lender, _hash, _signature, 0); // must be lender@@ -548,6 +555,7 @@ contract Community is// Internal call to reduce debt_reduceDebt(_communityID, _project, _repayAmount, _details);+        _communityProject.escrowNonce = _communityProject.escrowNonce + 1;emit DebtReducedByEscrow(_agent);}diff --git a/contracts/interfaces/ICommunity.sol b/contracts/interfaces/ICommunity.solindex c45bbf0..652f51c 100644--- a/contracts/interfaces/ICommunity.sol+++ b/contracts/interfaces/ICommunity.sol@@ -29,6 +29,7 @@ interface ICommunity {uint256 lentAmount; // current principal lent to project (needs to be repaid by project's builder)uint256 interest; // total accrued interest on `lentAmount`uint256 lastTimestamp; // timestamp when last lending / repayment was made+        uint256 escrowNonce; // signing nonce to use when reducing debt by escrow}
+zgorizzo69 (Rigor) confirmed
+
+[H-04] Project funds can be drained by reusing signatures, in some cases
+Submitted by 0xA5DF, also found by Bahurum, bin2chen, byndooa, cryptphi, hansfriese, horsefacts, kaden, Lambda, neumo, panprog, rokinot, scaraven, and sseefried
+Project.sol#L386-L490Project.sol#L330-L359Tasks.sol#L153-L164
+This attack path is the results of signatures reusing in 2 functions -changeOrder()andsetComplete(), and a missing modifier atTasks.unApprove()library function.
+Impact
+Draining the project from funds
+Current or previous subcontractor of a task can drain the project out of its funds by runningsetComplete()multiple times.
+This can be exploited in 3 scenarios:
+The price of a task was changed to a price higher than available funds (i.e.totalLent - _totalAllocated, and therefore gets unapproved), and than changed back to the original price (or any price that’s not higher than available funds)The subcontractor for a task was changed viachangeOrderand then changed back to the original subcontractore.g. - Bob was the original SC, it was changed to Alice, and then back to BobSimilar to the case above, but even if the current SC is different from the original SC - it can still work if the current and previous SCs are teaming up to run the attacke.g. Bob was the original SC, it was changed to Alice, and changed again to Eve. And now Alice and Eve are teaming up to drain funds from the project
+AftersetComplete()ran once by the legitimate users (i.e. signed by contractor, SC and builder), the attackers can now run it multiple times:
+Reuse signatures to runchangeOrder()- changing SC or setting the price to higher than available fundsThe only signer that might change is the subcontractor, he’s either teaming up with the attacker (scenario #3) or he was the SC when it was first called (scenario #2)In case of price change:change it back to the original price viachangeOrder(), reusing signaturesRunallocateFunds()to mark it as funded againSC runsacceptInvite()to mark task as activeRunsetComplete()reusing signaturesIf SC has changed - replace his signature with the current one (current SC should be one of the attackers)Repeat till the project runs out of funds
+Changing tasks costs/subcontractor by external users
+This can also be used by external users (you don’t need to be builder/GC/SC in order to runchangeOrder()) to troll the system (This still requires the task to be changed at least twice, otherwise re-runningchangeOrder()with the same data would have no effect).
+Changing the task cost up or down, getting the SC paid a different amount than intended (if it goes unnoticed, or front-run thesetComplete()function)Unapproving a task by setting a different SC or a price higher than available fundsThe legitimate users can change it back, but the attacker can change it again, both sides playing around till someone gets tired :)
+Proof of Concept
+Since the tests depend on each other, the PoC tests were created by adding them to the filetest/utils/projectTests.ts, after the functionit('should be able to complete a task'(Line 1143).
+In the first test - a subcontractor is changed and then changed back.In the second scenario a price is changed to the new price (that is higher than the total available funds, and therefore is unapproved) and then back to its original price (it can actually be any price that is not higher than the available funds).In both cases I’m demonstrating how the project can be drained out of fund.
+Note: see warden’soriginal submissionfor full proof of concept.
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Use nonce to protectsetComplete()andchangeOrder()from signatures reuseAdd theonlyActive()modifier toTasks.unApprove()Consider limitingallocateFunds()for builder only (this is not necessary to resolve the bug, just for hardening security)
+zgorizzo69 (Rigor) confirmed and commented:
+Very nice wrap up.
+
+[H-05] Add members to the not yet created community
+Submitted by vlad_bochok, also found by indijanc, Lambda, and wastewa
+Community.sol#L187Community.sol#L179Community.sol#L878SignatureDecoder.sol#L39
+There is aaddMemberfunction in theCommunity.  The function accepts_datathat should be signed by the_community.ownerand_newMemberAddr.
+// Compute hash from bytesbytes32 _hash = keccak256(_data);// Decode params from _data(uint256 _communityID,address _newMemberAddr,bytes memory _messageHash) = abi.decode(_data, (uint256, address, bytes));CommunityStruct storage _community = _communities[_communityID];// check signaturescheckSignatureValidity(_community.owner, _hash, _signature, 0); // must be community ownercheckSignatureValidity(_newMemberAddr, _hash, _signature, 1); // must be new member
+The code above shows exactly what the contract logic looks like.
+_communityIDis taken from the data provided by user, so it can arbitrarily. Specifically,  community with selected_communityIDcan be not yet created. For instance, it can be equal to thecommunityCount + 1, thus the next created community will have this_communityID._communities[_communityID]will store null values for all fields, for a selected_communityID. That means,_community.owner == address(0)checkSignatureValiditywith a parametersaddress(0), _hash, _signature, 0will not revert a call if an attacker provide incorrect_signature.
+Let’s see the implementation ofcheckSignatureValidity:
+// Decode signeraddress _recoveredSignature = SignatureDecoder.recoverKey(_hash,_signature,_signatureIndex);// Revert if decoded signer does not match expected address// Or if hash is not approved by the expected address.require(_recoveredSignature == _address || approvedHashes[_address][_hash],"Community::invalid signature");// Delete from approvedHash. So that signature cannot be reused.delete approvedHashes[_address][_hash];
+No restrictions on_recoveredSignatureor_address. Moreover, ifSignatureDecoder.recoverKeycan return zero value, then there will be no revert.
+if (messageSignatures.length % 65 != 0) {return (address(0));}uint8 v;bytes32 r;bytes32 s;(v, r, s) = signatureSplit(messageSignatures, pos);// If the version is correct return the signer addressif (v != 27 && v != 28) {return (address(0));} else {// solium-disable-next-line arg-overflowreturn ecrecover(toEthSignedMessageHash(messageHash), v, r, s);}
+As we can see below,recoverKeyfunction can return zero value, if anecrecoverreturn zero value or ifv != 27 || v != 28. Both cases are completely dependent on the input parameters to the function, namely fromsignaturethat is provided by attacker.
+checkSignatureValidity(_newMemberAddr, _hash, _signature, 1)will not revert the call if an attacker provide correct signature in the function. It is obviously possible.
+All in all, an attacker can add as many members as they want, BEFORE thecommunitywill be created.
+Recommended Mitigation Steps
+checkSignatureValidity/recoverKeyshould revert the call if anaddress == 0.addMembershould have arequire(_communityId <= communityCount)
+parv3213 (Rigor) confirmed
+Jack the Pug (judge) commented:
+Nice catch!Btw, thisv != 27 && v != 28check is no longer needed:if(v!=27&&v!=28) {return(address(0));}See:https://twitter.com/alexberegszaszi/status/1534461421454606336?s=20&t=H0Dv3ZT2bicx00hLWJk7Fg
+
+[H-06] Wrong APR can be used when project is unpublished and published again
+Submitted by Lambda, also found by rbserver
+Community.sol#L267
+When a project is unpublished from a community, it can still owe money to this community (on which it needs to pay interest according to the specified APR). However, when the project is later published again in this community, the APR can be overwritten and the overwritten APR is used for the calculation of the interest for the old project (when it was unpublished).
+Proof Of Concept
+1.) Project A is published in community I with an APR of 3%. The community lends 1,000,000 USD to the project.2.) Project A is unpublished, thelentAmountis still 1,000,000 USD.3.) During one year, no calls torepayLender,reduceDebt, orescrowhappens, i.e. the interest is never added and thelastTimestampnot updated.4.) After one year, the project is published again in the same community. Because the FED raised interest rates, it is specified that the APR should be 5% from now on.5.) Another $1,000,000 is lent to the project by callinglendToProject. Now,claimInterestis called which calculates the interest of the last year for the first million. However, the function already uses the new APR of 5%, meaning the added interest is 50,000 USD instead of the correct 30,000 USD.
+Recommended Mitigation Steps
+When publishing a project, if thelentAmountfor the community is non-zero, calculate the interest before updating the APR.
+parv3213 (Rigor) confirmed
+

@@ -1,0 +1,20 @@
+Type of vulnerability: Arbitrary Delegatecall Destination
+Cause of vulnerability: Public functions in TOFT and USDO modules allow an attacker to supply an address for a delegatecall, which can be an attacker-controlled contract designed to selfdestruct.
+Execution process: An attacker deploys a malicious contract with a fallback function that executes selfdestruct, then calls the vulnerable functions in the TOFT or USDO modules with the address of this malicious contract as the `module` parameter, causing the module to selfdestruct.
+Vulnerable code: 
+```solidity
+function leverageUp(address module, uint16 _srcChainId, bytes memory _srcAddress, uint64 _nonce, bytes memory _payload) public {
+    // .. snip ..
+    (bool success, bytes memory reason) = module.delegatecall(
+        //@audit-issue arbitrary destination delegatecall
+        abi.encodeWithSelector(this.leverageUpInternal.selector, amount, swapData, externalData, lzData, leverageFor)
+    );
+    if (!success) {
+        if (balanceAfter - balanceBefore >= amount) {
+            IERC20(address(this)).safeTransfer(leverageFor, amount);
+        }
+        revert(_getRevertMsg(reason)); // forward revert because it's handled by the main executor
+    }
+    // .. snip ..
+}
+```

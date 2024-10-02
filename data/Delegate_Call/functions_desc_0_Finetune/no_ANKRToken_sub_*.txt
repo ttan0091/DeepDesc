@@ -1,0 +1,10 @@
+Type of vulnerability: Underflow leading to more than 100% return in case of rug pull or malfunction of peg contract
+Cause of vulnerability: Absence of check for 0 amounts before adding delta amounts, leading to a value higher than the total deposits in the pool
+Proposed fix: Modify internal _getDeltaForBurn function in PegManager with logical underflow check similar to _getDeltaForMint function
+Detailed explanation: 
+1. When a user calls burnAndUnstake function of PegManager, the function calls _getDeltaForBurn to calculate variable integratedPegDelta, which is the amount of peg that needs to be removed from the pool.
+2. _getDeltaForBurn calculates the delta amount by calling _getDeltaAmountsOfPegAndAssetForBurn.
+3. _getDeltaAmountsOfPegAndAssetForBurn checks if the total peg delta is nonzero, and in that case, another internal function _getBurnPegForPeg calculates the peg amount.
+4. _getBurnPegForPeg calculates payPeg as totalPeg.sub(_getDelta()), where _getDelta() is delta amount of all coins to be burned, and totalPeg is the total unclaimed peg in the pool.
+5. The code proceeds to add the delta information by lpStruct.addDelta(integratedPegDelta, assetCommonInformation.lpTokenTotalDeposit);
+6. If the pool is empty and assetCommonInformation.lpTokenTotalDeposit == 0, this could cause the integratedPegDelta to be greater than the total deposits in the pool, leading to a user receiving more peg than deposited, especially in the case of a rug pull where assetCommonInformation.lpTokenTotalDeposit is 0.

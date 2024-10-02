@@ -1,0 +1,25 @@
+Type of vulnerability: Access Control Vulnerability
+
+Cause of vulnerability: The `createMinipool` function allows any external actor to hijack a minipool by providing an existing `nodeID` that is in the `Withdrawable` or `Error` state, without verifying the ownership of the `nodeID`.
+
+Execution process:
+1. A malicious actor identifies a `nodeID` that is in the `Withdrawable` or `Error` state.
+2. The attacker calls the `createMinipool` function with this `nodeID`, depositing the required funds.
+3. The function allows the transition to `Prelaunch` state, setting the attacker as the new owner of the minipool.
+4. The original node operator loses the ability to withdraw their staked funds or rewards.
+
+Vulnerable code:
+```solidity
+function createMinipool(address nodeID, uint256 duration, uint256 delegationFee, uint256 avaxAssignmentRequest) external payable whenNotPaused {
+    // Create or update a minipool record for nodeID
+    // If nodeID exists, only allow overwriting if node is finished or canceled
+    // (completed its validation period and all rewards paid and processing is complete)
+    int256 minipoolIndex = getIndexOf(nodeID);
+    if (minipoolIndex != -1) {
+        requireValidStateTransition(minipoolIndex, MinipoolStatus.Prelaunch);
+        resetMinipoolData(minipoolIndex);
+        setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Prelaunch));
+        setAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".owner")), msg.sender);
+    }
+}
+```

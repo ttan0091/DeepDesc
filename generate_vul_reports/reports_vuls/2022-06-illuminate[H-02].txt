@@ -1,0 +1,13 @@
+[H-02] Division Before Multiplication Can Lead To Zero Rounding Of Return Amount
+Submitted by kirk-baird, also found by csanuragjain, datapunk, and ladboy233
+There is a division before multiplication bug that exists inlend()for the Swivel case.
+Iforder.premiumis less thanorder.principalthenreturnedwill round to zero due to the integer rounding.
+When this occurs the user’s funds are essentially lost. That is because they transfer in the underlying tokens but the amount sent toyield(u, y, returned, address(this))will be zero.
+Proof of Concept
+functionlend(uint8p,addressu,uint256m,uint256[]calldataa,addressy,Swivel.Order[]calldatao,Swivel.Components[]calldatas)publicunpaused(p)returns(uint256) {// lent represents the number of underlying tokens lentuint256lent;// returned represents the number of underlying tokens to lend to yielduint256returned;{uint256totalFee;// iterate through each order a calculate the total lent and returnedfor(uint256i=0;i<o.length; ) {Swivel.Ordermemoryorder=o[i];// Require the Swivel order provided matches the underlying and maturity market providedif(order.underlying!=u) {revertNotEqual('underlying');}elseif(order.maturity>m) {revertNotEqual('maturity');}// Determine the feeuint256fee=calculateFee(a[i]);// Track accumulated feestotalFee+=fee;// Sum the total amount lent to Swivel (amount of ERC5095 tokens to mint) minus feeslent+=a[i] -fee;// Sum the total amount of premium paid from Swivel (amount of underlying to lend to yield)returned+= (a[i] -fee) * (order.premium/order.principal);unchecked{i++;}}// Track accumulated feefees[u] +=totalFee;// transfer underlying tokens from user to illuminateSafe.transferFrom(IERC20(u),msg.sender,address(this),lent);// fill the orders on swivel protocolISwivel(swivelAddr).initiate(o,a,s);yield(u,y,returned,address(this));}emitLend(p,u,m,lent);returnlent;}
+Specifically the functionreturned += (a[i] - fee) * (order.premium / order.principal);
+Recommended Mitigation Steps
+The multiplication should occur before division, that is((a[i] - fee) * order.premium) / order.principal);.
+JTraversa (Illuminate) confirmed
+Alex the Entreprenerd (warden) commented:
+Also see howSwivel Calculates it

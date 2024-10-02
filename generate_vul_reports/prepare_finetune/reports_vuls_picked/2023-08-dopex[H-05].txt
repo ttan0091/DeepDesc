@@ -1,0 +1,16 @@
+Type of vulnerability: Reentrancy and Timing Attack
+Cause of vulnerability: Incorrect order of operations in the `deposit` function, specifically calling `previewDeposit` before `updateFunding`, which allows users to profit from the funding update in the same block.
+Execution process: A user calls `deposit` to get shares based on the current assets. Before the shares are minted, the contract calls `updateFunding`, which may increase the total collateral. The user then immediately calls `redeem` to convert their shares back to assets, benefiting from the increased collateral value.
+Vulnerable code: 
+```solidity
+function deposit(uint256 assets, address receiver) public virtual returns (uint256 shares) {
+    // Check for rounding error since we round down in previewDeposit.
+    require((shares = previewDeposit(assets)) != 0, "ZERO_SHARES");
+    perpetualAtlanticVault.updateFunding();
+    // Need to transfer before minting or ERC777s could reenter.
+    collateral.transferFrom(msg.sender, address(this), assets);
+    _mint(receiver, shares);
+    _totalCollateral += assets;
+    emit Deposit(msg.sender, receiver, assets, shares);
+}
+```

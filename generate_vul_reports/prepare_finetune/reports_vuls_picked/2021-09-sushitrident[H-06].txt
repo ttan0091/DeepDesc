@@ -1,0 +1,26 @@
+Type of vulnerability: Incorrect Function Conversion and Logic Error
+Cause of vulnerability: Misinterpretation and incorrect conversion from Balancer V1’s implementation, leading to improper use of mathematical functions and missing return statements.
+Execution process: The functions `_computeSingleOutGivenPoolIn` and `_compute` are used to calculate token ratios and balances. Due to incorrect conversions and logic errors, these functions may return incorrect values, affecting the pool's balance calculations and potentially leading to financial losses.
+Vulnerable code: 
+```solidity
+function _compute(uint256 base, uint256 exp) internal pure returns (uint256 output) {
+    require(MIN_POW_BASE <= base && base <= MAX_POW_BASE, "INVALID_BASE");
+    uint256 whole = (exp / BASE) * BASE;
+    uint256 remain = exp - whole;
+    uint256 wholePow = _pow(base, whole / BASE);
+    if (remain == 0) output = wholePow; // Missing return statement
+    uint256 partialResult = _powApprox(base, remain, POW_PRECISION);
+    output = _mul(wholePow, partialResult);
+}
+
+function _computeSingleOutGivenPoolIn(uint256 tokenOutBalance, uint256 tokenOutWeight, uint256 _totalSupply, uint256 _totalWeight, uint256 toBurn, uint256 _swapFee) internal pure returns (uint256 amountOut) {
+    uint256 normalizedWeight = _div(tokenOutWeight, _totalWeight);
+    uint256 newPoolSupply = _totalSupply - toBurn;
+    uint256 poolRatio = _div(newPoolSupply, _totalSupply);
+    uint256 tokenOutRatio = _compute(poolRatio, _div(BASE, normalizedWeight)); // Should use _compute()
+    uint256 newBalanceOut = _mul(tokenOutRatio, tokenOutBalance);
+    uint256 tokenAmountOutBeforeSwapFee = tokenOutBalance - newBalanceOut;
+    uint256 zaz = _mul(BASE - normalizedWeight, _swapFee); // Should use _mul()
+    amountOut = _mul(tokenAmountOutBeforeSwapFee, (BASE - zaz));
+}
+```

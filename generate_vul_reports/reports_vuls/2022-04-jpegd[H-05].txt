@@ -1,0 +1,20 @@
+[H-05]yVaultLPFarming: No guarantee JPEG currentBalance > previousBalance
+Submitted by hickuphh3
+yVaultLPFarming.sol#L169-L170
+yVault users participating in the farm have to trust that:
+vault.balanceOfJPEG()returns the correct claimable JPEG amount by its strategy / strategiesthe strategy / strategies will send all claimable JPEG to the farm
+Should either of these assumptions break, then it could possibly be the case thatcurrentBalanceis less thanpreviousBalance, causing deposits and crucially, withdrawals to fail due to subtraction overflow.
+Proof of Concept
+For instance,
+Farm migration occurs. A new farm is set inyVault, thenwithdrawJPEG()is called, which sends funds to the new farm. Users of the old farm would be unable to withdraw their deposits.
+it.only("will revert old farms' deposits and withdrawals if yVault migrates farm",async()=>{// 0. setupawaittoken.mint(owner.address,units(1000));awaittoken.approve(yVault.address,units(1000));awaityVault.depositAll();awaityVault.approve(lpFarming.address,units(1000));// send some JPEG to strategy prior to depositawaitjpeg.mint(strategy.address,units(100));// deposit twice, so that the second deposit will invoke _update()awaitlpFarming.deposit(units(250));awaitlpFarming.deposit(units(250));// 1. change farm and call withdrawJPEG()awaityVault.setFarmingPool(user1.address);awaityVault.withdrawJPEG();// deposit and withdrawal will failawaitexpect(lpFarming.deposit(units(500))).to.be.revertedWith('reverted with panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)');awaitexpect(lpFarming.withdraw(units(500))).to.be.revertedWith('reverted with panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)');});
+Strategy migration occurs, but JPEG funds held by the old strategy were not claimed, causingvault.balanceOfJPEG()to report a smaller amount than previously recordedjpegcould be accidentally included in the StrategyConfig, resulting in JPEG being converted to other assetsA future implementation takes a fee on thejpegto be claimed
+Recommended Mitigation Steps
+A simple fix would be toreturnifcurrentBalance ≤ previousBalance. A full fix would properly handle potential shortfall.
+if(currentBalance<=previousBalance)return;
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity and commented:
+The issue can be reproduced, but due to the extremely specific cases in which this happens the severity should be lowered to 2.
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#7.
+LSDan (judge) commented:
+I disagree with the sponsor. This is high risk.

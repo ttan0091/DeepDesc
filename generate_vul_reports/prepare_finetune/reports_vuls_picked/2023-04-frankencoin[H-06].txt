@@ -1,0 +1,17 @@
+Type of vulnerability: Reentrancy and Unchecked Reward Calculation
+
+Cause of vulnerability: The vulnerability arises from the unchecked calculation of the challenger reward based on a potentially manipulated price, which can lead to excessive minting of ZCHF tokens and draining of reserves.
+
+Execution process: 
+1. The position owner mints the maximum ZCHF.
+2. The position owner adjusts the price to a very large value.
+3. The owner starts a challenge via MintingHub.
+4. The challenge always succeeds due to the high price, bypassing the AvertChallenge check.
+5. The `end()` function is called, and the challenger receives a high amount of ZCHF as a fee, which is calculated based on the inflated price.
+6. If there are insufficient funds in the Position to pay for the reward, `FrankenCoin.notifyLoss()` is used to get the funds from the reserve and mint new coins.
+
+Vulnerable code:
+```solidity
+uint256 reward = (volume * CHALLENGERREWARD) / 1000\000;
+uint256 volumeZCHF = _mulD18(price, _size);
+```

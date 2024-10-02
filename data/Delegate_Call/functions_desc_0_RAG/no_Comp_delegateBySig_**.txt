@@ -1,0 +1,56 @@
+This code defines a public function named delegateBySig, which allows a user to delegate their voting rights to another address using a signed message. This function is commonly used in token contracts that support governance, such as Compound's COMP token.
+
+Here’s a detailed explanation of how this function works:
+
+1. Domain Separator Calculation:
+   solidity
+   bytes32 domainSeparator = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name)), getChainId(), address(this)));
+   
+    This line calculates the domain separator, which is a hash that uniquely identifies the contract and the chain it is deployed on. This helps prevent replay attacks across different contracts and chains.
+    DOMAIN_TYPEHASH is a constant that defines the structure of the domain separator.
+    keccak256(bytes(name)) hashes the contract's name to ensure uniqueness.
+    getChainId() retrieves the current chain ID.
+    address(this) is the address of the contract itself.
+
+2. Struct Hash Calculation:
+   solidity
+   bytes32 structHash = keccak256(abi.encode(DELEGATION_TYPEHASH, delegatee, nonce, expiry));
+   
+    This line calculates the hash of the delegation message structure.
+    DELEGATION_TYPEHASH is a constant that defines the structure of the delegation message.
+    delegatee is the address to which voting rights are being delegated.
+    nonce is a unique number for each signature to prevent replay attacks.
+    expiry is the timestamp after which the signature is no longer valid.
+
+3. Digest Calculation:
+   solidity
+   bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+   
+    This line calculates the final digest, which is a hash of the prefix \x19\x01, the domain separator, and the struct hash.
+    The prefix \x19\x01 is a standard prefix for EIP712 typed data signatures.
+
+4. Signature Recovery:
+   solidity
+   address signatory = ecrecover(digest, v, r, s);
+   
+    This line recovers the address of the signer using the ecrecover function, which takes the digest and the signature components v, r, and s.
+    ecrecover is a builtin Ethereum function that recovers the address from a signature.
+
+5. Validation Checks:
+   solidity
+   require(signatory != address(0), "Comp::delegateBySig: invalid signature");
+   require(nonce == nonces[signatory]++, "Comp::delegateBySig: invalid nonce");
+   require(now <= expiry, "Comp::delegateBySig: signature expired");
+   
+    These lines perform several validation checks:
+      signatory != address(0) ensures that the recovered address is not the zero address, which would indicate an invalid signature.
+      nonce == nonces[signatory]++ checks that the provided nonce matches the current nonce for the signatory and then increments it to prevent replay attacks.
+      now <= expiry ensures that the signature has not expired.
+
+6. Delegation Execution:
+   solidity
+   return _delegate(signatory, delegatee);
+   
+    If all checks pass, the function calls the internal _delegate function to delegate the voting rights from the signatory to the delegatee.
+
+This function ensures that the delegation is authorized by the signer and that the signature is valid and not expired. It leverages EIP712 for structured data hashing and signing, which enhances security and usability compared to raw Ethereum signatures.

@@ -1,0 +1,27 @@
+Type of vulnerability: Incorrect Pricing Mechanism
+
+Cause of vulnerability: The `ethPerDerivative` function in the Reth derivative contract uses the entire Reth balance of the derivative contract to determine the price, which can lead to an incorrect price being used when the pool has space for more deposits.
+
+Execution process: 
+1. The staking function calculates the `underlyingValue` by calling `ethPerDerivative` with the Reth balance of the derivative contract.
+2. If the pool has space for more deposits, the function should return the regular price, but it incorrectly returns the pool price which is overpriced.
+3. This overpriced `underlyingValue` is used to calculate the `preDepositPrice`.
+4. When a user deposits ETH, the contract calculates the `derivativeReceivedEthValue` based on the normal price since there is space in the pool.
+5. The `mintAmount` is calculated using the overpriced `preDepositPrice` and the normal `totalStakeValueEth`, resulting in the user receiving less minted tokens.
+
+Vulnerable code:
+```solidity
+function ethPerDerivative(uint256 _amount) public view returns (uint256) {
+    if (poolCanDeposit(_amount))
+        return RocketTokenRETHInterface(rethAddress()).getEthValue(10**18);
+    else
+        return (poolPrice() * 10**18) / (10**18);
+}
+
+function poolCanDeposit(uint256 _amount) returns (bool) {
+    return rocketDepositPool.getBalance() + _amount <= rocketDAOProtocolSettingsDeposit.getMaximumDepositPoolSize() &&
+           _amount >= rocketDAOProtocolSettingsDeposit.getMinimumDeposit();
+}
+
+underlyingValue += (derivatives[i].ethPerDerivative(derivatives[i].balance()) * derivatives[i].balance()) / 10**18;
+```

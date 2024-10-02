@@ -1,0 +1,15 @@
+Type of vulnerability: Oracle Manipulation
+Cause of vulnerability: The contract transfers the deposit amount before calculating the rsETH amount to mint, which increases the totalEthLocked and thus inflates the rsETH price, leading to a miscalculation of the rsETH amount to mint.
+Execution process: A user deposits ETH, which is transferred to the contract before the rsETH amount to mint is calculated. This increases the totalEthLocked, causing the rsETH price to be higher than expected, resulting in the user receiving less rsETH than intended.
+Vulnerable code:
+```solidity
+function depositAsset(address asset, uint256 depositAmount) external whenNotPaused nonReentrant onlySupportedAsset(asset) {
+    ...
+    if (!IERC20(asset).transferFrom(msg.sender, address(this), depositAmount)) {
+        revert TokenTransferFailed();
+    }
+    // interactions
+    uint256 rsethAmountMinted = _mintRsETH(asset, depositAmount);
+    emit AssetDeposit(asset, depositAmount, rsethAmountMinted);
+}
+```

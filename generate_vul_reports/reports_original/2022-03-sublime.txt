@@ -1,0 +1,32 @@
+[H-01]LenderPool: Principal withdrawable is incorrectly calculated if start() is invoked with non-zero start fee
+Submitted by hickuphh3
+LenderPool.sol#L594-L599LenderPool.sol#L399-L404
+The_principalWithdrawablecalculated will be more than expected if_start()is invoked with a non-zero start fee, because the borrow limit is reduced by the fee, resulting intotalSupply[id]not being 1:1 with the borrow limit.
+function_calculatePrincipalWithdrawable(uint256_id,address_lender)internalviewreturns(uint256) {uint256_borrowedTokens=pooledCLConstants[_id].borrowLimit;uint256_totalLiquidityWithdrawable=_borrowedTokens.sub(POOLED_CREDIT_LINE.getPrincipal(_id));uint256_principalWithdrawable=_totalLiquidityWithdrawable.mul(balanceOf(_lender,_id)).div(_borrowedTokens);return_principalWithdrawable;}
+Proof of Concept
+Assume the following conditions:
+Alice, the sole lender, provided100_000tokens:totalSupply[_id] = 100_000borrowLimit = 99_000because of a 1% startFeeBorrower borrowed zero amount
+When Alice attempts to withdraw her tokens, the_principalWithdrawableamount is calculated as
+_borrowedTokens=99_000_totalLiquidityWithdrawable=99_000-0=99_000_principalWithdrawable=99_000*100_000/99_000=100_000
+This is more than the available principal amount of99_000, so the withdrawal will fail.
+Recommended Mitigation Steps
+One hack-ish way is to save the initial supply inminBorrowAmount(perhaps rename the variable tominInitialSupply) when the credit line is accepted, and replacetotalSupply[_id]with it.
+The other places whereminBorrowAmountare used will not be affected by the change because:
+startTime has been zeroed, sostart()cannot be invoked (revert with error S1)credit line status would have been changed toACTIVEand cannot be changed back toREQUESTED, meaning the check below will be false regardless of the value ofminBorrowAmount._status==PooledCreditLineStatus.REQUESTED&&block.timestamp>pooledCLConstants[_id].startTime&&totalSupply[_id] <pooledCLConstants[_id].minBorrowAmount
+Code amendment example:
+function_accept(uint256_id,uint256_amount)internal{...// replace delete pooledCLConstants[_id].minBorrowAmount; with the following:pooledCLConstants[_id].minInitialSupply=totalSupply[_id];}// update comment in _withdrawLiquidity// Case 1: Pooled credit line never started because desired amount wasn't reached// state will never revert back to REQUESTED if credit line is accepted so this case is never runfunction_calculatePrincipalWithdrawable(uint256_id,address_lender)internalviewreturns(uint256) {uint256_borrowedTokens=pooledCLConstants[_id].borrowLimit;uint256_totalLiquidityWithdrawable=_borrowedTokens.sub(POOLED_CREDIT_LINE.getPrincipal(_id));// totalSupply[id] replaced with minInitialSupplyuint256_principalWithdrawable=_totalLiquidityWithdrawable.mul(balanceOf(_lender,_id)).div(minInitialSupply);return_principalWithdrawable;}
+Interminate(), the shares withdrawable can simply be_sharesHeld.
+functionterminate(uint256_id,address_to)externaloverrideonlyPooledCreditLinenonReentrant{address_strategy=pooledCLConstants[_id].borrowAssetStrategy;address_borrowAsset=pooledCLConstants[_id].borrowAsset;uint256_sharesHeld=pooledCLVariables[_id].sharesHeld;SAVINGS_ACCOUNT.withdrawShares(_borrowAsset,_strategy,_to,_sharesHeld,false);deletepooledCLConstants[_id];deletepooledCLVariables[_id];}
+ritik99 (Sublime) confirmed
+
+[H-02]PooledCreditLine: termination likely fails because_principleWithdrawableis treated as shares
+Submitted by hickuphh3, also found by rayn and WatchPug
+LenderPool.sol#L404-L406
+_principalWithdrawableis denominated in the borrowAsset, but subsequently treats it as the share amount to be withdrawn.
+// _notBorrowed = borrowAsset amount that isn't borrowed// totalSupply[_id] = ERC1155 total supply of _id// _borrowedTokens = borrower's specified borrowLimituint256_principalWithdrawable=_notBorrowed.mul(totalSupply[_id]).div(_borrowedTokens);SAVINGS_ACCOUNT.withdrawShares(_borrowAsset,_strategy,_to,_principalWithdrawable.add(_totalInterestInShares),false);
+Recommended Mitigation Steps
+The amount of shares to withdraw can simply be_sharesHeld.
+Note that this comes with the assumption thatterminate()is only called when the credit line isACTIVEorEXPIRED(consider ensuring this condition on-chain), because_sharesHeldexcludes principal withdrawals,so the function will fail once a lender withdraws his principal.
+functionterminate(uint256_id,address_to)externaloverrideonlyPooledCreditLinenonReentrant{address_strategy=pooledCLConstants[_id].borrowAssetStrategy;address_borrowAsset=pooledCLConstants[_id].borrowAsset;uint256_sharesHeld=pooledCLVariables[_id].sharesHeld;SAVINGS_ACCOUNT.withdrawShares(_borrowAsset,_strategy,_to,_sharesHeld,false);deletepooledCLConstants[_id];deletepooledCLVariables[_id];}
+ritik99 (Sublime) confirmed
+

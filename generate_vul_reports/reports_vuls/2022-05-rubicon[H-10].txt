@@ -1,0 +1,22 @@
+[H-10]BathToken.sol#_deposit()attacker can mint more shares with re-entrancy from hookable tokens
+Submitted by WatchPug
+BathToken.sol#_deposit()calculates the actual transferred amount by comparing the before and after balance, however, since there is no reentrancy guard on this function, there is a risk of re-entrancy attack to mint more shares.
+Some token standards, such as ERC777, allow a callback to the source of the funds (thefromaddress) before the balances are updated intransferFrom(). This callback could be used to re-enter the function and inflate the amount.
+https://github.com/code-423n4/2022-05-rubicon/blob/8c312a63a91193c6a192a9aab44ff980fbfd7741/contracts/rubiconPools/BathToken.sol#L557-L568
+function_deposit(uint256assets,addressreceiver)internalreturns(uint256shares){uint256_pool=underlyingBalance();uint256_before=underlyingToken.balanceOf(address(this));// **Assume caller is depositor**underlyingToken.transferFrom(msg.sender,address(this),assets);uint256_after=underlyingToken.balanceOf(address(this));assets=_after.sub(_before);// Additional check for deflationary tokens...
+Proof of Concept
+With a ERC777 token by using the ERC777TokensSendertokensToSendhook to re-enter thedeposit()function.
+Given:
+underlyingBalance():100_000e18 XYZ.totalSupply:1e18
+The attacker can create a contract withtokensToSend()function, then:
+deposit(1)
+-   preBalance  = `100_000e18`;-   `underlyingToken.transferFrom(msg.sender, address(this), 1)`
+reenter usingtokensToSendhook for the 2nd call:deposit(1_000e18)preBalance  =100_000e18;underlyingToken.transferFrom(msg.sender, address(this), 1_000e18)postBalance =101_000e18;assets (actualDepositAmount) =101_000e18 - 100_000e18 = 1_000e18;mint1000shares;continue with the firstdeposit()call:underlyingToken.transferFrom(msg.sender, address(this), 1)postBalance =101_000e18 + 1;assets (actualDepositAmount) =(101_000e18 + 1) - 100_000e18 = 1_000e18 + 1;mint1000shares;
+As a result, with only1 + 1_000e18transferred to the contract, the attacker minted2_000e18 XYZworth of shares.
+Recommendation
+Consider addingnonReentrantmodifier from OZ’sReentrancyGuard.
+bghughes (Rubicon) marked as duplicate and commented:
+Duplicate of#283#410. Note that no ERC777 tokens will be created and this will be patched, making it a non-issue in practice.
+HickupHH3 (judge) commented:
+Not sure what is meant by “no ERC777 tokens will be created”, since it’s transferring the underlying token which is an arbitrary ERC20, and by extension, ERC777.The best practice is to break the CEI pattern for deposits and perform the interaction first. Or simply add reentrancy guards.
+bghughes (Rubicon) confirmed

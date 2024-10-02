@@ -1,0 +1,17 @@
+[H-08]MasterChef.solUsers won’t be able to receive theconcurrewards
+Submitted by WatchPug, also found by hickuphh3 and leastwood
+According to:
+READMEImplementation ofdeposit():/contracts/MasterChef.sol#L157-L180
+MasterChef is only recording the deposited amount in the states, it’s not actually holding thedepositToken.
+depositTokenwon’t be transferred from_msgSender()to the MasterChef contract.
+Therefore, inupdatePool()L140lpSupply = pool.depositToken.balanceOf(address(this))will always be0. And theupdatePool()will be returned at L147.
+MasterChef.sol#L135-L154
+functionupdatePool(uint_pid)public{PoolInfostoragepool=poolInfo[_pid];if(block.number<=pool.lastRewardBlock) {return;}uintlpSupply=pool.depositToken.balanceOf(address(this));if(lpSupply==0||pool.allocPoint==0) {pool.lastRewardBlock=block.number;return;}if(block.number>=endBlock) {pool.lastRewardBlock=block.number;return;}uintmultiplier=getMultiplier(pool.lastRewardBlock,block.number);uintconcurReward=multiplier.mul(concurPerBlock).mul(pool.allocPoint).div(totalAllocPoint);pool.accConcurPerShare=pool.accConcurPerShare.add(concurReward.mul(_concurShareMultiplier).div(lpSupply));pool.lastRewardBlock=block.number;}
+Impact
+The MasterChef contract fail to implement the most essential function;Users won’t be able to receive anyConcurrewards from MasterChef;
+Recommended Mitigation Steps
+Consider creating a receipt token to represent the invested token and use the receipt tokens in MasterChef.
+See:https://github.com/convex-eth/platform/blob/883ffd4ebcaee12e64d18f75bdfe404bcd900616/contracts/contracts/Booster.sol#L272-L277
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a logical flaw in theMasterchefcontract.The contract is expectinglpTokens(deposited in another depositor contract) to be in theMasterchefat the time in whichupdatePoolis called.However, due to the fact that thelpTokenwill be somewhere else, a more appropriate check would be to ask the depositor contract for the total supply.Given this finding, the Masterchef contract will always reward 0 tokens.This should classify the finding as Medium Severity (loss of Yield).However, because the finding shows how this can happen reliably, and effectively breaks the purpose of the contract, I believe High Severity to be more appropriate.

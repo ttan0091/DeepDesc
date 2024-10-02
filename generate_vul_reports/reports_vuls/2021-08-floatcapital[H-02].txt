@@ -1,0 +1,14 @@
+[H-02] 2 variables not indexed bymarketIndex
+Submitted by gpersoon
+In the token contract:batched_stakerNextTokenShiftIndexis indexed bymarketIndex, so it can have separate (or the same) values for each differentmarketIndex.
+stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingandstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mappingare not indexed bymarketIndex.
+So the values ofstakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingandstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mappingcan be overwritten by a different market, ifbatched_stakerNextTokenShiftIndex[market1]==batched_stakerNextTokenShiftIndex[market2]
+This will lead to weird results in_calculateAccumulatedFloat, allocating too much or too little float.
+Staker.solL622
+functionpushUpdatedMarketPricesToUpdateFloatIssuanceCalculations(...stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mapping[batched_stakerNextTokenShiftIndex[marketIndex]  ] =stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingIfShiftExecuted;stakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mapping[batched_stakerNextTokenShiftIndex[marketIndex]  ] =latestRewardIndex[marketIndex] +1;batched_stakerNextTokenShiftIndex[marketIndex] +=1;...)
+Recommend adding an index withmarketIndexto the variables:
+stakerTokenShiftIndex_to_longShortMarketPriceSnapshotIndex_mappingstakerTokenShiftIndex_to_accumulativeFloatIssuanceSnapshotIndex_mapping
+Also consider shortening the variable names, this way mistakes can be spotted easier.
+Confirmed by Jason of Float Capital: Yes, you are totally right, it should use themarketIndexsince they are specific per market!
+JasoonS (Float) confirmed:
+Embarrassed by this one!Thank you for the report.Fixed!!

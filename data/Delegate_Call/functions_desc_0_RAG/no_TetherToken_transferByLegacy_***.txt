@@ -1,0 +1,224 @@
+The code provided defines a smart contract named TetherToken which is an ERC20 token with additional features such as pausing, blacklisting, and token deprecation. Below is a detailed explanation of how this contract works:
+
+### Contract Structure and Inheritance
+
+1. Inheritance:
+    Pausable: Allows the contract to be paused and unpaused, affecting certain functions.
+    StandardToken: Implements the standard ERC20 token functionality.
+    BlackList: Manages a blacklist of addresses that are restricted from certain operations.
+
+2. State Variables:
+    name, symbol, decimals: Basic token details.
+    upgradedAddress: Address of the new contract if this one is deprecated.
+    deprecated: Boolean flag indicating if the contract is deprecated.
+
+### Constructor
+
+solidity
+function TetherToken(uint _initialSupply, string _name, string _symbol, uint _decimals) public {
+    _totalSupply = _initialSupply;
+    name = _name;
+    symbol = _symbol;
+    decimals = _decimals;
+    balances[owner] = _initialSupply;
+    deprecated = false;
+}
+
+
+ Purpose: Initializes the token with an initial supply, name, symbol, and decimals.
+ Details:
+   _totalSupply is set to _initialSupply.
+   Token details (name, symbol, decimals) are set.
+   The initial supply is deposited into the owner's balance.
+   The deprecated flag is set to false.
+
+### Transfer Functions
+
+solidity
+function transfer(address _to, uint _value) public whenNotPaused {
+    require(!isBlackListed[msg.sender]);
+    if (deprecated) {
+        return UpgradedStandardToken(upgradedAddress).transferByLegacy(msg.sender, _to, _value);
+    } else {
+        return super.transfer(_to, _value);
+    }
+}
+
+
+ Purpose: Transfers tokens from the sender to another address.
+ Details:
+   Checks if the sender is not blacklisted.
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, calls the transfer function from the StandardToken contract.
+
+### TransferFrom Function
+
+solidity
+function transferFrom(address _from, address _to, uint _value) public whenNotPaused {
+    require(!isBlackListed[_from]);
+    if (deprecated) {
+        return UpgradedStandardToken(upgradedAddress).transferFromByLegacy(msg.sender, _from, _to, _value);
+    } else {
+        return super.transferFrom(_from, _to, _value);
+    }
+}
+
+
+ Purpose: Transfers tokens from one address to another using an allowance mechanism.
+ Details:
+   Checks if the _from address is not blacklisted.
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, calls the transferFrom function from the StandardToken contract.
+
+### BalanceOf Function
+
+solidity
+function balanceOf(address who) public constant returns (uint) {
+    if (deprecated) {
+        return UpgradedStandardToken(upgradedAddress).balanceOf(who);
+    } else {
+        return super.balanceOf(who);
+    }
+}
+
+
+ Purpose: Returns the token balance of a specific address.
+ Details:
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, calls the balanceOf function from the StandardToken contract.
+
+### Approve Function
+
+solidity
+function approve(address _spender, uint _value) public onlyPayloadSize(2  32) {
+    if (deprecated) {
+        return UpgradedStandardToken(upgradedAddress).approveByLegacy(msg.sender, _spender, _value);
+    } else {
+        return super.approve(_spender, _value);
+    }
+}
+
+
+ Purpose: Approves a spender to spend a certain amount of tokens on behalf of the sender.
+ Details:
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, calls the approve function from the StandardToken contract.
+
+### Allowance Function
+
+solidity
+function allowance(address _owner, address _spender) public constant returns (uint remaining) {
+    if (deprecated) {
+        return StandardToken(upgradedAddress).allowance(_owner, _spender);
+    } else {
+        return super.allowance(_owner, _spender);
+    }
+}
+
+
+ Purpose: Returns the remaining number of tokens that a spender is allowed to spend on behalf of the owner.
+ Details:
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, calls the allowance function from the StandardToken contract.
+
+### Deprecate Function
+
+solidity
+function deprecate(address _upgradedAddress) public onlyOwner {
+    deprecated = true;
+    upgradedAddress = _upgradedAddress;
+    Deprecate(_upgradedAddress);
+}
+
+
+ Purpose: Marks the current contract as deprecated and sets the address of the new contract.
+ Details:
+   Sets the deprecated flag to true.
+   Sets the upgradedAddress to _upgradedAddress.
+   Emits a Deprecate event with the new address.
+
+### TotalSupply Function
+
+solidity
+function totalSupply() public constant returns (uint) {
+    if (deprecated) {
+        return StandardToken(upgradedAddress).totalSupply();
+    } else {
+        return _totalSupply;
+    }
+}
+
+
+ Purpose: Returns the total supply of the token.
+ Details:
+   If the contract is deprecated, forwards the call to the upgraded contract.
+   Otherwise, returns the _totalSupply.
+
+### Issue Function
+
+solidity
+function issue(uint amount) public onlyOwner {
+    require(_totalSupply + amount > _totalSupply);
+    require(balances[owner] + amount > balances[owner]);
+
+    balances[owner] += amount;
+    _totalSupply += amount;
+    Issue(amount);
+}
+
+
+ Purpose: Issues new tokens and adds them to the owner's balance.
+ Details:
+   Ensures that the total supply and owner's balance will not overflow.
+   Adds the new tokens to the owner's balance and increases the total supply.
+   Emits an Issue event with the amount of new tokens.
+
+### Redeem Function
+
+solidity
+function redeem(uint amount) public onlyOwner {
+    require(_totalSupply >= amount);
+    require(balances[owner] >= amount);
+
+    _totalSupply = amount;
+    balances[owner] = amount;
+    Redeem(amount);
+}
+
+
+ Purpose: Redeems tokens from the owner's balance, reducing the total supply.
+ Details:
+   Ensures that the total supply and owner's balance are sufficient.
+   Reduces the owner's balance and the total supply by the specified amount.
+   Emits a Redeem event with the amount of redeemed tokens.
+
+### SetParams Function
+
+solidity
+function setParams(uint newBasisPoints, uint newMaxFee) public onlyOwner {
+    require(newBasisPoints < 20);
+    require(newMaxFee < 50);
+
+    basisPointsRate = newBasisPoints;
+    maximumFee = newMaxFee.mul(10decimals);
+
+    Params(basisPointsRate, maximumFee);
+}
+
+
+ Purpose: Sets new parameters for the token's fee structure.
+ Details:
+   Ensures that the new basis points and maximum fee are within acceptable limits.
+   Sets the basisPointsRate and maximumFee.
+   Emits a Params event with the new parameters.
+
+### Events
+
+ Issue(uint amount): Emitted when new tokens are issued.
+ Redeem(uint amount): Emitted when tokens are redeemed.
+ Deprecate(address newAddress): Emitted when the contract is deprecated.
+ Params(uint feeBasisPoints, uint maxFee): Emitted when new parameters are set.
+
+### Summary
+
+The TetherToken contract extends the standard ERC20 token functionality with additional features such as pausing, blacklisting, and token deprecation. It allows for the issuance and redemption of tokens, and provides mechanisms to forward calls to an upgraded contract if the current one is deprecated. The contract is designed to be secure and flexible, with checks to prevent overflows and ensure that operations are only performed by authorized parties.

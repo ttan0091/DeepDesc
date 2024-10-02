@@ -1,0 +1,21 @@
+[H-13] TOFTtriggerSendFromcan be used to steal all the balance
+Submitted bywindhustler
+triggerSendFrom->sendFromDestinationmessage pathway can be used to steal all the balance of theTapiocaOFTandmTapiocaOFT` tokens in case when their underlying tokens is native gas token.
+TOFTs that hold native tokens are deployed witherc20 addressset to address zero, so whileminting you need to transfer value.
+Proof of Concept
+The attack flow is the following:
+Attacker callstriggerSendFromwithairdropAdapterParamsof typeairdropAdapterParamsV1which don’t airdrop any value on the remote chain but just deliver the message.On the other handlzCallParamsare of typeadapterParamsV2which are used to airdrop the balance from the destination chain to another chain to the attacker.
+structLzCallParams{addresspayablerefundAddress;// => address of the attackeraddresszroPaymentAddress;// => doesn't matterbytesadapterParams;//=> airdropAdapterParamsV2}
+Whereby thesendFromData.adapterParamswould be encoded in the following way:
+functionencodeAdapterParamsV2()public{// https://layerzero.gitbook.io/docs/evm-guides/advanced/relayer-adapter-parameters#airdropuint256gasLimit=250_000;// something enough to deliver the messageuint256airdroppedAmount=maxairdropcapdefinedathttps://layerzero.gitbook.io/docs/evm-guides/advanced/relayer-adapter-parameters#airdrop. => 0.24 for ethereum, 1.32 for bsc, 681 for polygon etc.addressattacker=makeAddr("attacker");// => address of the attackerbytesmemoryadapterParams=abi.encodePacked(uint16(2),gasLimit,airdroppedAmount,attacker);}
+When this is received on the remote inside thesendFromDestinationISendFrom(address(this)).sendFrom{value: address(this).balance}is instructed by the maliciousISendFrom.LzCallParams memory callParamsto actually airdrop the max amount allowed by LayerZero to the attacker on thelzDstChainId.Since there is a cap on the maximum airdrop amount this type of attack would need to be executed multiple times to drain the balance of the TOFT.
+The core issue at play here is thatBaseTOFTdelegatecalls into theBaseTOFTOptionsModuleand thus the BaseTOFT is themsg.senderforsendFromfunction.
+There is also another simpler attack flow possible:
+SincesendFromDestinationpasses as value whole balance of the TapiocaOFT it is enough to specify the refundAddress incallParamsas the address of the attacker.This way the whole balance will be transferred to the_lzSendand any excess will be refunded to the_refundAddress.This is how layer zero works.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+One of the ways of tackling this issue is during thetriggerSendFromto:
+Not allowingairdropAdapterParamsandsendFromData.adapterParamsparams to be passed as bytes but rather asgasLimitandairdroppedAmount, from which you would encode eitheradapterParamsV1oradapterParamsV2.And then on the receiving side check and send with value only the amount the user has airdropped.
+// Only allow the airdropped amount to be used for another messageISendFrom(address(this)).sendFrom{value:aidroppedAmount}(from,lzDstChainId,LzLib.addressToBytes32(from),amount,callParams);
+0xRektora (Tapioca) confirmed

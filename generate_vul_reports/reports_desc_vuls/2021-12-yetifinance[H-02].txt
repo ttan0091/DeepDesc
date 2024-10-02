@@ -1,0 +1,26 @@
+Type of vulnerability: Incorrect Token Balance Check during Rebase
+
+Cause of vulnerability: The contract uses the entire balance of Yeti tokens instead of the amount bought back from the market during the rebase process, leading to an incorrect calculation of the additional Yeti token balance.
+
+Execution process: During the rebase function, the contract calculates the additional Yeti token balance based on the entire balance of Yeti tokens held by the contract, rather than the actual amount of Yeti tokens bought back. This can result in the contract adding more tokens to `effectiveYetiTokenBalance` than it actually owns, leading to a deficit in the contract's net holdings.
+
+Vulnerable code:
+```solidity
+function rebase() external {
+    ...
+    uint256 yetiTokenBalance = yetiToken.balanceOf(address(this));
+    uint256 valueOfContract = _getValueOfContract(yetiTokenBalance);
+    uint256 additionalYetiTokenBalance = ...
+    if (yetiTokenBalance < additionalYetiTokenBalance) {
+        additionalYetiTokenBalance = yetiTokenBalance;
+    }
+    effectiveYetiTokenBalance = effectiveYetiTokenBalance.add(additionalYetiTokenBalance);
+    ...
+}
+
+function _getValueOfContract(uint _yetiTokenBalance) internal view returns (uint256) {
+    uint256 adjustedYetiTokenBalance = _yetiTokenBalance.sub(effectiveYetiTokenBalance);
+    uint256 yusdTokenBalance = yusdToken.balanceOf(address(this));
+    return div(lastBuybackPrice.mul(adjustedYetiTokenBalance), (1e18)).add(yusdTokenBalance);
+}
+```

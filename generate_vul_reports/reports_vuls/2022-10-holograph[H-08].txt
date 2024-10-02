@@ -1,0 +1,38 @@
+[H-08] Gas limit check is inaccurate, leading to an operator being able to fail a job intentionally
+Submitted by 0xA5DF, also found by Trust and V_B
+HolographOperator.sol#L316
+There’s a check at line 316 that verifies that there’s enough gas left to execute theHolographBridge.bridgeInRequest()with thegasLimitset by the user, however the actual amount of gas left during the call is less than that (mainly due to the1/64rule, see below).An attacker can use that gap to fail the job while still having theexecuteJob()function complete.
+Impact
+The owner of the bridged token would loose access to the token since the job failed.
+Proof of Concept
+Besides using a few units of gas between the check and the actual call, there’s also a rule that only 63/64 of the remaining gas would be dedicated to an (external) function call. Since there are 2 external function calls done (nonRevertingBridgeCall()and the actual call to the bridge)~2/64of the gas isn’t sent to the bridge call and can be used after the bridge call runs out of gas.
+The following PoC shows that if the amount of gas left before the call is at least 1 million then the execution can continue after the bridge call fails:
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.0;import"forge-std/Test.sol";contractContractTestisTest{eventFailedOperatorJob(bytes32jobHash);uint256private_inboundMessageCounter;mapping(bytes32=>bool)private_failedJobs;constructor(){_inboundMessageCounter=5;}functiontestGas64()public{this.entryPoint{gas:1000000}();}Bridgebridge=newBridge();eventGasLeftAfterFail(uintleft);functionentryPoint()public{console2.log("Gas left before call: ",gasleft());bytes32hash=0x987744358512a04274ccfb3d9649da3c116cd6b19c535e633ef8529a80cb06a0;trythis.intermediate(){}catch{// check out how much gas is left after the call to the bridge failedconsole2.log("Gas left after failure: ",gasleft());// simulate operations done after failure_failedJobs[hash] =true;emitFailedOperatorJob(hash);}++_inboundMessageCounter;console2.log("Gas left at end: ",gasleft());}functionintermediate()public{bridge.bridgeCall();}}contractBridge{eventDone(uintgasLeft);uint256[]myArr;functionbridgeCall()public{for(uinti=1;i<=100;i++){myArr.push(i);}// this line would never be reached, we'll be out of gas beforehandemitDone(gasleft());}}
+Output of PoC:
+Gas left before call:  999772Gas left after failure:  30672Gas left at end:  1628
+Side note: due to some bug in forge_inboundMessageCounterwould be considered warm even though it’s not necessarily the case. However in a real world scenario we can warm it up if the selected operator is a contract and we’er using another operator contract to execute a job in the same tx beforehand.
+Reference for the1/64rule -EIP-150. Also check outevm.codes.
+Recommended Mitigation Steps
+Modify the required amount of gas left to gasLimit + any amount of gas spent before reaching thecall(), then multiply it by32/30to mitigate the1/64rule (+ some margin of safety maybe).
+gzeon (judge) commented:
+There are some risks but would require the nested call gas limit to be pretty high (e.g. 1m used in the poc) to have enough gas (1/64) left afterward so that it doesn’t revert due to out-of-gas.
+Trust (warden) commented:
+@gzeon - actually this is not a limitation. When the call argument passes a gaslimit which is lower than the available gas, it instantly reverts with no gas wasted. Therefore we will have64/64of the gas amount to work with post-revert.I have explained this in duplicate report#437.
+0xA5DF (warden) commented:
+When the call argument passes a gaslimit which is lower than the available gas, it instantly reverts with no gas wasted.You meanhigherthan the available gas?I thought the same, but doing some testing and reading the Yellow Paper it turns out it wouldn’t revert just because the gas parameter is higher than the available gas.You can modify the PoC above to test that too.
+Trust (warden) commented:
+You can check this example in Remix:contract Storage {/*** @dev Return value* @return value of 'number'*/function gas_poc() public  returns (uint256, uint256){uint256 left_gas = gasleft();address this_address = address(this);assembly {let result := call(/// @dev gas limit is retrieved from last 32 bytes of payload in-memory valueleft_gas,/// @dev destination is bridge contractthis_address,/// @dev any value is passed along0,/// @dev data is retrieved from 0 index memory position0,/// @dev everything except for last 32 bytes (gas limit) is sent0,0,0)}uint256 after_left_gas = gasleft();return (left_gas, after_left_gas);}fallback() external {}}We pass a lower gas limit than what we have in the “call” opcode, which reverts.The function returns{"0": "uint256: 3787","1": "uint256: 3579"}Meaning only the gas consumed by the call opcode was deducted, not 63/64.
+0xA5DF (warden) commented:
+In your example the fallback function is actually being called, it’s just doesn’t use much gas, I’ve added an event to confirm that:contractStorage{eventCool();/***@devReturn value*@returnvalue of 'number'*/functiongas_poc()publicreturns(uint256,uint256){uint256left_gas=gasleft();addressthis_address=address(this);assembly{letresult:=call(/// @dev gas limit is retrieved from last 32 bytes of payload in-memory valueleft_gas,/// @dev destination is bridge contractthis_address,/// @dev any value is passed along0,/// @dev data is retrieved from 0 index memory position0,/// @dev everything except for last 32 bytes (gas limit) is sent0,0,0)}uint256after_left_gas=gasleft();return(left_gas,after_left_gas);}fallback()external{emitCool();}}Output:
+gzeon (judge) commented:
+A child call can never use more than 63/64 of gasleft post eip-150.
+Trust (warden) commented:
+@0xA5DF - Yeah , it seems my setup when I tested this during the contest was wrong, because it instantly reverted in the CALL opcode.Page 37 of the Yellow book describes the GASCAP as minimum of gasLeft input and current gas counter minus costs:Thanks for the good direct counterexample.@gzeon - Right, we were discussing if call to child will instantly revert becauserequestedGas > availableGas, but it doesn’t.
+gzeon (judge) commented:
+That’s true, and the code also doesn’t forward a limited amount of gas explicitly too.
+Trust (warden) commented:
+The point was that executor can always craft supplied gas to the contract, so that during the CALL opcode, gas left would be smaller than requested gas limit. If EVM behavior reverts in this check, we have deterministic failing ofbridgeIn.
+alexanderattar (Holograph) confirmed and commented:
+Nice find! Gas limit sent by operator could be used maliciously to ensure that job fails. This will be updated to mitigate the issue observed.
+ACC01ADE (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes

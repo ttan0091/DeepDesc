@@ -1,0 +1,28 @@
+[H-06] BalancerStrategy_withdrawusesBPT_IN_FOR_EXACT_TOKENS_OUTwhich can be attack to cause loss to all depositors
+Submitted byGalloDaSballo
+Withdrawals can be manipulated to cause complete loss of all tokens.
+The BalancerStrategy accounts for user deposits in terms of the BPT shares they contributed, however, for withdrawals, it estimates the amount of BPT to burn based on the amount of ETH to withdraw, which can be manipulated to cause a total loss to the Strategy.
+Deposits of weth are done via userData.joinKind set to1, which is extracted here in the generic Pool Logic:https://etherscan.io/address/0x5c6ee304399dbdb9c8ef030ab642b10820db8f56#code#F24#L49
+The interpretation (by convention is shown here):https://etherscan.io/address/0x5c6ee304399dbdb9c8ef030ab642b10820db8f56#code#F24#L49
+enum JoinKind { INIT, EXACT_TOKENS_IN_FOR_BPT_OUT, TOKEN_IN_FOR_EXACT_BPT_OUT }
+Which means that the deposit is usingEXACT_TOKENS_IN_FOR_BPT_OUTwhich is safe in most circumstances (Pool Properly Balanced, with minimum liquidity).
+BPT_IN_FOR_EXACT_TOKENS_OUTis vulnerable to manipulation
+_vaultWithdrawuses the following logic to determine how many BPT to burn:
+https://github.com/Tapioca-DAO/tapioca-yieldbox-strategies-audit/blob/05ba7108a83c66dada98bc5bc75cf18004f2a49b/contracts/balancer/BalancerStrategy.sol#L224-L242
+uint256[]memoryminAmountsOut=newuint256[](poolTokens.length);for(uint256i=0;i<poolTokens.length;i++) {if(poolTokens[i] ==address(wrappedNative)) {minAmountsOut[i] =amount;index=int256(i);}else{minAmountsOut[i] =0;}}IBalancerVault.ExitPoolRequestmemoryexitRequest;exitRequest.assets=poolTokens;exitRequest.minAmountsOut=minAmountsOut;exitRequest.toInternalBalance=false;exitRequest.userData=abi.encode(2,exitRequest.minAmountsOut,pool.balanceOf(address(this)));
+This query logic is using2, which Maps out toBPT_IN_FOR_EXACT_TOKENS_OUTwhich means Exact Out, with any (all) BPT IN, this means that the swapper is willing to burn all tokens:https://etherscan.io/address/0x5c6ee304399dbdb9c8ef030ab642b10820db8f56#code#F24#L51
+enum ExitKind { EXACT_BPT_IN_FOR_ONE_TOKEN_OUT, EXACT_BPT_IN_FOR_TOKENS_OUT, BPT_IN_FOR_EXACT_TOKENS_OUT }
+This meets the 2 prerequisite for stealing value from the vault by socializing loss due to single sided exposure:
+The request is for at leastamountWETHThe request is usingBPT_IN_FOR_EXACT_TOKENS_OUT
+Which means the strategy will accept any slippage, in this case 100%, causing it to take a total loss for the goal of allowing a withdrawal, at the advantage of the attacker and the detriment of all other depositors.
+POC
+The requirement to trigger the loss are as follows:
+Deposit to have some amount of BPTs deposited into the strategyImbalance the Pool to cause pro-rata amount of single token to require burning a lot more BPTsWithdraw from the strategy, the strategy will burn all of the BPTs it owns (more than the shares)Rebalance the pool with the excess value burned from the strategy
+Further Details
+Specifically, in withdrawing one Depositor Shares, the request would end up burning EVERYONEs shares, causing massive loss to everyone.
+This has already been exploited and explained in Yearns Disclosure:
+https://github.com/yearn/yearn-security/blob/master/disclosures/2022-01-30.md
+More specifically this finding can cause a total loss, while trying to withdraw tokens for a single user, meaning that an attacker can setup the pool to cause a complete loss to all other stakers.
+Mitigation Step
+UseEXACT_BPT_IN_FOR_TOKENS_OUTand denominate the Strategy in LP tokens to avoid being attacked via single sided exposure.
+cryptotechmaker (Tapioca) confirmed

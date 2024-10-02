@@ -1,0 +1,19 @@
+[H-03] Reentrancy in settleAuction(): malicious publisher can bypass index timelock mechanism, inject malicious index, and rug the basket
+Submitted by kenzo, also found by itsmeSTYJ and jonah1005
+ThesettleAuction()function callswithdrawBounty()before settingauctionOngoing = false, thereby allowing reentrancy.
+Impact
+A malicious publisher can bypass the index timelock mechanism and publish new index which the basket’s users won’t have time to respond to.
+At worst case, this means setting weights that allow the publisher to withdraw all the basket’s underlying funds for himself, under the guise of a valid new index.
+Proof of Concept
+The publisher (a contract) will propose new valid index and bond the auction.To settle the auction, the publisher will execute the following steps in the same transaction:Add a bounty of an ERC20 contract with a malicioustransfer()function.Settle the valid new weights correctly (usingsettleAuction()with the correct parameters, and passing the malicious bounty id).settleAuction()will callwithdrawBounty()which upon transfer will call the publisher’s malicious ERC20 contract.The contract will callsettleAuction()again, with empty parameters. Since the previous call’s effects have already set all the requirements to be met,settleAuction()will finish correctly and callsetNewWeights()which will set the new valid weights and setpendingWeights.pending = false.Still inside the malicious ERC20 contract transfer function, the attacker will now call the basket’spublishNewIndex(), with weights that will transfer all the funds to him upon his burning of shares. This call will succeed to set new pending weights as the previous step setpendingWeights.pending = false.Now the maliciouswithdrawBounty()has ended, and the originalsettleAuction()is resuming, but now with malicious weights inpendingWeights(set in step 6).settleAuction()will now callsetNewWeights()which will set the basket’s weights to be the malicious pending weights.NowsettleAuctionhas finished, and the publisher (within the same transaction) willburn()all his shares of the basket, thereby transferring all the tokens to himself.
+POC exploit:
+Password to both files: “exploit”.
+AttackPublisher.sol , to be put under contracts/contracts/Exploit:https://pastebin.com/efHZjstSExploitPublisher.test.js , to be put under contracts/test:https://pastebin.com/knBtcWkk
+Tools Used
+Manual analysis, hardhat.
+Recommended Mitigation Steps
+InsettleAuction(), movebasketAsERC20.transfer()andwithdrawBounty()to the end of the function, conforming with Checks Effects Interactions pattern.
+frank-beard (defiProtocol) confirmed
+Alex the Entreprenerd (judge) commented:
+This is a re-entrancy finding.There is no denying that the code is vulnerable to re-entrancyThe warden identified the way to exploit re-entrancy by using a malicious bounty token.I think the finding is valid and the warden has shown how to run re-entrnacy.That said the POC the warden shows requires callingpublishNewIndexwhich is aonlyPublisherfunction.
+This exploit would be contingent on the publisher rugging the basket.The code is:Vulnerable to re-entancyThe warden showed how to trigger itDespite the fact that the POC is flawed, I believe this finding highlights a different vector for re-entrancy (bounty token transfers) as such I agree with a high severity

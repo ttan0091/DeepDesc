@@ -1,0 +1,26 @@
+[H-19]twTAP.participate()can be permanently frozen due to lack of access control on host-chain-only operations
+Submitted bypeakbolt
+twTAPis a omnichain NFT (ONFT721) that will be deployed on all supported chains.
+However, there are no access control for operations meant for execution on the host chain only, such asparticipate(), which mintstwTAP.
+The implication of not restrictingparticipate()to host chain is that an attacker can lockTAPand participate on other chain to minttwTAPwith a tokenId that does not exist on the host chain yet. The attacker can then send thattwTAPto the host chain using the inheritedsendFrom(), to permanently freeze thetwTAPcontract asparticipate()will fail when attempting to mint an existingtokenId.
+It is important to restrict minting to the host chain so thatmintedTWTap(which keeps track of last minted tokenId) is only incremented at one chain, to prevent duplicate tokenId. That is because thetwTAPcontracts on each chain have their ownmintedTWTapvariable and there is no mechanism to sync them.
+Detailed Explanation
+InTwTAP, there are no modifiers or checks to ensureparticipte()can only be called on the host chain. So we can use it to mint atwTAPon a non-host chain.https://github.com/Tapioca-DAO/tap-token-audit/blob/59749be5bc2286f0bdbf59d7ddc258ddafd49a9f/contracts/governance/twTAP.sol#L252-L256
+functionparticipate(address_participant,uint256_amount,uint256_duration)externalreturns(uint256tokenId) {require(_duration>=EPOCH_DURATION,"twTAP: Lock not a week");
+ThetokenIdto be minted is determined bymintedTWTap, which is not synchronized across the chains.
+https://github.com/Tapioca-DAO/tap-token-audit/blob/59749be5bc2286f0bdbf59d7ddc258ddafd49a9f/contracts/governance/twTAP.sol#L309-L310
+functionparticipate(...//@audit tokenId to mint is obtained from `mintedTWTap`tokenId= ++mintedTWTap;_safeMint(_participant,tokenId);
+Suppose on host chain, the last mintedtokenIdisN. From a non-host chain, we can usesendFrom()to send over atwTAPwithtokenIdN+1and mint a newtwTAPwith the sametokenId(see_creditTo()below). This will not incrementmintedTWTapon the host chain, causing a de-sync.
+<br>https:function _creditTo(uint16, address _toAddress, uint _tokenId) internal virtual override{require(!_exists(_tokenId) || (_exists(_tokenId) &&ERC721.ownerOf(_tokenId) ==address(this)));if(!_exists(_tokenId)) {//@audit transfering token N+1 will mint it as it doesnt exists. this will not increment mintedTwTap_safeMint(_toAddress,_tokenId);}else{_transfer(address(this),_toAddress, _tokenId);}}
+On the host chain,participate()will always revert when it tries to mint the nexttwTAPwithtokenIdN+1, as it now exists on the host chain due tosendFrom().
+https://github.com/Tapioca-DAO/tap-token-audit/blob/59749be5bc2286f0bdbf59d7ddc258ddafd49a9f/contracts/governance/twTAP.sol#L309-L310
+functionparticipate(...tokenId= ++mintedTWTap;//@audit this will always revert when tokenId already exists_safeMint(_participant,tokenId);
+Impact
+An attacker will be able to permanent freeze thetwTAP.participate(). This will preventTAPholders from participating in the governance and from claiming rewards, causing loss of rewards to users.
+Proof of Concept
+Consider the following scenario,
+Suppose we start withtwTAP.mintedTwTap == 0on all the chains, so next tokenId will be1.Attackerparticipate()with 1 TAP and minttwTAPon a non-host chain withtokenId1.Attacker sends the mintedtwTAPacross to host chain usingtwTAP.sendFrom()to permanently freeze thetwTAPcontract.On the host chain, thetwTAPcontract receives the cross chain message and mint atwTAPwithtokenId1to attacker as it does not exist on host chain yet. (Note this cross-chain transfer is part of Layer Zero ONFT71 mechanism)Now on the host chain, we have atwTAPwithtokenId1butmintedTwTapis still0. That means when users try toparticipate()on the host chain, it will try to mint atwTAPwithtokenId1, and that will fail as it now exists on the host chain. At this pointparticipate()will be permanently DoS, affecting governance and causing loss of rewards.Note that the attacker can then transfer thetwTAPback to the source chain and exit position to retrieve the lockedTAPtoken. However, the host chain still remain frozen as the owner oftokenId1will now betwTAPcontract itself after the cross chain transfer.
+Note that the attack is still possible even whenmintedTwTap > 0on host chain as attacker just have to repeatly mint on the non-host chain till it obtain the requiredtokenId.
+Recommended Mitigation Steps
+Add in access control to prevent host-chain-only operations such asparticipate()from being executed on other chains .
+0xRektora (Tapioca) confirmed

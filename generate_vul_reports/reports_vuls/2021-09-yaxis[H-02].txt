@@ -1,0 +1,19 @@
+[H-02]  set cap breaks vault’s Balance
+Submitted by jonah1005, also found by 0xsanson
+Impact
+In controller.sol’s functionsetCap, the contract wrongly handles_vaultDetails[_vault].balance. While the balance should be decreased by the difference of strategies balance, it subtracts the remaining balance of the strategy. SeeController.sol L262-L278._vaultDetails[_vault].balance = _vaultDetails[_vault].balance.sub(_balance);
+This would result invaultDetails[_vault].balancebeing far smaller than the strategy’s value. A user would trigger the assertion atController.sol#475and the fund would be locked in the strategy.
+ThoughsetCapis a permission function that only the operator can call, it’s likely to be called and the fund would be locked in the contract. I consider this a high severity issue.
+Proof of Concept
+We can trigger the issue by setting the cap 1 wei smaller than the strategy’s balance.
+strategy_balance = strategy.functions.balanceOf().call()controller.functions.setCap(vault.address, strategy.address, strategy_balance -1, dai.address).transact()## this would be revertedvault.functions.withdrawAll(dai.address).transact()
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+I believe the dev would spot the issue in the test if_vaultDetails[_vault].balanceis a public variable.
+One possible fix is to subtract the difference of the balance.
+uintpreviousBalance=IStrategy(_strategy).balanceOf();_vaultDetails[_vault].balance.sub(previousBalance.sub(_amount));
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/1to verify resolution.
+GalloDaSballo (judge) commented:
+High risk vulnerability due to incorrect logic which can impact protocol functionalitySponsor has mitigated

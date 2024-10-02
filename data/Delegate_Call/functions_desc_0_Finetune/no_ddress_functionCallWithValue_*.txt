@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Failure to update the Reserve Ratio (crrN) after a user adds or removes liquidity, resulting in the initialPegPerToken being calculated using the outdated crrN.
+Working process of vulnerable code: 
+1. The getExchangeRate() function incorrectly calculates the initialPegPerToken by using the current crrN instead of the crrN at the inception of the token pool.
+2. Users who add or remove liquidity receive projectedRewards based on the outdated initialPegPerToken.
+3. The initializeLiquidity function allows a user to initialize liquidity in a pool with the crrPercentage set to 8%, which enables the attacker to manipulate initialPegPerToken and subsequently the projectedRewards.
+4. An attacker adds a negligible amount of liquidity and adds rewards, causing initialPegPerToken to increase.
+5. The attacker calls removeLiquidityAndRewards() and receives the token's balance in the pool due to the inflated initialPoolPerToken.
+6. The value of initialPegPerToken continues to increase as the attacker claims more rewards, leading users to fear losing their tokens as they swap.
+7. Users start removing their liquidity due to fears of impermanent loss, causing the pool's ratio to increase to 95% of the total reserves.
+8. The reentrancy attack is then performed by removing most of the liquidity, adding rewards, and claiming rewards, whereupon the inflated initialPegPerToken is once again exploited.
+9. This process continues until the attacker owns the entire pool by continuously extracting the inflated initialPegPerToken and rewards.
+Recommended fix: The initializeLiquidity function needs to calculate initialPegPerToken based on the crrN and crrD at the token's inception, preventing manipulation of the reward distribution.

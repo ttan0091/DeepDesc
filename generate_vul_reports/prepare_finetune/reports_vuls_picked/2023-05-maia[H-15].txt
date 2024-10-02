@@ -1,0 +1,26 @@
+Type of vulnerability: Gas Inefficiency Leading to Unpredictable Execution Failure
+
+Cause of vulnerability: The condition `gasLeft - gasAfterTransfer > TRANSFER_OVERHEAD` is always true due to the high gas cost of the transfer operation, which exceeds the predefined `TRANSFER_OVERHEAD` value.
+
+Execution process: 
+1. The function `_payExecutionGas` is called, which records the initial gas left (`gasLeft`).
+2. It then performs an ETH transfer using `SafeTransferLib.safeTransferETH`.
+3. After the transfer, it records the gas left again (`gasAfterTransfer`).
+4. It checks if the difference between the initial and final gas left exceeds `TRANSFER_OVERHEAD`.
+5. If the condition is true, it forces a revert by calling `_forceRevert()`.
+
+Vulnerable code:
+```solidity
+/// Save gas left
+uint256 gasLeft = gasleft();
+// Transfer gas remaining to recipient
+SafeTransferLib.safeTransferETH(_recipient, gasRemaining - minExecCost);
+// Save Gas
+uint256 gasAfterTransfer = gasleft();
+// Check if sufficient balance
+if (gasLeft - gasAfterTransfer > TRANSFER_OVERHEAD) {
+    _forceRevert();
+    return;
+}
+```
+Link to vulnerable code: [BranchBridgeAgent.sol#L1029-L1054](https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L1029-L1054)

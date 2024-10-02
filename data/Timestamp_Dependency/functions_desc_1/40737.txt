@@ -1,0 +1,32 @@
+This code defines a smart contract named DappRegistry, which manages and checks authorizations for various wallets, spenders, and destinations. The contract uses two mappings to store and retrieve authorization data.
+
+Here’s a detailed explanation of how this function works:
+
+1. Data Structures:
+    enabledRegistryIds: A public mapping that associates an Ethereum address (wallet) with a bytes32 value. This value represents the enabled registries for the wallet.
+    authorisations: A nested mapping where the first key is a uint8 (registry ID), and the second key is an Ethereum address (spender). The value is a bytes32 that contains authorization details.
+
+2. Function isAuthorised:
+    Parameters:
+      _wallet: The address of the wallet whose authorization is being checked.
+      _spender: The address of the spender (the entity trying to spend from the wallet).
+      _to: The address of the destination where the funds are being sent.
+    Return Value: A boolean indicating whether the spender is authorized to spend from the wallet to the specified destination.
+
+3. Function Logic:
+    Initialization:
+      registries: Converts the bytes32 value from enabledRegistryIds[_wallet] to a uint for bitwise operations.
+    Loop Through Registries:
+      The loop iterates over registry IDs starting from 0. It continues as long as the registry ID is 0 or the corresponding bit in registries is set (indicating the registry is enabled).
+      isEnabled: Checks if the current registry ID is enabled by performing a bitwise AND operation with 1.
+    Check Authorization:
+      If the registry is enabled, it retrieves the bytes32 value from authorisations for the current registry ID and spender, converting it to a uint.
+      validAfter: Extracts the lower 64 bits of the auth value, which represents a timestamp indicating when the authorization becomes valid.
+      Validation:
+        If validAfter is greater than 0 and less than or equal to the current block timestamp (block.timestamp), the authorization is considered valid.
+        filter: Extracts the address from the upper 96 bits of the auth value. This address is used to further filter the authorization (though the function currently does not use it for additional checks).
+        If the conditions are met, the function returns true, indicating the spender is authorized.
+    Return False:
+      If no valid authorization is found after iterating through all relevant registries, the function returns false.
+
+This function is crucial for the contract's authorization mechanism, allowing it to check if a spender is authorized to spend from a wallet to a specific destination based on the enabled registries and their respective authorization details.

@@ -1,0 +1,25 @@
+Type of vulnerability: Reentrancy or Arithmetic Underflow/Overflow
+Explanation of the working process: 
+1. Owner of PerfectToken deploys PerfectSwap
+2. PerfectSwap is initialized: 
+   - tokenA is set to PerfectToken's address
+   - router is set as the deployer (owner)
+   - uniswapV2Router is initialized
+3. Ether is injected to the PerfectSwap with enough A and B reserves. 
+4. PerfectToken total supply is increased and transfer token to protocol's address
+5. Owner executes `update` to set the balances on the swaps to the minted tokens based on A.
+6. Owner approves the swap to spend the needed tokens
+7. Owner calls `skim` then `create_pair` via swap_event to create the pair and lock the tokens.
+8. TransferHandlerWithdraw._callDriip(msg.sender) executes the callback that mints the pool shares for the locked tokens.
+9. It creates a swap_event where the token should be fetched and sends these tokens to the created pair.
+10. A conversion is initiated by the router, thus minting more pool shares to the callback. The callback should also be able to claim the amount of created pool shares.
+11. User pays out to the DEX and swaps the immediately minted pool shares back to the tokens.
+12. Router has to have a callback which utilizes the skim function to increment the balance of the swap event to the left over tokens.
+13. There has to be liquidity proof which should get the pool share of B and A, as well as the A balance, making everything below `perfectWithdraw` reachable.
+14. On the `PerfectSwap` salve, which opens an another `PerfectSwap` salve and gains the approval from `dad`.
+15. It skips `_safeEngage()` that should ensure `PerfectToken.balanceOf()` can be converted correctly.
+16. It bets on draining the balance of the `PerfectSwap` salve to zero.
+17. It utilizes the `withdraw()` to get ETH. `withdraw()` does not utilize `_safeEngage`.
+18. `msg.sender` calls `balanceOf()` - the Driip Instant Withdrawal receiver. 
+19. `_buryETH()` tries to fetch tokens back based on balance of `PerfectSwap` salve which happens to be manipulable by `from` in `unlock` callback
+20. Overflow happens because instead of draining initial balance gains, it gains enough to overflow the uint256.

@@ -1,0 +1,18 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Lack of proper access control in the `incrementWindow` function
+Execution process: An attacker can create a fake `RoyaltyVault` contract that meets the interface requirements and then call the `incrementWindow` function of the `Splitter` contract with a fake `royaltyAmount`, causing the `balanceForWindow` to be inflated. This allows the attacker to subsequently claim more tokens than they are entitled to.
+Vulnerable code: 
+```solidity
+function incrementWindow(uint256 royaltyAmount) public returns (bool) {
+    uint256 wethBalance;
+    require(IRoyaltyVault(msg.sender).supportsInterface(IID_IROYALTY),"Royalty Vault not supported");
+    require(IRoyaltyVault(msg.sender).getSplitter() == address(this),"Unauthorised to increment window");
+    wethBalance = IERC20(splitAsset).balanceOf(address(this));
+    require(wethBalance >= royaltyAmount, "Insufficient funds");
+    require(royaltyAmount > 0, "No additional funds for window");
+    balanceForWindow.push(royaltyAmount);
+    currentWindow += 1;
+    emit WindowIncremented(currentWindow, royaltyAmount);
+    return true;
+}
+```

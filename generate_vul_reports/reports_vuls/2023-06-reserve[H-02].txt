@@ -1,0 +1,22 @@
+[H-02] A new era might be triggered despite a significant value being held in the previous era
+Submitted by0xA5DF
+https://github.com/reserve-protocol/protocol/blob/c4ec2473bbcb4831d62af55d275368e73e16b984/contracts/p1/StRSR.sol#L441-L444https://github.com/reserve-protocol/protocol/blob/c4ec2473bbcb4831d62af55d275368e73e16b984/contracts/p1/StRSR.sol#L457-L460
+When RSR seizure occurs the staking and drafting rate is adjusted accordingly, if any of those rates is above some threshold then a new era begins (draft or staking era accordingly), wiping out all of the holdings of the current era.
+The assumption is that if the rate is above the threshold then there’s not much staking or drafts left after the seizure (and therefore it makes sense to begin a new era).
+However, there might be a case where a previous seizure has increased the staking/draft rate close to the threshold, and then even a small seizure would make it cross this threshold. In that case the total value of staking or drafts can be very high, and they will all be wiped out by starting a new era.
+Impact
+Stakers will lose their holdings or pending drafts.
+Proof of Concept
+Consider the following scenario:
+Max stake rate is 1e9A seizure occurs and the new rate is now 91e7Not much staking is left after the seizure, but as time passes users keep staking bring back the total stakes to a significant valueA 10% seizure occurs, this causes the staking rate to cross the threshold (getting to 1.01e9) and start a new era
+This means the stakings were wiped out despite holding a significant amount of value, causing a loss for the holders.
+Recommended Mitigation Steps
+This one is a bit difficult to mitigate.
+One way I can think of is to add a ‘migration’ feature, where in such cases a new era would be created but users would be able to transfer the funds that they held in the previous era into the new era. But this would require some significant code changes and checking that this doesn’t break anything or introduces new bugs.
+tbrent (Reserve) commented:
+@0xA5DF thoughts on a governance function that requires the ratio be out of bounds, that doesbeginEra()and/orbeginDraftEra()?The idea is that stakers can mostly withdraw, and since governance thresholds are all percentage, vote to immolate themselves and re-start the staking pool. I think it should treatbeginEra()andbeginDraftEra()separately, but I’m not confident in that yet.
+tbrent (Reserve) acknowledged and commented:
+We’re still not sure how to mitigate this one. Agree it should be considered HIGH and a new issue.
+Reserve mitigated:
+Adds governance function to manually push the era forward.PR:https://github.com/reserve-protocol/protocol/pull/888
+Status:Mitigation confirmed. Full details in reports from0xA5DF,ronnyx2017, andrvierdiiev- and also shared below in theMitigation Reviewsection.

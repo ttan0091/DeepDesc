@@ -1,0 +1,37 @@
+This code consists of a library named SafeMath and a contract named EtherStore. The SafeMath library provides a function to safely subtract two unsigned integers, while the EtherStore contract manages balances and allows users to withdraw funds with certain constraints.
+
+Here’s a detailed explanation of how this code works:
+
+### Library SafeMath
+
+The SafeMath library defines a single function sub which is used to safely subtract one unsigned integer from another.
+
+ Function Name: sub
+ Parameters:
+   a: The first unsigned integer (uint256).
+   b: The second unsigned integer (uint256).
+ Returns: The result of the subtraction (uint256).
+ Behavior:
+   It first checks if b is less than or equal to a using the assert function. This ensures that the subtraction will not result in an underflow (i.e., a negative number, which is not possible for unsigned integers).
+   If the condition is met, it returns the result of a  b.
+
+### Contract EtherStore
+
+The EtherStore contract uses the SafeMath library for safe arithmetic operations and manages user balances and withdrawals.
+
+ State Variables:
+   withdrawalLimit: A public uint256 variable set to 1 ether, representing the maximum amount a user can withdraw at once.
+   balances: A public mapping that associates addresses with their balances (uint256).
+
+ Function Name: withdrawFunds
+ Parameters:
+   _weiToWithdraw: The amount of wei (smallest unit of ether) the user wants to withdraw (uint256).
+ Behavior:
+   Step 1: It checks if the user's balance is greater than or equal to the requested withdrawal amount using the require statement. This ensures that the user has enough funds to cover the withdrawal.
+   Step 2: It checks if the requested withdrawal amount is less than or equal to the withdrawalLimit. This ensures that the withdrawal does not exceed the predefined limit.
+   Step 3: It attempts to send the requested amount of wei to the user using the call.value method. This is a lowlevel call that sends ether to the caller's address.
+   Step 4: After successfully sending the ether, it updates the user's balance by subtracting the withdrawn amount using the sub function from the SafeMath library. This ensures that the subtraction is performed safely and prevents underflows.
+
+### Potential Vulnerability
+
+The withdrawFunds function uses the call.value method to send ether, which is susceptible to reentrancy attacks. If the called contract (or any contract in the call chain) executes a reentrant call back into withdrawFunds, it could potentially withdraw more funds than intended. This is a known vulnerability and can be mitigated by updating the balance before making the external call or using a mutex (mutual exclusion) mechanism to prevent reentrancy.

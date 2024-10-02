@@ -1,0 +1,23 @@
+This code defines an internal function named registerLockedTokens, which is used to register a specified amount of tokens to be locked for a given account for a specified term. The function ensures that the lock term is in the future, finds an appropriate slot to store the locked tokens, and updates the relevant storage variables. Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function starts by validating the input parameters. It uses the require statement to ensure that the lock term (_term) is in the future relative to the current block timestamp (now). If the term is not in the future, the function will revert with the message "lock term must be in the future".
+
+2. Finding a Slot:
+    The function initializes an index variable idx to 9999, which is used to track the slot where the locked tokens will be stored.
+    It then retrieves the storage arrays term and amnt from the mappings lockTerm[_account] and lockAmnt[_account], respectively. These arrays store the lock terms and amounts for the specified account.
+    The function iterates over the slots (up to LOCK_SLOTS) to find an appropriate slot for the new lock entry:
+      If the current slot's term is in the past (term[i] < now), it resets the term and amount for that slot to 0, marking it as available. If idx is still 9999, it updates idx to the current index i.
+      If the current slot's term matches the specified term (term[i] == _term), it updates idx to the current index i.
+
+3. Slot Availability Check:
+    After the loop, the function checks if idx is still 9999, which would indicate that no suitable slot was found. If this is the case, the function reverts with the message "registerLockedTokens: no available slot found".
+
+4. Registering Locked Tokens:
+    If a valid slot was found, the function proceeds to register the locked tokens:
+      If the term for the selected slot is 0 (indicating an empty slot), it sets the term for that slot to the specified term (_term).
+      It then adds the specified amount of tokens (_tokens) to the amount stored in the selected slot using the add function.
+      The function sets the mayHaveLockedTokens[_account] flag to true, indicating that the account may have locked tokens.
+      Finally, it emits an event RegisteredLockedTokens with the account address, slot index, token amount, and lock term.
+
+This function ensures that locked tokens are properly registered and managed for a given account, handling the cleanup of expired locks and finding an appropriate slot for new lock entries.

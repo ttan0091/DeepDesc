@@ -1,0 +1,24 @@
+Type of vulnerability: Oracle Manipulation
+Cause of vulnerability: Lack of validation to ensure the Oracle used in the loan parameters remains unchanged after the loan becomes outstanding.
+Execution process: A malicious lender can change the Oracle after the loan is outstanding, allowing them to manipulate the Oracle's reported value to seize collateral at the borrower's expense.
+Vulnerable code: 
+```solidity
+function updateLoanParams(uint256 loanId, LoanParams memory params) public {
+    Loan storage loan = loans[loanId];
+    require(loan.status == LOAN_OUTSTANDING, "Loan not outstanding");
+    require(msg.sender == loan.lender, "Not lender");
+    require(params.collateralAmount > 0, "Invalid collateral amount");
+    require(params.interestRate > 0, "Invalid interest rate");
+    require(params.duration > 0, "Invalid duration");
+    loan.params = params;
+}
+
+function seizeCollateral(uint256 loanId) public {
+    Loan storage loan = loans[loanId];
+    require(loan.status == LOAN_OUTSTANDING, "Loan not outstanding");
+    require(msg.sender == loan.lender, "Not lender");
+    uint256 collateralValue = loan.params.oracle.getPrice(loan.params.collateralToken);
+    require(collateralValue < loan.amount + loan.interest, "Collateral value too high");
+    // Seize collateral logic here
+}
+```

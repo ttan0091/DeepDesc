@@ -1,0 +1,29 @@
+This code defines a public function named delegateBySig, which is part of the ERC20Votes extension of the ERC20 token standard. This function allows a token holder to delegate their voting rights to another address using a signed message (signature).
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    delegatee: The address to which the signer wants to delegate their voting rights.
+    nonce: A unique value associated with the signer's address, used to prevent replay attacks.
+    expiry: The timestamp after which the signature is considered invalid.
+    v, r, s: Components of the ECDSA signature that verify the signer's identity.
+
+2. Signature Expiry Check:
+    The function first checks if the current block timestamp is less than or equal to the expiry timestamp. If the signature has expired, it reverts the transaction with the error message "ERC20Votes: signature expired".
+
+3. Signature Verification:
+    The function uses the ECDSA.recover method to recover the address of the signer from the provided signature components (v, r, s). This is done by hashing the typed data (_hashTypedDataV4) which includes the delegatee, nonce, and expiry, along with a type hash (_DELEGATION_TYPEHASH).
+    The _hashTypedDataV4 function ensures that the data is structured and hashed in a way that is resistant to certain types of attacks, such as reordering or substitution attacks.
+
+4. Nonce Validation:
+    The function then checks if the provided nonce matches the next expected nonce for the signer's address. This is done by calling _useNonce(signer), which returns the current nonce for the signer and increments it. If the nonce does not match, the transaction is reverted with the error message "ERC20Votes: invalid nonce".
+
+5. Delegation Execution:
+    If all checks pass, the function calls _delegate(signer, delegatee) to delegate the signer's voting rights to the delegatee. This internal function updates the internal state to reflect the delegation.
+
+Security Considerations:
+ The use of nonces and expiry timestamps helps prevent replay attacks and ensures that signatures cannot be reused.
+ The function uses ECDSA signature verification to ensure that only the legitimate signer can delegate their votes.
+ The function is marked as virtual, allowing it to be overridden in derived contracts if necessary.
+
+This function is crucial for enabling offchain voting mechanisms in decentralized applications, ensuring that token holders can securely delegate their voting rights without directly interacting with the blockchain.

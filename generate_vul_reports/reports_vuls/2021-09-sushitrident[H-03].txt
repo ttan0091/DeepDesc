@@ -1,0 +1,13 @@
+[H-03]IndexPoolpow overflows whenweightRatio> 10.
+Submitted by broccoli
+Impact
+In theIndexPoolcontract, pow is used in calculating price. (IndexPool.solL255-L266).
+However, Pow is easy to cause overflow. If theweightRatiois large (e.g. 10), there’s always overflow.
+Lp providers can still provide liquidity to the pool where no one can swap. All pools need to redeploy. I consider this a high-risk issue.
+Proof of concept
+It’s easy to trigger this bug by deploying a 1:10IndexPool.
+deployed_code = encode_abi(["address[]","uint136[]","uint256"], [(link.address, dai.address),(10**18,10*10**18),10**13])tx_hash = master_deployer.functions.deployPool(index_pool_factory.address, deployed_code).transact()
+Transactions would be reverted when buyinglinkwithdai.
+Recommended Mitigation Steps
+TheweightRatiois an 18 decimals number. It should be divided by(BASE)^exp. The scale in the contract is not consistent. Recommend the dev to check all the scales/ decimals.
+maxsam4 (Sushi) confirmed

@@ -1,0 +1,14 @@
+Type of vulnerability: Improper Balance Management
+Cause of vulnerability: The contract allows a malicious user to manipulate the balance of `_totalSupply` and `_totalShares` by providing fake income, leading to an imbalance that can be exploited to steal funds without burning any shares.
+Execution process: A malicious user (Bob) deposits funds and then transfers additional fake income directly to the protocol, creating an excess income that can be bought by calling `excessIncomeDistribution`. This allows Bob to receive stETH without burning any shares, leading to an imbalance between `_totalSupply` and `_totalShares`.
+Vulnerable code: 
+```solidity
+function excessIncomeDistribution(uint256 _amount) external {
+    uint256 excessAmount = stETH.balanceOf(protocol) - totalDepositedAsset;
+    uint256 payAmount = (((realAmount * getAssetPrice()) / 1e18) * getDutchAuctionDiscountPrice()) / 10000;
+    uint256 sharesAmount = _EUSDAmount.mul(_totalShares).div(totalMintedEUSD);
+    // ...
+    _burn(msg.sender, sharesAmount);
+    // ...
+}
+```

@@ -1,0 +1,20 @@
+[H-01] Data corruption inNFTFloorOracle; Denial of Service
+Submitted byEnglave, also found byTrust,Josiah,minhquanym,Jeiwan,kaliberpoziomka8552,9svR6w,unforgiven,csanuragjain,RaymondFam, andLambda
+During_removeFeederoperation inNFTFloorOraclecontract, the feeder is removed fromfeedersarray, and linking infeederPositionMapfor the specific feeder is removed. Deletion logic is implemented in “Swap + Pop” way, so indexes changes, but existingcode doesn’t update indexes infeederPositionMapafter feeder removal, which causes the issue of Denial of Service for further removals.
+As a result:
+Impossible to remove somefeedersfrom the contract due to Out of Bounds array access. Removal fails because of transaction revert.Data infeederPositionMapis corrupted after somefeedersremoval. Data linking fromfeederPositionMap.indextofeedersarray is broken.
+Proof of Concept
+address internal feederA = 0x5B38Da6a701c568545dCfcB03FcB875f56beddC4;address internal feederB = 0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2;address internal feederC = 0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db;function corruptFeedersMapping() external {console.log("Starting from empty feeders array. Array size: %s", feeders.length);address[] memory initialFeeders = new address[](3);initialFeeders[0] = feederA;initialFeeders[1] = feederB;initialFeeders[2] = feederC;this.addFeeders(initialFeeders);console.log("Feeders array: [%s, %s, %s]", initialFeeders[0], initialFeeders[1], initialFeeders[2]);console.log("Remove feeder B");this.removeFeeder(feederB);console.log("feederPositionMap[A] = %s, feederPositionMap[C] = %s", feederPositionMap[feederA].index, feederPositionMap[feederC].index);console.log("Mapping for Feeder C store index 2, which was not updated after removal of B. Feeders array length is : %s", feeders.length);console.log("Try remove Feeder C. Transaction will be reverted because of access out of bounds of array. Data is corrupted");this.removeFeeder(feederC);}
+Snippet execution result:
+Tools Used
+Visual inspection; Solidity snippet for PoC
+Recommended Mitigation Steps
+Update index infeederPositionMapafter feeders swap and pop.
+feeders[feederIndex] = feeders[feeders.length - 1];feederPositionMap[feeders[feederIndex]].index = feederIndex; //Index update added as a recommendationfeeders.pop();
+yubo-ruan (Paraspace) confirmed
+Trust (warden) commented:
+I’ve submitted this report as well.
+However, I believe it does not meet the high criteria set for HIGH severity finding. For HIGH, warden must show a direct loss of funds or damage to the protocol that stems from the specific issue. Here, there are clearly several conditionals that must occur in order for actual damage to take place.
+Regardless, will respect judge’s views on the matter.
+dmvt commented:
+I’ve submitted this report as well. However, I believe it does not meet the high criteria set for HIGH severity finding. For HIGH, warden must show a direct loss of funds or damage to the protocol that stems from the specific issue. Here, there are clearly several conditionals that must occur in order for actual damage to take place. Regardless, will respect judge’s views on the matter.I respectfully disagree. The scenario is likely to occur at some point during normal operation of the protocol. The inability to remove dead or malfunctioning feeders can easily lead to the complete breakdown of the protocol and significant funds loss, the “data corruption” mentioned in the report. The severity of this issue, when it occurs, justifies the high risk rating.

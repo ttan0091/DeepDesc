@@ -1,0 +1,19 @@
+[H-01] Attacker can call sweepRewardToken() whenbribesProcessor==0and reward funds will be lost because there is no check in sweepRewardToken() and _handleRewardTransfer() and _sendTokenToBribesProcessor()
+Submitted by unforgiven, also found by GimelSec, and zzzitron
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L107-L113
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L405-L413
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L421-L425
+Impact
+If the value ofbribesProcessorwas0x0(the default is0x0andgovernance()can set to0x0) then attacker can callsweepRewardToken()make contract to send his total balance in attacker specified token to0x0address.
+Proof of Concept
+The default value ofbribesProcessoris0x0andgovernancecan set the value to0x0at any time. Rewards are stacking in contract address and they are supposed to send tobribesProcessor.
+This issweepRewardToken()and_handleRewardTransfer()and_sendTokenToBribesProcessor()code:
+/// @dev Function to move rewards that are not protected/// @notice Only not protected, moves the whole amount using _handleRewardTransfer/// @notice because token paths are hardcoded, this function is safe to be called by anyone/// @notice Will not notify the BRIBES_PROCESSOR as this could be triggered outside bribesfunction sweepRewardToken(address token) public nonReentrant {_onlyGovernanceOrStrategist();_onlyNotProtectedTokens(token);uint256 toSend = IERC20Upgradeable(token).balanceOf(address(this));_handleRewardTransfer(token, toSend);}function _handleRewardTransfer(address token, uint256 amount) internal {// NOTE: BADGER is emitted through the treeif (token == BADGER) {_sendBadgerToTree(amount);} else {// NOTE: All other tokens are sent to bribes processor_sendTokenToBribesProcessor(token, amount);}}function _sendTokenToBribesProcessor(address token, uint256 amount) internal {// TODO: Too many SLOADsIERC20Upgradeable(token).safeTransfer(address(bribesProcessor), amount);emit RewardsCollected(token, amount);}
+As you can see callingsweepRewardToken()eventually (sweepRewardToken() -> _handleRewardTransfer() -> _sendTokenToBribesProcessor()) would transfer reward funds tobribesProcessorand there is no check thatbribesProcessor!=0x0in execution follow. so attacker can callsweepRewardToken()whenbribesProcessoris0x0and contract will lose all reward tokens.
+Tools Used
+VIM
+Recommended Mitigation Steps
+Check the value ofbribesProcessorin_sendTokenToBribesProcessor().
+Alex the Entreprenerd (BadgerDAO) confirmed and commented:
+A transfer to address 0 would cause a loss, we should have a check or add a safe default (governance for example).Mitigated by adding a 0 check.
+jack-the-pug (judge) validated

@@ -1,0 +1,34 @@
+This code defines an external view function named peek, which is designed to estimate the value of a given amount of a base token in terms of a quote token. The function is marked as virtual and override, indicating that it is intended to be overridden in derived contracts and that it is replacing a similar function in a base contract.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    bytes32 base: The identifier of the base token.
+    bytes32 quote: The identifier of the quote token.
+    uint256 amount: The amount of the base token to be valued.
+
+2. Return Values:
+    uint256 value: The estimated value of the base token amount in terms of the quote token.
+    uint256 updateTime: The timestamp of the last update for the price.
+
+3. Initialization:
+    uint256 price = 1e18;: Initializes the price to 1 (scaled by 10^18, which is a common scaling factor in Ethereum smart contracts).
+    bytes6 base_ = base.b6();: Converts the base token identifier from bytes32 to bytes6.
+    bytes6 quote_ = quote.b6();: Converts the quote token identifier from bytes32 to bytes6.
+
+4. Path Retrieval:
+    bytes6[] memory path = paths[base_][quote_];: Retrieves the path from the base token to the quote token from a mapping named paths. This path is an array of bytes6 identifiers that represent intermediate tokens if a direct conversion is not available.
+
+5. Path Iteration:
+    The function iterates over each token in the path using a for loop. For each token in the path:
+      (price, updateTime) = _peek(base_, path[p]);: Calls a private function _peek to get the price and update time between the current base token and the intermediate token.
+      base_ = path[p];: Updates the base token to the current intermediate token for the next iteration.
+
+6. Final Price Calculation:
+    After iterating through the path, the function makes one final call to _peek to get the price and update time between the last intermediate token and the quote token.
+    value = price  amount / 1e18;: Calculates the final value by multiplying the price by the amount of base token and then dividing by 1e18 to normalize the result.
+
+7. Return:
+    The function returns the calculated value and the updateTime.
+
+This function is useful for protocols that need to estimate the value of tokens in different denominations without performing actual trades, such as in decentralized finance (DeFi) applications where liquidity and price discovery are critical. The use of paths allows for complex conversions involving multiple intermediate tokens, enhancing the flexibility and accuracy of the price estimation.

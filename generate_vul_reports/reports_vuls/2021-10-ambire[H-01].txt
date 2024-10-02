@@ -1,0 +1,20 @@
+[H-01] Prevent execution with invalid signatures
+Submitted by gpersoon
+Impact
+Suppose one of the suppliedaddrs\[i]to the constructor ofIdentity.solhappens to be 0 ( by accident).
+In that case:privileges\[0] = 1
+Now suppose you callexecute()with an invalid signature, thenrecoverAddrImplwill return a value of 0 and thus signer=0.
+If you then check ”privileges\[signer] !=0”  this will be true and anyone can perform any transaction.
+This is clearly an unwanted situation.
+Proof of Concept
+Identity.sol#L23L30Identity.sol#L97L98
+Recommended Mitigation Steps
+In the constructor ofIdentity.sol, add in the for loop the following:
+require(addrs\[i] !=0,"Zero not allowed");
+Ivshti (Ambire) confirmed:
+Ivshti (Ambire) patched:
+resolved inhttps://github.com/AmbireTech/adex-protocol-eth/commit/08d050676773fcdf7ec1c4eb53d51820b7e42534
+GalloDaSballo (judge) commented:
+This seems to be the risk of havingerecoverreturning zero, any invalid signature ends up being usable from any address to execute arbitrary logic.Mitigation can be achieved by either reverting when about to return address(0), which the sponsor has used for mitigationThe other mitigation is to ensure that an account with address(0) cannot have privileges set to 1I believe mitigation from sponsor to be sufficient, however I’d recommend adding a check against having address(0) in the constructor for Identity.sol just to be sure
+Ivshti (Ambire) commented:
+@GalloDeSballo an extra check is superfluous IMO, not only cause the revert on 0 in SIgnatureValidatorV2 guarantees that this is fixed, but also because it has to be in three places: constructor, setAddrPrivilege and the account creation system injs/IdentityProxyDeploywhich rolls out bytecode thatsstoresprivileges directly

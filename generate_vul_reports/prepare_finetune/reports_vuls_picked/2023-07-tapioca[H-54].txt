@@ -1,0 +1,18 @@
+Type of vulnerability: Authorization Bypass
+
+Cause of vulnerability: The `multiHopBuyCollateral` function does not check if the caller has enough allowance to take the borrow specified by the `borrowAmount`. This allows any caller to borrow on behalf of another user without requiring any allowance.
+
+Execution process: A malicious actor calls the `multiHopBuyCollateral` function, setting the `collateralAmount` to 0 and the `borrowAmount` to the maximum amount the `from` account can borrow without becoming insolvent. The function proceeds to borrow the specified amount without validating if the caller has the necessary allowance to do so.
+
+Vulnerable code:
+```solidity
+...
+// add collateral
+uint256 collateralShare = yieldBox.toShare(collateralId, collateralAmount, false);
+_allowedBorrow(from, collateralShare);
+_addCollateral(from, from, false, 0, collateralShare);
+...
+// borrow
+(, uint256 borrowShare) = _borrow(from, from, borrowAmount);
+...
+```

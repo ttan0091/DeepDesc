@@ -1,0 +1,71 @@
+The code you provided consists of two contracts: IKernel and AppStorage. Let's break down each part in detail.
+
+### IKernel Contract
+
+solidity
+interface IKernel {
+    function acl() public view returns (IACL);
+    function hasPermission(address who, address where, bytes32 what, bytes how) public view returns (bool);
+
+    function setApp(bytes32 namespace, bytes32 appId, address app) public;
+    function getApp(bytes32 namespace, bytes32 appId) public view returns (address);
+}
+
+
+This interface defines a contract named IKernel which outlines several functions that must be implemented by any contract that claims to be a kernel in the system. Here’s a detailed explanation of each function:
+
+1. acl(): This function is a view function that returns an instance of IACL (Access Control List). This instance is responsible for managing permissions within the system.
+
+2. hasPermission(address who, address where, bytes32 what, bytes how): This function checks if a given address (who) has permission to perform a specific action (what) on another address (where), potentially with additional data (how). It returns a boolean indicating whether the permission is granted.
+
+3. setApp(bytes32 namespace, bytes32 appId, address app): This function allows setting an application (app) in a specific namespace (namespace) with a unique identifier (appId). This is typically used for registering or updating applications in the system.
+
+4. getApp(bytes32 namespace, bytes32 appId): This function retrieves the address of an application given its namespace and app ID. It is used to fetch registered applications.
+
+### AppStorage Contract
+
+solidity
+contract AppStorage {
+    using UnstructuredStorage for bytes32;
+
+    bytes32 internal constant KERNEL_POSITION = 0x4172f0f7d2289153072b0a6ca36959e0cbe2efc3afe50fc81636caa96338137b;
+    bytes32 internal constant APP_ID_POSITION = 0xd625496217aa6a3453eecb9c3489dc5a53e6c67b444329ea2b2cbc9ff547639b;
+
+    function kernel() public view returns (IKernel) {
+        return IKernel(KERNEL_POSITION.getStorageAddress());
+    }
+
+    function appId() public view returns (bytes32) {
+        return APP_ID_POSITION.getStorageBytes32();
+    }
+
+    function setKernel(IKernel _kernel) internal {
+        KERNEL_POSITION.setStorageAddress(address(_kernel));
+    }
+
+    function setAppId(bytes32 _appId) internal {
+        APP_ID_POSITION.setStorageBytes32(_appId);
+    }
+}
+
+
+This contract, AppStorage, is designed to manage storage for kernel and application ID data. It uses a library UnstructuredStorage for handling storage operations. Here’s a detailed explanation of each function:
+
+1. kernel(): This view function returns the current kernel instance by reading the address stored at KERNEL_POSITION.
+
+2. appId(): This view function returns the current application ID by reading the bytes32 value stored at APP_ID_POSITION.
+
+3. setKernel(IKernel _kernel): This internal function sets the kernel instance by storing the address of _kernel at KERNEL_POSITION.
+
+4. setAppId(bytes32 _appId): This internal function sets the application ID by storing the bytes32 value of _appId at APP_ID_POSITION.
+
+### Storage Mechanism
+
+The AppStorage contract uses hardcoded storage positions (KERNEL_POSITION and APP_ID_POSITION) to store and retrieve data. These positions are hashed values of specific strings, ensuring that they are unique and do not clash with other storage variables in the contract. The UnstructuredStorage library likely provides functions like getStorageAddress() and setStorageAddress() to read and write to these storage slots.
+
+### Summary
+
+ IKernel: Defines an interface for a kernel contract, including functions for managing ACL, permissions, and application registration.
+ AppStorage: Manages storage for kernel and application ID data, using specific storage positions and a storage library to handle reads and writes.
+
+This setup is typical in systems where modularity and access control are critical, such as in decentralized applications (dApps) or frameworks like Aragon OS.

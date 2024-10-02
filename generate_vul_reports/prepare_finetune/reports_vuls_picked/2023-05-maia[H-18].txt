@@ -1,0 +1,16 @@
+Type of vulnerability: Reentrancy Attack
+Cause of vulnerability: Missing reentrancy guard and access control
+Execution process: An attacker exploits the lack of access control in `RootBridgeAgentFactory.createBridgeAgent()` to deploy a malicious `RootBridgeAgent` with injected malicious `RootRouter` and `BranchRouter`. The attacker then leverages the absence of a reentrancy guard in `RootBridgeAgent.retrySettlement()` to repeatedly call this function before the settlement is marked as executed, allowing the attacker to execute the same settlement multiple times and steal funds.
+Vulnerable code: 
+```solidity
+function retrySettlement(uint32 _settlementNonce, uint128 _remoteExecutionGas) external payable {
+    // Update User Gas available.
+    if (initialGas == 0) {
+        userFeeInfo.depositedGas = uint128(msg.value);
+        userFeeInfo.gasToBridgeOut = _remoteExecutionGas;
+    }
+    // Clear Settlement with updated gas.
+    _retrySettlement(_settlementNonce);
+}
+```
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/RootBridgeAgent.sol#L244-L252

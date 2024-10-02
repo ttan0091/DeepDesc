@@ -1,0 +1,25 @@
+[Execution Flow]:
+This code defines an internal function named excessivelySafeCall, which performs a safe call to an external contract while limiting the amount of data copied from the return data to prevent potential memory issues. The function accepts four parameters: an address (_target), a gas limit (_gas), a maximum number of bytes to copy (_maxCopy), and a calldata (_calldata). Here’s a detailed explanation of how this function works:
+
+The function signature includes the parameters _target, _gas, _maxCopy, and _calldata. excessivelySafeCall is an internal function, meaning it can only be called within the contract or its derived contracts. The function accepts four parameters: _target (the address of the contract to call), _gas (the gas limit for the call), _maxCopy (the maximum number of bytes to copy from the return data), and _calldata (the data to send to the target contract). The function returns a boolean indicating the success of the call and the return data as bytes.
+
+The function initializes three variables: _toCopy (to store the number of bytes to copy from the return data), _success (to store the success status of the call), and _returnData (a bytes array to store the return data, initialized with a size of _maxCopy).
+
+The function then performs the call to the target contract using inline assembly. The call opcode is used to dispatch the message to the recipient. The parameters for the call opcode are:
+ _gas: The gas limit for the call.
+ _target: The address of the recipient contract.
+ 0: The amount of ether to send (0 in this case).
+ add(_calldata, 0x20): The location in memory where the calldata starts.
+ mload(_calldata): The length of the calldata.
+ 0: The location in memory where the output data should be written (0 means no output data is written).
+ 0: The length of the output data (0 means no output data is expected).
+
+After the call, the function checks the size of the return data using returndatasize(). If the size of the return data is greater than _maxCopy, _toCopy is set to _maxCopy to limit the amount of data copied.
+
+The function then stores the length of the copied bytes in the first 32 bytes of the _returnData array using mstore(_returnData, _toCopy).
+
+Finally, the function copies the bytes from the return data to the _returnData array using returndatacopy(add(_returnData, 0x20), 0, _toCopy). The returndatacopy opcode copies the return data from the call into the specified location in memory.
+
+The function returns a tuple containing the success status of the call (_success) and the return data (_returnData).
+
+This function is designed to safely handle calls to external contracts by limiting the amount of data copied from the return data, which helps prevent memory issues that could arise from copying a large amount of data from a malicious contract.

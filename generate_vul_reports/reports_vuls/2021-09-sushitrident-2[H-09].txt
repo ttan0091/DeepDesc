@@ -1,0 +1,21 @@
+[H-09] range fee growth underflow
+Submitted by broccoli
+Impact
+The functionRangeFeeGrowth(ConcentratedLiquidityPool.sol#L601-L633) would revert the transaction in some cases.
+When a pool cross a tick, it only updates eitherfeeGrowthOutside0orfeeGrowthOutside1.Ticks.sol#L23-L53
+RangeFeeGrowthcalculates the fee as follow:
+feeGrowthInside0=_feeGrowthGlobal0-feeGrowthBelow0-feeGrowthAbove0;feeGrowthInside1=_feeGrowthGlobal1-feeGrowthBelow1-feeGrowthAbove1;
+feeGrowthBelow + feeGrowthAboveis not necessary smaller than_feeGrowthGlobal. Please seePOC.
+Users can not provide liquidity or burn liquidity. Fund will get stocked in the contract. I consider this is a high-risk issue.
+Proof of Concept
+# This is the wrapper.# def add_liquidity(pool, amount, lower, upper)# def swap(pool, buy, amount)add_liquidity(pool, deposit_amount, -800,500)add_liquidity(pool, deposit_amount,400,700)# We cross the tick here to trigger the bug.swap(pool,False, deposit_amount)# Only tick 700's feeGrowthOutside1 is updatedswap(pool,True, deposit_amount)# Only tick 500's feeGrowthOutside0 is updated# current tick at -800# this would revert# feeGrowthBelow1 = feeGrowthGlobal1# feeGrowthGlobal1 - feeGrowthBelow1 - feeGrowthAbove1 would revert# user would not be able to mint/withdraw/cross this tick. The pool is brokenadd_liquidity(pool, deposit_amount,400,700)
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+It’s either modify the tick’s algo orRangeFeeGrowth. The quick-fix I come up with is to deal with the fee inRangeFeeGrowth. However, I recommend the team to go through tick’s logic again.
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.
+alcueca (judge) commented:
+@sarangparikh22 (Sushi), is the example invalid, or the whole issue? Is this something that you would consider fixing?
+sarangparikh22 (Sushi) confirmed:
+@alcueca (judge) The example is invalid, but the issue is valid, the fix is to swap the condition of feeGrowthGlobal

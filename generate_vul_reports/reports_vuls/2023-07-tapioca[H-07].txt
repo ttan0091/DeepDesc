@@ -1,0 +1,18 @@
+[H-07] Usage ofBalancerStrategy.updateCachewill cause single sided Loss, discount to Depositor and to OverBorrow from Singularity
+Submitted byGalloDaSballo, also found bycarrotsmuggler,kaden, andcergyk
+The BalancerStrategy uses a cached value to determine it’s balance in pool for which it takes Single Sided Exposure.
+This means that the Strategy has some BPT tokens, but to price them, it’s callingvault.queryExitwhich simulates withdrawing the LP in a single sided manner.
+Due to the single sided exposure, it’s trivial to perform a Swap, that will change the internal balances of the pool, as a way to cause the Strategy to discount it’s tokens.
+By the same process, we can send more ETH as a way to inflate the value of the Strategy, which will then be cached.
+Since_currentBalanceis a view-function, the YieldBox will accept these inflated values without a way to dispute them
+https://github.com/Tapioca-DAO/tapioca-yieldbox-strategies-audit/blob/05ba7108a83c66dada98bc5bc75cf18004f2a49b/contracts/balancer/BalancerStrategy.sol#L138-L147
+function_deposited(uint256amount)internaloverridenonReentrant{uint256queued=wrappedNative.balanceOf(address(this));if(queued>depositThreshold) {_vaultDeposit(queued);emitAmountDeposited(queued);}emitAmountQueued(amount);updateCache();/// @audit this is updated too late (TODO PROOF)}
+POC
+Imbalance the pool (Sandwich A)UpdateupdateCacheDeposit into YieldBox, YieldBox is using aviewfunction, meaning it will use the manipulated strategy_currentBalance_depositedtrigger anupdateCacheRebalance the Pool (Sandwich B)CallupdateCacheagain to bring back the rate to a higher valueWithdraw at a gain
+Result
+Imbalance Up -> Allows OverBorrowing and causes insolvency to the protocol
+Imbalance Down -> Liquidate Borrowers unfairly at a profit to the liquidator
+Sandwhiching the Imbalance can be used to extract value from the strategy and steal user deposits as well
+Mitigation
+Use fair reserve math, avoid single sided exposure (use the LP token as underlying, not one side of it)
+cryptotechmaker (Tapioca) confirmed

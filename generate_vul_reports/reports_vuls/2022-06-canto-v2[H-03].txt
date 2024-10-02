@@ -1,0 +1,14 @@
+[H-03] Underlying asset price oracle forCTokeninBaseV1-peripheryis inaccurate
+Submitted by ladboy233
+https://github.com/Plex-Engineer/lending-market-v2/blob/443a8c0fed3c5018e95f3881a31b81a555c42b2d/contracts/Stableswap/BaseV1-periphery.sol#L489
+Underlying asset price oracle for CToken in BaseV1-periphery is inaccurate.
+Proof of Concept
+function getUnderlyingPrice(CToken ctoken) external override view returns(uint price) {IBaseV1Pair pair;uint8 stable;bool stablePair;address underlying;if (compareStrings(ctoken.symbol(), "cCANTO")) {stable = 0;underlying = address(wcanto);}//set price statically to 1 when the Comptroller is retrieving Priceelse if (compareStrings(ctoken.symbol(), "cNOTE") && msg.sender == Comptroller) {return 1; // Note price is fixed to 1}
+We should not be return 1. 1 is 1 wei. We should be 10 ** 18
+Tools Used
+VIM
+Recommended Mitigation Steps
+We can return 10 ** 18
+nivasan1 (Canto) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown what probably is a developer mistake, which will scale down the price of the cNOTE token to 1.The sponsor confirms.It should be noted that if cNOTE always returns 1e18 then the math fordiffwill always be zero, meaning the interest will exclusively be dictated bybaseRatePerYear.Because the sponsor confirms, and because the comments point to values “scaled by 1e18” I believe the finding to be valid, and since the “math is wrong”, I do agree with High Severity.

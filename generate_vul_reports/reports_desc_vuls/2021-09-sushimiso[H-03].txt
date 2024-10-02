@@ -1,0 +1,20 @@
+Type of vulnerability: Race Condition / Edge Case Vulnerability
+Cause of vulnerability: Lack of checks for auction end status and finalization status in the `commitEth` and `commitTokens` functions, allowing an additional token to be committed after the auction has technically ended and been finalized.
+Execution process: An attacker could exploit this by ensuring the total commitments are just one token short of the total tokens available (`marketStatus.commitmentsTotal == marketInfo.totalTokens - 1`). After the auction is finalized, the attacker could then commit for the last token, leaving the contract one token short, thereby preventing the last legitimate token holder from withdrawing their tokens.
+Vulnerable code: 
+```solidity
+function commitEth(address payable _beneficiary, bool readAndAgreedToMarketParticipationAgreement) public payable nonReentrant {
+    ...
+    uint256 ethToTransfer = calculateCommitment(msg.value);
+    ...
+    _addCommitment(_beneficiary, ethToTransfer);
+}
+
+function _addCommitment(address _addr, uint256 _commitment) internal {
+    require(block.timestamp >= uint256(marketInfo.startTime) && block.timestamp <= uint256(marketInfo.endTime), "Crowdsale: outside auction hours"); // doesn't check auctionEnded() nor status.finalized
+    ...
+    uint256 newCommitment = commitments[_addr].add(_commitment);
+    ...
+    commitments[_addr] = newCommitment;
+}
+```

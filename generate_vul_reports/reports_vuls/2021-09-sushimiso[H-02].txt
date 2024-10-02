@@ -1,0 +1,20 @@
+[H-02] SushiToken transfers are broken due to wrong delegates accounting on transfers
+Submitted by cmichel.
+When minting / transferring / burning tokens, theSushiToken._beforeTokenTransferfunction is called and supposed to correctly shift the voting power due to the increase/decrease in tokens for thefromandtoaccounts.
+However, it does not correctly do that, it tries to shift the votes from thefromaccount, instead of the_delegates[from]account.
+This can lead to transfers reverting.
+Proof Of Concept
+Imagine the following transactions on theSushiTokencontract.
+We’ll illustrate the corresponding_moveDelegatescalls and written checkpoints for each.
+mint(A, 1000) = transfer(0, A, 1000)=>_moveDelegates(0, delegates[A]=0)=> no checkpoints are written to anyone because delegatees are still zeroA delegates to A’ =>_moveDelegates(0, A')=>writeCheckpoint(A', 1000)B delegates to B’ => no checkpoints are written as B has a zero balancetransfer(A, B, 1000)=>_moveDelegates(A, delegates[B] = B')=> underflows when subtractingamount=1000from A’s non-existent checkpoint (defaults to 0 votes)
+It should subtract from A’s delegateeA'’s checkpoint instead.
+Impact
+Users that delegated votes will be unable to transfer any of their tokens.
+Recommended Mitigation Steps
+InSushiToken._beforeTokenTransfer, change the_moveDelegatescall to be from_delegates[from]instead:
+function_beforeTokenTransfer(addressfrom,addressto,uint256amount)internaloverride{_moveDelegates(_delegates[from],_delegates[to],amount);super._beforeTokenTransfer(from,to,amount);}
+This is also how theoriginal code from Compounddoes it.
+maxsam4 (Sushi Miso) acknowledged:
+This is a known issue in Sushi token but was kept unchanged in MISO for “preservation of history :)“. That was not necessarily a wise choice lol. I think 1 severity should be fine for this as this was an intentional thing. The delegate feature is not supposed to be used in these tokens. We might create a new token type with this bug fixed.
+ghoul-sol (judge) commented:
+We have crazy wallets on the blockchain that will call every possible function available to them and that’s why I’m keeping this as is. Even intentional, the issue stands so the warden should get credit for it.

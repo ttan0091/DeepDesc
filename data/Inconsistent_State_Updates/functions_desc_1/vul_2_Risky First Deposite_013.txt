@@ -1,0 +1,28 @@
+This code defines a public payable function named depositETH, which allows users to deposit Ether into the contract and receive corresponding shares in return. The function interacts with a wrapped Ether (WETH) token contract to facilitate the deposit process. Here’s a detailed explanation of how this function works:
+
+1. Initial Balance Check:
+    uint256 _pool = balance();: This line calls an external function balance() (not shown in the snippet) to get the current balance of the pool. This balance is used later to calculate the number of shares to be minted.
+
+2. Token Balance Before Deposit:
+    uint256 _before = token.balanceOf(address(this));: This line retrieves the current balance of the contract's address in terms of the WETH token before the deposit is made. This is used to calculate the exact amount of tokens received after the deposit.
+
+3. Capture Deposit Amount:
+    uint256 _amount = msg.value;: This line captures the amount of Ether sent by the user with the transaction. msg.value is a builtin variable in Solidity that represents the amount of Ether sent with a function call.
+
+4. Wrap Ether to WETH:
+    WETH(address(token)).deposit{value: _amount}();: This line calls the deposit function of the WETH contract, wrapping the deposited Ether into WETH tokens. The {value: _amount} syntax specifies that the function should be called with the specified amount of Ether.
+
+5. Token Balance After Deposit:
+    uint256 _after = token.balanceOf(address(this));: This line retrieves the updated balance of the contract's address in terms of the WETH token after the deposit. This is used to verify the actual amount of tokens received.
+
+6. Adjust for Deflationary Tokens:
+    _amount = _after.sub(_before);: This line recalculates the amount of tokens actually received by subtracting the balance before the deposit from the balance after the deposit. This step is crucial for handling deflationary tokens that might reduce in supply upon transfer.
+
+7. Calculate Shares to Mint:
+    uint256 shares = 0;: Initializes the variable to store the number of shares to be minted.
+    if (totalSupply() == 0) { shares = _amount; } else { shares = (_amount.mul(totalSupply())).div(_pool); }: This conditional block calculates the number of shares to mint. If the total supply of shares is zero, it mints shares equal to the amount of tokens deposited. Otherwise, it calculates the shares proportionally based on the ratio of the deposited amount to the pool balance.
+
+8. Mint Shares:
+    _mint(msg.sender, shares);: This line mints the calculated number of shares to the address of the user who initiated the transaction (msg.sender). The _mint function is assumed to be an internal function that handles the minting of shares in the contract.
+
+In summary, the depositETH function enables users to deposit Ether, which is wrapped into WETH tokens, and receive shares in the contract based on the deposited amount relative to the current pool balance. This mechanism ensures that users are rewarded with shares proportionally to their contribution to the pool.

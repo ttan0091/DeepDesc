@@ -1,0 +1,41 @@
+This code defines a smart contract named TelcoinSaleCapEscrow which manages deposits for a token sale and includes a function to reject a participant and return their deposited funds. Here’s a detailed explanation of how this function works:
+
+### Contract Structure
+
+The TelcoinSaleCapEscrow contract contains a single mapping deposited that associates addresses with their deposited amounts in Wei. This mapping is public, meaning it can be queried by external contracts or users.
+
+### Function: reject
+
+The reject function is designed to handle the scenario where a participant's deposit needs to be rejected and their funds returned. This function takes one parameter:
+ _participant: The address of the participant whose deposit is being rejected.
+
+#### Detailed Steps:
+
+1. Retrieve Deposit Amount:
+   solidity
+   uint256 weiAmount = deposited[_participant];
+   
+   This line retrieves the amount of Wei deposited by the participant from the deposited mapping.
+
+2. Require Statement:
+   solidity
+   require(_participant.call.value(weiAmount)());
+   
+   This line is crucial and involves a lowlevel call to the participant's address, sending the weiAmount of Wei back to them. The require statement ensures that this call either succeeds or the transaction reverts, ensuring that the funds are successfully sent back to the participant.
+
+    LowLevel Call: The _participant.call.value(weiAmount)() is a lowlevel call that sends Ether to the _participant address. This method is used instead of a direct transfer to allow the recipient to implement more complex logic upon receiving the funds, such as calling other contracts or triggering other actions.
+    Security Consideration: This approach, while flexible, can be risky if the recipient is a contract that does not handle incoming Ether correctly, potentially leading to reentrancy attacks or other vulnerabilities. However, in this specific context, the primary goal is to ensure the funds are returned to the participant.
+
+3. Reset Deposit Amount:
+   solidity
+   deposited[_participant] = 0;
+   
+   After successfully sending the funds back to the participant, this line resets the participant's deposit amount to zero in the deposited mapping, ensuring that the funds are not mistakenly sent again in the future.
+
+### Summary
+
+The reject function in the TelcoinSaleCapEscrow contract is designed to safely and effectively return deposited funds to a participant whose participation has been rejected. It uses a lowlevel call to send Ether back to the participant, ensuring the operation is flexible and can handle complex recipient logic, while also resetting the deposit amount to zero to prevent doublespending of the returned funds.
+
+### Potential Vulnerabilities
+
+While the function is straightforward in its purpose, the use of lowlevel calls can introduce potential security risks, such as reentrancy attacks. However, given the context of returning funds and the immediate resetting of the deposit amount, the risk is mitigated to a certain extent. Nonetheless, thorough testing and potential use of more secure patterns (like checkseffectsinteractions) could further enhance the contract's security.

@@ -1,0 +1,14 @@
+Type of vulnerability: Reentrancy or Logic Flaw
+Cause of vulnerability: Allowing the purchase of 0 NFTs after the sale has ended, which triggers the end-of-sale logic without actually changing the state, enabling the saleReceiver or feeReceiver to steal overpayments.
+Execution process: An attacker (saleReceiver or feeReceiver) buys 0 NFTs at a price equal to the difference between the totalSale and the contract's balance, repeatedly if necessary, to drain the contract of overpayments.
+Vulnerable code: 
+```solidity
+if(newId==temp.finalId) {
+    sale.finalPrice=uint80(price);
+    uint256totalSale=price*amountSold;
+    uint256fee=totalSale/20;
+    ISaleFactory(factory).feeReceiver().transfer(fee);
+    temp.saleReceiver.transfer(totalSale-fee);
+    _end();
+}
+```

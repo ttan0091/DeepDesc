@@ -1,0 +1,19 @@
+Type of vulnerability: Denial of Service (DoS) through forced liquidation
+Cause of vulnerability: Lack of validation for the vault fee during vault creation, allowing strategists to set an extremely high vault fee
+Execution process: A malicious strategist sets a high vault fee during vault creation, leading to a revert upon loan repayment due to failed integer conversion, thereby forcing liquidation of the borrowers' collateral
+Vulnerable code: 
+```solidity
+function _createPublicVault(address strategist,address delegate,uint256 epochLength) internal returns (address publicVault) {
+  vm.startPrank(strategist);
+  publicVault = ASTARIA_ROUTER.newPublicVault(epochLength,delegate,address(WETH9),
+  uint256(1e13),              //to replicate the bug, change vaultFee parameter from 0 to a high value like 1e13
+  false,new address[](0),uint256(0));
+  vm.stopPrank();
+}
+```
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/test/TestHelpers.t.sol#L471
+
+```solidity
+uint88 feeInShares = convertToShares(fee).safeCastTo88();
+```
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/PublicVault.sol#L605

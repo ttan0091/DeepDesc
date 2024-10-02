@@ -1,0 +1,34 @@
+[Execution Flow]:
+This code defines an external function named redeemAlgorithmicFRAX, which allows users to redeem FRAX tokens for FXS tokens under specific conditions. The function accepts two parameters: FRAX_amount (the amount of FRAX tokens to be redeemed) and FXS_out_min (the minimum amount of FXS tokens the user is willing to receive). The function is decorated with the notRedeemPaused modifier, ensuring that the redemption process is not paused. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    redeemAlgorithmicFRAX is an external function, meaning it can be called from outside the contract.
+    The function accepts two parameters: FRAX_amount (a uint256 representing the amount of FRAX tokens to be redeemed) and FXS_out_min (a uint256 representing the minimum amount of FXS tokens the user is willing to receive).
+
+2. Fetching Prices and Ratios:
+    The function first retrieves the current price of FXS tokens in FRAX terms using FRAX.fxs_price(), storing it in the variable fxs_price.
+    It also retrieves the global collateral ratio using FRAX.global_collateral_ratio(), storing it in the variable global_collateral_ratio.
+
+3. Collateral Ratio Check:
+    The function checks if the global collateral ratio is zero using require(global_collateral_ratio == 0, "Collateral ratio must be 0"). This ensures that the redemption process is only allowed when the system is fully algorithmic (i.e., no collateral backing).
+
+4. Calculating FXS Dollar Value:
+    The function sets fxs_dollar_value_d18 to FRAX_amount, which represents the dollar value of the FRAX tokens to be redeemed.
+    It then applies a redemption fee to fxs_dollar_value_d18 using the formula fxs_dollar_value_d18.sub((fxs_dollar_value_d18.mul(redemption_fee)).div(PRICE_PRECISION)). This reduces the dollar value by the redemption fee percentage.
+
+5. Calculating FXS Amount:
+    The function calculates the amount of FXS tokens to be received by dividing the adjusted dollar value by the FXS price: fxs_amount = fxs_dollar_value_d18.mul(PRICE_PRECISION).div(fxs_price).
+
+6. Updating Balances and State:
+    The function updates the redeemFXSBalances mapping to reflect the increase in FXS tokens owed to the sender: redeemFXSBalances[msg.sender] = redeemFXSBalances[msg.sender].add(fxs_amount).
+    It also updates the unclaimedPoolFXS variable to reflect the increase in unclaimed FXS tokens in the pool: unclaimedPoolFXS = unclaimedPoolFXS.add(fxs_amount).
+    The function records the current block number in lastRedeemed[msg.sender] to track the last redemption time.
+
+7. Slippage Check:
+    The function checks if the calculated FXS amount meets the minimum requirement specified by the user using require(FXS_out_min <= fxs_amount, "Slippage limit reached").
+
+8. External Function Calls:
+    The function burns the specified amount of FRAX tokens from the sender's address using FRAX.pool_burn_from(msg.sender, FRAX_amount).
+    It mints the calculated amount of FXS tokens to the contract's address using FXS.pool_mint(address(this), fxs_amount).
+
+This function ensures that users can redeem their FRAX tokens for FXS tokens under the specified conditions, while also applying a redemption fee and ensuring that the redemption process meets the user's slippage requirements.

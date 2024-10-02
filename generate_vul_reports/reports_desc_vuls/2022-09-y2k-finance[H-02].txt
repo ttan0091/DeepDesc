@@ -1,0 +1,31 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: Dependency on external service status (Arbitrum sequencer) and a grace period check
+Execution process: The `triggerEndEpoch` function calls `getLatestPrice`, which can revert if the Arbitrum sequencer is down or if the grace period after a restart has not passed, preventing the function from completing and thus blocking winners from withdrawing.
+Vulnerable code: 
+```solidity
+function triggerEndEpoch(uint256 marketIndex, uint256 epochEnd) public {
+    < ...omitted... >
+    emit DepegInsurance(
+        keccak256(abi.encodePacked(marketIndex, insrVault.idEpochBegin(epochEnd), epochEnd)),
+        tvl,
+        false,
+        epochEnd,
+        block.timestamp,
+        getLatestPrice(insrVault.tokenInsured()) // @audit getLatestPrice reverts while sequencer unavailable or during grace period
+    );
+}
+
+function getLatestPrice(address _token) public view returns (int256 nowPrice) {
+    < ...omitted... >
+    bool isSequencerUp = answer == 0;
+    if (!isSequencerUp) {
+        revert SequencerDown();
+    }
+    // Make sure the grace period has passed after the sequencer is back up.
+    uint256 timeSinceUp = block.timestamp - startedAt;
+    if (timeSinceUp <= GRACE_PERIOD_TIME) { // @audit 1 hour
+        revert GracePeriodNotOver();
+    }
+    < ...omitted... >
+}
+```

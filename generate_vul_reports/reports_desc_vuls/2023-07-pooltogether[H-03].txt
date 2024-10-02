@@ -1,0 +1,25 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: The `_amountOut` parameter is used inconsistently within the `liquidate` function, representing both asset amounts and share amounts without proper conversion between the two types.
+Execution process: The function `liquidate` uses `_amountOut` in comparisons and operations that assume it represents either asset amounts or share amounts, leading to incorrect behavior and potential reverts or incorrect calculations.
+Vulnerable code:
+```solidity
+function liquidate(address _account, address _tokenIn, uint256 _amountIn, address _tokenOut, uint256 _amountOut) public virtual override returns (bool) {
+    _requireVaultCollateralized();
+    if (msg.sender != address(_liquidationPair)) revert LiquidationCallerNotLP(msg.sender, address(_liquidationPair));
+    if (_tokenIn != address(_prizePool.prizeToken())) revert LiquidationTokenInNotPrizeToken(_tokenIn, address(_prizePool.prizeToken()));
+    if (_tokenOut != address(this)) revert LiquidationTokenOutNotVaultShare(_tokenOut, address(this));
+    if (_amountOut == 0) revert LiquidationAmountOutZero();
+    uint256 _liquidableYield = _liquidatableBalanceOf(_tokenOut);
+    if (_amountOut > _liquidableYield) revert LiquidationAmountOutGTYield(_amountOut, _liquidableYield);
+    _prizePool.contributePrizeTokens(address(this), _amountIn);
+    if (_yieldFeePercentage != 0) {
+        _increaseYieldFeeBalance((_amountOut * FEE_PRECISION) / (FEE_PRECISION - _yieldFeePercentage) - _amountOut);
+    }
+    uint256 _vaultAssets = IERC20(asset()).balanceOf(address(this));
+    if (_vaultAssets != 0 && _amountOut >= _vaultAssets) {
+        _yieldVault.deposit(_vaultAssets, address(this));
+    }
+    _mint(_account, _amountOut);
+    return true;
+}
+```

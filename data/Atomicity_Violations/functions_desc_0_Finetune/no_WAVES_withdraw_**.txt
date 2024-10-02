@@ -1,0 +1,23 @@
+Type of vulnerability: DoS (Denial of Service)
+Cause of vulnerability: Incorrect management of liquid supply, specifically the deposit mechanism when custody mode is disabled.
+Working process of the vulnerability: When an account attempts to withdraw its tokens, if the account's balance is not zero, the withdraw function is designed to decrease the _liquidTotalSupply by the account's balance and transfer the tokens to the zero address. However, if a contract is the beneficiary and the accrual period is ongoing, the jumpDelayPeriod allows for reward index updates according to the function jumpIndex (which does not transfer any additional tokens). This results in an inflated reward index compared to the actual deposits. If the contract's balance is not zero, this inflated reward index causes _liquidTotalSupply to underflow, rendering the contract's tokens permanently stuck.
+Affected code snippet:
+solidity
+function withdraw(address account) external onlyOwner onlyNotDeprecated override virtual returns (bool) {
+    uint256 oldDeposit = _deposits[account];
+    uint256 rewardIndex = _rewardIndexForAccount[account];
+
+    if (rewardIndex == _percents.length  1) {
+        // logic for complete removal
+    } else {
+        uint256 balance = balanceOf(account);
+        uint256 liquidTotalSupply = _liquidTotalSupply;
+        require(balance <= liquidTotalSupply, "subtraction overflow for total supply");
+        _liquidTotalSupply = liquidTotalSupply  balance;
+    }
+
+    // reset account balances
+    _balances[account] = 0;
+    _deposits[account] = 0;
+    return true;
+}

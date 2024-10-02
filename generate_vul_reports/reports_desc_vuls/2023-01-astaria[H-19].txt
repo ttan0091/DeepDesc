@@ -1,0 +1,20 @@
+Type of vulnerability: Time-sensitive vulnerability
+Cause of vulnerability: Lack of deadline verification in VaultImplementation._validateCommitment()
+Execution process: Users can take out loans using expired strategies directly from the vault, bypassing the deadline check that is enforced in AstariaRouter._validateCommitment().
+Vulnerable code: 
+```solidity
+function _validateCommitment(IAstariaRouter.Commitment calldata params, address receiver) internal view {
+    uint256 collateralId = params.tokenContract.computeId(params.tokenId);
+    ERC721 CT = ERC721(address(COLLATERAL_TOKEN()));
+    address holder = CT.ownerOf(collateralId);
+    address operator = CT.getApproved(collateralId);
+    if (msg.sender != holder && receiver != holder && receiver != operator && !CT.isApprovedForAll(holder, msg.sender)) {
+        revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);
+    }
+    VIData storage s = _loadVISlot();
+    address recovered = ecrecover(keccak256(_encodeStrategyData(s, params.lienRequest.strategy, params.lienRequest.merkle.root)), params.lienRequest.v, params.lienRequest.r, params.lienRequest.s);
+    if ((recovered != owner() && recovered != s.delegate) || recovered == address(0)) {
+        revert IVaultImplementation.InvalidRequest(InvalidRequestReason.INVALID_SIGNATURE);
+    }
+}
+```

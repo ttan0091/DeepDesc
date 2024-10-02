@@ -1,0 +1,25 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The `transform` function does not validate if the `tokenId` encoded inside the `bytes calldata data` parameter belongs to `msg.sender`.
+Execution process: An attacker can call the `transform` function with a `tokenId` that they own to pass initial validation, but encode a different `tokenId` inside the `data` parameter to manipulate a position they do not own.
+Vulnerable code: 
+```solidity
+function transform(uint256 tokenId, address transformer, bytes calldata data) external override returns (uint256 newTokenId) {
+    ...
+    address loanOwner = tokenOwner[tokenId];
+    if (loanOwner != msg.sender && !transformApprovals[loanOwner][tokenId][msg.sender]) {
+        revert Unauthorized();
+    }
+    nonfungiblePositionManager.approve(transformer, tokenId);
+    (bool success, ) = transformer.call(data);
+    if (!success) {
+        revert TransformFailed();
+    }
+    ...
+    address owner = nonfungiblePositionManager.ownerOf(tokenId);
+    if (owner != address(this)) {
+        revert Unauthorized();
+    }
+    ...
+    return tokenId;
+}
+```

@@ -1,0 +1,19 @@
+[H-01] Timelock can be bypassed
+Submitted by WatchPug, also found by 0x0x0x and gzeon
+The purpose of a Timelock contract is to put a limit on the privileges of thegovernor, by forcing a two step process with a preset delay time.
+However, we found that the current implementation actually won’t serve that purpose as it allows thegovernorto execute any transactions without any constraints.
+To do that, the current governor can callTimelock#setGovernor(address _governor)and set a newgovernoreffective immediately.
+And the newgovernorcan then callTimelock#setDelay()and change the delay to0, also effective immediately.
+The newgovernorcan now use all the privileges without a delay, including granting minter role to any address and mint unlimited amount of MALT.
+In conclusion, a Timelock contract is supposed to guard the protocol from lost private key or malicious actions. The current implementation won’t fulfill that mission.
+https://github.com/code-423n4/2021-11-malt/blob/c3a204a2c0f7c653c6c2dda9f4563fd1dc1cecf3/src/contracts/Timelock.sol#L98-L105
+functionsetGovernor(address_governor)publiconlyRole(GOVERNOR_ROLE,"Must have timelock role"){_swapRole(_governor,governor,GOVERNOR_ROLE);governor=_governor;emitNewGovernor(_governor);}
+https://github.com/code-423n4/2021-11-malt/blob/c3a204a2c0f7c653c6c2dda9f4563fd1dc1cecf3/src/contracts/Timelock.sol#L66-L77
+functionsetDelay(uint256_delay)publiconlyRole(GOVERNOR_ROLE,"Must have timelock role"){require(_delay>=0&&_delay<gracePeriod,"Timelock::setDelay: Delay must not be greater equal to zero and less than gracePeriod");delay=_delay;emitNewDelay(delay);}
+Recommendation
+Consider makingsetGovernorandsetDelayonly callable from the Timelock contract itself.
+Specificaly, changing fromonlyRole(GOVERNOR_ROLE, "Must have timelock role")torequire(msg.sender == address(this), "...").
+Also, consider changing_adminSetup(_admin)inTimelock#initialize()to_adminSetup(address(this)), so that all roles are managed by the timelock itself as well.
+0xScotch (sponsor) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified an exploit that allows to sidestep the delay for the timelock, effectively bypassing all of the timelock’s security guarantees. Because of the gravity of this, I agree with the high risk severity.Mitigation can be achieved by ensuring that all operations run under a time delay

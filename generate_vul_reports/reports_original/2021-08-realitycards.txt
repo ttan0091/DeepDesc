@@ -1,0 +1,37 @@
+[H-01]findNewOwneredgecase
+Submitted by gpersoon
+In the functionfindNewOwnerofRCOrderbook, as loop is done which included the check_loopCounter < maxDeletionsAfterwards, a check is done for  “(loopCounter != maxDeletions)” to determine if the processing is finished.
+If `loopCounter == maxDeletions` then the conclusion is that it isn’t finished yet.
+However, there is the edgecase that the processing might just be finished at the same time as_loopCounter == maxDeletions.
+You can see this the best if you assumemaxDeletions==1, in that case it will never draw the conclusion it is finished.
+Of course havingmaxDeletions==1is very unlikely in practice.
+functionfindNewOwner(uint256_card,uint256_timeOwnershipChanged)externaloverrideonlyMarkets{...// delete current ownerdo{_newPrice=_removeBidFromOrderbookIgnoreOwner(_head.next,_market,_card);_loopCounter++;// delete next bid if foreclosed}while(treasury.foreclosureTimeUser(_head.next,_newPrice,_timeOwnershipChanged) <minimumTimeToOwnTo&&_loopCounter<maxDeletions);if(_loopCounter!=maxDeletions) {// the old owner is dead, long live the new owner_newOwner= .......}else{// we hit the limit, save the old owner, we'll try again next time...}}
+Recommend using a different way to determine that the processing is done. This could save some gas.
+Note: the additional check also costs gas, so you have to verify the end result.
+Perhaps insetDeletionLimit, doublecheck that_deletionLimit> 1.
+Splidge (Reality Cards) confirmed and disagreed with severity:
+oh wow, this is actually a really big problem. It’s easier to see it ifmaxDeletionsis 1 but it exists with any size ofmaxDeletions.
+Whenever we find a valid owner on the final iteration of the loop the if statement will simply check if it was the final loop. That valid owner is then assumed to be invalid and saved for the next transaction to try and find a new owner. When that next transaction happens the valid owner is immediately deleted and not given any ownership of the card at all.
+I think this just falls short of 3 (High risk) because I don’t think it’d be possible for an attacker to engineer the situation to have a particular user deleted without ownership. But I believe this would count as 2 (Med risk) because the protocol“availability could be impacted”for the user that is deleted.
+Splidge (Reality Cards) commented:
+I have since thought of an attack that could have used this and might raise it to 3 (High risk).Due to the difficultly of monitoring which cards you own all the time a valid strategy which some users employ is to bid high enough to scare off other users (usually bidding significantly beyond the 10% minimum increase). Suppose Alice employs this strategy by bidding $100 on a card that was previously only $10.
+Mal (our attacker) wishes to rent the card but wants to pay less than $100. Mal could use Sybil accounts to placemaxDeletions - 1bids all for the minimum rental duration (only funding the accounts for the minimum duration). Mal would then need to wait for the minimum duration of all these bids to expire,(maxDeletions - 1 ) * minimumRentalDurationOnce this has completed Mal can place a bid at $11, this will trigger a rent collection which will attempt tofindNewOwner, Alice being the user that was found on the last iteration of the loop would be considered as invalid. There will not be a change of ownership or any events emitted about this until the next rent collection is triggered.
+This means that the UI would still consider Alice to be the owner of card (Mals’ Sybil bids having hadLogRemoveFromOrderbookandLogUserForeclosedevents emitted) and other users might not consider trying to outbid this, whereas actually Mal is accruing time at a significantly cheaper rate.Thinking about it, this doesn’t really even need Alice at all, Mal could have placed all the higher bids to simultaneously scare off other users while renting at a lower price.I think the fix is relatively simple, by checking if we found a valid user OR hit the deletion limit we can make it so that we don’t skip any bids. This would then leave Alice (or Mal in the other version) correctly having to pay for the time at the higher price.
+0xean (judge) commented:
+upgrading based on sponsors analysis
+Splidge (Reality Cards) patched:
+Fixedhere
+[H-02]UberOwnerhas too much power
+Submitted by tensors
+The Uber Owner has too much power within the system. This makes the protocol closer to a centralized prediction market whose rules are determined by the Uber Owner. See issue page for referenced code
+The above functions can be used by the Uber Owner to completely change the functionality of the system.
+This goes well beyond simple setting new constants and fees, the Uber Owner can basically reprogram how the entire protocol works. Not to mention if the address falls into the wrong hands.
+Recommend limiting the permission of the Uber Owner to something more manageable and trustable. If upgrades to underlying contracts are required they can be done through a proxy instead, in the standard way.
+mcplums (Reality Cards) disputed:
+This is a subjective opinion- there is always going to be a compromise between decentralisation and the ability to respond to potential problems. The latter is especially important with a protocol that is so new.There is no correct answer here, but the current abilities ofuberOwnerwere decided after a lot of thought and are in line with other DeFi protocols.
+Splidge (Reality Cards) commented:
+I’d just like to add that we did recognize the power of the UberOwner which is why it is separated from the Owner specifically so that we can add additional security to it (in the form of a multisig) and so that we can relinquish this control at the appropriate time.
+This was covered in thereadme.
+And alsocommentedin the code.
+0xean (judge) commented:
+I think the warden(s) have a valid point here. This is an incredible amount of power for a single address to yield over the protocol, even if backed by a multi-sig.Is it no an option to 1) pause all activity, and unlock all funds allowing users to withdraw their own funds or 2) pause all activity besides withdraws and implement a time delay between that and the “rug pull” function being called.The readme also statesAlternatively we may wish for this to be a multisig but the normal owner to not be, for convenience.Without a multisig, I believe this absolutely qualifies as a high severity issue as a compromise of a single end user address compromises the entire system, with a multisig it potentially lowers the severity down to a medium, but its still a risk that is worth highlighting in the system and for the sponsor to scrutinize if there are indeed other mitigation paths that could be taken.

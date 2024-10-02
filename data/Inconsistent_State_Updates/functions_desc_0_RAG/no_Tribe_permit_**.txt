@@ -1,0 +1,23 @@
+[Execution Flow]:
+This code defines an external function named permit, which is used to approve an allowance for a spender on behalf of the owner using a signed message (EIP2612). The function accepts seven parameters: owner (address of the token owner), spender (address of the spender), rawAmount (amount to be approved), deadline (expiration time of the permit), v, r, and s (components of the ECDSA signature). Here’s a detailed explanation of how this function works:
+
+1. Parameter Initialization and Conversion:
+    The function starts by declaring a variable amount of type uint96.
+    It checks if rawAmount is equal to uint(1), which is the maximum value a uint can hold. If true, amount is set to uint96(1), which is also the maximum value a uint96 can hold.
+    If rawAmount is not uint(1), it calls the safe96 function to convert rawAmount to uint96. If rawAmount exceeds 96 bits, it throws an error with the message "Tribe: amount exceeds 96 bits".
+
+2. Domain and Struct Hash Calculation:
+    The function calculates the domainSeparator using the keccak256 hash function on the encoded data of DOMAIN_TYPEHASH, the hash of the contract's name, the chain ID, and the contract's address.
+    It then calculates the structHash using the keccak256 hash function on the encoded data of PERMIT_TYPEHASH, owner, spender, rawAmount, the current nonce of the owner (incremented after use), and deadline.
+
+3. Digest and Signature Verification:
+    The digest is calculated by hashing the encoded data of the prefix "\x19\x01", domainSeparator, and structHash.
+    The ecrecover function is used to recover the address of the signer from the digest using the signature components v, r, and s.
+    It checks if the recovered address (signatory) is not zero and if it matches the owner address. If not, it throws an error indicating an invalid or unauthorized signature.
+    It also checks if the current block timestamp is less than or equal to the deadline. If the signature has expired, it throws an error.
+
+4. Updating Allowances and Emitting Event:
+    If all checks pass, the function updates the allowances mapping to set the approved amount for the spender by the owner.
+    Finally, it emits an Approval event with the owner, spender, and amount to notify the network of the approval.
+
+This function is crucial for allowing offchain approvals that can be verified onchain, enhancing the usability and efficiency of token transfers, especially in decentralized applications.

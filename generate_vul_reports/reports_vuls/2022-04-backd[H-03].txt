@@ -1,0 +1,26 @@
+[H-03] Customers cannot betopUp()ed a second time
+Submitted by IllIllI
+CompoundHandler.sol#L71CompoundHandler.sol#L120AaveHandler.sol#L53TopUpAction.sol#L847
+OpenZeppelin’ssafeApprove()will revert if the account already is approved and the newsafeApprove()is done with a non-zero value.
+functionsafeApprove(IERC20token,addressspender,uint256value)internal{// safeApprove should only be called when setting an initial allowance,// or when resetting it to zero. To increase and decrease it, use// 'safeIncreaseAllowance' and 'safeDecreaseAllowance'require((value==0) || (token.allowance(address(this),spender) ==0),"SafeERC20: approve from non-zero to non-zero allowance");_callOptionalReturn(token,abi.encodeWithSelector(token.approve.selector,spender,value));}
+OpenZeppelin/SafeERC20.sol#L45-L58
+Impact
+Customers cannot be topped up a second time, which will cause them to be liquidated even though they think they’re protected.
+Proof of Concept
+There are multiple places wheresafeApprove()is called a second time without setting the value to zero first. The instances below are all related to topping up.
+Compound-specific top-ups will fail the second time around when approving thectokenagain:
+File:backd/contracts/actions/topup/handlers/CompoundHandler.sol#150functiontopUp(51bytes32account,52addressunderlying,53uint256amount,54bytesmemoryextra55       )externaloverridereturns(bool) {56boolrepayDebt=abi.decode(extra, (bool));57CTokenctoken=cTokenRegistry.fetchCToken(underlying);58uint256initialTokens=ctoken.balanceOf(address(this));5960addressaddr=account.addr();6162if(repayDebt) {63amount-=_repayAnyDebt(addr,underlying,amount,ctoken);64if(amount==0)returntrue;65}6667uint256err;68if(underlying==address(0)) {69err=ctoken.mint{value:amount}(amount);70}else{71IERC20(underlying).safeApprove(address(ctoken),amount);
+CompoundHandler.sol#L50-L71
+Compound-specific top-ups will also fail when trying to repay debt:
+File:backd/contracts/actions/topup/handlers/CompoundHandler.sol#262if(repayDebt) {63amount-=_repayAnyDebt(addr,underlying,amount,ctoken);64if(amount==0)returntrue;65}
+CompoundHandler.sol#L62-L65
+Aave-specific top-ups will fail for thelendingPool:
+File:backd/contracts/actions/topup/handlers/AaveHandler.sol#336functiontopUp(37bytes32account,38addressunderlying,39uint256amount,40bytesmemoryextra41       )externaloverridereturns(bool) {42boolrepayDebt=abi.decode(extra, (bool));43if(underlying==address(0)) {44weth.deposit{value:amount}();45underlying=address(weth);46}4748addressaddr=account.addr();4950DataTypes.ReserveDatamemoryreserve=lendingPool.getReserveData(underlying);51require(reserve.aTokenAddress!=address(0),Error.UNDERLYING_NOT_SUPPORTED);5253IERC20(underlying).safeApprove(address(lendingPool),amount);
+AaveHandler.sol#L36-L53
+TheTopUpActionitself fails for thefeeHandler:
+File:backd/contracts/actions/topup/TopUpAction.sol#4840function_payFees(841addresspayer,842addressbeneficiary,843uint256feeAmount,844addressdepositToken845       )internal{846addressfeeHandler=getFeeHandler();847IERC20(depositToken).safeApprove(feeHandler,feeAmount);
+TopUpAction.sol#L840-L847
+I’ve filed the other less-severe instances as a separate medium-severity issue, and flagged the remaining low-severity instances in my QA report.
+Recommended Mitigation Steps
+Always dosafeApprove(0)if the allowance is being changed, or usesafeIncreaseAllowance().
+chase-manning (Backd) confirmed and resolved

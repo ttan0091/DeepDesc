@@ -1,0 +1,46 @@
+[H-01] User could lose underlying tokens when redeeming from theIdleYieldSource
+Submitted by shw
+TheredeemTokenfunction inIdleYieldSourceusesredeemedShareinstead ofredeemAmountas the input parameter when callingredeemIdleTokenof the Idle yield source. As a result, users could get fewer underlying tokens than they should.
+When burning users’ shares, it is correct to useredeemedShare(line 130). However, when redeeming underlying tokens from Idle Finance,redeemAmountshould be used instead ofredeemedShare(line 131). Usually, thetokenPriceWithFee()is greater thanONE_IDLE_TOKEN, and thusredeemedShareis less thanredeemAmount, causing users to get fewer underlying tokens than expected.
+Recommend changingredeemedSharetoredeemAmountat lineL131.
+PierrickGT (PoolTogether) confirmed and patched:
+PR:https://github.com/pooltogether/idle-yield-source/pull/4
+[H-02]YearnV2YieldSourcewrong subtraction in withdraw
+Submitted by cmichel, also found by 0xRajeev
+When withdrawing from thevault, one redeemsyTokensfortokens, thus thetokenbalance of the contract should increase after withdrawal.
+But the contract subtracts thecurrentBalancefrom thepreviousBalance:
+uint256yShares=_tokenToYShares(amount);uint256previousBalance=token.balanceOf(address(this));// we accept losses to avoid being locked in the Vault (if losses happened for some reason)if(maxLosses!=0) {vault.withdraw(yShares,address(this),maxLosses);}else{vault.withdraw(yShares);}uint256currentBalance=token.balanceOf(address(this));// @audit-issue this seems wrongreturnpreviousBalance.sub(currentBalance);
+All vault withdrawals fail due to the integer underflow as thepreviousBalanceis less thancurrentBalance. Users won’t be able to get back their investment.
+Recommend that It should returncurrentBalance > previousBalance ? currentBalance - previousBalance : 0
+kamescg (PoolTogether) confirmed and patched:
+https://github.com/pooltogether/pooltogether-yearnv2-yield-source/pull/new/fix/90https://github.com/pooltogether/pooltogether-yearnv2-yield-source/pull/7
+[H-03]BadgerYieldSourcebalanceOfTokenshare calculation seems wrong
+Submitted by cmichel
+When suppling to theBadgerYieldSource, someamountofbadgeris deposited tobadgerSettand one receivesbadgerSettshare tokens in return which are stored in thebalancesmapping of the user. So far this is correct.
+ThebalanceOfTokenfunction should then return the redeemable balance inbadgerfor the user’sbadgerSettbalance.
+It computes it as the pro-rata share of the user balance (compared to the total-supply ofbadgerSett) on thebadgerin the vault:
+balances[addr].mul(badger.balanceOf(address(badgerSett))).div(badgerSett.totalSupply())
+However,badger.balanceOf(address(badgerSett))is only a small amount of badger that is deployed in the vault (“Sett”) due to most of the capital being deployed to thestrategies. Therefore, it under-reports the actual balance:
+Typically, a Sett will keep a small portion of deposited funds in reserve to handle small withdrawals cheaply.Badger Docs
+Any contract or user calling thebalanceOffunction will receive a value that is far lower than the actual balance.
+Using this value as a basis for computations will lead to further errors in the integrations.
+Recommend usingbadgerSett.balance()instead ofbadger.balanceOf(address(badgerSett))to also account for “the balance in the Sett, the Controller, and the Strategy”.
+asselstine (PoolTogether) confirmed
+[H-04] withdraw timelock can be circumvented
+Submitted by cmichel
+One can withdraw the entirePrizePooldeposit by circumventing the timelock.
+Assume the user has no credits for ease of computation:
+user callswithdrawWithTimelockFrom(user, amount=userBalance)with their entire balance. This “mints” an equivalentamountoftimelockand resets_unlockTimestamps[user] = timestamp = blockTime + lockDuration.user callswithdrawWithTimelockFrom(user, amount=0)again but this time withdrawing0amount. This will return alockDurationof0and thusunlockTimestamp = blockTime. The inner_mintTimelocknow resets_unlockTimestamps[user] = unlockTimestampAsif (timestamp <= _currentTime())is true, the full users amount is now transferred out to the user in the_sweepTimelockBalancescall.
+Users don’t need to wait for their deposit to contribute their fair share to the prize pool.
+They can join before the awards and leave right after without a penalty which leads to significant issues for the protocol.
+It’s the superior strategy but it leads to no investments in the strategy to earn the actual interest.
+Recommend that the unlock timestamp should be increased by duration each time, instead of being reset to the duration.
+asselstine (PoolTogether) confirmed:
+Mitigation:If a user’s timelock balance is non-zero, the prize strategy rejects the ticket burn.
+[H-05]IdleYieldSourcedoesn’t use mantissa calculations
+Submitted by tensors
+Because mantissa calculations are not used in this case to account for decimals, the arithmetic can zero out the number of shares or tokens that should be given.
+For example, say I deposit 1 token, expecting 1 share in return. OnL95, if thetotalUnderlyingAssetsis increased to be larger than the number of total shares, then the division would output 0 and I wouldn’t get any shares.
+Recommend  implementing mantissa calculations like in the contract for the AAVE  yield.
+PierrickGT (PoolTogether) confirmed and patched:
+PR:https://github.com/pooltogether/idle-yield-source/pull/5

@@ -1,0 +1,47 @@
+[H-01] Aave Vaults are vulnerable to share inflation attacks
+Lines of Code
+AAVESmartTrendVault.sol#L226-L227AAVEDNTVault.sol#L228-L229
+Description
+In the Aave vaults,SHARE_MULTIPLIERis used to prevent share inflation attack by increasing share precision. This is to prevent attacks that cause an user’s share to be rounded down to zero or a small number, thus receiving incorrect share.
+However, the_mint()actually reduces the share precision again with a division bySHARE_MULTIPLIER, causing user to be minted incorrect shares amount when there is an share inflation attack.
+_mint(_msgSender(),productId,aTokenShare/SHARE_MULTIPLIER,"");_mint(params.maker,makerProductId,aTokenShare/SHARE_MULTIPLIER,"");
+Recommendation
+Remove the division bySHARE_MULTIPLIERso that the minted share amount are inSHARE_MULTIPLIERprecision. Note that this will also require changes to other share computation (e.g. in burn(), harvest()) that had assumed collateral precision for shares amount. Anddecimals()should reflect the increased precision as well.
+Sofa Protocol
+Fixed in commit#7aab.
+Code4rena Pro League
+Verified, the share precision is now correctly increased based onSHARE_MULTIPLIERduring mint and other share computations.
+
+[H-02] Incorrect Expiry Used ingetHlPricesFunction When Burning A ProductIDAllow Double Withdrawal Exploit in DNT Vaults
+Lines of Code
+DNTVaultAAVEDNTleverageDNT
+Description
+ThegetHlPricesfunction may include prices after the intendedexpirytime when theburn()function is called inDNTVaultcontract after theexpirydate (more than 1 day atleast). This can lead to incorrect settlement calculations and allow an attacker to double withdraw his bet.The expiry passed togetHlPrices()might be later than the product’s actualexpiry, that’s because we always passlatestExpiry, which is basically current time rounded  togetMakerPayoffandgetMinterPayofffunctions:// some code ...>>uint256latestExpiry= (block.timestamp-28800) /86400*86400+28800;if(isMaker==1) {>>payoff=getMakerPayoff(latestTerm,latestExpiry,anchorPrices,amount);}else{>>     (payoff,settlementFee) =getMinterPayoff(latestTerm,latestExpiry,anchorPrices,amount);}Note that theexpirypassed togetHlPrices()might be later than the product’s actualexpiry, causing the function to iterate over and include prices that should not be considered and exclude some that should be included. This results in settling the payoff incorrectly, as prices beyond the product’s expiry can skew the high/low price determination.
+>>payoff=STRATEGY.getMakerPayoff(anchorPrices,ORACLE.getHlPrices(term,expiry),amount);
+Since the minter and the maker call this function separately, they might use differentlatestExpiryvalues if they burn their tokens at different times. This discrepancy can lead to inconsistent settlement values for the two parties.
+Attack Example:
+An attacker could take advantage of that by opening a position with themselves and monitoring the prices after the expiry. When prices are favorable to the minter, the attacker burns the minter’s token id.Conversely, when prices favor the maker, the attacker closes the maker’s position. This allows the attacker to double withdraw their bet, effectively draining the protocol with a large position.
+Note: This issue is present in allDNT Vaults.
+Recommendation
+ForDNTvaults, always ensure that the time used for settlement is equal to or less than the product’s realexpiry. Implement checks to prevent using a later expiry time:
+function _burn(uint256 term, uint256 expiry, uint256[2] memory anchorPrices, uint256 isMaker) internal nonReentrant returns (uint256 payoff) {uint256 productId = getProductId(term, expiry, anchorPrices, isMaker);(uint256 latestTerm, bool _isBurnable) = isBurnable(term, expiry, anchorPrices);require(_isBurnable, "Vault: not burnable");// check if settled-        uint256 latestExpiry = (block.timestamp - 28800) / 86400 * 86400 + 28800;+        uint256 current = (block.timestamp - 28800) / 86400 * 86400 + 28800;+        uint256 latestExpiry = current > expiry ? expiry : currentrequire(ORACLE.settlePrices(latestExpiry, 1) > 0, "Vault: not settled");// more code ...}function _burnBatch(Product[] calldata products) internal nonReentrant returns (uint256 totalPayoff) {//some code ..for (uint256 i = 0; i < products.length; i++) {// check if settled-            uint256 latestExpiry = (block.timestamp - 28800) / 86400 * 86400 + 28800;+            Product memory product = products[i];+            uint256 current = (block.timestamp - 28800) / 86400 * 86400 + 28800;+            uint256 latestExpiry = current > product.expiry ? product.expiry  : current+            require(ORACLE.settlePrices(latestExpiry, 1) > 0, "Vault: not settled");-            Product memory product = products[i];}// more code ....}
+Sofa Protocol
+Fixed in commit#a83b.
+Code4rena Pro League
+Verified. The DNT vaults now ensure that settlement calculation will not include prices after product expiry.
+
+[H-03] Signatures from makers can be re-used due to malleability
+Lines of Code
+AAVEDNTVault.sol#L195-L197AAVESmartTrendVault.sol#L194-L196DNTVault.sol#L175-L177LeverageDNTVault.sol#L190-L192LeverageSmartTrendVault.sol#L188-L190SmartTrendVault.sol#L173-L175
+Description
+Maker signatures used are malleable. The contract usesecrecoverto recover the signer of the signatures, and then stores the hash ofv,r,sto denote a used signature.
+The issue is that if(v,r,s)is a valid signature, so is(v,r, -s mod n). This is a well known feature of the elliptic curve cryptography. The hash of this manipulated signature is different from the original one, so it allows the same signature to be used twice.
+More details about the signature malleability can be foundhere.
+This vulnerability allows maker signatures to be used twice. So makers can be signed up to be exposed to positions twice the size of the position they were anticipating.
+Recommendation
+Either use the latest openzeppelin ECDSA library, or implement a nonce system for maker signatures to prevent re-use. Openzeppelin ECDSA library already makes sure that the passedsvalue is only in the lower range.
+Sofa Protocol
+Fixed in commit#e4d8. It is still considered acceptable regardless of the fix, as the market makers allow users to re-use the signature twice.
+Code4rena Pro League
+Verified to have adopted OpenZeppelin ECDSA library for signature verification to prevent signature re-use.
+

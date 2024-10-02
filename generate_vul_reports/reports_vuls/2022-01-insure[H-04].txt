@@ -1,0 +1,11 @@
+[H-04] Initial pool deposit can be stolen
+Submitted by cmichel, also found by WatchPug
+Note that thePoolTemplate.initializefunction, called when creating a market withFactory.createMarket, calls a vault function to transfer an initial deposit amount (conditions[1])fromthe initial depositor (_references[4]):
+// PoolTemplatefunctioninitialize(stringcalldata_metaData,uint256[]calldata_conditions,address[]calldata_references)externaloverride{// ...if(_conditions[1] >0) {// @audit vault calls asset.transferFrom(_references[4], vault, _conditions[1])_depositFrom(_conditions[1],_references[4]);}}function_depositFrom(uint256_amount,address_from)internalreturns(uint256_mintAmount){require(marketStatus==MarketStatus.Trading&&paused==false,"ERROR: DEPOSIT_DISABLED");require(_amount>0,"ERROR: DEPOSIT_ZERO");_mintAmount=worth(_amount);// @audit vault calls asset.transferFrom(_from, vault, _amount)vault.addValue(_amount,_from,address(this));emitDeposit(_from,_amount,_mintAmount);//mint iToken_mint(_from,_mintAmount);}
+The initial depositor needs to first approve the vault contract for thetransferFromto succeed.
+An attacker can then frontrun theFactory.createMarkettransaction with their own market creation (it does not have access restrictions) and create a marketwith different parametersbut still passing in_conditions[1]=amountand_references[4]=victim.
+A market with parameters that the initial depositor did not want (different underlying, old whitelisted registry/parameter contract, etc.) can be created with their tokens and these tokens are essentially lost.
+Recommended Mitigation Steps
+Can the initial depositor be set toFactory.createMarket’smsg.sender, instead of being able to pick a whitelisted one as_references[4]?
+oishun1112 (Insure) confirmed:
+https://github.com/code-423n4/2022-01-insure-findings/issues/224

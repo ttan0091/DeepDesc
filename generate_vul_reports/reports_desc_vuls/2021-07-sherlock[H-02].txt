@@ -1,0 +1,16 @@
+Type of vulnerability: Unchecked Return Value Injection
+Cause of vulnerability: The function `bps()` incorrectly assumes the structure of `msg.data` and allows a malicious user to inject extra values at the end of `calldata`, leading to the return of fake values.
+Execution process: A malicious user can craft a transaction with specially encoded `calldata` that includes additional values beyond what the function expects. This allows the user to manipulate the return value of `bps()` to an arbitrary address.
+Vulnerable code: 
+```solidity
+function bps() internal pure returns (IERC20 rt) {
+    // These fields are not accessible from assembly
+    bytes memory array = msg.data;
+    uint256 index = msg.data.length;
+    // solhint-disable-next-line no-inline-assembly
+    assembly {
+        // Load the 32 bytes word from memory with the address on the lower 20 bytes, and mask those.
+        rt := and(mload(add(array, index)), 0xffffffffffffffffffffffffffffffffffffffff)
+    }
+}
+```

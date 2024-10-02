@@ -1,0 +1,21 @@
+Type of vulnerability: Re-entrancy
+Cause of vulnerability: Lack of re-entrancy protection and untrusted input tokens allowed in the `settleAuction` function
+Execution process: The attacker creates a custom malicious token that re-enters the `settleAuction` function multiple times, each time lowering the `newRatio` and thus the `tokensNeeded`, allowing the attacker to drain more funds each time until the basket is empty
+Vulnerable code: 
+```solidity
+function settleAuction(address[] memory inputTokens, address[] memory outputTokens) public {
+    // ...
+    for (uint256 i = 0; i < pendingWeights.length; i++) {
+        uint256 tokensNeeded = basketAsERC20.totalSupply() * pendingWeights[i] * newRatio / BASE / BASE;
+        require(IERC20(pendingTokens[i]).balanceOf(address(basket)) >= tokensNeeded);
+    }
+    // ...
+    for (uint256 i = 0; i < inputTokens.length; i++) {
+        IERC20(inputTokens[i]).safeTransferFrom(msg.sender, address(this), amount);
+    }
+    // ...
+    basket.setNewWeights();
+    basket.updateIBRatio(newRatio);
+    // ...
+}
+```

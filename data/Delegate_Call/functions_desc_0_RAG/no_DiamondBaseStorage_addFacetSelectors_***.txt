@@ -1,0 +1,28 @@
+This code defines an internal function named addFacetSelectors, which is used to add new function selectors to a diamond contract's facet. A diamond contract is a pattern in Ethereum smart contract development that allows for modularity and upgradability by using multiple facets (contracts) that can be dynamically added or replaced.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Storage Layout:
+    Layout storage l: This is a reference to the storage layout of the diamond contract, which contains mappings and other storage variables necessary for managing facets and selectors.
+    uint256 selectorCount: This parameter tracks the number of selectors that have been added.
+    bytes32 selectorSlot: This parameter is used to manage the storage of selectors in a compact manner, packing multiple selectors into a single bytes32 slot.
+    IDiamondCuttable.FacetCut memory facetCut: This parameter contains details about the facet being added, including the target contract address and the list of function selectors to be added.
+
+2. Preliminary Checks:
+    The function first checks if the target address in facetCut is either the same as the contract itself or is a valid contract (i.e., it has code). This is done using the require statement to ensure that the target is valid and not just an empty address.
+
+3. Loop Through Selectors:
+    The function iterates over each selector in the facetCut.selectors array.
+    For each selector, it checks if the selector is already present in the l.facets mapping. This is done by checking if the address part of the oldFacet (extracted from l.facets[selector]) is address(0). If the selector is already present, the function reverts with an error message.
+
+4. Adding the Selector:
+    If the selector is not already present, the function adds it to the l.facets mapping. It combines the target address (facetCut.target) with the current selectorCount to store in the mapping.
+    It then calculates the position of the selector within the selectorSlot using bitwise operations. This involves clearing the current position in the slot and then adding the new selector.
+
+5. Handling Full Slots:
+    If the selectorSlot is full (i.e., all 256 bits are used), the function writes the full slot to storage in l.selectorSlots and resets selectorSlot to zero for the next set of selectors.
+
+6. Return Values:
+    The function returns the updated selectorCount and selectorSlot after processing all selectors in the facetCut.
+
+This function is crucial for managing the dynamic nature of diamond contracts, allowing new functions to be added to the contract without redeploying the entire contract. It ensures that selectors are correctly mapped to their respective facets and efficiently stored in the contract's storage.

@@ -1,0 +1,23 @@
+Type of vulnerability: Reward Distribution Logic Flaw
+Cause of vulnerability: Incorrect handling of reward tokens in the `VoterProxy` contract when using `ExtraRewardStashV3` with Angle Deployment.
+Execution process: When `VoterProxy.claimVeAsset` is triggered, it claims all available reward tokens from the gauge and sends only the veAsset (ANGLE) to the `Booster` contract, leaving other reward tokens (e.g., DAI) stuck in the `VoterProxy` contract. This occurs because the contract does not handle the redirection of these additional rewards correctly.
+Vulnerable code: 
+```solidity
+function claimVeAsset(address _gauge) external returns (uint256) {
+    require(msg.sender == operator, "!auth");
+    uint256 _balance = 0;
+    if (escrowModle == IVoteEscrow.EscrowModle.PICKLE) {
+        try IGauge(_gauge).getReward() {} catch { return _balance; }
+    } else if (escrowModle == IVoteEscrow.EscrowModle.CURVE ||
+               escrowModle == IVoteEscrow.EscrowModle.RIBBON) {
+        try ITokenMinter(minter).mint(_gauge) {} catch { return _balance; }
+    } else if (escrowModle == IVoteEscrow.EscrowModle.IDLE) {
+        try ITokenMinter(minter).distribute(_gauge) {} catch { return _balance; }
+    } else if (escrowModle == IVoteEscrow.EscrowModle.ANGLE) {
+        try IGauge(_gauge).claim_rewards() {} catch { return _balance; }
+    }
+    _balance = IERC20(veAsset).balanceOf(address(this));
+    IERC20(veAsset).safeTransfer(operator, _balance);
+    return _balance;
+}
+```

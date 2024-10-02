@@ -1,0 +1,20 @@
+[H-07] VaderReserve does not support paying IL protection out to more than one address, resulting in locked funds
+Submitted by TomFrenchBlockchain
+Impact
+All liquidity deployed to one ofVaderPoolorVaderPoolV2will be locked permanently.
+Proof of Concept
+BothVaderRouterandVaderRouterV2make calls toVaderReservein order to pay out IL protection.
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/dex/router/VaderRouter.sol#L206https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/dex-v2/router/VaderRouterV2.sol#L227
+HoweverVaderReserveonly allows a single router to claim IL protection on behalf of users.
+https://github.com/code-423n4/2021-11-vader/blob/3a43059e33d549f03b021d6b417b7eeba66cf62e/contracts/reserve/VaderReserve.sol#L80-L83
+It’s unlikely that the intent is to deploy multiple reserves so there’s no way for bothVaderRouterandVaderRouterV2to pay out IL protection simultaneously.
+This is a high severity issue as any LPs which are using the router which is not listed onVaderReservewill be unable to remove liquidity as the call to the reserve will revert. Vader governance is unable to update the allowed router onVaderReserveso all liquidity on eitherVaderPoolorVaderPoolV2will be locked permanently.
+Recommended Mitigation Steps
+Options:
+Allow the reserve to whitelist multiple addresses to claim fundsAllow the call to the reserve to fail without reverting the entire transaction (probably want to make this optional for LPs)
+SamSteinGG (Vader) disputed:
+As the code indicates, only one of the two versioned instances of the AMM will be deployed and active at any given time rendering this exhibit incorrect.
+alcueca (judge) commented:
+Sorry @SamSteinGG, where does the code indicate that?
+SamSteinGG (Vader) commented:
+Correction, this was clarified during the audit in the discord channel.

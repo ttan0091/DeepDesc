@@ -1,0 +1,19 @@
+Type of vulnerability: Price Manipulation
+Cause of vulnerability: Direct use of the most recent data point (`sqrtPriceX96`) from `Uniswap.slot0`, which is susceptible to manipulation through MEV bots and flash loans via sandwich attacks.
+Execution process: An attacker manipulates the `sqrtPriceX96` value by executing a sandwich attack using MEV bots or flash loans. This manipulated value is then used in the `Uniswap.swap` function, leading to transactions being executed at an inflated price, resulting in financial loss for the users interacting with the swap function.
+Vulnerable code: 
+```solidity
+(uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(poolAddress).slot0();
+// Calculate Price limit depending on pre-set price impact
+uint160 exactSqrtPriceImpact = (sqrtPriceX96 * (priceImpactPercentage / 2)) / GLOBAL_DIVISIONER;
+// Get limit
+uint160 sqrtPriceLimitX96 = zeroForOneOnInflow ? sqrtPriceX96 - exactSqrtPriceImpact : sqrtPriceX96 + exactSqrtPriceImpact;
+// Swap imbalanced token as long as we haven't used the entire amountSpecified and haven't reached the price limit
+try IUniswapV3Pool(poolAddress).swap(
+    address(this),
+    zeroForOneOnInflow,
+    int256(_amount),
+    sqrtPriceLimitX96,
+    abi.encode(SwapCallbackData({tokenIn: gasTokenGlobalAddress}))
+)
+```

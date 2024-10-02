@@ -1,0 +1,17 @@
+[H-17] TWAPOracle might register with wrong token order
+Submitted by cmichel
+TheTWAPOracle.registerPairfunction takes in afactoryand (token0, token1).
+The function accepts a_factoryargument which means any Uniswap-like factory can be used.
+When using the actual Uniswap factory’sIUniswapV2Factory(factory).getPair(token0, token1)call, it could be that thetoken0andtoken1are reversed as itignores the order.
+Meaning, theprice0/1CumulativeLastcould also be reversed as it matches the internal order.
+The code however pushes the_pairsassuming that the internalprice0CumulativeLast, price1CumulativeLastorder matches the order of the function argumentstoken0, token1.
+_pairs.push(PairData({pair:pairAddr,token0:token0,token1:token1,price0CumulativeLast:price0CumulativeLast,price1CumulativeLast:price1CumulativeLast,blockTimestampLast:blockTimestampLast,price0Average:FixedPoint.uq112x112({_x:0}),price1Average:FixedPoint.uq112x112({_x:0})}));
+Impact
+The prices could be inverted which leads to the oracle providing wrong prices.
+Recommended Mitigation Steps
+It should be checked if Uniswap’s internal order matches the order of thetoken0/1function arguments.
+If not, the cumulative prices must be swapped.
+// pseudocodeIUniswapV2Pairpair=IUniswapV2Pair(IUniswapV2Factory(factory).getPair(token0,token1));pairAddr=address(pair);price0CumulativeLast=pair.price0CumulativeLast();price1CumulativeLast=pair.price1CumulativeLast();(price0CumulativeLast,price1CumulativeLast) =token0==pair.token0() ? (price0CumulativeLast,price1CumulativeLast) : (price1CumulativeLast,price0CumulativeLast);
+The same issue exists inupdate
+SamSteinGG (Vader) confirmed
+The TWAP oracle module has been completely removed and redesigned from scratch as LBTwap that is subject of the new audit.

@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `forceRevert()` function allows an attacker to withdraw all deposited gas budget, which can be replenished later, leading to the freezing of all withdrawn gas.
+Execution process: An attacker calls `callOutSigned` on a branch chain to bypass lock. On the root chain, the virtual account makes three external calls: retryDeposit at Arbitrum Branch Bridge Agent with an already executed nonce, which forces a revert and withdraws all execution gas budget. Then, the attacker calls `callOut` at Arbitrum Branch Bridge Agent, which deletes `initialGas`. Finally, the attacker directly deposits a small amount of gas at Anycall Config to ensure the transaction succeeds, freezing all withdrawn gas budgets.
+Vulnerable code: 
+```solidity
+function _forceRevert() internal {
+    if (initialGas == 0) revert GasErrorOrRepeatedTx();
+    IAnycallConfig anycallConfig = IAnycallConfig(IAnycallProxy(local`AnyCall`Address).config());
+    uint256 executionBudget = anycallConfig.executionBudget(address(this));
+    // Withdraw all execution gas budget from anycall for tx to revert with "no enough budget"
+    if (executionBudget > 0) try anycallConfig.withdraw(executionBudget) {} catch {}
+}
+```

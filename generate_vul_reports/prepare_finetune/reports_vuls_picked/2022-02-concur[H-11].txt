@@ -1,0 +1,37 @@
+Type of vulnerability: Reward Distribution Manipulation
+Cause of vulnerability: Interdependence between pools and unguarded `getReward` function leading to incorrect calculation of rewards.
+Execution process: A malicious user calls the `getReward` function on multiple pools with the same reward token, inflating the contract's balance. This inflated balance is then used to calculate rewards for a single pool, allowing the user to siphon rewards from other pools.
+Vulnerable code: 
+```solidity
+function _calcRewardIntegral(uint256 _pid,uint256 _index,address _account,uint256 _balance,uint256 _supply) internal {
+    RewardType memory reward = rewards[_pid][_index];
+    //get difference in balance and remaining rewards
+    //getReward is unguarded so we use remaining to keep track of how much was actually claimed
+    uint256 bal = IERC20(reward.token).balanceOf(address(this));
+    uint256 d_reward = bal - reward.remaining;
+    // send 20 % of cvx / crv reward to treasury
+    if (reward.token == cvx || reward.token == crv) {
+        IERC20(reward.token).transfer(treasury, d_reward / 5);
+        d_reward = (d_reward * 4) / 5;
+    }
+    IERC20(reward.token).transfer(address(claimContract), d_reward);
+    if (_supply > 0 && d_reward > 0) {
+        reward.integral =
+        reward.integral +
+        uint128((d_reward * 1e20) / _supply);
+    }
+    //update user integrals
+    uint256 userI = userReward[_pid][_index][_account].integral;
+    if (userI < reward.integral) {
+        userReward[_pid][_index][_account].integral = reward.integral;
+        claimContract.pushReward(_account,
+        reward.token,
+        (_balance * (reward.integral - userI)) / 1e20);
+    }
+    //update remaining reward here since balance could have changed if claiming
+    if (bal != reward.remaining) {
+        reward.remaining = uint128(bal);
+    }
+    rewards[_pid][_index] = reward;
+}
+```

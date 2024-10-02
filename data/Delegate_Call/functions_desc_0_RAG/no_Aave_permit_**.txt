@@ -1,0 +1,28 @@
+This code defines an external function named permit, which is designed to allow an owner (referred to as target) to grant an allowance to a spender without the need for the owner to directly interact with the contract. This function is typically used to enable metatransactions, allowing users to authorize transfers on their behalf using offchain signatures.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    target: The address of the token owner who is granting the allowance.
+    spender: The address of the account that will be allowed to spend the tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which this permit is no longer valid.
+    v, r, s: These are components of an ECDSA signature that the target uses to sign the permit.
+
+2. Time Validity Check:
+    The function starts by checking if the current block timestamp (block.timestamp) is less than or equal to the deadline. If the permit has expired (i.e., block.timestamp > deadline), the function reverts with the message "WERC10: Expired permit".
+
+3. Hash Calculation:
+    The function calculates a hash (hashStruct) of the structured data that needs to be signed. This includes the PERMIT_TYPEHASH (a constant that defines the structure of the permit), the target, spender, value, the current nonce of the target (which is incremented after use to prevent replay attacks), and the deadline.
+
+4. Signature Verification:
+    The function then verifies the signature provided (v, r, s) against the calculated hash. It attempts to verify the signature using two methods:
+      verifyEIP712: This function verifies the signature in the context of the EIP712 standard, which provides a way to encode and hash structured data for use in signatures.
+      verifyPersonalSign: This function verifies the signature using the personal sign format, which is a simpler but less structured method of signing data.
+    If neither verification method succeeds, the function reverts, indicating that the signature is invalid.
+
+5. Approval Update and Event Emission:
+    If the signature is valid, the function updates the allowance mapping to set the allowance of the spender by the target to the specified value.
+    It then emits an Approval event, which notifies external observers (such as blockchain explorers or offchain applications) that an approval has been made.
+
+This function is crucial for enabling gasless transactions (metatransactions) where the actual transaction execution is offloaded to a third party who pays the gas fees, but the authorization is done via a signature from the owner. This is particularly useful in scenarios where users might not have ETH to pay for gas fees but still need to interact with the contract.

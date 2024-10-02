@@ -1,0 +1,12 @@
+[H-01] Tokens can be burned with no access control
+Submitted by sirhashalot
+The Vault.sol contract has two address state variables, thekeepervariable and thecontrollervariable, which are both permitted to be the zero address. If both variables are zero simultaneously, any address can burn the available funds (available funds = balance - totalDebt) by sending these tokens to the zero address with the unprotectedutilitize()function. If a user has no totalDebt, the user can lose their entire underlying token balance because of this.
+Proof of Concept
+The problematicutilize()function isfound here. To see how the two preconditions can occur:
+The keeper state variable is only changed by thesetKeeper()functionfound here. If this function is not called, the keeper variable will retain the default value of address(0), which bypassesthe only access control for the utilize function.There is a commenthere on line 69stating the controller state variable can be zero. There is no zero address check for the controller state variable in the Vault constructor.
+If both address variables are left at their defaults ofaddress(0), then thesafeTransfer()callon line 348would send the tokens to address(0).
+Recommended Mitigation Steps
+Add the following line to the very beginning of theutilize()function:require(address(controller) != address(0))
+This check is already found in many other functions in Vault.sol, including the_unutilize()function.
+oishun1112 (Insure) confirmed and resolved:
+https://github.com/InsureDAO/pool-contracts/blob/audit/code4rena/contracts/Vault.sol#L382

@@ -1,0 +1,50 @@
+This code defines an external view function named profitOf, which calculates the profit in USD, HUNNY, and BNB for a given minter, FLIP token, and amount. Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    solidity
+    function profitOf(address minter, address flip, uint amount) 
+        external 
+        view 
+        returns (uint _usd, uint _hunny, uint _bnb) 
+    
+     Parameters:
+         minter: The address of the minter.
+         flip: The address of the FLIP token.
+         amount: The amount of FLIP tokens.
+     Returns:
+         _usd: The profit in USD.
+         _hunny: The profit in HUNNY tokens.
+         _bnb: The profit in BNB.
+
+2. Calculating USD Profit:
+    solidity
+    _usd = tvl(flip, amount);
+    
+     The function tvl(flip, amount) is called to calculate the total value locked (TVL) in USD for the given FLIP token and amount. The result is stored in _usd.
+
+3. Handling Minter Address:
+    solidity
+    if (address(minter) == address(0)) {
+        _hunny = 0;
+    } else {
+        uint performanceFee = IHunnyMinter(minter).performanceFee(_usd);
+        _usd = _usd.sub(performanceFee);
+        uint bnbAmount = performanceFee.mul(1e18).div(bnbPriceInUSD());
+        _hunny = IHunnyMinter(minter).amountHunnyToMint(bnbAmount);
+    }
+    
+     If the minter address is 0x0 (i.e., the zero address), the function sets _hunny to 0.
+     Otherwise, it proceeds to calculate the performance fee and the corresponding HUNNY tokens:
+         IHunnyMinter(minter).performanceFee(_usd) calculates the performance fee in USD based on the total USD profit.
+         _usd is then reduced by this performance fee.
+         The performance fee is converted to BNB by multiplying it by 1e18 and dividing by the BNB price in USD (bnbPriceInUSD()).
+         Finally, IHunnyMinter(minter).amountHunnyToMint(bnbAmount) calculates the amount of HUNNY tokens to be minted based on the BNB amount.
+
+4. Setting BNB Profit:
+    solidity
+    _bnb = 0;
+    
+     The BNB profit is set to 0, indicating that no BNB profit is calculated or returned by this function.
+
+### Summary
+The profitOf function calculates the profit in USD and HUNNY tokens for a given minter, FLIP token, and amount. It first calculates the total value locked in USD, then adjusts for any performance fees if a valid minter address is provided, converting the performance fee to HUNNY tokens based on the BNB price. The BNB profit is explicitly set to 0. This function is a view function, meaning it does not modify the state and can be called without incurring gas fees.

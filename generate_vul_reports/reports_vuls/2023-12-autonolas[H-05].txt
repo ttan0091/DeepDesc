@@ -1,0 +1,19 @@
+[H-05] Withdrawals can be frozen by creating null deposits
+Submitted byerebus, also found byhashandBugzyVonBuggernaut
+It won’t be possible to withdraw any LP token after doing a deposit of $0$ liquidity, leading to withdrawals being effectively freezed.
+Proof of Concept
+Inliquidity_lockbox, function withdraw
+...uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];// Check that the token account existsif(positionLiquidity==0) {revert("No liquidity on a provided token account");}...
+The code checks for the existence of a position via the recorded liquidity. This is a clever idea, as querying a non-existant value from a mapping will return $0$. However, indeposit, due to a flawed input validation, it is possible to make positions with $0$ liquidity as the only check being done is for liquidity to not be higher thantype(uint64).max:
+liquiditylockbox, function \getPositionData
+...// Check that the liquidity is within uint64 boundsif(positionData.liquidity>type(uint64).max) {revert("Liquidity overflow");}...
+As it will pass the input validation inside_getPositionData, the only way for such a tx to revert is in thetransfer/mint, which are low-level calls with no checks for success, as stated in my reportMissing checks for failed calls to the token program will corrupt user's positions.
+Due to the reasons above, this deposit with $0$ liquidity will be treated as a valid one and will be stored inside themapPositionAccountLiquidityandpositionAccountsarrays. If we add the fact that withdrawals are done by loopingLINEARLYthroughpositionAccounts:
+liquidity_lockbox, function withdraw
+functionwithdraw(uint64amount)external{addresspositionAddress=positionAccounts[firstAvailablePositionAccountIndex];// @audit linear loop...uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];// Check that the token account existsif(positionLiquidity==0) {// @audit it will revert here once it reaches the flawed positionrevert("No liquidity on a provided token account");}...if(remainder==0) {// @audit if the liquidity after the orca call is 0, close the position and ++ the index...// Increase the first available position account indexfirstAvailablePositionAccountIndex++;// @audit it won't reach here as the revert above will roll-back the whole tx}}
+It can be seen that once it encounters such a“fake”deposit with $0$ liquidity provided, it will always revert due to the existence check. As there is no other way to updatefirstAvailablePositionAccountIndexto bypass the flawed position, withdrawals will be completely freezed.
+Recommended Mitigation Steps
+Just check for the supplied liquidity to not be $0$ in
+liquiditylockbox, function \getPositionData
+...+       // Check that the liquidity > 0+       if (positionData.liquidity == 0) {+           revert("Liquidity cannot be 0");+       }// Check that the liquidity is within uint64 boundsif (positionData.liquidity > type(uint64).max) {revert("Liquidity overflow");}...
+mariapiamo (Olas) confirmed

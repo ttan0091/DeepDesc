@@ -1,0 +1,43 @@
+This code defines an external function named deleverToZeroBorrowBalance, which is designed to reduce the borrow balance of a given SetToken to zero by redeeming collateral and repaying the borrowed assets. The function is marked as nonReentrant to prevent reentrancy attacks and includes a modifier onlyManagerAndValidSet to ensure it can only be called by a manager and with a valid SetToken.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    _setToken: An instance of ISetToken, representing the SetToken whose borrow balance needs to be reduced.
+    _collateralAsset: An instance of IERC20, representing the collateral asset to be redeemed.
+    _repayAsset: An instance of IERC20, representing the asset to be repaid.
+    _redeemQuantity: A uint256 value, representing the quantity of collateral to be redeemed.
+    _tradeAdapterName: A string memory, representing the name of the trade adapter to be used for trading.
+    _tradeData: A bytes memory, containing additional data needed for the trade execution.
+
+2. Notional Redeem Quantity Calculation:
+    The function calculates notionalRedeemQuantity by multiplying _redeemQuantity with the total supply of _setToken using the preciseMul method. This converts the redeem quantity to a notional amount based on the total supply.
+
+3. Borrow Check:
+    The function checks if the borrow of the _repayAsset is enabled for the _setToken by looking up the borrowCTokenEnabled mapping. If not enabled, it reverts with the message "Borrow not enabled".
+
+4. Notional Repay Quantity Calculation:
+    The function retrieves the current borrow balance of _setToken for the _repayAsset using the borrowBalanceCurrent method of the corresponding cToken (Compound token).
+
+5. ActionInfo Creation and Validation:
+    The function creates and validates an ActionInfo struct using the _createAndValidateActionInfoNotional method. This struct contains detailed information about the deleveraging action, including the SetToken, collateral and repay assets, notional quantities, and trade adapter details.
+
+6. Redeem Underlying:
+    The function calls _redeemUnderlying to redeem the collateral asset from the deleverInfo.collateralCTokenAsset in the specified notional quantity.
+
+7. Execute Trade:
+    The function executes the trade using the _executeTrade method, converting the redeemed collateral asset into the repay asset using the specified trade adapter and data.
+
+8. Repay Borrow:
+    The function repays the borrowed asset using the _repayBorrow method, ensuring the borrow balance is reduced to zero.
+
+9. Update Default Position:
+    The function updates the default position of the _repayAsset in the _setToken using the calculateAndEditDefaultPosition method, adjusting the position based on the pretrade balance and total supply.
+
+10. Update Lever Positions:
+     The function updates the leverage positions using the _updateLeverPositions method, ensuring the positions are correctly adjusted postdeleveraging.
+
+11. Emit Event:
+     Finally, the function emits a LeverageDecreased event, logging the details of the deleveraging action, including the SetToken, collateral and repay assets, exchange adapter, notional quantities, and protocol fee (which is zero in this case).
+
+This function is crucial for managing and reducing leverage in a controlled and secure manner, ensuring that the borrow balance of a SetToken is accurately reduced to zero while maintaining the integrity of the positions and assets involved.

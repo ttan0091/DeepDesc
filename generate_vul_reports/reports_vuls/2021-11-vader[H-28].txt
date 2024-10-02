@@ -1,0 +1,21 @@
+[H-28] Incorrect Price Consultation Results
+Submitted by leastwood
+Impact
+TheTwapOracle.consult()function iterates over all token pairs which belong to eitherVADERor USDV` and then calculates the price of the respective asset by using both UniswapV2 and Chainlink price data. This helps to further protect against price manipulation attacks as the price is averaged out over the various registered token pairs.
+Let’s say we wanted to query the price ofUSDV, we would sum up any token pair whereUSDV == pairData.token0.
+The sum consists of the following:
+Price ofUSDVdenominated in terms oftoken1(USDV/token1).Price of token1 denominated in terms ofUSD(token1/USD).
+Consider the following example:
+SUSHIis the only registered token pair that exists alongsideUSDV.Hence, calculatingsumNativegives us an exchange rate that is denominated asUSDV/SUSHI.Similarly,sumUSDgives us the following denominated pair,SUSHI/USD.I’d expect the result to equalsumUSD * token.decimals() * sumNativewhich should give us a USDV/USD denominated result.
+However, the protocol calculates it as(sumUSD * token.decimals()) / sumNativewhich gives us aSUSHI^2 / (USD*USDV)denominated result. This seems incorrect.
+I’d classify this issue as high risk as the oracle returns false results upon being consulted. This can lead to issues in other areas of the protocol that use this data in performing sensitive actions.
+Proof of Concept
+https://github.com/code-423n4/2021-11-vader/blob/main/contracts/twap/TwapOracle.sol#L115-L157
+Similar working implementation listed below:
+https://github.com/gg2001/dpx-oracle/blob/master/contracts/UniswapV2Oracle.sol#L184-L211https://github.com/gg2001/dpx-oracle/blob/master/contracts/UniswapV2Oracle.sol#L291-L304
+Tools Used
+Manual code review.
+Recommended Mitigation Steps
+To calculate the correct consultation of a given token, the result should returnsumUSD * token.decimals() * sumNativeinstead to ensure the target token to consult is denominated inUSDand contains the correct number of decimals.
+SamSteinGG (Vader) confirmed:
+The description seems slightly incorrect as it uses a power where multiplication is performed but the general idea is correct.

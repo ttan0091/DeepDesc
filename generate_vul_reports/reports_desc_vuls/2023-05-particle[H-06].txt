@@ -1,0 +1,16 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The contract does not properly validate the source of the NFT transfer, allowing an unwhitelisted executor contract to create a new lien during the `buyNftFromMarket()` flow.
+Execution process: The marketplace calls `onERC721Received()` during `buyNftFromMarket()`, bypassing the check for whitelisted marketplaces and creating a new lien for the NFT, leading to divergence.
+Vulnerable code: 
+```solidity
+function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external returns (bytes4) {
+    if (data.length == 64) {
+        if (registeredMarketplaces[operator]) {
+            revert Errors.Unauthorized();
+        }
+        (uint256 price, uint256 rate) = abi.decode(data, (uint256, uint256));
+        _supplyNft(from, msg.sender, tokenId, price, rate);
+    }
+    return this.onERC721Received.selector;
+}
+```

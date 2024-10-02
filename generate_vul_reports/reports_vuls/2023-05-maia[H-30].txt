@@ -1,0 +1,19 @@
+[H-30] Incorrect flow of adding liquidity inUlyssesRouter.sol
+Submitted byT1MOH, also found bybin2chen
+Usually the router inAMMis stateless, i.e. it isn’t supposed to contain any tokens, it is just a wrapper of low-level pool functions to perform user-friendly interactions. The current implementation ofaddLiquidity()assumes that a user firstly transfers tokens to the router and then the router performs the deposit to the pool. However, it is not atomic and requires two transactions. Another user can break in after the first transaction and deposit someone else’s tokens.
+Proof of Concept
+The router calls the deposit withmsg.senderas a receiver of shares:
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/ulysses-amm/UlyssesRouter.sol#L49-L56
+functionaddLiquidity(uint256amount,uint256minOutput,uint256poolId)externalreturns(uint256) {UlyssesPoolulysses=getUlyssesLP(poolId);amount=ulysses.deposit(amount,msg.sender);if(amount<minOutput)revertOutputTooLow();returnamount;}
+And in deposit pool transfer tokens frommsg.sender, which is the router:
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/erc-4626/UlyssesERC4626.sol#L34-L45
+functiondeposit(uint256assets,addressreceiver)publicvirtualnonReentrantreturns(uint256shares) {// Need to transfer before minting or ERC777s could reenter.asset.safeTransferFrom(msg.sender,address(this),assets);shares=beforeDeposit(assets);require(shares!=0,"ZERO_SHARES");_mint(receiver,shares);emitDeposit(msg.sender,receiver,assets,shares);}
+First, a user will lose tokens sent to the router, if a malicious user callsaddLiquidity()after it.
+Recommended Mitigation Steps
+Transfer tokens to the router viasafeTransferFrom():
+functionaddLiquidity(uint256amount,uint256minOutput,uint256poolId)externalreturns(uint256) {UlyssesPoolulysses=getUlyssesLP(poolId);address(ulysses.asset()).safeTransferFrom(msg.sender,address(this),amount);amount=ulysses.deposit(amount,msg.sender);if(amount<minOutput)revertOutputTooLow();returnamount;}
+Assessed type
+Access Control
+0xLightt (Maia) confirmed
+0xLightt (Maia) commented:
+We recognize the audit’s findings on Ulysses AMM. These will not be rectified due to the upcoming migration of this section to Balancer Stable Pools.

@@ -1,0 +1,76 @@
+The code provided consists of a Solidity library SafeMath and a smart contract BountyHunt. Let's break down each part in detail.
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+This library defines a function sub which performs a subtraction operation on two unsigned integers (uint256). The function is marked as internal and pure, meaning it can only be called from within the contract or derived contracts and does not read or modify the state.
+
+ Function: sub
+   Parameters:
+     a: The first operand.
+     b: The second operand.
+   Returns: The result of a  b.
+   Operation:
+     It first checks if b is less than or equal to a using the assert function. The assert function is used to check for conditions that should never be false. If the condition fails, it indicates a serious error in the code.
+     If the condition is true, it returns the result of a  b.
+
+### BountyHunt Contract
+
+solidity
+contract BountyHunt {
+    using SafeMath for uint;
+    mapping(address => uint) public bountyAmount;
+    uint public totalBountyAmount;
+
+    function claimBounty() {
+        uint balance = bountyAmount[msg.sender];
+
+        if (msg.sender.call.value(balance)()) {
+          totalBountyAmount = totalBountyAmount.sub(balance);
+          bountyAmount[msg.sender] = 0;
+        }
+    }
+}
+
+
+This contract manages a bounty system where users can claim bounties. It uses the SafeMath library for arithmetic operations.
+
+ State Variables:
+   bountyAmount: A mapping that associates each address with a bounty amount.
+   totalBountyAmount: A uint that keeps track of the total bounty amount in the system.
+
+ Function: claimBounty
+   Operation:
+     It retrieves the bounty amount for the caller (msg.sender) and stores it in the variable balance.
+     It then attempts to send the balance amount of Ether to the caller using the call.value function. This is a lowlevel function that sends Ether and returns a boolean indicating success or failure.
+     If the transfer is successful, it updates the totalBountyAmount by subtracting the balance using the sub function from the SafeMath library.
+     It also sets the bounty amount for the caller to 0, effectively resetting their bounty.
+
+### Potential Vulnerability
+
+The claimBounty function uses the call.value function to send Ether. This function is susceptible to reentrancy attacks if not handled properly. If the called contract (or any contract in the call chain) executes a reentrant call back into claimBounty, it could potentially drain the contract repeatedly before the state updates are completed.
+
+### Mitigation
+
+To mitigate the reentrancy risk, the state updates (totalBountyAmount and bountyAmount[msg.sender]) should be performed before the Ether transfer. This follows the "ChecksEffectsInteractions" pattern, which ensures that all state changes are made before any external calls.
+
+Here is the modified claimBounty function with the mitigation:
+
+solidity
+function claimBounty() {
+    uint balance = bountyAmount[msg.sender];
+    totalBountyAmount = totalBountyAmount.sub(balance);
+    bountyAmount[msg.sender] = 0;
+    msg.sender.call.value(balance)();
+}
+
+
+In this modified version, the state updates are performed before the Ether transfer, reducing the risk of reentrancy attacks.

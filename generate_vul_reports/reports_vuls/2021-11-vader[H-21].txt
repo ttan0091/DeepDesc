@@ -1,0 +1,14 @@
+[H-21] Lack of access control allow attacker tomintFungible()andmintSynth()with other user’s wallet balance
+Submitted by WatchPug
+https://github.com/code-423n4/2021-11-vader/blob/429970427b4dc65e37808d7116b9de27e395ce0c/contracts/dex-v2/pool/VaderPoolV2.sol#L284-L335
+functionmintFungible(IERC20foreignAsset,uint256nativeDeposit,uint256foreignDeposit,addressfrom,addressto)externaloverridenonReentrantreturns(uint256liquidity) {IERC20Extendedlp=wrapper.tokens(foreignAsset);require(lp!=IERC20Extended(_ZERO_ADDRESS),"VaderPoolV2::mintFungible: Unsupported Token");(uint112reserveNative,uint112reserveForeign, ) =getReserves(foreignAsset);// gas savingsnativeAsset.safeTransferFrom(from,address(this),nativeDeposit);foreignAsset.safeTransferFrom(from,address(this),foreignDeposit);PairInfostoragepair=pairInfo[foreignAsset];uint256totalLiquidityUnits=pair.totalSupply;if(totalLiquidityUnits==0)liquidity=nativeDeposit;elseliquidity=VaderMath.calculateLiquidityUnits(nativeDeposit,reserveNative,foreignDeposit,reserveForeign,totalLiquidityUnits);require(liquidity>0,"VaderPoolV2::mintFungible: Insufficient Liquidity Provided");pair.totalSupply=totalLiquidityUnits+liquidity;_update(foreignAsset,reserveNative+nativeDeposit,reserveForeign+foreignDeposit,reserveNative,reserveForeign);lp.mint(to,liquidity);emitMint(from,to,nativeDeposit,foreignDeposit);}
+https://github.com/code-423n4/2021-11-vader/blob/429970427b4dc65e37808d7116b9de27e395ce0c/contracts/dex-v2/pool/VaderPoolV2.sol#L126-L167
+Funds are transferred from thefromparameter, and the output tokens are transferred to thetoparameter, both passed by the caller without proper access control.
+Impact
+This issue allows anyone to callmintFungible()andmintSynth()and steal almost all their wallet balances for all the users who have approved the contract before.
+SamSteinGG (Vader) commented:
+Duplicate #67
+alcueca (judge) commented:
+Not a duplicate.
+SamSteinGG (Vader) commented:
+@alcueca Can you elaborate as to why it is not a duplicate?

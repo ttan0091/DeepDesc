@@ -1,0 +1,27 @@
+This code defines a public constant function named balanceOfAt, which is used to retrieve the balance of a specific owner at a given block number. This function is particularly useful for historical queries or for systems that require tracking of token balances over time.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    balanceOfAt(address _owner, uint _blockNumber): This function takes two parameters:
+      _owner: The address of the token owner whose balance is being queried.
+      _blockNumber: The block number at which the balance is to be queried.
+
+2. Initial Check for No Checkpoints:
+    The function first checks if there are no checkpoints (balances[_owner].length == 0) or if the first checkpoint's block number is after the queried block number (balances[_owner][0].fromBlock > _blockNumber).
+    If either condition is true, it means there are no checkpoints available for the queried block number.
+
+3. Fallback to Parent Token:
+    If there are no checkpoints available, the function checks if there is a parent token (address(parentToken) != 0).
+    If a parent token exists, it queries the parent token's balance at the minimum of the queried block number and the parent snapshot block (parentToken.balanceOfAt(_owner, min(_blockNumber, parentSnapShotBlock))).
+    This is necessary because the current token's balance might be derived from the parent token's balance at the genesis block.
+
+4. Default Case with Checkpoints:
+    If there are checkpoints available and the first checkpoint's block number is not after the queried block number, the function retrieves the balance using the getValueAt function.
+    getValueAt(balances[_owner], _blockNumber) is used to get the balance at the specified block number from the checkpoints stored for the owner.
+
+5. Return Value:
+    The function returns the balance of the owner at the specified block number.
+
+### Summary
+The balanceOfAt function is designed to handle historical balance queries by checking if there are any checkpoints available for the queried block number. If no checkpoints are available, it falls back to querying the parent token's balance. This ensures that the function can provide accurate balance information even for blocks before the first checkpoint was created for the token.

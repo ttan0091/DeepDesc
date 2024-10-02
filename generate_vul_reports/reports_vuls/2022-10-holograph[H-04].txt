@@ -1,0 +1,34 @@
+[H-04] An attacker can manipulate each pod and gain an advantage over the remainder Operators
+Submitted by eighty, also found by d3e4, eighty, Lambda, and eighty
+Incontracts/HolographOperator.sol#crossChainMessage, each Operator is selected by:
+Generating a random number (L499)A pod is selected by dividing the random with the total number of pods, and using the remainder (L503)An Operator of the selected pod is chosen using thesamerandom and dividing by the total number of operators (L511).
+This creates an unintended bias since the first criterion (therandom) is used for both selecting the pod and selecting the Operator, as explained in a previous issue (M001-Biased distribution). In this case, an attacker knowing this flaw can continuously monitor the contracts state and see the current number of pods and Operators. Accordingly to thedocumentationand providedflow:
+An Operator can easily join and leave a pod, albeit when leaving a small fee is paidAn Operator can only join one pod, but an attacker can control multiple OperatorsThe attacker can then enter and leave a pod to increase (unfairly) his odds of being selected for a job
+Honest Operators may feel compelled to leave the protocol if there are no financial incentives (and lose funds in the process), which can also increase the odds of leaving the end-users at the hands of a malicious Operator.
+Proof of Concept
+Consider the following simulation for 10 pods with a varying number of operators follows (X → “does not apply”):
+Pod nPon lenOp0Op1Op2Op3Op4Op5Op6Op7Op8Op9Total PodP010615000000000615P13203205207XXXXXXX615P26208023302070XXXX648P39616269706569616054X571P4430002920XXXXXX592P510000005860000586P626020XXXXXXXX602P77939310099767478XXX613P825860XXXXXXXX586P96019001890192XXXX571
+At this stage, an attacker Mallory joins the protocol and scans the protocol (or interacts with - e.g.getTotalPods,getPodOperatorsLength). As an example, after considering the potential benefits, she chooses podP9and sets up some bots[B1, B2, B3]. The number of Operators will determine the odds, so:
+Pod P9Alt lenOp0Op1Op2Op3Op4Op5Op6Op7Op8Op9Total PodP9A402760295XXXXXX571P9B50000571XXXXX571P96019001890192XXXX571P9C766778183879087XXX571P9D80127014701490148XX571
+And then:
+She waits for the next job to fall inP9and keeps an eye on the number of pods, since it could change the odds.After an Operator is selected (hepopsfrom the array), the number of available Operators change to 5, and the odds change toP9B.She deploysB1and it goes to positionOp5, odds back toP9. If the meantime the previously chosen Operator comes back to thepod, see the alternative timeline.She now has 1/3 of the probability to be chosen for the next job:
+4.1 If she is not chosen,she will assume the positionof the chosen Operator, and deploysB2to maintain the odds ofP9and controls 2/3 of the pod.
+4.2 If she is chosen, she chooses between employing another bot or waiting to execute the job to back to the pod (keeping the original odds).
+5. She can then iterate multiple times to swap to the remainder of possible indexes via step 4.1.
+Alternative timeline (from previous 3.):
+The chosen Operator finishes the job and goes back to the pod. Now there’s 7 members with uniform odds (P9C).Mallory deploysB2and the length grows to 8, the odds turn toP9Dand she now controls two of the four possible indexes from which she can be chosen.
+There are a lot of ramifications and possible outcomes that Mallory can manipulate to increase the odds of being selected in her favor.
+Recommended Mitigation Steps
+As stated inM001-Biased distribution, use two random numbers for pod and Operator selection. Ideally, an independent source for randomness should be used, but following the assumption that the one used inL499is safe enough, using the most significant bits (e.g.random >> 128) should guarantee an unbiased distribution. Also, reading theEIP-4399could be valuable.
+Additionally, since randomness in blockchain is always tricky to achieve without an oracle provider, consider adding additional controls (e.g. waiting times before joining each pod) to increase the difficulty of manipulating the protocol.
+And finally, in this particular case, removing the swapping mechanism (moving the last index to the chosen operator’s current index) for another mechanism (shifting could also create conflictswith backup operators?) could also increase the difficulty of manipulating a particular pod.
+gzeon (judge) commented:
+Considering this as duplicate of#169since they share the same root cause.
+ACC01ADE (Holograph) confirmed and commented:
+Really love this analysis!
+gzeon (judge) commented:
+Judging this as high risk due to possible manipulation.
+Trust (warden) commented:
+Agree this is a high severity find. Believe issue#167and this one are essentially different exploits of the same flaw and therefore should be bulked.Relevant org discussionhere.
+gzeon (judge) commented:
+Agreed.

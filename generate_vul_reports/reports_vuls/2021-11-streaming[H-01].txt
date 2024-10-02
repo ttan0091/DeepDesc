@@ -1,0 +1,14 @@
+[H-01] Wrong calculation of excess depositToken allows stream creator to retrievedepositTokenFlashloanFeeAmount, which may cause fund loss to users
+Submitted by WatchPug, also found by 0x0x0x, ScopeLift, gpersoon, harleythedog, hyh, gzeon, jonah1005, and kenzo
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L654-L654
+uint256excess=ERC20(token).balanceOf(address(this)) - (depositTokenAmount-redeemedDepositTokens);
+In the current implementation,depositTokenFlashloanFeeAmountis not excluded when calculatingexcessdepositToken. Therefore, the stream creator can callrecoverTokens(depositToken, recipient)and retrievedepositTokenFlashloanFeeAmountif there are any.
+As a result:
+When the protocolgovernancecallsclaimFees()and claim accumulateddepositTokenFlashloanFeeAmount, it may fail due to insufficient balance of depositToken.Or, part of users’ funds (depositToken) will be transferred to the protocolgovernanceas fees, causing some users unable to withdraw or can only withdraw part of their deposits.
+Proof of Concept
+Given:
+feeEnabled: truefeePercent: 10 (0.1%)Alice deposited1,000,000depositToken;Bob calledflashloan()and borrowed1,000,000depositToken, then repaid1,001,000;Charlie deposited1,000depositToken;AfterendDepositLock, Alice calledclaimDepositTokens()and withdrawn1,000,000depositToken;streamCreatorcalledrecoverTokens(depositToken, recipient)and retrieved1,000depositToken(2,000 - (1,001,000 - 1,000,000));governancecalledclaimFees()and retrieved another1,000depositToken;Charlie tries toclaimDepositTokens()but since the current balanceOf depositToken is0, the transcation always fails, and Charlie loses all the depositToken.
+Recommendation
+Change to:
+uint256excess=ERC20(token).balanceOf(address(this)) - (depositTokenAmount-redeemedDepositTokens) -depositTokenFlashloanFeeAmount;
+brockelmore (Streaming Protocol) confirmed

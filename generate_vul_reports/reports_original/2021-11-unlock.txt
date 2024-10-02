@@ -1,0 +1,71 @@
+[H-01] MEV miner can mint larger than expected UDT total supply
+Submitted by elprofesor
+UnlockProtocolattempts to calculate gas reimbursement usingtx.gasprice, typically users who falsifytx.gaspricewould lose gas to miners and therefore not obtain any advantage over the protocol itself. This does present capabilities for miners to extract value, as they can submit their own transactions, or cooperate with a malicious user, reimbursing a portion (or all) or thetx.gaspriceused. As the following calculation is made;
+uint tokensToDistribute = (estimatedGasForPurchase * tx.gasprice) * (125 * 10 ** 18) / 100 / udtPrice;
+we can see that arbitrarytx.gaspricescan rapidly inflate thetokensToDistribute. Though capped at maxTokens, this value can be up to half the total supply of UDT, which could dramatically affect the value of UDT potentially leading to lucrative value extractions outside of the pool.
+Recommended Mitigation Steps
+Using an oracle service to determine the average gas price and ensuring it is within some normal bounds that has not been subjected to arbitrary value manipulation.
+julien51 (Unlock Protocol) disputed and commented:
+we can see that arbitrary tx.gasprices can rapidly inflate the tokensToDistribute. Though capped at maxTokens, this value can be up to half the total supply of UDT, which could dramatically affect the value of UDT potentially leading to lucrative value extractions outside of the pool.As you noted it would be capped by the actual increase of the GDP transaction.However we could indeed use an oracle to determine the average gas price over a certain number of blocks to limit the risk even further.
+0xleastwood (judge) commented:
+I think the warden has raised a valid issue of value extractions. Whether the value extracted is capped at a certain number of tokens, I don’t think the issue is nullified as a result. Miners can realistically fill up blockspace by abusing this behaviour and then selling netted tokens on the open market. I’ll consider marking this asmedium, what do you think @julien51 ?
+0xleastwood (judge) commented:
+I thinkmaxTokenswill be set toIMintableERC20(udt).totalSupply() / 2upon the first call torecordKeyPurchase(). If I’m not mistaken, this could allow a malicious miner could effectively distribute half of the token supply in one tx.
+0xleastwood (judge) commented:
+After further offline discussions with @julien51. We agree that this is an issue that needs to be addressed.If we consider real-world values forIMintableERC20(udt).totalSupply()andIMintableERC20(udt).totalSupply()as1_000_000e18and400e18respectively. Then a miner could mint up to ~1247UDTtokens valued at $USD 124,688 if they provide a single Ether as their purchase amount. Obviously this can be abused to generate a huge amount of profit for miners, so as this is a viable way to extract value from the protocol, I will be keeping this ashighseverity.
+[H-02] Wrong design/implementation of freeTrial allows attacker to steal funds from the protocol
+Submitted by WatchPug
+The current design/implementation offreeTrialallows users to get full refund before thefreeTrialends. Plus, a user can transfer partial of their time to another user usingshareKey.
+This makes it possible for the attacker to steal from the protocol by transferringfreeTrialtime from multiple addresses to one address and adding up toexpirationDurationand call refund to steal from the protocol.
+Proof of Concept
+Given:
+keyPriceis 1 ETH;expirationDurationis 360 days;freeTrialLengthis 31 days.
+The attacker can create two wallet addresses: Alice and Bob.
+Alice callspurchase(), transfer 30 days viashareKey()to Bob, then callscancelAndRefund()to get full refund; Repeat 12 times;Bob callscancelAndRefund()and get 1 ETH.
+Recommendation
+Consider disablingcancelAndRefund()for users who transferred time to another user.
+julien51 (Unlock Protocol) confirmed and commented:
+I think this is valid! The free trial approach is indeed a risk on that front and we need to “warn” lock managers about this more.For lock manager who still want to offer free trials, the best approach would probably be to set a high transfer fee to make sure that free trials cannot be transfered.As a consequence of this, I am not sure this is as critical as indicated by the submitter.
+0xleastwood (judge) commented:
+Nice find!From what I can tell at least, this does seem like a viable attack vector. Can I ask why this should not be treated ashighrisk? @julien51
+julien51 (Unlock Protocol) commented:
+Sorry for the long delay here.
+In short: this is valid, but only an issue for locks which are enabling free trials (no one has done it) and we would make sure our UI shows this as a potential issue.
+In other words: a lock manager would need toexplicitlyenable free trials, despite our warning to put their own funds at risk. For that reason I don’t think this is “High”.
+0xleastwood (judge) commented:
+While this is a valid issue pertaining only to lock managers whoexplicitlyenable free trials, this may still lead to a loss of funds ifcancelAndRefundis called by a user who has transferred their time to another account. I still believe this deserves ahighseverity rating.In my honest opinion, a warning isn’t sufficient to prevent such abuse. I think on-chain enforcement ideal in this situation.
+[H-03]MixinTransfer.sol#transferFromWrong implementation can potentially allows attackers to reverse transfer and cause fund loss to the users
+Submitted by WatchPug
+https://github.com/code-423n4/2021-11-unlock/blob/ec41eada1dd116bcccc5603ce342257584bec783/smart-contracts/contracts/mixins/MixinTransfer.sol#L131-L152
+if(toKey.tokenId==0) {toKey.tokenId=_tokenId;_recordOwner(_recipient,_tokenId);// Clear any previous approvals_clearApproval(_tokenId);}if(previousExpiration<=block.timestamp) {// The recipient did not have a key, or had a key but it expired. The new expiration is the sender's key expiration// An expired key is no longer a valid key, so the new tokenID is the sender's tokenIDtoKey.expirationTimestamp=fromKey.expirationTimestamp;toKey.tokenId=_tokenId;// Reset the key Manager to the key owner_setKeyManagerOf(_tokenId,address(0));_recordOwner(_recipient,_tokenId);}else{// The recipient has a non expired key. We just add them the corresponding remaining time// SafeSub is not required since the if confirms `previousExpiration - block.timestamp` cannot underflowtoKey.expirationTimestamp=fromKey.expirationTimestamp+previousExpiration-block.timestamp;}
+Based on the context, L131-136 seems to be the logic of handling the case of the recipient with no key, and L138-148 is handing the case of the recipient’s key expired.
+However, in L131-136, the key manager is not being reset.
+This allows attackers to keep the role of key manager after the transfer, and transfer the key back or to another recipient.
+Proof of Concept
+Given:
+Alice owns a key that is valid until 1 year later.Alice callssetKeyManagerOf(), making herself the keyManager;Alice callstransferFrom(), transferring the key to Bob; Bob might have paid a certain amount of money to Alice upon receive of the key;Alice callstransferFrom()again, transferring the key back from Bob.
+Recommendation
+Consider resetting the key manager regardless of the status of the recipient’s key.
+julien51 (Unlock Protocol) confirmed:
+Ithinkyou are onto something here. We will need to investigate further and reproduce to fix!
+0xleastwood (judge) commented:
+@julien51 Just following up if you were able to double-check this?
+julien51 (Unlock Protocol) confirmed:
+This is indeed valid and I think we will need to “patch” this. We’re still unsure how but we’re exploring multiple ways.
+[H-04] Approvals not cleared after key transfer
+Submitted by cmichel
+The locks implement three different approval types, seeonlyKeyManagerOrApprovedfor an overview:
+key manager (mapkeyManagerOf)single-person approvals (mapapproved). Cleared by_clearApprovalor_setKeyManagerOfoperator approvals (mapmanagerToOperatorApproved)
+TheMixinTransfer.transferFromrequires any of the three approval types in theonlyKeyManagerOrApprovedmodifier on the tokenId to authenticate transfers fromfrom.
+Notice that if thetoaddress previously had a key but it expired only the_setKeyManagerOfcall is performed, which does not clearapprovedif the key manager was already set to 0:
+functiontransferFrom(address_from,address_recipient,uint_tokenId)publiconlyIfAlivehasValidKey(_from)onlyKeyManagerOrApproved(_tokenId){// @audit this is skipped if user had a key that expiredif(toKey.tokenId==0) {toKey.tokenId=_tokenId;_recordOwner(_recipient,_tokenId);// Clear any previous approvals_clearApproval(_tokenId);}if(previousExpiration<=block.timestamp) {// The recipient did not have a key, or had a key but it expired. The new expiration is the sender's key expiration// An expired key is no longer a valid key, so the new tokenID is the sender's tokenIDtoKey.expirationTimestamp=fromKey.expirationTimestamp;toKey.tokenId=_tokenId;// Reset the key Manager to the key owner// @audit  doesn't clear approval if key manager already was 0_setKeyManagerOf(_tokenId,address(0));_recordOwner(_recipient,_tokenId);}// ...}//function_setKeyManagerOf(uint_tokenId,address_keyManager)internal{// @audit-ok only clears approved if key manager updatedif(keyManagerOf[_tokenId] !=_keyManager) {keyManagerOf[_tokenId] =_keyManager;_clearApproval(_tokenId);emitKeyManagerChanged(_tokenId,address(0));}}
+Impact
+It’s possible to sell someone a key and then claim it back as the approvals are not always cleared.
+Proof Of Concept
+Attacker A has a valuable key (tokenId = 42) with an expiry date far in the future.A sets approvals for their second attacker controlled account A’ by callingMixinKeys.setApprovalForAll(A', true), which setsmanagerToOperatorApproved[A][A'] = true.A clears the key manager by setting it to zero, for example, by transferring it to a second account that does not have a key yet, this calls the above_setKeyManagerOf(42, address(0));intransferFromA sets single-token approval to A’ by callingMixinKeys.approve(A', 42), settingapproved[42] = A'.A sells the token to a victim V for a discount (compared to purchasing it from the Lock). The victim needs to have owned a key before which already expired. ThetransferFrom(A, V, 42)call sets the owner of token 42 toV, but does not clear theapproved[42] == A'field as described above. (_setKeyManagerOf(_tokenId, address(0));is called but the key manager was already zero, which then does not clear approvals.)A’ can claim back the token by callingtransferFrom(V, A', 42)and theonlyKeyManagerOrApproved(42)modifier will pass asapproved[42] == A'is still set.
+Recommended Mitigation Steps
+The_setKeyManagerOffunction should not handle clearing approvals of single-token approvals (approved) as these are two separate approval types.
+ThetransferFromfunction should always call_clearApprovalin the(previousExpiration <= block.timestamp)case.
+julien51 (Unlock Protocol) confirmed and commented:
+Thanks for reporting this.
+This is valid and we will fix it.

@@ -1,0 +1,19 @@
+[H-01] Any borrower with bad debt can be liquidated multiple times to lock funds in the lending pair
+Submitted by panprog, also found by 0xA5DF and Lambda
+Leftover shares inliquidateCleanare only subtracted from pair totals, but not from user’s borrowed shares. This means that afterliquidateClean, borrower’s shares will be greater than0(leftover shares after liquidations), but the user is still insolvent and can be liquidated again and again (with_sharesToLiquidateset to0). Each subsequent liquidation will write off the bad debt (reduce pair totals by borrower leftover shares/amounts), but doesn’t take anything from liquidator nor borrower (since_sharesToLiquidate == 0).
+This messes up the whole pair accounting, with total asset amounts reducing and total borrow amounts and shares reducing. This will make it impossible for borrowers to repay debt (or be liquidated), because borrow totals will underflow, and lenders amount to withdraw will reduce a lot (they will share non-existant huge bad debt).
+Reducing pair totals scenario:
+Alice borrows1000 FRAX(1000shares) against1.5 ETHcollateral (1 ETH = 1000,Max LTV=75%)ETH drops to500very quickly with liquidators being unable to liquidate Alice due to network congestionAt ETH =500, Alice collateral is worth750against1000 FRAXdebt, making Alice insolvent and in a bad debtLiquidator callsliquidateCleanfor800shares, which cleans up all available collateral of1.5 ETH.At this point Alice has200shares debt with0collateralLiquidator repeatedly callsliquidateCleanwith0shares to liquidate. Each call pair totals are reduced by200shares (and total borrow amount by a corresponding amount).When pair totals reach close to0, the pool is effectively locked. Borrowers can’t repay, lenders can withdraw severly reduced amounts.
+Proof of Concept
+Copy this to src/test/e2e/LiquidationBugTest.sol
+https://gist.github.com/panprog/cbdc1658d63c30c9fe94127a4b4b7e72
+Recommended Mitigation Steps
+After the line
+https://github.com/code-423n4/2022-08-frax/blob/c4189a3a98b38c8c962c5ea72f1a322fbc2ae45f/src/contracts/FraxlendPairCore.sol#L1012
+add
+_sharesToLiquidate += _sharesToAdjust;
+amirnader-ghazvini (Frax) marked as duplicate and commented:
+Duplicate of#112
+gititGoro (judge) commented:
+Setting to original in set.
+DrakeEvans (Frax) confirmed

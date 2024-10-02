@@ -1,0 +1,25 @@
+This code defines an external function named permit, which is designed to allow an owner (referred to as target) to grant an allowance to a spender without the need for the owner to directly interact with the contract. This function is typically used in the context of ERC20 tokens to enable metatransactions, where the owner signs a message offchain that can be submitted by another party (the spender) to execute the approval on their behalf.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address target: The address of the token owner who is granting the allowance.
+    address spender: The address of the account that will be allowed to spend the tokens.
+    uint256 value: The amount of tokens that the spender is allowed to spend.
+    uint256 deadline: The timestamp until which the permit is valid.
+    uint8 v, bytes32 r, bytes32 s: These are components of an ECDSA signature that the owner provides to authorize the transaction.
+
+2. Time Validity Check:
+    require(block.timestamp <= deadline, "WERC10: Expired permit");: This line checks if the current block timestamp is less than or equal to the deadline. If the permit has expired (i.e., the current time is past the deadline), the function reverts with the error message "WERC10: Expired permit".
+
+3. Hash Calculation:
+    bytes32 hashStruct = keccak256(abi.encode(PERMIT_TYPEHASH, target, spender, value, nonces[target]++, deadline));: This line calculates the hash of the structured data that includes the PERMIT_TYPEHASH (a constant that defines the type of the data being hashed), the target, spender, value, the current nonce of the target (which is incremented after being used), and the deadline. This hash is used to verify the signature.
+
+4. Signature Verification:
+    require(verifyEIP712(target, hashStruct, v, r, s) || verifyPersonalSign(target, hashStruct, v, r, s));: This line verifies the signature provided by the owner. It checks if the signature matches the hash of the structured data using either EIP712 standard verification (verifyEIP712) or a personal sign verification (verifyPersonalSign). If neither verification method passes, the function reverts.
+
+5. Approval and Event Emitting:
+    allowance[target][spender] = value;: This line sets the allowance of the spender to value tokens for the target.
+    emit Approval(target, spender, value);: This line emits an Approval event, which notifies external observers (such as blockchain explorers or other smart contracts) that an approval has been made.
+
+This function leverages cryptographic signatures to enable offchain approvals, which can reduce gas costs and improve user experience by allowing third parties to submit transactions on behalf of the owner. The use of nonces prevents replay attacks and ensures that each permit can only be used once.

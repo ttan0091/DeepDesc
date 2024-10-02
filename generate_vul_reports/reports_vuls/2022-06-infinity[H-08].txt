@@ -1,0 +1,22 @@
+[H-08] Overpayment of native ETH is not refunded to buyer
+Submitted by horsefacts, also found by 0x29A, antonttc, berndartmueller, byterocket, cccz, codexploder, dipp, GimelSec, GreyArt, Lambda, oyc109, Ruhum, and unforgiven_
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L119-L121
+https://github.com/code-423n4/2022-06-infinity/blob/765376fa238bbccd8b1e2e12897c91098c7e5ac6/contracts/core/InfinityExchange.sol#L1228-L1232
+Vulnerability Details
+InfinityExchangeaccepts payments in native ETH, but does not return overpayments to the buyer. Overpayments are likely in the case of auction orders priced in native ETH.
+In the case of a Dutch or reverse Dutch auction priced in native ETH, the end user is likely to send more ETH than the final calculated price in order to ensure their transaction succeeds, since price is a function ofblock.timestamp, and the user cannot predict the timestamp at which their transaction will be included.
+In a Dutch auction, final price may decrease below the calculated price at the time the transaction is sent. In a reverse Dutch auction, the price may increase above the calculated price by the time a transaction is included, so the buyer is incentivized to provide additional ETH in case the price rises while their transaction is waiting for inclusion.
+ThetakeOrdersandtakeMultipleOneOrdersfunctions both check that the buyer has provided an ETH amount greater than or equal to the total price at the time of execution:
+InfinityExchange#takeOrders
+// check to ensure that for ETH orders, enough ETH is sent// for non ETH orders, IERC20 safeTransferFrom will throw error if insufficient amount is sentif(isMakerSeller&&currency==address(0)) {require(msg.value>=totalPrice,'invalid total price');}
+InfinityExchange#takeMultipleOneOrders
+// check to ensure that for ETH orders, enough ETH is sent// for non ETH orders, IERC20 safeTransferFrom will throw error if insufficient amount is sentif(isMakerSeller&&currency==address(0)) {require(msg.value>=totalPrice,'invalid total price');}
+However, neither of these functions refunds the user in the case of overpayment. Instead, overpayment amounts will accrue in the contract balance.
+Moreover, since there is a bug inrescueETHthat prevents ether withdrawals fromInfinityExchange, these overpayments will be locked permanently: the owner cannot withdraw and refund overpayments manually.
+Scenario:
+Alice creates a sell order for her token with constraints that set up a reverse Dutch auction: start price500, end price2000, start time1, end time5.Bob fills the order at time2. The calculated price is875. Bob is unsure when his transaction will be included, so provides a full2000wei payment.Bob’s transaction is included at time3. The calculated price is1250.Bob’s additional750wei are locked in the contract and not refunded.
+Suggestion: Calculate and refund overpayment amounts to callers.
+nneverlander (Infinity) confirmed and resolved:
+Agree with the assessment, fixed inhttps://github.com/infinitydotxyz/exchange-contracts-v2/commit/a605b72e44256aee76d80ae1652e5c98c855ffd3
+HardlyDifficult (judge) commented:
+In the case of a Dutch auction, precise pricing is unknown at the time a tx is broadcasted. This leads to users overpaying and the surplus is taken as exchange fees instead of being refunded.Accepting as a High risk submission.

@@ -1,0 +1,20 @@
+Type of vulnerability: Reward Distribution Exploit
+Cause of vulnerability: Incorrect calculation of virtual rewards for the first liquidity provider in an empty pool
+Execution process: The first liquidity provider stakes in an empty pool, resulting in zero virtual rewards. This allows them to claim all the pool's rewards without any deduction of virtual rewards.
+Vulnerable code: 
+```solidity
+function _increaseUserShare(address wallet, bytes32 poolID, uint256 increaseShareAmount, bool useCooldown) internal {
+    ...
+    uint256 existingTotalShares = totalShares[poolID];
+    if (existingTotalShares != 0) { // prevent / 0
+        // Round up in favor of the protocol.
+        uint256 virtualRewardsToAdd = Math.ceilDiv(totalRewards[poolID] * increaseShareAmount, existingTotalShares);
+        user.virtualRewards += uint128(virtualRewardsToAdd);
+        totalRewards[poolID] += uint128(virtualRewardsToAdd);
+    }
+    // Update the deposit balances
+    user.userShare += uint128(increaseShareAmount);
+    totalShares[poolID] = existingTotalShares + increaseShareAmount;
+    ...
+}
+```

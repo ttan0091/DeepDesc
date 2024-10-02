@@ -1,0 +1,35 @@
+Type of vulnerability: Authorization Bypass and Reentrancy
+
+Cause of vulnerability: 
+1. Lack of function signature validation in `Magnetar._processOFTOperation` function.
+2. The Magnetar contract address being added to the Cluster whitelist, allowing self-calls that bypass sender checks.
+
+Execution process: 
+1. An attacker calls `Magnetar.burst` with `_action.id == MagnetarAction.OFT`, setting `_target` as the Magnetar contract itself and `_actionCalldata` to encode a call to `Magnetar.burst` with `_action.id == MagnetarAction.OFT` again.
+2. In the second call, `msg.sender` is the Magnetar itself, bypassing the `_checkSender` check since `msg.sender` is whitelisted.
+3. The attacker can then impersonate any user and call any contract through the Magnetar, potentially stealing user tokens if they have approved the Magnetar.
+
+Vulnerable code: 
+1. `Magnetar.sol` - `_processOFTOperation` function:
+   ```solidity
+   function _processOFTOperation(
+       address _target,
+       bytes memory _actionCalldata
+   ) internal {
+       // Vulnerability: No check on function sigs in action calldata
+       (bool success, bytes memory returnData) = _target.call(_actionCalldata);
+       require(success, string(returnData));
+   }
+   ```
+2. `Magnetar.sol` - `_checkSender` function:
+   ```solidity
+   function _checkSender(address _from) internal view {
+       if (_from != msg.sender && !cluster.isWhitelisted(0, msg.sender)) {
+           revert Magnetar_NotAuthorized(msg.sender, _from);
+       }
+   }
+   ```
+3. `MagnetarStorage.sol` - Whitelist addition:
+   ```solidity
+   // Magnetar contract address added to the Cluster whitelist
+   ```

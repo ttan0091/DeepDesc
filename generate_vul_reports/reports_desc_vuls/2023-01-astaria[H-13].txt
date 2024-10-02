@@ -1,0 +1,18 @@
+Type of vulnerability: Unauthorized State Wipe
+
+Cause of vulnerability: Lack of proper validation to ensure that the `safeTransferFrom` function is only called after an auction has completed.
+
+Execution process: An attacker can call the `safeTransferFrom` function for any user’s collateral without an auction being completed. This triggers the settlement process, which includes deleting the collateral state hash from `LienToken.sol`, burning all lien tokens, deleting the `idToUnderlying` mapping, and burning the collateral token. This effectively wipes out all record of the liens and removes any claim the borrower has on their underlying collateral.
+
+Vulnerable code:
+- `safeTransferFrom(offerer, buyer, paymentToken, amount, data)`
+- `_execute(offerer, buyer, paymentToken, amount)`
+- `LienToken#payDebtViaClearingHouse()`
+- `Collateral#settleAuction()`
+- `ERC721(msg.sender).safeTransferFrom(address(this), s.clearingHouse[collateralId], tokenId_)`
+- The condition in `settleAuction()` using an `&&` operator instead of an `||`:
+  ```solidity
+  if (s.collateralIdToAuction[collateralId] == bytes32(0) && ERC721(s.idToUnderlying[collateralId].tokenContract).ownerOf(s.idToUnderlying[collateralId].tokenId) != s.clearingHouse[collateralId]) {
+    revert InvalidCollateralState(InvalidCollateralStates.NO_AUCTION);
+  }
+  ```

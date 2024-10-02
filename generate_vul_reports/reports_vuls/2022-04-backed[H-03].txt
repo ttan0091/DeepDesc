@@ -1,0 +1,26 @@
+[H-03] Borrower can be their own lender and steal funds from buyout due to reentrancy
+Submitted by 0xDjango
+NFTLoanFacilitator.sol#L214-L221NFTLoanFacilitator.sol#L230-L250
+If borrower lends their own loan, they can repay and close the loan before ownership of the lend ticket is transferred to the new lender. The borrower will keep the NFT + loan amount + accrued interest.
+Proof of Concept
+This exploit requires that theloanAssetContractAddresstoken transfers control to the receiver.
+Steps of exploit:
+Borrower creates loan withcreateLoan().The same Borrower callslend(), funding their own loan. The Borrower receives the lend ticket, and funds are transferred to themself.A new lender attempts to buy out the loan. The original loan amount + accruedInterest are sent to the original lender (same person as borrower).Due to lack of checks-effects-interactions pattern, the borrower is able to immediately callrepayAndCloseLoan()before the lend ticket is transferred to the new lender.
+The following code illustrates that the new lender sends funds to the original lender prior to receiving the lend ticket in return.
+}else{ERC20(loan.loanAssetContractAddress).safeTransferFrom(msg.sender,currentLoanOwner,accumulatedInterest+previousLoanAmount);}ILendTicket(lendTicketContract).loanFacilitatorTransfer(currentLoanOwner,sendLendTicketTo,loanId);
+Theoriginallender/borrowercallsthefollowing`repayAndCloseLoan()`functionsothattheyreceivetheircollateralNFTfromtheprotocol.functionrepayAndCloseLoan(uint256loanId)externaloverridenotClosed(loanId) {Loanstorageloan=loanInfo[loanId];uint256interest=_interestOwed(loan.loanAmount,loan.lastAccumulatedTimestamp,loan.perAnumInterestRate,loan.accumulatedInterest);addresslender=IERC721(lendTicketContract).ownerOf(loanId);loan.closed=true;ERC20(loan.loanAssetContractAddress).safeTransferFrom(msg.sender,lender,interest+loan.loanAmount);IERC721(loan.collateralContractAddress).safeTransferFrom(address(this),IERC721(borrowTicketContract).ownerOf(loanId),loan.collateralTokenId);emitRepay(loanId,msg.sender,lender,interest,loan.loanAmount);emitClose(loanId);}
+Finally, the new lender receives the lend ticket that has no utility at this point. The borrower now possesses the NFT, original loan amount, and accrued interest.
+Recommended Mitigation Steps
+Move the line to transfer the lend ticket to the new lender above the line to transfer to funds to the original lender. Or, use reentrancyGuard from OpenZeppelin to remove the risk of reentrant calls completely.
+If desired, also require that the lender cannot be the same account as the borrower of a loan.
+wilsoncusack (Backed Protocol) confirmed and commented:
+Borrower would need to convince lender to use an ERC20 with this malicious callback, but yes is legit.malicious ERC20-> transfers value to borrow ticket holder-> calls repay and close loan (would need funds available to do so, but still nets up)
+wilsoncusack (Backed Protocol) commented:
+Possibility of an ERC777 loan asset warrants this as high, I think. Even though the warden didn’t suggest that vector.
+wilsoncusack (Backed Protocol) commented:
+Scratch that, I think ERC777 not possible because our contract isn’t setup to receive them.
+wilsoncusack (Backed Protocol) commented:
+er erc777 does work because reception ack is not needed in the normal case.
+wilsoncusack (Backed Protocol) resolved
+gzeon (judge) commented:
+Sponsor confirmed.

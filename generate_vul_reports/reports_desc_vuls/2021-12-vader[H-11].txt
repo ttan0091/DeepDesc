@@ -1,0 +1,25 @@
+Type of vulnerability: Data Integrity and Manipulation
+Cause of vulnerability: Immediate update of `totalLiquidityWeight` when adding new token pairs, leading to skewed price data in `syncVaderPrice` and `getUSDVPrice` functions.
+Execution process: When `_addVaderPair` is called, it updates `totalLiquidityWeight` with `pairLiquidityEvaluation`. If `syncVaderPrice` is called before the new token's update period has passed, `pastTotalLiquidityWeight` is increased while `pastLiquidityWeights` remains underrepresented, skewing the price calculations.
+Vulnerable code: 
+```solidity
+function _addVaderPair(IUniswapV2Pair pair, IAggregatorV3 oracle, uint256 updatePeriod) internal {
+    // ... other code ...
+    uint256 pairLiquidityEvaluation = (reserveNative * previousPrices[uint256(Paths.VADER)]) + (reserveForeign * getChainlinkPrice(foreignAsset));
+    pairData.pastLiquidityEvaluation = pairLiquidityEvaluation;
+    totalLiquidityWeight[uint256(Paths.VADER)] += pairLiquidityEvaluation; // Vulnerable line
+    vaderPairs.push(pair);
+    // ... other code ...
+}
+
+function syncVaderPrice() public override returns (uint256[] memory pastLiquidityWeights, uint256 pastTotalLiquidityWeight) {
+    // ... other code ...
+    pastTotalLiquidityWeight = totalLiquidityWeight[uint256(Paths.VADER)]; // Affected by the update in _addVaderPair
+    for (uint256 i; i < totalPairs; ++i) {
+        // ... other code ...
+        pastLiquidityWeights[i] = pastLiquidityEvaluation; // Underrepresented due to immediate update in _addVaderPair
+        // ... other code ...
+    }
+    // ... other code ...
+}
+```

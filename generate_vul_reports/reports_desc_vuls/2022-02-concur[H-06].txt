@@ -1,0 +1,32 @@
+Type of vulnerability: Reward Calculation and Distribution
+Cause of vulnerability: Incorrect handling of reward token balances and remaining rewards across different pools using the same reward token.
+Execution process: 
+1. Multiple pools use the same reward token.
+2. Rewards are calculated based on the balance difference before and after reward distribution.
+3. Due to improper updating of `reward.remaining`, subsequent reward calculations can underflow or leave rewards undistributed.
+4. This leads to either transaction failures or frozen rewards in the contract.
+
+Vulnerable code: 
+```solidity
+uint256 bal = IERC20(reward.token).balanceOf(address(this));
+uint256 d_reward = bal - reward.remaining;
+// send 20 % of cvx / crv reward to treasury
+if (reward.token == cvx || reward.token == crv) {
+    IERC20(reward.token).transfer(treasury, d_reward / 5);
+    d_reward = (d_reward * 4) / 5;
+}
+IERC20(reward.token).transfer(address(claimContract), d_reward);
+if (_supply > 0 && d_reward > 0) {
+    reward.integral = reward.integral + uint128((d_reward * 1e20) / _supply);
+}
+// update user integrals
+uint256 userI = userReward[_pid][_index][_account].integral;
+if (userI < reward.integral) {
+    userReward[_pid][_index][_account].integral = reward.integral;
+    claimContract.pushReward(_account, reward.token, (_balance * (reward.integral - userI)) / 1e20);
+}
+// update remaining reward here since balance could have changed if claiming
+if (bal != reward.remaining) {
+    reward.remaining = uint128(bal);
+}
+```

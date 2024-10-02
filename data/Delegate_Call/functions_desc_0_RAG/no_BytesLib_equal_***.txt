@@ -1,0 +1,33 @@
+This code defines an internal function named equal, which compares two byte arrays (_preBytes and _postBytes) to determine if they are identical. The function is marked as pure because it does not modify the state and only relies on its input parameters.
+
+Here’s a detailed explanation of how this function works:
+
+1. Initialization:
+    The function starts by declaring a boolean variable success and initializing it to true. This variable will be used to indicate whether the two byte arrays are equal or not.
+
+2. Inline Assembly Block:
+    The function then enters an inline assembly block, which allows for lowlevel operations directly on the Ethereum Virtual Machine (EVM).
+
+3. Load Lengths:
+    Inside the assembly block, the function first loads the lengths of the two byte arrays using mload. mload(_preBytes) retrieves the length of _preBytes, and mload(_postBytes) retrieves the length of _postBytes.
+
+4. Length Comparison:
+    The function uses a switch statement to compare the lengths of the two arrays. If the lengths are equal (eq(length, mload(_postBytes)) returns 1), it proceeds to compare the contents of the arrays. Otherwise, it sets success to 0 (false) and exits the switch statement.
+
+5. Content Comparison:
+    If the lengths are equal, the function initializes a circuit breaker variable cb to 1. This variable is used to control the loop.
+    It then calculates the starting memory addresses (mc and cc) for the contents of _preBytes and _postBytes, respectively. These addresses are offset by 0x20 bytes to skip over the length prefix.
+    The function calculates the end address (end) for _preBytes.
+
+6. Loop for Content Comparison:
+    The function enters a loop that continues as long as mc is less than end and cb is 1. The loop condition is checked using eq(add(lt(mc, end), cb), 2), which ensures that both conditions are met.
+    Inside the loop, the function compares the 32byte chunks of memory at addresses mc and cc using mload and eq. If any of these comparisons fail (iszero(eq(mload(mc), mload(cc)))), the function sets success to 0 and cb to 0 to break the loop.
+    The loop increments mc and cc by 0x20 bytes in each iteration to move to the next 32byte chunk.
+
+7. Default Case for Length Mismatch:
+    If the lengths of the two arrays do not match, the default case of the switch statement sets success to 0.
+
+8. Return Result:
+    Finally, the function returns the value of success, which indicates whether the two byte arrays are equal (true) or not (false).
+
+This function is efficient for comparing byte arrays in Solidity, leveraging inline assembly to perform lowlevel memory operations and comparisons.

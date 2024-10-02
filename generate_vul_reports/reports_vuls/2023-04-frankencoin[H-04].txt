@@ -1,0 +1,16 @@
+[H-04] Transfer position ownership toaddr(0)to DoSend()challenge
+Submitted by__141345__
+If some challenge is about to succeed, the position owner will lose the collateral. Seeing the unavoidable loss, the owner can transfer the position ownership toaddr(0), fail theend()call of the challenge. At the end, the DoS inend()will have these impacts:
+the successful bidder will lose bid fund.the challenger’s collateral will be locked, and lose the challenge reward.
+Proof of Concept
+Assuming, the position hasminimumCollateralof 600 zchf, the position owner minted 1,000 zchf against some collateral worth of 1,100 zchf, the highest bid for the collateral was 1,060 zchf, the challenge reward being 50. Then inPosition.sol#notifyChallengeSucceeded(), therepaymentwill be 1,000, buteffectiveBidworth of 1,060. ThefundNeededwill be 1,000 + 50 = 1,050, and results in excess of 1,060 - 1,050 = 10 to refund the position owner in line 268MintingHub.sol. In addition, due to theminimumCollaterallimit, this challenge cannot be split into smaller ones.
+File:contracts/MintingHub.sol252:functionend(uint256_challengeNumber,boolpostponeCollateralReturn)public{260:         (addressowner,uint256effectiveBid,uint256volume,uint256repayment,uint32reservePPM) =challenge.position.notifyChallengeSucceeded(recipient,challenge.bid,challenge.size);261:if(effectiveBid<challenge.bid) {262:// overbid, return excess amount263:IERC20(zchf).transfer(challenge.bidder,challenge.bid-effectiveBid);264:         }265:uint256reward= (volume*CHALLENGER_REWARD) /1000_000;266:uint256fundsNeeded=reward+repayment;267:if(effectiveBid>fundsNeeded){268:zchf.transfer(owner,effectiveBid-fundsNeeded);File:contracts/Position.sol329:functionnotifyChallengeSucceeded(address_bidder,uint256_bid,uint256_size)externalonlyHubreturns(address,uint256,uint256,uint256,uint32) {349:uint256repayment=minted<volumeZCHF?minted:volumeZCHF;// how much must be burned to make things even350:351:notifyRepaidInternal(repayment);// we assume the caller takes care of the actual repayment352:internalWithdrawCollateral(_bidder,_size);// transfer collateral to the bidder and emit update353:return(owner,_bid,volumeZCHF,repayment,reserveContribution);354:     }
+From the position owner’s point of view, the position is on auction and has incurred loss already, only 10 zchf refund left. The owner can give up the tiny amount, and transfer the ownership toaddr(0)to DoS theend()call.
+When the positionownerisaddr(0), the transfer in line 268MintingHub.solwill revert, due to the requirement in zchf (inherited fromERC20.sol):
+File:contracts/ERC20.sol151:function_transfer(addresssender,addressrecipient,uint256amount)internalvirtual{152:require(recipient!=address(0));
+Now the successful bidder can no longer callend(). The bid fund will be lost. Also the challenger will lose the collateral because the return call encounter DoS too.
+Recommended Mitigation Steps
+Disallow transferring position ownership toaddr(0)
+0xA5DF (lookout) commented:
+The need to prevent transferring to the zero address is already mentioned in the automated findings and was reported by#935, however the impact demonstrated in this report is much more severe than the low severity impact identified by other reports and therefore I believe it should be a separate finding.
+luziusmeisser (Frankencoin) confirmed

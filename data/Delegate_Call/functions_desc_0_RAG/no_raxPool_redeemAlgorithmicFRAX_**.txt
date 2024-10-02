@@ -1,0 +1,33 @@
+This code defines an external function named redeemAlgorithmicFRAX, which is used to redeem FRAX tokens for FXS tokens in an algorithmic stablecoin system. The function ensures that the redemption process is not paused and performs several checks and calculations to determine the amount of FXS tokens to be issued in exchange for the FRAX tokens.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifier:
+    The function redeemAlgorithmicFRAX takes two parameters: FRAX_amount (the amount of FRAX tokens to be redeemed) and FXS_out_min (the minimum amount of FXS tokens the user is willing to accept to prevent slippage).
+    The function is marked as external, meaning it can only be called from outside the contract.
+    The notRedeemPaused modifier ensures that the redemption process is not paused, otherwise, the function call will revert.
+
+2. Fetching Prices and Ratios:
+    The function first retrieves the current price of FXS in terms of the base currency (fxs_price) and the global collateral ratio of the FRAX system (global_collateral_ratio).
+    It then checks if the global collateral ratio is zero using require(global_collateral_ratio == 0, "Collateral ratio must be 0");. This condition ensures that the system is purely algorithmic and not collateralized.
+
+3. Calculating FXS Dollar Value:
+    The function sets fxs_dollar_value_d18 to the amount of FRAX tokens being redeemed (FRAX_amount).
+    It then applies a redemption fee to this amount, reducing fxs_dollar_value_d18 by the fee percentage.
+
+4. Calculating FXS Amount:
+    The function calculates the amount of FXS tokens (fxs_amount) that corresponds to the adjusted fxs_dollar_value_d18 based on the current FXS price.
+
+5. Updating Balances and State:
+    The function updates the redeem FXS balances for the sender by adding the calculated fxs_amount.
+    It also updates the unclaimed pool FXS balance by adding the same fxs_amount.
+    The block number of the last redemption for the sender is updated to the current block number.
+
+6. Slippage Check:
+    The function checks if the calculated fxs_amount is greater than or equal to FXS_out_min to ensure that the slippage limit is not exceeded. If the condition is not met, the function reverts with the message "Slippage limit reached".
+
+7. External Function Calls:
+    The function calls FRAX.pool_burn_from(msg.sender, FRAX_amount); to burn the FRAX tokens from the sender's account.
+    It then calls FXS.pool_mint(address(this), fxs_amount); to mint the corresponding amount of FXS tokens to the contract's address.
+
+This function is crucial for the redemption mechanism of the algorithmic stablecoin system, ensuring that users can exchange their FRAX tokens for FXS tokens under the correct conditions and with the appropriate checks in place to prevent issues like slippage and incorrect token issuance.

@@ -1,0 +1,59 @@
+This code defines an internal function named _mint1155, which is designed to mint ERC1155 tokens within a specific vault in the NFTX system. The function takes three parameters: vaultId (the identifier of the vault), ids (an array of token IDs to be minted), and amounts (an array of corresponding amounts for each token ID).
+
+Here’s a detailed explanation of how this function works:
+
+1. Retrieve Vault Address:
+   solidity
+   address vault = nftxFactory.vault(vaultId);
+   
+   This line retrieves the address of the vault associated with the given vaultId by calling the vault function on the nftxFactory contract.
+
+2. Check Vault Existence:
+   solidity
+   require(vault != address(0), "NFTXZap: Vault does not exist");
+   
+   This line ensures that the retrieved vault address is not the zero address, which would indicate that the vault does not exist. If the vault does not exist, the function will revert with the error message "NFTXZap: Vault does not exist".
+
+3. Retrieve Asset Address:
+   solidity
+   address assetAddress = INFTXVault(vault).assetAddress();
+   
+   This line retrieves the address of the asset (ERC1155 token) associated with the vault by calling the assetAddress function on the INFTXVault interface.
+
+4. Transfer Tokens to Zap:
+   solidity
+   IERC1155Upgradeable(assetAddress).safeBatchTransferFrom(msg.sender, address(this), ids, amounts, "");
+   
+   This line transfers the specified tokens from the sender (msg.sender) to the contract itself (address(this)) using the safeBatchTransferFrom function of the IERC1155Upgradeable interface. This ensures that the tokens are securely transferred to the contract before minting.
+
+5. Set Approval for All:
+   solidity
+   IERC1155Upgradeable(assetAddress).setApprovalForAll(vault, true);
+   
+   This line sets the approval for the vault to manage all tokens of the specified asset address on behalf of the contract. This is necessary for the vault to mint the tokens.
+
+6. Mint Tokens:
+   solidity
+   uint256 count = INFTXVault(vault).mint(ids, amounts);
+   
+   This line calls the mint function on the INFTXVault interface to mint the specified tokens. The count variable stores the number of tokens successfully minted.
+
+7. Calculate Balance:
+   solidity
+   uint256 balance = (count  BASE)  INFTXVault(vault).mintFee()  count;
+   
+   This line calculates the expected balance of the contract after minting, taking into account the mint fee charged by the vault. The BASE constant is used to adjust the balance calculation.
+
+8. Verify Balance:
+   solidity
+   require(balance == IERC20Upgradeable(vault).balanceOf(address(this)), "Did not receive expected balance");
+   
+   This line checks if the actual balance of the contract matches the expected balance. If the balances do not match, the function will revert with the error message "Did not receive expected balance".
+
+9. Return Vault Address and Balance:
+   solidity
+   return (vault, balance);
+   
+   Finally, the function returns the address of the vault and the calculated balance.
+
+In summary, the _mint1155 function ensures that the specified ERC1155 tokens are transferred to the contract, approved for minting by the vault, minted, and the resulting balance is verified. This function is crucial for securely and accurately minting tokens within the NFTX system.

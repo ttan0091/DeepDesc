@@ -1,0 +1,17 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: The contract incorrectly includes newly staked amounts in the calculation of rewards per LP share, leading to an imbalance where old stakers can claim rewards based on new stakers' deposits.
+Execution process: An old staker stakes 4 ETH and waits for a new user to stake. Once a new user stakes, the old staker calls `claimRewards` to withdraw the new user's stake as rewards.
+Vulnerable code: 
+```solidity
+function _updateAccumulatedETHPerLP(uint256 _numOfShares) internal {
+    if (_numOfShares > 0) {
+        uint256 received = totalRewardsReceived();
+        uint256 unprocessed = received - totalETHSeen;
+        if (unprocessed > 0) {
+            emit ETHReceived(unprocessed);
+            accumulatedETHPerLPShare += (unprocessed * PRECISION) / _numOfShares;
+            totalETHSeen = received;
+        }
+    }
+}
+```

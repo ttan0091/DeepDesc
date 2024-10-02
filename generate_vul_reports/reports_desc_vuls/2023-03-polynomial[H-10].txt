@@ -1,0 +1,27 @@
+Type of vulnerability: Incorrect Calculation
+Cause of vulnerability: Missing `queuedPerpSize` in the calculation of `currentPosition`
+Execution process: The function `hedgePositions` calculates the `newPosition` based on `currentPosition`, which does not include `queuedPerpSize`. This leads to an incorrect `newPosition` being passed to `_placeDelayedOrder`, causing the position size of the pool to deviate significantly from the expected hedging.
+Vulnerable code: 
+```solidity
+function hedgePositions() external override requiresAuth nonReentrant {
+    int256 currentPosition = _getTotalPerpPosition();
+    int256 skew = _getSkew();
+    uint256 delta = _getDelta();
+    int256 requiredPosition = wadMul(skew, int256(delta));
+    int256 newPosition = requiredPosition - currentPosition;
+    int256 marginDelta = int256(_calculateMargin(newPosition));
+    if (requiredPosition.abs() < currentPosition.abs()) {
+        marginDelta = -marginDelta;
+    }
+    usedFunds += marginDelta;
+    perpMarket.transferMargin(marginDelta);
+    _placeDelayedOrder(newPosition, false);
+    emit HedgePositions(currentPosition, requiredPosition, marginDelta);
+}
+
+function _getTotalPerpPosition() internal view returns (int256 positionSize) {
+    IPerpsV2MarketBaseTypes.Position memory position = perpMarket.positions(address(this));
+    IPerpsV2MarketBaseTypes.DelayedOrder memory delayedOrder = perpMarket.delayedOrders(address(this));
+    positionSize = position.size + delayedOrder.sizeDelta;
+}
+```

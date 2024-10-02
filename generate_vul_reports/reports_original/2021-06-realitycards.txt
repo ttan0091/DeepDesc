@@ -1,0 +1,57 @@
+[H-01] Unchecked ERC20 transfers can cause lock up
+Submitted byaxic, also found bygpersoon,pauliax, [Jmukesh](https://twitter.com/MukeshJeth),a_delamo,s1m0,cmichel, andshw_
+Some major tokens went live before ERC20 was finalized, resulting in a discrepancy whether the transfer functions should (A) return a boolean or (B) revert/fail on error. The current best practice is that they should revert, but return “true” on success. However, not every token claiming ERC20-compatibility is doing this — some only return true/false; some revert, but do not return anything on success. This is a well known issue, heavily discussed since mid-2018.
+Today many tools, including OpenZeppelin, offera wrapper for “safe ERC20 transfer”:
+RealityCards is not using such a wrapper, but instead tries to ensure successful transfers via thebalancedBooksmodifier:
+modifierbalancedBooks{_;// using >= not == in case anyone sends tokens direct to contractrequire(erc20.balanceOf(address(this)) >=totalDeposits+marketBalance+totalMarketPots,"Books are unbalanced!");}
+This modifier is present on most functions, but is missing ontopupMarketBalance:
+functiontopupMarketBalance(uint256_amount)externaloverride{erc20.transferFrom(msgSender(),address(this),_amount);if(_amount>marketBalanceDiscrepancy) {marketBalanceDiscrepancy=0;}else{marketBalanceDiscrepancy-=_amount;}marketBalance+=_amount;}
+In the case where an ERC20 token which is not reverting on failures is used, a malicious actor could calltopupMarketBalancewith a failing transfer, but also move the value ofmarketBalanceabove the actual holdings. After this,deposit,withdrawDeposit,payRent,payout,sponsor, etc. could be locked up and always failing with “Books are unbalanced”.
+Anyone can calltopupMarketBalancewith some unrealistically large number, so thatmarketBalancedoes not overflow, but is above the actually helping balances. This is only possible if the underlying ERC20 used is not reverting on failures, but is returning “false” instead.
+Recommended Steps:
+Use something like OpenZeppelin’sSafeERC20Set up an allow list for tokens, which are knowingly safeConsider a different approach to thebalancedBooksmodifier
+Splidge (Reality Cards) confirmed:
+The particular ERC20 contracts we are using don’t have this issue. However for futureproofing in the event we change ERC20 tokens we will implement the recommended mitigation 1 and start using OpenZeppelin’s SafeERC20.
+Splidge (Reality Cards) resolved:
+Fix implementedhere
+[H-02] Can access cards of other markets
+Submitted bygpersoon
+WithinRCMarket.solthe functionsownerOfandonlyTokenOwnerdo not check if the_cardId/_tokenis smaller thannumberOfCards. So it’s possible to supply a larger number and access cards of other markets.
+The most problematic seems to beupgradeCard. Here the check forisMarketApprovedcan be circumvented by trying to move the card via another market.
+You can still only move cards you own.
+functionownerOf(uint256_cardId)publicviewoverridereturns(address) {uint256_tokenId=_cardId+totalNftMintCount;// doesn't check if _cardId < numberOfCardsreturnnfthub.ownerOf(_tokenId);}https:modifieronlyTokenOwner(uint256_token) {require(msgSender() ==ownerOf(_token),"Not owner");// _token could be higher than numberOfCards,_;}functionupgradeCard(uint256_card)externalonlyTokenOwner(_card) {// _card  could be higher than numberOfCards,_checkState(States.WITHDRAW);require(!factory.trapIfUnapproved() ||factory.isMarketApproved(address(this)),// this can be circumvented by calling the function via another market"Upgrade blocked");uint256_tokenId=_card+totalNftMintCount;// _card  could be higher than numberOfCards, thus accessing a card in another market_transferCard(ownerOf(_card),address(this),_card);// contract becomes final resting placenfthub.withdrawWithMetadata(_tokenId);emitLogNftUpgraded(_card,_tokenId);}
+Recommend adding the following toownerOf:require(_card < numberOfCards, "Card does not exist");
+Splidge (Reality Cards) confirmed but recommendedhigherseverity:
+I would assign this a higher severity level, I think it should be 3(High Risk) as this can be used to steal assets. An NFT being an asset as defined in the warden judging criteria foundhere.It is planned that eventually market creation will be opened up to anyone. There are several steps along this path towards opening up market creation:only the Factoryownercan create marketsGovernors will be assigned who also have the ability to create marketsAnybody can be allowed to create markets by callingchangeMarketCreationGovernorsOnlyNFTs allowed to be created (or more accurately not burned on market completion) by anyone by callingchangeTrapCardsIfUnapprovedThe key here is that even in step 3 where anybody can create a market, the market will still require Governor approval for it to be displayed in the UI and for the NFT to be allowed to be upgraded. It is here in step 3 thatupgradeCardcould be called on an approved market in order to move a card from an unapproved market.
+mcplums (Reality Cards) confirmed:
+Agreed, this indeed should have a higher severity- fantastic catch @gpersoon!!
+Splidge (Reality Cards) resolved:
+FixedhereImpressed also with the simplicity of the solution.
+dmvt (Judge) commented:
+Agree with the higher severity
+[H-03] anyone can call functionsponsor
+Submitted bypaulius.eth, also found by0xRajeev,cmichel, andshw
+This functionsponsorshould only be called by the factory, however, it does not have any auth checks, so that means anyone can call it with an arbitrary_sponsorAddressaddress and transfer tokens from them if the allowance is > 0:
+/// @notice ability to add liqudity to the pot without being able to win./// @dev called by Factory during market creation/// @param _sponsorAddress the msgSender of createMarket in the Factoryfunctionsponsor(address_sponsorAddress,uint256_amount)externaloverride{_sponsor(_sponsorAddress,_amount);}
+Recommend checking that the sender is a factory contract.
+Splidge (Reality Cards) confirmed:
+This is a good one!
+mcplums (Reality Cards) commented:
+Yeah this is massive one!! Thanks @pauliax :)
+Splidge (Reality Cards) resolved:
+fixedhere
+[H-04] Anyone can affect deposits of any user and turn the owner of the token
+Submitted by [adlamo](https://twitter.com/a_delamo)_
+OnRCTreasury, we have the methodcollectRentUser. This method is public, so anyone can call it using whatever user and whatever timestamp.
+So, calling this method usinguser = XXXXXand_timeToCollectTo = type(uint256).max), would makeisForeclosed[user] = true.
+Seeissue pagefor referenced code
+Now, we can do the same for all the users bidding for a specific token.
+Finally, I can become the owner of the token by just callingnewRentaland using a small price.newRentalwill iterate over all the previous bid and will remove them because there are foreclosed.
+Recommend thatcollectRentUsershould be private and create a new public method withonlyOrderbookmodifier.
+Splidge (Reality Cards) confirmed:
+I like this.
+Although I might change the mitigation steps. I like keepingcollectRentUseravailable to use, we can call it from our bot and it’ll help keep user deposits updated in a timely manner for the frontend. I think I’ll just add inrequire(_timeToCollectTo<=block.timestamp,"Can't collect future rent")
+mcplums (Reality Cards) commented:
+Yeah this is a real doozie, very happy this one was spotted!! Thanks @a_delamo :)
+Splidge (Reality Cards) resolved:
+Fix implementedhere

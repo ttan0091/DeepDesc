@@ -1,0 +1,135 @@
+[H-01] ERC20 transferFrom return values not checked
+Submitted by hickuphh3, also found by 0xDjango, kirk-baird, leastwood, m9800, minhquanym, and pedroais
+ThetransferFrom()function returns a boolean value indicating success. This parameter needs to be checked to see if the transfer has been successful. Oddly,transfer()function calls were checked.
+Some tokens likeEURSandBATwillnotrevert if the transfer failed but returnfalseinstead. Tokens that don’t actually perform the transfer and returnfalseare still counted as a correct transfer.
+Impact
+Users would be able to mint NFTs for free regardless of mint fee if tokens that don’t revert on failed transfers were used.
+Recommended Mitigation Steps
+Check thesuccessboolean of alltransferFrom()calls. Alternatively, use OZ’sSafeERC20’ssafeTransferFrom()function.
+sofianeOuafir (Joyn) confirmed, disagreed with severity and commented:
+In my opinion, the severity level should be 3 (High Risk) instead of 2 (Med Risk)This is clearly an issue that needs to be fixed and represents a high risk. Currently, the current state of the code would allow users to mint tokens even if the payment isn’t successful.
+deluca-mike (judge) increased severity to High and commented:
+payableTokenseems to be defined by whomever defines theCollectionincreateProject, so it would be possible for that person to define a payable token that, unbeknownst to them, behaves unexpectedly. I agree with high risk (unless there is some person/committee that is curates and validates thepaybaleTokens ahead of time). Need to handle return fromtransferandtransferFrom, as well as erc20s that do not return anything from fromtransferandtransferFrom.
+
+[H-02] Splitter: Anyone can call incrementWindow to steal the tokens in the contract
+Submitted by cccz, also found by hickuphh3, kirk-baird, leastwood, pedroais, rayn, Ruhum, saian, WatchPug, and wuwe1
+In general, the Splitter contract’s incrementWindow function is only called when tokens are transfer to the contract, ensuring that the number of tokens stored in balanceForWindow is equal to the contract balance.
+However, anyone can use a fake RoyaltyVault contract to call the incrementWindow function of the Splitter contract, so that the amount of tokens stored in balanceForWindow is greater than the contract balance, after which the verified user can call the claim or claimForAllWindows functions to steal the tokens in the contract.
+function incrementWindow(uint256 royaltyAmount) public returns (bool) {uint256 wethBalance;require(IRoyaltyVault(msg.sender).supportsInterface(IID_IROYALTY),"Royalty Vault not supported");require(IRoyaltyVault(msg.sender).getSplitter() == address(this),"Unauthorised to increment window");wethBalance = IERC20(splitAsset).balanceOf(address(this));require(wethBalance >= royaltyAmount, "Insufficient funds");require(royaltyAmount > 0, "No additional funds for window");balanceForWindow.push(royaltyAmount);currentWindow += 1;emit WindowIncremented(currentWindow, royaltyAmount);return true;}
+Proof of Concept
+https://github.com/code-423n4/2022-03-joyn/blob/main/splits/contracts/Splitter.sol#L149-L169
+Recommended Mitigation Steps
+Add the onlyRoyaltyVault modifier to the incrementWindow function of the Splitter contract to ensure that only RoyaltyVault contracts with a specific address can call this function.
+sofianeOuafir (Joyn) confirmed and commented:
+This is a high-risk issue and we intend to solve it. The mitigation provided looks good too and will be considered when fixing this issue 👍
+deluca-mike (judge) commented:
+See a detailed exploit and recommended solution at #21
+
+[H-03] DoS:claimForAllWindows()May Be Made Unusable By An Attacker
+Submitted by kirk-baird, also found by hyh and Ruhum
+When the value ofcurrentWindowis raised sufficiently highSplitter.claimForAllWindows()will not be able to be called due to the block gas limit.
+currentWindowcan only ever be incremented and thus will always increase. This value will naturally increase as royalties are paid into the contract.
+Furthermore, an attacker can continually incrementcurrentWindowby callingincrementWindow(). An attacker can impersonate aIRoyaltyVaultand send 1 WEI worth of WETH to pass the required checks.
+Proof of Concept
+Excerpt fromSplitter.claimForAllWindows()demonstrating the for loop overcurrentWindowthat will grow indefinitely.
+for (uint256 i = 0; i < currentWindow; i++) {if (!isClaimed(msg.sender, i)) {setClaimed(msg.sender, i);amount += scaleAmountByPercentage(balanceForWindow[i],percentageAllocation);}}
+Splitter.incrementWindow()may be called by an attacker increasingcurrentWindow.
+function incrementWindow(uint256 royaltyAmount) public returns (bool) {uint256 wethBalance;require(IRoyaltyVault(msg.sender).supportsInterface(IID_IROYALTY),"Royalty Vault not supported");require(IRoyaltyVault(msg.sender).getSplitter() == address(this),"Unauthorised to increment window");wethBalance = IERC20(splitAsset).balanceOf(address(this));require(wethBalance >= royaltyAmount, "Insufficient funds");require(royaltyAmount > 0, "No additional funds for window");balanceForWindow.push(royaltyAmount);currentWindow += 1;emit WindowIncremented(currentWindow, royaltyAmount);return true;}
+Recommended Mitigation Steps
+Consider modifying the functionclaimForAllWindows()to instead claim for range of windows. Pass the function astartWindowandendWindowand only iterate through windows in that range. Ensure thatendWindow < currentWindow.
+sofianeOuafir (Joyn) confirmed, disagreed with severity and commented:
+In my opinion, the severity level should be 3 (High Risk) instead of 2 (Med Risk)
+duplicate of #3
+deluca-mike (judge) increased severity to High and commented:
+While similar, I believe these issues are separate.Issue 3 indicates that the check thatmsg.senderis an authorizedRoyaltyVaultis faulty, since any contract can implement the interface and return theSplitterfromgetSplitter. While this should be fixed, as the warden suggested in the Recommended Mitigation Steps in #3, the issue raised in this issue can still occur when enough authorizedRoyaltyVaultcontracts callincrementWindow.claimForAllWindowscan remain, but as this warden suggests, aclaimForWindows(uint256 startWindow, uint256 endWindow, uint256 percentageAllocation, bytes32[] calldata merkleProof)should exist, in caseclaimForAllWindowsbecomes prohibitively expensive, even organically (i.e.currentWindowis made very high due to sufficient authorizedincrementWindowcalls).
+
+[H-04] CoreCollection can be reinitialized
+Submitted by hyh, also found by 0xkatana, hubble, kirk-baird, leastwood, pedroais, rayn, rfa, Ruhum, saian, securerodd, and WatchPug
+Reinitialization is possible for CoreCollection asinitializefunction setsinitializedflag, but doesn’t control for it, so the function can be rerun multiple times.
+Such types of issues tend to be critical as all core variables can be reset this way, for examplepayableToken, which provides a way to retrieve all the contract funds.
+However, setting priority to be medium asinitializeisonlyOwner. A run by an external attacker this way is prohibited, but the possibility of owner initiated reset either by mistake or with a malicious intent remains with the same range of system breaking consequences.
+Proof of Concept
+initializedoesn’t control for repetitive runs:
+https://github.com/code-423n4/2022-03-joyn/blob/main/core-contracts/contracts/CoreCollection.sol#L87
+Recommended Mitigation Steps
+AddonlyUnInitializedmodifier to theinitializefunction:
+https://github.com/code-423n4/2022-03-joyn/blob/main/core-contracts/contracts/CoreCollection.sol#L46-L49
+sofianeOuafir (Joyn) confirmed, disagreed with severity and commented:
+This is a high severity issue and we intend to fix it. The mitigation step looks great and will be considered to fix the issue.In my opinion, the severity level should be 3 (High Risk) instead of 2 (Med Risk)
+deluca-mike (judge) increased severity to High and commented:
+Not convinced this is a high severity issue, since erroneously changingpayableTokenvia a re-initialization can simply be corrected by a re-re-initialization to set it back correctly. Further, as the warden mentioned, the initialize function is behindonlyOwner.However, if it can be shown that users other than the owner can end up losing value due to the owner abusing or erroneously usinginitialize, then it can be promoted to High Severity.And just as I say that, #17 points that out clearly. So, yes, agreed, this is a High Severity issue.
+
+[H-05] Centralisation RIsk: Owner OfRoyaltyVaultCan Take All Funds
+Submitted by kirk-baird, also found by 0xDjango, defsec, Dravee, hubble, hyh, leastwood, minhquanym, Ruhum, TomFrenchBlockchain, and WatchPug
+The owner ofRoyaltyVaultcan set_platformFeeto any arbitrary value (e.g. 100% = 10000) and that share of the contracts balance and future balances will be set to theplatformFeeRecipient(which is in the owners control) rather than the splitter contract.
+As a result the owner can steal the entire contract balance and any future balances avoiding the splitter.
+Proof of Concept
+function setPlatformFee(uint256 _platformFee) external override onlyOwner {platformFee = _platformFee;emit NewRoyaltyVaultPlatformFee(_platformFee);}
+Recommended Mitigation Steps
+This issue may be mitigated by add a maximum value for the_platformFeesay 5% (or some reasonable value based on the needs of the platform).
+Also consider callingsendToSplitter()before adjusting theplatformFee. This will only allow the owner to change the fee for future value excluding the current contract balance.
+Consider the following code.
+function setPlatformFee(uint256 _platformFee) external override onlyOwner {require(_platformFee < MAX_FEE);sendToSplitter(); // @audit this will need to be public rather than externalplatformFee = _platformFee;emit NewRoyaltyVaultPlatformFee(_platformFee);}
+sofianeOuafir (Joyn) confirmed and commented:
+This is an issue and we intend to fix it. The recommended mitigation looks good and will be considered.We also agree that this is a med risk as this can currently only be done by the contract owner which is us at Joyn
+deluca-mike (judge) commented:
+Instead of having to come up with a “reasonable”MAX_FEE, consider instead just preventing the fee from ever being raised, and only allowing it to be lowered.
+deluca-mike (judge) increased severity to High and commented:
+While I was originally leaning Medium Risk, after taking the arguments made by the duplicate issues into account, I am now leaning High Risk. The rationale is that, a DOS ofsendToSplittervia a highplatformFeenot only harms stakeholders of theRoyaltyVaultthat would get the remainder of the balance, split, but may also prevent all NFT transfers ifsendToSplitteris hooked into as part of all token transfer, via royalty payments. A malicious or disgruntledRoyaltyVaultowner can hold all the NFTs hostage that callsendToSplitteratomically on transfers.So there are 2 issues that need to be solved here:protect NFT holders by ensuringplatformFee(or any other values) cannot be set to a value that would causesendToSplitterto fail (splitterShare = 0orplatformShare > balanceOfVault), or don’t havesendToSplitterbe called on NFT transfersprotect royalty split recipients by putting an arbitrary max to the fee, or only allowing the fee to be reduced
+
+[H-06] STORAGE COLLISION BETWEEN PROXY AND IMPLEMENTATION (LACK EIP 1967)
+Submitted by peritoflores
+Storage collision because of lack of EIP1967 could cause conflicts and override sensible variables
+Proof of Concept
+contract CoreProxy is Ownable {address private immutable _implement;
+When you implement proxies, logic and implementation share the same storage layout.    In order to avoid storage conflicts  EIP1967 was proposed.(https://eips.ethereum.org/EIPS/eip-1967)   The idea is to set proxy variables at fixed positions (likeimplandadmin).
+For example, according to the standard,  the slot for for logic address should be
+0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc(obtained asbytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)).
+In this case, for example, as you inherits fromOwnablethe variable _owner is at the first slot and can be overwritten in the implementation.   There is a table at OZ site that explains this scenario more in detail
+https://docs.openzeppelin.com/upgrades-plugins/1.x/proxies
+section  “Unstructured Storaged Proxies”
+Recommended Mitigation Steps
+Consider using EIP1967
+sofianeOuafir (Joyn) confirmed and commented:
+This is an issue we want to investigate and fix if our investigation suggests we indeed need to make improvement on that end.At the same time, I have little idea of what is the impact of this issue. I’m not sure if it’s a high risk item
+deluca-mike (judge) commented:
+Impact would be that an upgrade could brick a contract by simply rearranging inheritance order, or adding variables to an inherited contract, since the implantation slot will not be where it is expected. As the warden suggests, its critical that the implementation slot be fixed at an explicit location, and not an implicit location derived purely from inheritance and declaration order.
+
+[H-07] Duplicate NFTs Can Be Minted ifpayableTokenHas a Callback Attached to it
+Submitted by leastwood
+https://github.com/code-423n4/2022-03-joyn/blob/main/core-contracts/contracts/CoreCollection.sol#L139-L167
+https://github.com/code-423n4/2022-03-joyn/blob/main/core-contracts/contracts/ERC721Payable.sol#L50-L56
+Impact
+ThemintToken()function is called to mint unique tokens from anERC721collection. This function will either require users to provide a merkle proof to claim an airdropped token or pay a fee in the form of apayableToken. However, because thepayableTokenis paid before a token is minted, it may be possible to reenter themintToken()function if there is a callback attached before or after the token transfer. BecausetotalSupply()has not been updated for the new token, a user is able to bypass thetotalSupply() + amount <= maxSupplycheck. As a result, if the user mints the last token, they can reenter and mint duplicate NFTs as the waytokenIdis generated will wrap around to the start again.
+Proof of Concept
+For the sake of this example, let’s saystartingIndex = 0andmaxSupply = 100.tokenIdis minted according to((startingIndex + totalSupply()) % maxSupply) + 1. If we see that a user mints a token wheretotalSupply() = maxSupply - 1 = 99and they reenter the function, then the next token to mint will actually be of index1astotalSupply() % maxSupply = 0. Calculating the firsttokenId, we get((0 + 0) % maxSupply) + 1 = 1which is a duplicate of our example.
+Recommended Mitigation Steps
+Consider adding reentrancy protections to prevent users from abusing this behaviour. It may also be useful to follow the checks-effects pattern such that all external/state changing calls are made at the end.
+sofianeOuafir (Joyn) confirmed and commented:
+This is an issue we intend to investigate and fix if indeed it is an issue
+deluca-mike (judge) commented:
+This is a valid high risk issue. Also, for reference, the checks-effects-interactions (CEI) pattern suggests you, in this order:perform checks that something can be doneperform the effects (update storage and emit events)interact with other functions/contracts (since you may not be sure they will call out and re-enter)
+
+[H-08] Funds cannot be withdrawn inCoreCollection.withdraw
+Submitted by ych18, also found by hickuphh3 and WatchPug
+TheCoreCollection.withdrawfunction usespayableToken.transferFrom(address(this), msg.sender, amount)to transfer tokens from theCoreCollectioncontract to themsg.sender( who is the owner of the contract). The usage oftransferFromcan result in serious issues. In fact, many ERC20 always require that intransferFromallowance[from][msg.sender] >= amount, so in this case the call to thewithdrawfunction will revert as theallowance[CoreCollection][CoreCollection] == 0and therefore the funds cannot ben withdrawn and will be locked forever in the contract.
+Recommendation
+ReplacetransferFromwithtransfer
+sofianeOuafir (Joyn) confirmed and commented:
+duplicate of #52
+deluca-mike (judge) commented:
+This is not a duplicate, as it pertains to the wrong use of transfer vs transferFrom, which can have implications regarding required allowances.
+
+[H-09] ERC20 tokens with no return value will fail to transfer
+Submitted by ych18, also found by wuwe1
+https://github.com/code-423n4/2022-03-joyn/blob/main/royalty-vault/contracts/RoyaltyVault.sol#L43-L46
+https://github.com/code-423n4/2022-03-joyn/blob/main/royalty-vault/contracts/RoyaltyVault.sol#L51-L57
+Vulnerability details
+Although the ERC20 standard suggests that a transfer should return true on success, many tokens are non-compliant in this regard (including high profile, like USDT) . In that case, the .transfer() call here will revert even if the transfer is successful, because solidity will check that the RETURNDATASIZE matches the ERC20 interface.
+Recommendation
+Consider using OpenZeppelin’s SafeERC20
+sofianeOuafir (Joyn) confirmed and commented:
+duplicate of #52
+deluca-mike (judge) commented:
+Actually not a duplicate of #52, since it pertains to return data size handling causing an issue, rather than failure to handle a true/false return at all. Still, same solution (use SafeERC20).
+

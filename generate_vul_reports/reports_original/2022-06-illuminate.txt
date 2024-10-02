@@ -1,0 +1,246 @@
+[H-01] The lend function for tempus uses the wrong return value of depositAndFix
+Submitted by cccz, also found by 0x52 and datapunk
+The depositAndFix function of the TempusController contract returns two uint256 data, the first is the number of shares exchanged for the underlying token, the second is the number of principalToken exchanged for the shares, the second return value should be used in the lend function for tempus.
+This will cause the contract to mint an incorrect number of illuminateTokens to the user.
+Proof of Concept
+https://github.com/code-423n4/2022-06-illuminate/blob/92cbb0724e594ce025d6b6ed050d3548a38c264b/lender/Lender.sol#L452-L453
+https://github.com/tempus-finance/tempus-protocol/blob/master/contracts/TempusController.sol#L52-L76
+Recommended Mitigation Steps
+interfaces.sol
+interface ITempus {function maturityTime() external view returns (uint256);function yieldBearingToken() external view returns (IERC20Metadata);function depositAndFix(Any,Any,uint256,bool,uint256,uint256) external returns (uint256, uint256);}
+Lender.sol
+(,uint256 returned) = ITempus(tempusAddr).depositAndFix(Any(x), Any(t), a - fee, true, r, d);returned -= illuminateToken.balanceOf(address(this));
+sourabhmarathe (Illuminate) confirmed
+
+[H-02] Division Before Multiplication Can Lead To Zero Rounding Of Return Amount
+Submitted by kirk-baird, also found by csanuragjain, datapunk, and ladboy233
+There is a division before multiplication bug that exists inlend()for the Swivel case.
+Iforder.premiumis less thanorder.principalthenreturnedwill round to zero due to the integer rounding.
+When this occurs the user’s funds are essentially lost. That is because they transfer in the underlying tokens but the amount sent toyield(u, y, returned, address(this))will be zero.
+Proof of Concept
+functionlend(uint8p,addressu,uint256m,uint256[]calldataa,addressy,Swivel.Order[]calldatao,Swivel.Components[]calldatas)publicunpaused(p)returns(uint256) {// lent represents the number of underlying tokens lentuint256lent;// returned represents the number of underlying tokens to lend to yielduint256returned;{uint256totalFee;// iterate through each order a calculate the total lent and returnedfor(uint256i=0;i<o.length; ) {Swivel.Ordermemoryorder=o[i];// Require the Swivel order provided matches the underlying and maturity market providedif(order.underlying!=u) {revertNotEqual('underlying');}elseif(order.maturity>m) {revertNotEqual('maturity');}// Determine the feeuint256fee=calculateFee(a[i]);// Track accumulated feestotalFee+=fee;// Sum the total amount lent to Swivel (amount of ERC5095 tokens to mint) minus feeslent+=a[i] -fee;// Sum the total amount of premium paid from Swivel (amount of underlying to lend to yield)returned+= (a[i] -fee) * (order.premium/order.principal);unchecked{i++;}}// Track accumulated feefees[u] +=totalFee;// transfer underlying tokens from user to illuminateSafe.transferFrom(IERC20(u),msg.sender,address(this),lent);// fill the orders on swivel protocolISwivel(swivelAddr).initiate(o,a,s);yield(u,y,returned,address(this));}emitLend(p,u,m,lent);returnlent;}
+Specifically the functionreturned += (a[i] - fee) * (order.premium / order.principal);
+Recommended Mitigation Steps
+The multiplication should occur before division, that is((a[i] - fee) * order.premium) / order.principal);.
+JTraversa (Illuminate) confirmed
+Alex the Entreprenerd (warden) commented:
+Also see howSwivel Calculates it
+
+[H-03] Pendle Uses Wrong Return Value ForswapExactTokensForTokens()
+Submitted by kirk-baird, also found by 0x52, cccz, csanuragjain, kenzo, and WatchPug
+The functionswapExactTokensForTokens()will return and array with the 0 index being the input amount follow by each output amount. The 0 index is incorrectly used in Pendlelend()function as the output amount. As a result the value ofreturnedwill be the invalid (i.e. the input rather than the output).
+Since this impacts how many PTs will be minted to themsg.sender, the value will very likely be significantly over or under stated depending on the exchange rate. Hence themsg.senderwill receive an invalid number of PT tokens.
+Proof of Concept
+address[]memorypath=newaddress[](2);path[0] =u;path[1] =principal;returned=IPendle(pendleAddr).swapExactTokensForTokens(a-fee,r,path,address(this),d)[0];
+Recommended Mitigation Steps
+The amount ofprincipalreturned should be index 1 of the array returned byswapExactTokensForTokens().
+sourabhmarathe (Illuminate) confirmed
+
+[H-04] Allowance check always true in ERC5095 redeem
+Submitted by Lambda, also found by 0x29A, Chom, cryptphi, itsmeSTYJ, kenzo, kirk-baird, and sashiketh_
+Inredeem, it is checked that the allowance is larger thanunderlyingAmount, which is the return parameter (i.e., equal to 0 at that point). Therefore, this check is always true and there is no actual allowance check, allowing anyone to redeem for another user.
+Recommended Mitigation Steps
+Change theunderlyingAmounttoprincipalAmount, which is the intended parameter.
+sourabhmarathe (Illuminate) disputed and commented:
+While we did not actually intend to audit the 5095 implementation, as 5095 itself is not yet final, we did describe its purpose in our codebase in the initial readme, and didn’t specify that it was not in scope.
+(we wanted wardens to understand its role in our infra)With that context, we will leave it up to the judges whether or not to accept issues related to the ERC5095 token.
+gzeoneth (judge) commented:
+I think it is fair to accept issues related to the ERC5095 token.
+
+[H-05] Redeemer.redeem() for Element withdraws PT to wrong address.
+Submitted by auditor0517, also found by 0x52, cccz, datapunk, kenzo, and pashov
+Redeemer.redeem() for Element withdraws PT to wrong address.
+This might cause a result of loss of PT.
+Proof of Concept
+According to the ReadMe.md, Redeemer should transfer external principal tokens from Lender.sol to Redeemer.sol.
+But it transfers to the “marketPlace” and it would lose the PT.
+Recommended Mitigation Steps
+ModifyIElementToken(principal).withdrawPrincipal(amount, marketPlace);like this.
+IElementToken(principal).withdrawPrincipal(amount, address(this));
+sourabhmarathe (Illuminate) confirmed
+
+[H-06] Tempus lend method wrongly calculates amount of iPT tokens to mint
+Submitted by kenzo, also found by cccz, Metatron, unforgiven, and WatchPug
+The Tempuslendmethod calculates the amount of tokens to mint asamountReturnedFromTempus - lenderBalanceOfMetaPrincipalToken.
+This seems wrong as there’s no connection between the two items. Tempus has no relation to the iPT token.
+Impact
+Wrong amount of iPT will be minted to the user.
+If the Lender contract has iPT balance, the function will revert, otherwise, user will get minted 0 iPT tokes.
+Proof of Concept
+Thisis how thelendmethod calculates the amount of iPT tokens to mint:
+uint256 returned = ITempus(tempusAddr).depositAndFix(Any(x), Any(t), a - fee, true, r, d) -illuminateToken.balanceOf(address(this));illuminateToken.mint(msg.sender, returned);
+The TempusdepositAndFixmethoddoes not returnanything.
+Therefore this calculation will revert ifilluminateToken.balanceOf(address(this)) > 0, or will return 0 if the balance is 0.
+[Note: there’s another issue here where the depositAndFix sends wrong parameters - I will submit it in another issue.]
+Recommended Mitigation Steps
+I believe that what you intended to do is to check how many Tempus principal tokens the contract received.
+So you need to check Lender’sx.tempusPool().principalShare()before and after the swap, and the delta is the amount received.
+sourabhmarathe (Illuminate) confirmed
+
+[H-07] Redeem Sense can be bricked
+Submitted by kenzo
+Sense’sredeemcan be totally DOSd due to user supplied input.
+Impact
+Using this attack, Sense market can not be redeemed.
+Proof of Concept
+Thisis how Sense market is being redeemed:
+IERC20 token = IERC20(IMarketPlace(marketPlace).markets(u, m, p));uint256 amount = token.balanceOf(lender);Safe.transferFrom(token, lender, address(this), amount);ISense(d).redeem(o, m, amount);
+The problem is thatdis user supplied input and the function only tries to redeem the amount that was transferred from Lender.
+A user can supply maliciousdcontract which does nothing onredeem(o, m, amount).
+The user will then call Redeemer’sredeemwith his malicious contract.
+Redeemer will transfer all the prinicipal from Lender to itself, will calld(noop), and finish.
+Sense market has not been redeemed.
+Now if somebody tries to call Sense market’sredeemagain, theamountvariable will be 0, and Redeemer will try to redeem 0 from Sense.
+All the original principal is locked and lost in the contract,
+like tears in rain.
+Recommended Mitigation Steps
+I think you should either use a whitelisted Sense address, or send toISense(d).redeemRedeemer’s whole principal balance.
+sourabhmarathe (Illuminate) confirmed
+
+[H-08] ERC5095 redeem/withdraw does not update allowances
+Submitted by kenzo, also found by 0x29A, cccz, csanuragjain, GimelSec, kirk-baird, Lambda, sashiketh, shenwilly, and StErMi_
+ERC5095’sredeem/withdrawallows an ERC20-approved account to redeem user’s tokens, but does not update the allowance after burning.
+Impact
+User Mal can burn more tokens than Alice allowed him to.
+He can set himself to be the receiver of the underlying, therefore Alice will lose funds.
+Proof of Concept
+withdrawandredeemfunctions check that the msg.sender has enough approvals to redeem the tokens:
+require(_allowance[holder][msg.sender] >= underlyingAmount, 'not enough approvals');
+But they do not update the allowances.
+They then callauthRedeem, which also does not update the allowances.
+Therefore, an approved user could “re-use his approval” again and again and redeem whole of approver’s funds to himself.
+Recommended Mitigation Steps
+Update the allowances upon spending.
+sourabhmarathe (Illuminate) confirmed and commented:
+While we did not actually intend to audit the 5095 itself, as 5095 itself is not yet final, we did describe its purpose in our codebase in the initial readme, and didn’t specify that it was not in scope.With that context, we will leave it up to the judges whether or not to accept issues related to the ERC5095 token.
+
+[H-09] Lender: no check for paused market on mint
+Submitted by kenzo, also found by bardamu, csanuragjain, and IllIllI
+Lender’smintfunctiondoes not checkwhether the supplied market is paused.
+Impact
+Even if a market is paused due to insolvency/bugs, an attacker can issue iPTs.
+This renders the whole pause and insolvency protection mechanism ineffective.  See POC.
+Proof of Concept
+Let’s say market P has become insolvent, and Illuminate pauses that market, as it doesn’t want to create further bad debt.
+Let’s say P’s principal tokens’s value has declined severely in the market because of the insolvency.
+An attacker can buy many worthless P principal tokens for cheap, then call Lender and mint from them iPT.
+The attacker is now owed underlying which belongs to the legitimate users. There won’t be enough funds to repay everybody.
+Recommended Mitigation Steps
+Check inmintthat the market is not paused.
+sourabhmarathe (Illuminate) confirmed
+
+[H-10] Able to mint any amount of PT
+Submitted by dipp, also found by 0x1f8b, bardamu, Chom, datapunk, Alex the Entreprenerd, GimelSec, hyh, jah, kenzo, kirk-baird, Kumpa, ladboy233, Metatron, oyc109, shenwilly, simon135, unforgiven, and zer0dot_
+Lender.sol#L192-L235
+Lender.sol#L486-L534
+Lender.sol#L545-L589
+Impact
+Some of thelendfunctions do not validate addresses sent as input which could lead to a malicous user being able to mint more PT tokens than they should.
+Functions affect:
+Illuminate and Yieldlendfunction.Senselendfunction.APWinelendfunction.
+Proof of Concept
+In the Illuminate and Yieldlendfunction:
+Let the Yieldspace poolybe a malicious contract that implements theIYieldinterface.Thebaseandmaturityfunctions forymay return any value so the conditions on lines 208 and 210 are easily passed.The caller oflendsends any amountafor the desired underlyingu.If principal tokenpcorresponds to the Yield principal, then theyieldfunction is called which has areturn value controlled by the malicious contracty.Themintfunction is then called for the principal token with an underlyinguand a maturitymwhich will then mint thereturnedamount of principal tokens to the malicious user.
+In the Senselendfunction:
+Let the ammxinput variable be a malicous contract that implements theISenseinterface.The malicious user sends any amount of underlying toLender.sol.Since the amm isn’t validated, theswapUnderlyingForPTsfunction can return any amount forreturnedthat is used to mint the Illuminate tokens.The malicious user gains a disproportionate amount of PT.
+In the APWinelendfunction:
+Let the APWinepoolinput variable be a malicous contract that implements theIAPWineRouterinterface.The malicious user sends any amount of underlying toLender.sol.TheswapExactAmountInfunction of the maliciouspoolcontract returns any amount forreturned.Themintfunction is called for the PT with underlyinguand maturitymwith the attacker controlledreturnedamount.
+Recommmended Mitigation Steps
+Consider validating the input addresses ofy,xandpoolthrough a whitelisting procedure if possible or validating that thereturnedamounts correspond with the amount of PT gained from the protocols by checking the balance before and after the PTs are gained and checking the difference is equal toreturned.
+sourabhmarathe (Illuminate) confirmed
+
+[H-11] Not minting iPTs for lenders in several lend functions
+Submitted by Metatron, also found by 0x52, auditor0517, cccz, datapunk, hansfriese, hyh, kenzo, kirk-baird, shenwilly, unforgiven, and WatchPug
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L247-L305
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L317-L367
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L192-L235
+Impact
+Using any of thelendfunction mentioned, will result in loss of funds to the lender - as the funds are transferred from them but no iPTs are sent back to them!
+Basically making lending via these external PTs unusable.
+Proof of Concept
+There is no minting of iPTs to the lender (or at all) in the 2lendfunctions below:https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L247-L305
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L317-L367
+Corresponding to lending of (respectively):swivelelement
+Furthermore, in:https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/lender/Lender.sol#L227-L234Comment says “Purchase illuminate PTs directly to msg.sender”, but this is not happening. sending yield PTs at best.
+Recommended Mitigation Steps
+Mint the appropriate amount of iPTs to the lender - like in the rest of the lend functions.
+sourabhmarathe (Illuminate) confirmed
+
+[H-12] Funds may be stuck whenredeemingfor Illuminate
+Submitted by Picodes, also found by auditor0517, Chom, cryptphi, csanuragjain, hansfriese, hyh, kenzo, kirk-baird, Lambda, pashov, unforgiven, and zer0dot
+Funds may be stuck whenredeemingfor Illuminate.
+Proof of Concept
+Assuming the goal of callingredeemfor Illuminatehereis to redeem the Illuminate principal held by the lender or the redeemer, then there is an issue because the wrongbalanceis checked. So if nomsg.senderhas a positive balance funds will be lost.
+Now assuming the goal of callingredeemfor Illuminatehereis for users to redeem their Illuminate principal and receive the underlying as suggested by thiscomment, then the underlying is not sent back to users becauseSafe.transferFrom(IERC20(u), lender, address(this), amount);send the funds to the redeemer, not the user.
+Recommended Mitigation Steps
+Clarify the purpose of this function and fix the corresponding bug.
+sourabhmarathe (Illuminate) confirmed
+
+[H-13] Illuminate PT redeeming allows for burning from other accounts
+Submitted by hyh, also found by 0x1f8b, 0x29A, cccz, Chom, csanuragjain, hansfriese, itsmeSTYJ, kenzo, pashov, shenwilly, Soosh, and unforgiven
+Illuminate PT burns shares from a user supplied address account instead of user’s account. With such a discrepancy a malicious user can burn all other’s user shares by having the necessary shares on her balance, while burning them from everyone else.
+Setting the severity to be high as this allows for system-wide stealing of user’s funds.
+Proof of Concept
+Redeemer’s Illuminate redeem() checks the balance of msg.sender, but burns from the balance of user suppliedoaddress:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/redeemer/Redeemer.sol#L114-L128
+L120:
+uint256amount=token.balanceOf(msg.sender);
+L126:
+token.burn(o,amount);
+addressprincipal=IMarketPlace(marketPlace).markets(u,m,p);if(p==uint8(MarketPlace.Principals.Illuminate)) {// Get Illuminate's principal tokenIERC5095token=IERC5095(principal);// Get the amount of tokens to be redeemed from the senderuint256amount=token.balanceOf(msg.sender);// Make sure the market has maturedif(block.timestamp<token.maturity()) {revertInvalid('not matured');}// Burn the prinicipal token from Illuminatetoken.burn(o,amount);// Transfer the original underlying token back to the userSafe.transferFrom(IERC20(u),lender,address(this),amount);
+oaddress isn’t validated and used as provided.
+Burning proceeds as usual, Illuminate PT burns second argumentafrom the first argumentf, i.e.f’s balance to be reduced bya:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC5095.sol#L121-L127
+/// @param f Address to burn from/// @param a Amount to burn/// @return bool true if successfulfunctionburn(addressf,uint256a)externalonlyAdmin(redeemer)returns(bool) {_burn(f,a);returntrue;}
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC5095.sol#L7
+contractERC5095isERC20Permit,IERC5095{
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC20.sol#L187-L196
+function_burn(addresssrc,uintwad)internalvirtualreturns(bool) {unchecked{require(_balanceOf[src] >=wad,"ERC20: Insufficient balance");_balanceOf[src] =_balanceOf[src] -wad;_totalSupply=_totalSupply-wad;emitTransfer(src,address(0),wad);}returntrue;}
+This way a malicious user owning some Illuminate PT can burn the same amount of PT as she owns from any another account, that is essentially from all other accounts, obtaining all the underlying tokens from the system. The behavior is somewhat similar to the public burn case.
+Recommended Mitigation Steps
+oaddress looks to be not needed in Illuminate PT case.
+Consider burning the shares frommsg.sender, for example:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/redeemer/Redeemer.sol#L125-L126
+// Burn the prinicipal token from Illuminate-token.burn(o,amount);+token.burn(msg.sender,amount);
+sourabhmarathe (Illuminate) confirmed
+
+[H-14]Redeemer.sol#redeem()can be called by anyone before maturity, which may lead to loss of user funds
+Submitted by WatchPug, also found by csanuragjain, datapunk, and Lambda
+functionredeem(uint8p,addressu,uint256m)publicreturns(bool) {// Get the principal token that is being redeemed by the useraddressprincipal=IMarketPlace(marketPlace).markets(u,m,p);// Make sure we have the correct principalif(p!=uint8(MarketPlace.Principals.Swivel) &&p!=uint8(MarketPlace.Principals.Element) &&p!=uint8(MarketPlace.Principals.Yield) &&p!=uint8(MarketPlace.Principals.Notional)) {revertInvalid('principal');}// The amount redeemed should be the balance of the principal token held by the Illuminate contractuint256amount=IERC20(principal).balanceOf(lender);// Transfer the principal token from the lender contract to hereSafe.transferFrom(IERC20(principal),lender,address(this),amount);if(p==uint8(MarketPlace.Principals.Swivel)) {// Redeems zc tokens to the sender's addressISwivel(swivelAddr).redeemZcToken(u,m,amount);}elseif(p==uint8(MarketPlace.Principals.Element)) {// Redeems principal tokens from elementIElementToken(principal).withdrawPrincipal(amount,marketPlace);}elseif(p==uint8(MarketPlace.Principals.Yield)) {// Redeems prinicipal tokens from yieldIYieldToken(principal).redeem(address(this),address(this),amount);}elseif(p==uint8(MarketPlace.Principals.Notional)) {// Redeems the principal token from notionalamount=INotional(principal).maxRedeem(address(this));}emitRedeem(p,u,m,amount);returntrue;}
+There are some protocols (eg Notional) that allows redeem before maturity, when doing so, they will  actually make a market sell, usually means a discounted sale.
+Sinceredeem()is a public function, anyone can call it before maturity, and force the whole protocol to sell it’s holdings at a discounted price, causing fund loss to the stake holders.
+https://github.com/notional-finance/wrapped-fcash/blob/8f76be58dda648ea58eef863432c14c940e13900/contracts/wfCashERC4626.sol#L155-L169
+functionpreviewRedeem(uint256shares)publicviewoverridereturns(uint256assets) {if(hasMatured()) {assets=convertToAssets(shares);}else{// If withdrawing non-matured assets, we sell them on the market (i.e. borrow)(uint16currencyId,uint40maturity) =getDecodedID();(assets,/* */,/* */,/* */) =NotionalV2.getPrincipalFromfCashBorrow(currencyId,shares,maturity,0,block.timestamp);}}
+Recommendation
+Consider only allow unauthenticated call after maturity.
+JTraversa (Illuminate) confirmed
+
+[H-15] Incorrect implementation of APWine and Tempusredeem
+Submitted by shenwilly, also found by cccz, Chom, datapunk, kenzo, Picodes, and unforgiven
+Redeeming APWine and Tempus PT will always fail, causing a portion of iPT to not be able to be redeemed for the underlying token.
+The issue is caused by the incorrect implementation ofredeem:
+uint256 amount = IERC20(principal).balanceOf(lender);Safe.transferFrom(IERC20(u), lender, address(this), amount);
+The first line correctly calculates the balance of PT token available inLender. However, the second line tries to transfer the underlying tokenuinstead ofprincipalfrom Lender toRedeemer. Therefore, the redeeming process will always fail as bothAPWine.withdrawandITempus.redeemToBackingwill try to redeem non-existent PT.
+Recommended Mitigation Steps
+Fix the transfer line:
+Safe.transferFrom(IERC20(principal), lender, address(this), amount);
+sourabhmarathe (Illuminate) confirmed
+kenzo (warden) commented:
+(Referring all dups here, severity should be upgraded as user funds at risk)
+gzeoneth (judge) increased severity to High and commented:
+Agree.
+
+[H-16] Unable to redeem from Notional
+Submitted by dipp, also found by cccz, cryptphi, datapunk, hyh, kenzo, Lambda, and WatchPug
+ThemaxRedeemfunction is a view function which only returns the balance of theRedeemer.solcontract. After this value is obtained, the PT is not redeemed from Notional. The user will be unable to redeem PT from Notional throughRedeemer.sol.
+Proof of Concept
+Notional code:
+function maxRedeem(address owner) public view override returns (uint256) {return balanceOf(owner);}
+Recommmended Mitigation Steps
+Callredeemfrom Notional using theamountfrommaxRedeemas thesharesinput after the call tomaxRedeem.
+kenzo (warden) commented:
+Should be high severity as affects user funds.
+gzeoneth (judge) increased severity to High
+sourabhmarathe (Illuminate) confirmed and commented
+This is confirmed as a high-risk issue.
+

@@ -1,0 +1,14 @@
+Type of vulnerability: Reentrancy or Arbitrary Contract Call
+Cause of vulnerability: The function `fillZrxQuote` allows calling an arbitrary contract with custom calldata, which can be manipulated to execute `transferFrom` on an ERC20 token that users have approved to the contract.
+Execution process: An attacker can call `Swap.swapByQuote` with specific parameters to invoke `transferFrom` on an ERC20 token, transferring tokens from a user who has previously approved the contract to the attacker's address.
+Vulnerable code: 
+```solidity
+function fillZrxQuote(IERC20 zrxBuyTokenAddress, address payable zrxTo, bytes calldata zrxData, uint256 ethAmount) internal returns (uint256, uint256) {
+    uint256 originalERC20Balance = 0;
+    if (!signifiesETHOrZero(address(zrxBuyTokenAddress))) {
+        originalERC20Balance = zrxBuyTokenAddress.balanceOf(address(this));
+    }
+    uint256 originalETHBalance = address(this).balance;
+    (bool success,) = zrxTo.call{value: ethAmount}(zrxData);
+}
+```

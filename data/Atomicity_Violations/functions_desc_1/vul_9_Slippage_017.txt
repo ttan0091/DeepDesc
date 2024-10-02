@@ -1,0 +1,29 @@
+This code defines a public view function named calculateInGivenOut, which is used to calculate the amount of input tokens required to receive a specified amount of output tokens in a swap operation, given a specific path of token addresses. The function is designed to work with either a single pool swap or a multihop swap involving two pools.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    uint256 amountOut: The amount of output tokens that the user wants to receive.
+    address[] calldata path: An array of token addresses representing the path through which the swap will occur. The path includes the input token, intermediate tokens (if any), and the output token.
+
+2. Function Type:
+    public: The function can be called from any contract or externally.
+    view: The function does not modify the state of the blockchain; it only reads data.
+
+3. Function Logic:
+    The function first checks the length of the path array.
+      If the length is 2 (path.length == 2), it means the swap involves a single pool.
+        It retrieves the native asset address from the factory contract using factory.nativeAsset().
+        It gets the pool instance for the tokens in the path using factory.getPool(path[0], path[1]).
+        It retrieves the reserves of the native and foreign assets in the pool using pool.getReserves().
+        Depending on whether the first token in the path is the native asset or not, it calculates the required input amount using VaderMath.calculateSwapReverse. This function computes the amount of input tokens needed to receive the specified amountOut based on the reserves of the pool.
+      If the length of the path array is not 2, it means the swap involves two pools (a multihop swap).
+        It retrieves the pool instances for the first and second segments of the path using factory.getPool(path[0], path[1]) and factory.getPool(path[1], path[2]).
+        It retrieves the reserves for both pools.
+        It calculates the required input amount for the second pool using VaderMath.calculateSwapReverse with the reserves of the second pool.
+        It then uses the result from the first calculation as the amountOut for the first pool and calculates the required input amount for the first pool using VaderMath.calculateSwapReverse again.
+
+4. Return Value:
+    The function returns the total amount of input tokens required (uint256 amountIn) to receive the specified amountOut through the given path.
+
+This function is crucial for providing users with the necessary information to perform swaps, ensuring they understand the input requirements for their desired output amount, especially in complex swap scenarios involving multiple pools.

@@ -1,0 +1,20 @@
+Type of vulnerability: Incorrect Token Transfer Amount
+Cause of vulnerability: The `canMatchMakerAsk` function incorrectly returns a fixed amount of 1 instead of the actual order amount.
+Execution process: When an ERC1155 order with an amount greater than 1 is matched, the `canMatchMakerAsk` function returns 1 as the amount. This value is then used in the `_executeTokenTransfer` call, resulting in only 1 token being transferred to the buyer instead of the full order amount.
+Vulnerable code: 
+```solidity
+function canMatchMakerAsk(Order calldata makerAsk, Order calldata takerBid) external pure override returns (bool, uint256, uint256, uint256, AssetType) {
+    return (
+        (makerAsk.side != takerBid.side) &&
+        (makerAsk.paymentToken == takerBid.paymentToken) &&
+        (makerAsk.collection == takerBid.collection) &&
+        (makerAsk.tokenId == takerBid.tokenId) &&
+        (makerAsk.matchingPolicy == takerBid.matchingPolicy) &&
+        (makerAsk.price == takerBid.price),
+        makerAsk.price,
+        makerAsk.tokenId,
+        1, // Vulnerable line: should be makerAsk.amount
+        AssetType.ERC1155
+    );
+}
+```

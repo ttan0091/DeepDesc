@@ -1,0 +1,22 @@
+[H-06] earn results in decreasing share price
+Submitted by jonah1005
+Impact
+For a dai vault that pairs withNativeStrategyCurve3Crv, every timeearn()is called, shareholders would lose money. (about 2%)
+There are two issues involved. TheVaultcontract and thecontrollercontract doesn’t handle the price difference between the want token and other tokens.
+AtVault.sol L293, when a vault calculates its value, it sums up all tokens balance. However, when the controller calculates vaults’ value (atController.sol L410-L436), it only adds the amount ofstrategy.wantit received. (in this case, it’s t3crv).
+Under the current design, users who deposit dai to the vault would not get yield. Instead, they would keep losing money. I consider this a high-risk issue
+Proof of Concept
+I trigger the bug with the following web3.py script:
+previous_price = vault.functions.getPricePerFullShare().call()vault.functions.available(dai.address).call()vault.functions.earn(dai.address, strategy.address).transact()current_price = vault.functions.getPricePerFullShare().call()print(previous_price)print(current_price)
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+The protocol should decide what the balance sheet in each contract stands for and make it consistent in all cases. Take, for example, if_vaultDetails[_vault].balance;stands for the amount of ‘want’ token the vault owns, there shouldn’t exist two different want in all the strategies the vault has. Also, when the vault queries controllersfunction balanceOf(), they should always multiply it by the price.
+transferAndCall (yAxis) acknowledged
+gpersoon commented:
+I think this is also related to the underlying problem that all coins are assumed to have the same value.
+See also #2, #8 and #158
+GalloDaSballo (judge) commented:
+Agree with wardens finding and acknowledge it’s similitude with other issuesPersonally this is a different vulnerability that can be solved by solving the same underlying problemMarking this as unique finding as it’s a specific exploit the protocol could face
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.

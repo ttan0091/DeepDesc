@@ -1,0 +1,15 @@
+[H-03] Critical Oracle Manipulation Risk by Lender
+Submitted by 0x1337, also found by catchup, cccz, kenzo, GimelSec, BowTiedWardens, gzeon, horsefacts, and hyh
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L286-L288
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L200-L211
+The intended use of the Oracle is to protect the lender from a drop in the borrower’s collateral value. If the collateral value goes up significantly and higher than borrowed amount + interest, the lender should not be able to seize the collateral at the expense of the borrower. However, in theNFTPairWithOraclecontract, the lender could change the Oracle once a loan is outstanding, and therefore seize the collateral at the expense of the borrower, if the actual value of the collateral has increased significantly. This is a critical risk because borrowers asset could be lost to malicious lenders.
+Proof of Concept
+InNFTPairWithOracle, theparamsare set by theborrowerwhen they callrequestLoan(), including the Oracle used. Once a lender agrees with the parameters and calls thelend()function, theloan.statuschanges toLOAN_OUTSTANDING.
+Then, the lender can call theupdateLoanParams()function and pass in its ownparamsincluding the Oracle used. Therequirestatement from line 205 to 211 does not check ifparams.oracleandcur.oracleare the same. A malicious lender could pass in his ownoracleafter the loan becomes outstanding, and the change would be reflected in line 221.
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L200-L211
+In a situation where the actual value of the collateral has gone up by a lot, exceeding the amount the lender is owed (principal + interest), the lender would have an incentive to seize the collateral. If the Oracle is not tampered with, lender should not be able to do this, because line 288 should fail. But a lender could freely change Oracle once the loan is outstanding, then a tampered Oracle could produce a very lowratein line 287 such that line 288 would pass, allowing the lender to seize the collateral, hurting the borrower.
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L286-L288
+Recommended Mitigation Steps
+Once a loan is agreed to, the oracle used should not change. I’d recommend adding a check in therequirestatement in line 205 - 211 thatparams.oracle == cur.oracle
+cryptolyndon (AbraNFT) confirmed and commented:
+Confirmed, this is bad. First report of this particular exploit.

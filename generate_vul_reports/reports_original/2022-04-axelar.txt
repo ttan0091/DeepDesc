@@ -1,0 +1,24 @@
+[H-01] Cross-chain smart contract calls can revert but source chain tokens remain burnt and are not refunded
+Submitted by sseefried, also found by Chom
+Smart contract calls often revert. In such cases any ether sent along with the transaction is returned and sometimes the remaining gas (depending on whether anassertcaused the reversion or not).
+For contracts involving ERC20 tokens it is also expected that, should a contract call fail, one’s tokens are not lost/transferred elsewhere.
+ThecallContractWithTokenfunction does not appear to take contract call failure on the destination chain into account, even though this could be quite a common occurrence.
+Tokens are burned online 105but there is no mechanism in the code base to return these burned tokens in the case that the contract call fails on the destination chain.
+The impact is that users of the Axelar Network can lose funds.
+Proof of Concept
+I have put together an executable Proof of Concept in a fork of the repo.
+FileDestinationChainContractCallFails.jsimplements a test that attempts to call a token swap function on the destination chain. Theswapfunction was provided as part of the competition repo. Given a certain amount of token A it returns twice as much of token B.
+In the test I have provided the contract call on the destination chain fails because there is simply not enough of token B in theTokenSwappercontract to transfer to the user. This might be rare in practice — since adequate liquidity would generally be provided by the contract — but cross-chain contract calls are unlikely to be limited to token swaps only! I specifically chose this example to show that cross-chain contract calls can faileven in the cases that Axelar have already consideredin their test suite.
+In theunit testyou will find:
+Lines of note have been prefixed withsseefried:The test is a little strange in that itsucceedsbecause it expects arevert. This happens online 380I took the liberty of modifying theTokenSwappercontract slightlyhere, in order to show that the contract call reverts because of a lack of token B.The amount of token A online 201can be modified to be a smaller value. Doing so, and re-running the test, will result in atest failurewhich means that the contract call didnotrevert i.e. the contract call on the destination chain succeeded. This shows that, before the change, the revert was due to a lack of token B in theTokenSwappercontract.Lines 388-389show that, in the case of a revert on the destination chain, the tokens remain burnt on the source chain.
+Recommended Mitigation Steps
+When making a credit card purchase it is common for transactions to remain in a “pending” state until eventually finalised. Often one’savailablebank balance will decrease the moment the purchase has been approved. Then one of
+two things happens:
+the transaction is finalised and the balance becomes the same as the available balancethe transaction fails and the amount is refunded
+I suggest a similar design for cross-chain contract calls, with one major difference: the token should still be burned on the source chain but it should be re-minted and refunded in case of a contract call failure on the destination chain. The steps would be roughly this:
+User callsAxelarGateway.callContractWithToken()and tokens are burnedSteps 3 - 8 from thecompetition pageoccur as normal.However, the call toexecuteWithTokenin step 8 now fails. This is monitored by the Axelar Network and a new event e.g.ContractCalledFailedis emitted on thedestination chain.One thesource chainthe Axelar Network emits a new event e.g.ContractCallFailedWithRefund. This causes a re-minting of the tokens and a refund to the user to occur. The event should also be observable by the user. It should contain a reason for the contract call failure so that they are informed as to why it failed
+deluca-mike (Axelar) acknowledged and commented:
+In this situation, the validators can still mint/transfer the user back their tokens on the source chain, so there is no real loss. There does lack an “official” way to alert the validators of this, but it can be handled entirely by off-chain micro-services and whatnot. In the future, as ERC20 transfers are pushed out of the contract as handled as separate application on top of the generic cross-chain calls, a mechanism can be implemented to send a message back to the source chain to release/mint the tokens back to the user.
+0xean (judge) increased severity to High and commented:
+Upgrading this issue from Medium to High Severity3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).While the sponsor does mention there is a possible way that this could be handled in the future, currently this risk exists in the system today and doesn’t have a proper or official mitigation in place.
+

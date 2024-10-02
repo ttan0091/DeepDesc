@@ -1,0 +1,31 @@
+This code defines an external function named burnLogic, which is designed to handle the burning of tokens from a specified address. The function is restricted to be called only by a designated caller, indicated by the onlyCaller modifier. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Access Control:
+    address from: The address from which tokens will be burned.
+    uint256 value: The amount of tokens to be burned.
+    string calldata btcAddress: A Bitcoin address associated with the transaction.
+    string calldata proof: A proof string possibly used for verification.
+    bytes32 taskHash: A hash of the task, used to verify the integrity of the transaction details.
+    address supportAddress: An address possibly used for support or verification purposes.
+    uint256 requireNum: A required number possibly for consensus or validation.
+
+2. Initial Checks:
+    The function first retrieves the balance of the from address using store.balanceOf(from).
+    It then checks if the balance is sufficient to cover the value to be burned using require(balance >= value, "sender address not have enough HBTC").
+    It also ensures that the value is greater than zero with require(value > 0, "value need > 0").
+    It verifies the taskHash by comparing it with a newly computed hash from the provided parameters (from, value, btcAddress, proof). This is done to ensure the integrity of the transaction details.
+
+3. Support Task Verification:
+    The function calls supportTask(BURNTASK, taskHash, supportAddress, requireNum) to get the status of the task. This function likely checks if the task has been approved or completed based on the provided parameters.
+
+4. Conditional Execution Based on Task Status:
+    If the status returned by supportTask is TASKDONE, the function proceeds to update the token balances and total supply:
+      It retrieves the current total supply using store.getTotalSupply().
+      It safely subtracts the value from the total supply using totalSupply.safeSub(value).
+      It also safely subtracts the value from the balance of the from address using balance.safeSub(value).
+      It updates the balance of the from address and the total supply in the store using store.setBalance(from, balance) and store.setTotalSupply(totalSupply), respectively.
+
+5. Return Value:
+    The function returns the status of the task, which indicates whether the burning process was successful (TASKDONE) or not.
+
+This function is crucial for securely burning tokens, ensuring that all conditions are met before executing the burn operation. It leverages hashing for integrity checks and uses a support function to ensure that the task is valid and approved before proceeding with the token burn.

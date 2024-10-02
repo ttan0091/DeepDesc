@@ -1,0 +1,27 @@
+[H-23] An attacker can redeposit gas afterforceRevert()to freeze all deposited gas budget ofRoot Bridge Agent
+Submitted byxuwinnie
+The callforceRevert()withdraws all of the deposited gas budget ofRoot Bridge Agentto ensure that the  failedAnyCallexecution will not be charged. However, ifforceRevert()took place during a call made byvirtual account, the gas can be replenished later manually. As a result, theAnyCallexecution will succeed, but all withdrawn gas will be frozen.
+Proof of Concept
+function anyExecute(bytes calldata data)externalvirtualrequiresExecutorreturns (bool success, bytes memory result){uint256 _initialGas = gasleft();uint24 fromChainId;UserFeeInfo memory _userFeeInfo;if (local`AnyCall`ExecutorAddress == msg.sender) {initialGas = _initialGas;(, uint256 _fromChainId) = _getContext();fromChainId = _fromChainId.toUint24();_userFeeInfo.depositedGas = _gasSwapIn(uint256(uint128(bytes16(data[data.length - PARAMS_GAS_IN:data.length - PARAMS_GAS_OUT]))), fromChainId).toUint128();_userFeeInfo.gasToBridgeOut = uint128(bytes16(data[data.length - PARAMS_GAS_OUT:data.length]));} else {fromChainId = localChainId;_userFeeInfo.depositedGas = uint128(bytes16(data[data.length - 32:data.length - 16]));_userFeeInfo.gasToBridgeOut = _userFeeInfo.depositedGas;}if (_userFeeInfo.depositedGas < _userFeeInfo.gasToBridgeOut) {_forceRevert();return (true, "Not enough gas to bridge out");}userFeeInfo = _userFeeInfo;// execution part............if (initialGas > 0) {_payExecutionGas(userFeeInfo.depositedGas, userFeeInfo.gasToBridgeOut, _initialGas, fromChainId);}}
+To implement the attack, the attacker can callcallOutSignedon a branch chain to bypasslock. On the root chain, thevirtual accountmakes three external calls:
+retryDepositatArbitrum Branch Bridge Agentwith an already executed nonce. The call willforceRevert()andinitialGaswill be non-zero since it has not been modified by reentering. As a result, all of the execution gas budget will be withdrawn.
+function _forceRevert() internal {if (initialGas == 0) revert GasErrorOrRepeatedTx();IAnycallConfig anycallConfig = IAnycallConfig(IAnycallProxy(local`AnyCall`Address).config());uint256 executionBudget = anycallConfig.executionBudget(address(this));// Withdraw all execution gas budget from anycall for tx to revert with "no enough budget"if (executionBudget > 0) try anycallConfig.withdraw(executionBudget) {} catch {}}
+callOutatArbitrum Branch Bridge Agent. The call should succeed andinitialGasis deleted.
+function _payExecutionGas(uint128 _depositedGas, uint128 _gasToBridgeOut, uint256 _initialGas, uint24 _fromChain) internal {delete(initialGas);delete(userFeeInfo);if (_fromChain == localChainId) return;
+Directly deposit a small amount of gas atAnycall Config, to ensure the success of the transaction.
+function deposit(address _account) external payable {executionBudget[_account] += msg.value;emit Deposit(_account, msg.value);}
+Then, the original call proceeds and_payExecutionGaswill be skipped. The call will succeed with all withdrawn gas budgets permanently frozen. In current implementation, ETH can be sweeped to the DAO address, but this is another mistake, assweepshould transfer WETH instead.
+Recommended Mitigation Steps
+Add amsg.sendercheck in_forceRevertto ensure the local call will be directly reverted.
+Assessed type
+Reentrancy
+0xBugsy (Maia) confirmed
+peakbolt (warden) commented:
+This is an interesting attack vector.However, the impact seems like a Medium, as the attack cost could be higher than the frozen execution gas budget, lowering the incentive for such an attack. That is because the attacker has to pay the tx cost and also deposit gas to theAnycallConfigfor the attack to succeed. And the execution gas budget inRootBridgeAgentis likely negligible, as it is intended to be replenished by the user.
+xuwinnie (warden) commented:
+Hey @peakbolt - Actually, it could DOS the entire cross chain message sending.“If the gas fee isn’t enough when you callanycall, the tx wouldn’t execute until you top up with enough gas fees. This status would be reflected in the api.”- according to theanycall V7documentation (RIP multichain).IfRootBridgeAgenthas zero budget, tx will not execute. But no user is incentivized to top it up manually. The system heavily relies on the pre-deposited gas.
+To make it clearer, suppose when deploying, a team tops up 5 units of gas. A user’s tx cost 1 unit gas, then 1 unit gas is replenished. However, if the 5 units of gas is removed, the tx won’t execute at all.
+0xBugsy (Maia) commented:
+@xuwinnie - the system should execute tx as long asexecutionBudgetis>0. But you are correct - if this value reaches 0, the execution will be stopped until gas is topped up and this can be continuously depleted, which is completely undesired.
+0xBugsy (Maia) commented:
+We recognize the audit’s findings on Anycall Gas Management. These will not be rectified due to the upcoming migration of this section to LayerZero.

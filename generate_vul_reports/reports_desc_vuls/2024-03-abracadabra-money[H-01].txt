@@ -1,0 +1,40 @@
+Type of vulnerability: TWAP (Time-Weighted Average Price) Manipulation
+Cause of vulnerability: TWAP is updated after reserve changes, allowing an attacker to control the registered price for the entire duration since the last update.
+Execution process: 
+1. Attacker inflates the reserves of token A by performing a large swap, causing the price to increase significantly.
+2. The victim contract queries the TWAP value, which now reflects the inflated price due to the attacker's actions.
+3. The victim performs a trade based on the manipulated TWAP, resulting in a losing trade.
+4. The attacker swaps back the tokens to their original state, profiting from the price manipulation.
+Vulnerable code: 
+```solidity
+function _twapUpdate() internal {
+    uint32 blockTimestamp = uint32(block.timestamp % 2 ** 32);
+    uint32 timeElapsed = blockTimestamp - _BLOCK_TIMESTAMP_LAST_;
+    if (timeElapsed > 0 && _BASE_RESERVE_ != 0 && _QUOTE_RESERVE_ != 0) {
+        unchecked {
+            _BASE_PRICE_CUMULATIVE_LAST_ += getMidPrice() * timeElapsed;
+        }
+    }
+    _BLOCK_TIMESTAMP_LAST_ = blockTimestamp;
+}
+
+function _resetTargetAndReserve() internal returns (uint256 baseBalance, uint256 quoteBalance) {
+    baseBalance = _BASE_TOKEN_.balanceOf(address(this));
+    quoteBalance = _QUOTE_TOKEN_.balanceOf(address(this));
+    if (baseBalance > type(uint112).max || quoteBalance > type(uint112).max) {
+        revert ErrOverflow();
+    }
+    _BASE_RESERVE_ = uint112(baseBalance);
+    _QUOTE_RESERVE_ = uint112(quoteBalance);
+    _BASE_TARGET_ = uint112(baseBalance);
+    _QUOTE_TARGET_ = uint112(quoteBalance);
+    _RState_ = uint32(PMMPricing.RState.ONE);
+    _twapUpdate();
+}
+
+function _setReserve(uint256 baseReserve, uint256 quoteReserve) internal {
+    _BASE_RESERVE_ = baseReserve.toUint112();
+    _QUOTE_RESERVE_ = quoteReserve.toUint112();
+    _twapUpdate();
+}
+```

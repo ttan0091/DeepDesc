@@ -1,0 +1,183 @@
+[H-01] Vault fails to track debt correctly that leads to bad debt
+Submitted by jonah1005, also found by WatchPug
+Impact
+It’s similar to the issue “misuse amount as increasing debt in the vault contract”.
+Similar issue in a different place that leads to different exploit patterns and severity.
+When users borrow usdm from a vault, the debt increases by the amount * 1.005.
+uint256increasingDebt= (_amount*1005) /1000;
+However, when the contract records the total debt it uses_amountinstead ofincreasingDebt.
+details[_id].debtIndex=(details[_id].debtIndex* (totalDebt)) /(details[_id].debt+_amount);details[_id].debt=totalDebt;details[_id].status=Status.Active;debts+=_amount;
+MochiVault.sol L242-L249
+The contract’s debt is inconsistent with the total sum of all users’ debt. The bias increases overtime and would break the vault at the end.
+For simplicity, we assume there’s only one user in the vault.
+Example:
+User deposits 1.2 M worth of BTC and borrows 1M USDM.The user’s debt (details[_id].debt) would be 1.005 M as there’s a .5 percent fee.The contract’s debt is 1M.BTC price decrease by 20 percentThe liquidator tries to liquidate the position.The liquidator repays 1.005 M and the contract tries to sub the debt by 1.005 MThe transaction is reverted asdetails[_id].debt -= _usdm;would raise exception.
+inaccurate accounting would lead to serious issues. I consider this a high-risk issue.
+Proof of Concept
+This is a web3.py script that a liquidation may fail.
+deposit_amount =10**18big_deposit = deposit_amount *100000minter.functions.mint(user, big_deposit).transact()dai.functions.approve(vault.address, big_deposit + deposit_amount).transact()# create two positionsvault.functions.mint(user, zero_address).transact()vault.functions.mint(user, zero_address).transact()# # borrow max amountvault.functions.increase(0, big_deposit, big_deposit, zero_address,'').transact()vault.functions.increase(1, deposit_amount, deposit_amount, zero_address,'').transact()vault_debt = vault.functions.debts().call()# ## This would clear out all debt in vault.repay_amount = vault_debt +10**18usdm.functions.approve(vault.address, repay_amount).transact()vault.functions.repay(0, repay_amount).transact()print('debt left:', vault.functions.debts().call())# ## All the positions would not be liquidated from now ondai_price = cssr_factory.functions.getPrice(dai.address).call()cssr_factory.functions.setPrice(dai.address, dai_price[0] //10).transact()## this would revertliquidator.functions.triggerLiquidation(dai.address,1).transact()
+Recommended Mitigation Steps
+I believe this is a mistake. Recommend to check the contract to make sureincreasingDebtis used consistently.
+[H-02]FeePoolV0.sol#distributeMochi()will unexpectedly flushtreasuryShare, causing the protocol fee cannot be properly accounted for and collected
+Submitted by WatchPug
+distributeMochi()will call_buyMochi()to convertmochiShareto Mochi token and call_shareMochi()to send Mochi to vMochi Vault and veCRV Holders. It wont touch thetreasuryShare.
+However, in the current implementation,treasurySharewill be reset to0. This is unexpected and will cause the protocol fee can not be properly accounted for and collected.
+FeePoolV0.sol#L79L95
+function_shareMochi()internal{IMochimochi=engine.mochi();uint256mochiBalance=mochi.balanceOf(address(this));// send Mochi to vMochi Vaultmochi.transfer(address(engine.vMochi()),(mochiBalance*vMochiRatio) /1e18);// send Mochi to veCRV Holdersmochi.transfer(crvVoterRewardPool,(mochiBalance* (1e18-vMochiRatio)) /1e18);// flush mochiSharemochiShare=0;treasuryShare=0;}
+Impact
+Anyone can calldistributeMochi()and resettreasuryShareto0, and then callupdateReserve()to allocate part of the wrongfuly resettedtreasurySharetomochiShareand calldistributeMochi().
+Repeat the steps above and thetreasurySharewill be consumed to near zero, profits the vMochi Vault holders and veCRV Holders. The protocol suffers the loss of funds.
+Recommendation
+Change to:
+function_buyMochi()internal{IUSDMusdm=engine.usdm();address[]memorypath=newaddress[](2);path[0] =address(usdm);path[1] =address(engine.mochi());usdm.approve(address(uniswapRouter),mochiShare);uniswapRouter.swapExactTokensForTokens(mochiShare,1,path,address(this),type(uint256).max);// flush mochiSharemochiShare=0;}function_shareMochi()internal{IMochimochi=engine.mochi();uint256mochiBalance=mochi.balanceOf(address(this));// send Mochi to vMochi Vaultmochi.transfer(address(engine.vMochi()),(mochiBalance*vMochiRatio) /1e18);// send Mochi to veCRV Holdersmochi.transfer(crvVoterRewardPool,(mochiBalance* (1e18-vMochiRatio)) /1e18);}
+ryuheimat (Mochi) confirmed
+[H-03]ReferralFeePoolV0.sol#claimRewardAsMochi()Array out of bound exception
+Submitted by WatchPug, also found by pauliax
+ReferralFeePoolV0.sol#L28L42
+functionclaimRewardAsMochi()external{IUSDMusdm=engine.usdm();address[]memorypath=newaddress[](2);path[0] =address(usdm);path[1] =uniswapRouter.WETH();path[2] =address(engine.mochi());usdm.approve(address(uniswapRouter),reward[msg.sender]);// we are going to ingore the slippages hereuniswapRouter.swapExactTokensForTokens(reward[msg.sender],1,path,address(this),type(uint256).max);
+InReferralFeePoolV0.sol#claimRewardAsMochi(),pathis defined as an array of length 2 while it should be length 3.
+As a result, at L33, an out-of-bound exception will be thrown and revert the transaction.
+Impact
+claimRewardAsMochi()will not work as expected so that all the referral fees cannot be claimed but stuck in the contract.
+ryuheimat (Mochi) confirmed
+[H-04]registerAsset()canoverwrite _assetClassvalue
+Submitted by gpersoon, also found by jonah1005 and leastwood
+Impact
+Everyone can call the functionregisterAsset()of MochiProfileV0.sol
+Assuming the liquidity for the asset is sufficient,registerAsset()will reset the _assetClass of an already registered asset toAssetClass.Sigma.
+When the _assetClass is changed toAssetClass.SigmathenliquidationFactor(),riskFactor(),maxCollateralFactor(),liquidationFee()keeperFee()maxFee()will also return a different value.
+Then the entire vault will behave differently.
+The threshold for liquidation will also be different, possibly leading to a liquidation that isn’t supposed to happen.
+Recommended Mitigation Steps
+Add the following in functionregisterAsset():
+require(\_assetClass\[\_asset] ==0,"Already exists");
+ryuheimat (Mochi) confirmed
+[H-05]debtscalculation is not accurate
+Submitted by gpersoon
+Impact
+The value of the global variabledebtsin the contractMochiVault.solis calculated in an inconsistent way.
+In the functionborrow()the variabledebtsis increased with a value excluding the fee.
+However inrepay()andliquidate()it is decreased with the same value asdetails\[\_id].debtis decreased, which is including the fee.
+This would mean thatdebtswill end up in a negative value when all debts are repay-ed. Luckily the functionrepay()prevents this from happening.
+In the meantime the value ofdebtsisn’t accurate.
+This value is used directly or indirectly in:
+utilizationRatio(),stabilityFee()calculateFeeIndex()ofMochiProfileV0.solliveDebtIndex(),accrueDebt(),currentDebt()ofMochiVault.sol
+This means the entire debt and claimable calculations are slightly off.
+Proof of Concept
+vault/MochiVaultsol
+functionborrow(..)details\[\_id].debt=totalDebt;// includes the feedebts+= \_amount;// excludes the feefunctionrepay(..)debts-= \_amount;\details\[\_id].debt-= \_amount;functionliquidate(..)debts-= \_usdm;details\[\_id].debt-= \_usdm;
+seeissue pagefor referenced code.
+Recommended Mitigation Steps
+In functionborrow():
+replacedebts += \_amount;withdebts += totalDebt
+ryuheimat (Mochi) confirmed
+[H-06] Referrer can drainReferralFeePoolV0
+Submitted by gzeon
+Impact
+functionclaimRewardAsMochiinReferralFeePoolV0.soldid not reduce user reward balance, allowing referrer to claim the same reward repeatedly and thus draining the fee pool.
+Proof of Concept
+Did not reduce user reward balance at L28-47 inReferralFeePoolV0.sol
+Recommended Mitigation Steps
+Add the following lines
+rewards -= reward[msg.sender];
+reward[msg.sender] = 0;
+ryuheimat (Mochi) confirmed
+[H-07] Liquidation will never work with non-zero discounts
+Submitted by harleythedog
+Impact
+Right now, there is only one discount profile in the github repo: the ”NoDiscountProfile” which does not discount the debt at all. This specific discount profile works correctly, but I claim that any other discount profile will result in liquidation never working.
+Suppose that we instead have a discount profile wherediscount()returns any value strictly larger than 0. Now, suppose someone wants to trigger a liquidation on a position. First,triggerLiquidationwill be called (withinDutchAuctionLiquidator.sol). The variable “debt” is initialized as equal tovault.currentDebt(\_nftId). Notice thatcurrentDebt(\_ndfId)(withinMochiVault.sol) simply scales the current debt of the position using theliveDebtIndex()function, but there is no discounting being done within the function - this will be important.
+Back within thetriggerLiquidationfunction, the variable “collateral” is  simply calculated as the total collateral of the position. Then, the function callsvault.liquidate(\_nftId, collateral, debt), and I claim that this will never work due to underflow.  Indeed, the liquidate function will first update the debt of the position (due to theupdateDebt(\_id)modifier). The debt of the position is thus updated using lines 99-107 inMochiVault.sol. We can see that thedetails\[\_id].debtis updated in the exact same way as the calculations forcurrentDebt(\_nftId), however, there is the extra subtraction of thediscountedDebton line 107.
+Eventually we will reach line 293 inMochiVault.sol. However, since we discounted the debt in the calculation ofdetails\[\_id].debt, but we did not discount the debt for the passed in parameter _usdm (and thus is strictly larger in value), line 293 will always error due to an underflow. In summary, any discount profile that actually discounts the debt of the position will result in all liquidations erroring out due to this underflow. Since no positions will be liquidatable, this represents a major flaw in the contract as then no collateral can be liquidated so the entire functionality of the contract is compromised.
+Proof of Concept
+Liquidate function inMochiVault.soltriggerLiquidationfunction inDutchAuctionLiquidator.sol
+Retracing the steps as I have described above, we can see that any call totriggerLiquidationwill result in:
+details\[\_id].debt-= \_usdm;
+throwing an error since _usdm will be larger thandetails\[\_id].debt.
+Recommended Mitigation Steps
+An easy fix is to simply change:
+details\[\_id].debt -= \_usdm;
+to be:
+details\[\_id].debt = 0;
+as liquidating a position should probably just be equivalent to repaying all of the debt in the position.
+Side Note: If there are no other discount profiles planned to be added other than ”NoDiscountProfile”, then I would recommend deleting all of the discount logic entirely, sinceNoDiscountProfiledoesn’t actually do anything.
+ryuheimat (Mochi) confirmed
+[H-08] Anyone can extend withdraw wait period by depositing zero collateral
+Submitted by harleythedog, also found by WatchPug
+Impact
+InMochiVault.sol, the deposit function allows anyone to deposit collateral into any position. A malicious user can call this function with amount = 0, which would reset the amount of time the owner has to wait before they can withdraw their collateral from their position. This is especially troublesome with longer delays, as a malicious user would only have to spend a little gas to lock out all other users from being able to withdraw from their positions, compromising the functionality of the contract altogether.
+Proof of Concept
+thedepositfunctionhere
+Notice that calling this function with amount = 0 is not disallowed. This overwriteslastDeposit\[\_id], extending the wait period before a withdraw is allowed.
+Recommended Mitigation Steps
+I would recommend adding:
+require(amount > 0, "zero")
+at the start of the function, as depositing zero collateral does not seem to be a necessary use case to support.
+It may also be worthwhile to consider only allowing the owner of a position to deposit collateral.
+ryuheimat (Mochi) confirmed
+[H-09] treasury is vulnerable to sandwich attack
+Submitted by jonah1005
+Impact
+There’s a permissionless functionveCRVlockinMochiTreasury. Since everyone can trigger this function, the attacker can launch a sandwich attack with flashloan to steal the funds.MochiTreasuryV0.sol#L73-L94
+Attackers can possibly steal all the funds in the treasury. I consider this is a high-risk issue.
+Proof of Concept
+MochiTreasuryV0.sol#L73-L94
+Here’s an exploit pattern
+Flashloan and buy CRV the uniswap poolTriggerveCRVlock()The treasury buys CRV at a very high price.Sell CRV and pay back the loan.
+Recommended Mitigation Steps
+Recommend to addonlyOwnermodifier.
+ryuheimat (Mochi) confirmed
+[H-10] Changing NFT contract in theMochiEnginewould break the protocol
+Submitted by jonah1005
+Impact
+MochiEngineallows the operator to change the NFT contract inMochiEngine.sol#L91-L93
+All the vaults would point to a different NFT address. As a result, users would not be access their positions. The entire protocol would be broken.
+IMHO, A function that would break the entire protocol shouldn’t exist.
+I consider this is a high-risk issue.
+Proof of Concept
+MochiEngine.sol#L91-L93
+Recommended Mitigation Steps
+Remove the function.
+ryuheimat (Mochi) confirmed
+[H-11]treasuryShareis Overwritten inFeePoolV0._shareMochi()
+Submitted by leastwood
+Impact
+TheFeePoolV0.solcontract accrues fees upon the liquidation of undercollaterised positions. These fees are split between treasury andvMochicontracts. However, whendistributeMochi()is called to distributemochitokens toveCRVholders, bothmochiShareandtreasuryShareis flushed from the contract when there are stillusdmtokens in the contract.
+Proof of Concept
+Consider the following scenario:
+TheFeePoolV0.solcontract contains 100usdmtokens at an exchange rate of 1:1 withmochitokens.updateReserve()is called to set the split ofusdmtokens such thattreasurySharehas claim on 20usdmtokens andmochiSharehas claim on the other 80 tokens.AveCRVholder seeks to increase their earnings by callingdistributeMochi()beforesendToTreasury()has been called.As a result, 80usdmtokens are converted tomochitokens and  locked in a curve rewards pool.Consequently,mochiShareandtreasuryShareis set to0(aka flushed).The same user callsupdateReserve()to split the leftover 20usdmtokens betweentreasuryShareandmochiShare.mochiShareis now set to 16usdmtokens.The above process is repeated to distributemochitokens toveCRVholders again and again.The end result is thatveCRVholders have been able to receive all tokens that were intended to be distributed to the treasury.
+FeePoolV0.solL94
+Tools Used
+Manual code reviewDiscussions with the Mochi team.
+Recommended Mitigation Steps
+Consider removing the line inFeePoolV0.sol(mentioned above), wheretreasuryShareis flushed.
+ryuheimat (Mochi) confirmed
+[H-12] feePool is vulnerable to sandwich attack.
+Submitted by jonah1005
+Impact
+There’s a permissionless functiondistributeMochiinFeePoolV0.sol L55-L62. Since everyone can trigger this function, an attacker can launch a sandwich attack with flashloan to steal the funds.
+The devs have mentioned this concern in the comment. An attacker can steal the funds with a flash loan attack.
+Attackers can steal all the funds in the pool. I consider this is a high-risk issue.
+Proof of Concept
+FeePoolV0.sol#L55-L62
+Please refer toyDai Incidentto check the severity of aharvestfunction without slippage control.
+Please refer toMushrooms-finance-theftto check how likely this kind of attack might happen.
+Recommended Mitigation Steps
+If the dev wants to make this a permissionless control, the contract should calculate a min return based on TWAP and check the slippage.
+Comments:
+ryuheimat (Mochi) disputed:
+I think this is same case ashttps://github.com/code-423n4/2021-10-mochi-findings/issues/60
+ghoul-sol (judge) commented:
+The same attack, different part of the code. I’ll keep them both.
+[H-13] Tokens Can Be Stolen By FrontrunningVestedRewardPool.vest()andVestedRewardPool.lock()
+Submitted by leastwood
+Impact
+TheVestedRewardPool.solcontract is a public facing contract aimed at vesting tokens for a minimum of 90 days before allowing the recipient to withdraw theirmochi. Thevest()function does not utilisesafeTransferFrom()to ensure that vested tokens are correctly allocated to the recipient. As a result, it is possible to frontrun a call tovest()and effectively steal a recipient’s vested tokens. The same issue applies to thelock()function.
+Proof of Concept
+VestedRewardPool.sol#L36L46VestedRewardPool.sol#L54L64
+Tools Used
+Manual code review
+Discussions with the Mochi team
+Recommended Mitigation Steps
+Ensure that users understand that this function should not be interacted directly as this could result in lostmochitokens. Additionally, it might be worthwhile creating a single externally facing function which callssafeTransferFrom(),vest()andlock()in a single transaction.
+ryuheimat (Mochi) confirmed

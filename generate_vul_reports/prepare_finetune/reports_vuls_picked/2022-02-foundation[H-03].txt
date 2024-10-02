@@ -1,0 +1,14 @@
+Type of vulnerability: Auction Finalization Logic Flaw
+Cause of vulnerability: The contract allows an offer to be made after an auction has ended but before the winner has received the NFT, enabling the auction winner to steal the NFT and the offer amount.
+Execution process: 
+1. An auction ends, but the winner has not yet received the NFT.
+2. A new offer is made for the NFT after the auction has ended, which bypasses the `_isInActiveAuction` check.
+3. The auction winner calls `acceptOffer -> _acceptOffer`, which fails the direct transfer and proceeds to `_transferFromEscrow`.
+4. The `_transferFromEscrow` function in `NFTMarketReserveAuction` transfers the NFT to the auction winner via `_finalizeReserveAuction`, bypassing the intended recipient of the offer.
+Vulnerable code: 
+```solidity
+function _transferFromEscrow(address nftContract, uint256 tokenId, address recipient, address seller) internal override(NFTMarketCore, NFTMarketReserveAuction, NFTMarketBuyPrice, NFTMarketOffer) {
+    super._transferFromEscrow(nftContract, tokenId, recipient, seller);
+}
+```
+https://github.com/code-423n4/2022-02-foundation/blob/main/contracts/mixins/NFTMarketReserveAuction.sol#L556-L560

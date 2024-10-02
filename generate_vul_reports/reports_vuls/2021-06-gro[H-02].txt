@@ -1,0 +1,16 @@
+[H-02]Buoy3Pool.safetyCheckis not precise and has some assumptions
+Submitted by cmichel, also found by shw
+ThesafetyCheckfunction has several issues that impact how precise the checks are:
+Only checks if thea/banda/cratios are withinBASIS_POINTS.
+By transitivity,b/cis only within2 * BASIS_POINTSifa/banda/care in range.
+For a more precise check whether both USDC and USDT are within range,b/cmust be checked as well.Ifa/bis within range, this does not imply thatb/ais within range.“inverted ratios, a/b bs b/a, while producing different results should both reflect the same change in any one of the two underlying assets, but in opposite directions”Example:lastRatio = 1.0ratio: a = 1.0, b = 0.8=>a/b = 1.25,b/a = 0.8Ifa/bwas used with a 20% range, it’d be out of range, butb/ais in range.The NatSpec for the function states that it checks Curve and an external oracle, but no external oracle calls are checked, both_ratioandlastRatioare only from Curve. Only_updateRatioschecks the oracle.
+To address this issue, it is recommended to check ifb/cis withinBASIS_POINTS.
+kristian-gro (Gro) confirmed but disagreed with severity:
+Makes strong assumption about the range of possible values - small differences between a and b will result in small differences between a/b and b/a - Extreme cases are handled by emergency. Agree on b/c check
+kristian-gro (Gro) commented:
+medium severity - will only cause stop of deposits/withdrawals against curve, work around to put in emergency mode
+kristian-gro (Gro) commented:
+Acknowledged, but the differences between variables are in basis points, we’ve simulated flash loan manipulations of curve and come to the conclusion that this approximation has a sufficiently small error margin to not cause issues.
+The B/C check (usdc/usdt) has been added in release version.
+ghoul-sol (Judge) commented:
+A possibility of stopping deposits or withdrawals deserves high risk.

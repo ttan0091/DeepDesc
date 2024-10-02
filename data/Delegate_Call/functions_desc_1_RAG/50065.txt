@@ -1,0 +1,32 @@
+The code provided defines a smart contract named Admin with several functionalities related to ownership and delegation of calls to another contract. Here’s a detailed explanation of how this contract works:
+
+### Contract Structure and Variables
+ address public owner;: This variable stores the address of the contract owner.
+ address public callee;: This variable stores the address of another contract (referred to as the database contract) to which certain calls will be delegated.
+ uint256 public Limit = 111111;: This variable sets a limit on the amount of Ether that can trigger certain actions.
+
+### Function Set
+ Purpose: This function allows the owner to set the address of the database contract.
+ Parameters: address dataBase  the address of the database contract.
+ Modifiers: payable  allows the function to receive Ether, though it doesn't use it in this context.
+ Logic:
+   require(owner == msg.sender);: Ensures that only the owner can call this function.
+   callee = dataBase;: Sets the callee variable to the provided database address.
+
+### Function addOwner
+ Purpose: This function allows the sender to potentially add themselves as an owner in the database contract if they send more Ether than the specified limit.
+ Modifiers: payable  allows the function to receive Ether.
+ Logic:
+   if(msg.value > Limit) {: Checks if the amount of Ether sent is greater than the limit.
+   callee.delegatecall(bytes4(keccak256("AddToWangDB(address)")), msg.sender);: If the condition is met, a delegatecall is made to the database contract. This call uses the function signature AddToWangDB(address) and passes the sender's address as an argument.
+
+### Detailed Analysis of delegatecall
+ delegatecall: This is a lowlevel function similar to call. When using delegatecall, the code at the target address (callee) is executed in the context of the calling contract's state. This means that the state changes (like adding an owner) will affect the state of the Admin contract, not the callee contract.
+ Security Implications: Using delegatecall can be risky if not handled correctly. It can lead to unexpected behavior, especially if the target contract's code is not wellvetted or if it modifies critical state variables. In this case, if the AddToWangDB function in the database contract modifies the owner state variable of the Admin contract, it could lead to a privilege escalation vulnerability similar to the one described in the reference vulnerability report.
+
+### Potential Vulnerabilities
+ Privilege Escalation: If the AddToWangDB function in the database contract modifies the owner state variable of the Admin contract, an attacker could potentially gain ownership of the Admin contract by sending more Ether than the limit and exploiting the delegatecall.
+ Inadequate State Check: The function addOwner does not perform any checks on the state of the callee contract before executing the delegatecall, which could lead to unauthorized state changes if the callee contract is compromised or malicious.
+
+### Conclusion
+The Admin contract provides functionalities to set a database contract address and to add an owner based on a payment threshold. The use of delegatecall in the addOwner function introduces potential security risks, particularly around privilege escalation and inadequate state checks, which should be carefully reviewed and tested to ensure the contract's security.

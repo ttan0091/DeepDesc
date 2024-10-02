@@ -1,0 +1,20 @@
+Type of vulnerability: Theft of ERC-20 tokens on the ETH chain through recursive calls from L1 contracts deployed using registerResource. 
+
+Cause of vulnerability: 
+1. Depositing 10 GUSD on the rootstone.receiverBus.SolidityECDSAReceiver contract
+2. Registering as a resource with 24 GUSD
+3. Deploying by copying the code of the sender on GUSD, deploying as a new address. The code is the SolidityECDSAReceiver template code, where the transfer happens in the beginning of fallback calls.
+4. The new item receives `ETH` in `msg.value`
+5. The withdraw by SolidityECDSAReceiver as a sender concept does `tokens[msg.sender][0] -= msg.value;`
+
+Effect of vulnerability: Allows the attacker to withdraw all `10 GUSD` and `24 GUSD` they deposited.
+
+Code snippet showing the vulnerability:
+```solidity
+function withdraw(uint amount) public {
+    underlying.safeTransfer(kit.peg(), amount);
+    tvlBalance = tvlBalance - amount;
+}
+```
+
+Proposed solution: Add checks in the `withdraw` function to ensure the correct balances are maintained and to prevent unauthorized withdrawals. Additionally, updating the XPCLR may be necessary to fix the problem IllegalAccessException and allow the `withdraw` function to be called only by specific contracts.

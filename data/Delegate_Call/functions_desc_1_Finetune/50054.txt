@@ -1,0 +1,9 @@
+Type of vulnerability: Reentrancy / Logic Flaw
+Cause of vulnerability: Misconfiguration of withdrawal limit and reentrancy protection bypass
+Working process of the code:
+1. An attacker deposits 0.1 ETH into the contract to receive 100 dPowers.
+2. The attacker calls the withdrawal function of the contract, specifying their own address in the arguments.
+3. The withdrawal function checks if the msg.value is greater than the Limit, which always evaluates to true.
+4. The function then attempts to call logEvent using addr.delegatecall(bytes4(sha3("logEvent()"))), but since logEvent is not payable, the call fails and the function completes.
+5. The contract refunds 0.1 ETH to the attacker, as the deposit was made with 0.1 ETH.
+6. The attacker can then call withdrawal again, repeating the process by depositing 1 ETH, transfer 10 POWERS (no limit in how many POWERS can be transferred). This time, the function does not fail due to reach, POWERS are becoming 0, and the logEvent function tries to update powervoices0 using approveAndCallFake part, setting 0 (=======U2022), effectively locking the contract, just to burn them.

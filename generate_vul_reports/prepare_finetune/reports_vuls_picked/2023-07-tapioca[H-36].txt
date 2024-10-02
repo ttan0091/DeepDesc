@@ -1,0 +1,25 @@
+Type of vulnerability: Uncontrolled User Input Leading to Token Theft
+
+Cause of vulnerability: The vulnerability arises from the unchecked user input in the `rewardTokens` array, which allows an attacker to manipulate the index mapping and exploit the contract to repeatedly withdraw tokens from the 0th index of the `rewardTokens` array.
+
+Execution process: An attacker initiates the attack by calling `claimRewards` on chain A, passing an array of garbage addresses in the `rewardTokens` parameter. The contract then sends this manipulated input to chain B, where the `twTAP.claimAndSendRewards` function is executed. Due to the unchecked input, the `rewardTokenIndex` mapping returns a default value of 0, leading to the `safeTransfer` function being called on `rewardTokens[0]` multiple times, allowing the attacker to steal tokens from the 0th index repeatedly.
+
+Vulnerable code: 
+```solidity
+function _claimRewardsOn(uint256 _tokenId, address _to, IERC20[] memory _rewardTokens) internal {
+    uint256[] memory amounts = claimable(_tokenId);
+    unchecked {
+        uint256 len = _rewardTokens.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 claimableIndex = rewardTokenIndex[_rewardTokens[i]];
+            uint256 amount = amounts[i];
+            if (amount > 0) {
+                // Math is safe: `amount` calculated safely in `claimable()`
+                claimed[_tokenId][claimableIndex] += amount;
+                rewardTokens[claimableIndex].safeTransfer(_to, amount);
+            }
+            ++i;
+        }
+    }
+}
+```

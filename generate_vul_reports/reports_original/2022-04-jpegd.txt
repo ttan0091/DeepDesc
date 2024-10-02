@@ -1,0 +1,151 @@
+[H-01] yVault: First depositor can break minting of shares
+Submitted by hickuphh3, also found by 0xDjango, berndartmueller, cmichel, hyh, and WatchPug
+yVault.sol#L148-L153
+The attack vector and impact is the same asTOB-YEARN-003, where users may not receive shares in exchange for their deposits if the total asset amount has been manipulated through a large “donation”.
+Proof of Concept
+Attacker deposits 1 wei to mint 1 shareAttacker transfers exorbitant amount to theStrategyPUSDConvexcontract to greatly inflate the share’s price. Note that the strategy deposits its entire balance into Convex when itsdeposit()function is called.Subsequent depositors instead have to deposit an equivalent sum to avoid minting 0 shares. Otherwise, their deposits accrue to the attacker who holds the only share.
+Insert this test intoyVault.ts.
+it.only("will cause 0 share issuance",async()=>{// mint 10k + 1 wei tokens to user1// mint 10k tokens to ownerletdepositAmount=units(10_000);awaittoken.mint(user1.address,depositAmount.add(1));awaittoken.mint(owner.address,depositAmount);// token approval to yVaultawaittoken.connect(user1).approve(yVault.address,1);awaittoken.connect(owner).approve(yVault.address,depositAmount);// 1. user1 mints 1 wei = 1 shareawaityVault.connect(user1).deposit(1);// 2. do huge transfer of 10k to strategy// to greatly inflate share price (1 share = 10k + 1 wei)awaittoken.connect(user1).transfer(strategy.address,depositAmount);// 3. owner deposits 10kawaityVault.connect(owner).deposit(depositAmount);// receives 0 shares in returnexpect(awaityVault.balanceOf(owner.address)).to.equal(0);// user1 withdraws both his and owner's deposits// total amt: 20k + 1 weiawaitexpect(()=>yVault.connect(user1).withdrawAll()).to.changeTokenBalance(token,user1,depositAmount.mul(2).add(1));});
+Recommended Mitigation Steps
+Uniswap V2 solved this problem by sending the first 1000 LP tokens to the zero address. The same can be done in this case i.e. whentotalSupply() == 0, send the first min liquidity LP tokens to the zero address to enable share dilution.Ensure the number of shares to be minted is non-zero:require(_shares != 0, "zero shares minted");
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#16.
+
+[H-02] Existing user’s locked JPEG could be overwritten by new user, causing permanent loss of JPEG funds
+Submitted by hickuphh3, also found by 0x1f8b, AuditsAreUS, Foundation, Kthere, Meta0xNull, rayn, and WatchPug
+NFTVault.sol#L375JPEGLock.sol#L54-L62
+A user’s JPEG lock schedule can be overwritten by another user’s if he (the other user) submits and finalizes a proposal to change the same NFT index’s value.
+The existing user will be unable to withdraw his locked JPEGs, resulting in permanent lock up of JPEG in the locker contract.
+Proof of Concept
+usersuccessfully proposes and finalizes a proposal to change his NFT’s collateral valueAnother user (owner) does the same for the same NFT indexuserwill be unable to withdraw his locked JPEG because schedule has been overwritten
+Insert this test case intoNFTVault.ts.
+it.only("will overwrite existing user's JPEG lock schedule",async()=>{// 0. setupconstindex=7000;awaiterc721.mint(user.address,index);awaitnftVault.connect(dao).setPendingNFTValueETH(index,units(50));awaitjpeg.transfer(user.address,units(150000));awaitjpeg.connect(user).approve(locker.address,units(500000));awaitjpeg.connect(owner).approve(locker.address,units(500000));// 1. user has JPEG locked for finalizationawaitnftVault.connect(user).finalizePendingNFTValueETH(index);// 2. owner submit proposal to further increase NFT valueawaitnftVault.connect(dao).setPendingNFTValueETH(index,units(100));// 3. owner finalizes, has JPEG lockedawaitnftVault.connect(owner).finalizePendingNFTValueETH(index);// user schedule has been overwrittenletschedule=awaitlocker.positions(index);expect(schedule.owner).to.equal(owner.address);// user tries to unstake// wont be able to because schedule was overwrittenawaittimeTravel(days(366));awaitexpect(locker.connect(user).unlock(index)).to.be.revertedWith("unauthorized");});
+Recommended Mitigation Steps
+Release the tokens of the existing schedule. Simple and elegant.
+// in JPEGLock#lockFor()LockPositionmemoryexistingPosition=positions[_nftIndex];if(existingPosition.owner!=address(0)) {// release jpegs to existing ownerjpeg.safeTransfer(existingPosition.owner,existingPosition.lockAmount);}
+Revert infinalizePendingNFTValueETH()there is an existing lock schedule. This is less desirable IMO, as there is a use-case for increasing / decreasing the NFT value.
+spaghettieth (JPEG’d) confirmed
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#3.
+
+[H-03] Update initializer modifier to prevent reentrancy during initialization
+Submitted by Dravee
+package.json#L18-L19
+The solution uses:
+"@openzeppelin/contracts":"^4.0.0","@openzeppelin/contracts-upgradeable":"^4.3.2",
+These dependencies have a known high severity vulnerability:
+https://security.snyk.io/vuln/SNYK-JS-OPENZEPPELINCONTRACTSUPGRADEABLE-2320177https://snyk.io/test/npm/@openzeppelin/contracts-upgradeable/4.3.2#SNYK-JS-OPENZEPPELINCONTRACTSUPGRADEABLE-2320177https://snyk.io/test/npm/@openzeppelin/contracts/4.0.0#SNYK-JS-OPENZEPPELINCONTRACTS-2320176
+Which makes these contracts vulnerable:
+contracts/helpers/CryptoPunksHelper.sol:19:functioninitialize(addresspunksAddress)externalinitializer{contracts/helpers/EtherRocksHelper.sol:19:functioninitialize(addressrocksAddress)externalinitializer{contracts/staking/JPEGStaking.sol:21:functioninitialize(IERC20Upgradeable_jpeg)externalinitializer{contracts/vaults/FungibleAssetVaultForDAO.sol:71:     )externalinitializer{contracts/vaults/NFTVault.sol:149:     )externalinitializer{
+Recommended Mitigation Steps
+Upgrade@openzeppelin/contractsand@openzeppelin/contracts-upgradeableto version 4.4.1 or higher.
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#11.
+
+[H-04] Reentrancy issue inyVault.deposit
+Submitted by cmichel
+yVault.sol#L144-L145
+Indeposit, the balance is cached and then atoken.transferFromis triggered which can lead to exploits if thetokenis a token that gives control to the sender, like ERC777 tokens.
+Proof of Concept
+Initial state:balance() = 1000, sharessupply = 1000.
+Depositing 1000 amount should mint 1000 supply, but one can split the 1000 amounts into two 500 deposits and use re-entrancy to profit.
+Outerdeposit(500):balanceBefore = 1000. Control is given to attacker …Innerdeposit(500):balanceBefore = 1000.shares = (_amount * supply) / balanceBefore = 500 * 1000 / 1000 = 500shares are minted …Outerdeposit(500)continues with the mint:shares = (_amount * supply) / balanceBefore = 500 * 1500 / 1000 = 750are minted.Withdrawing the500 + 750 = 1250shares viawithdraw(1250), the attacker receivesbackingTokens = (balance() * _shares) / supply = 2000 * 1250 / 2250 = 1111.111111111. The attacker makes a profit of1111 - 1000 = 111tokens.They repeat the attack until the vault is drained.
+Recommended Mitigation Steps
+ThesafeTransferFromshould be the last call indeposit.
+spaghettieth (JPEG’d) confirmed
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#19.
+
+[H-05]yVaultLPFarming: No guarantee JPEG currentBalance > previousBalance
+Submitted by hickuphh3
+yVaultLPFarming.sol#L169-L170
+yVault users participating in the farm have to trust that:
+vault.balanceOfJPEG()returns the correct claimable JPEG amount by its strategy / strategiesthe strategy / strategies will send all claimable JPEG to the farm
+Should either of these assumptions break, then it could possibly be the case thatcurrentBalanceis less thanpreviousBalance, causing deposits and crucially, withdrawals to fail due to subtraction overflow.
+Proof of Concept
+For instance,
+Farm migration occurs. A new farm is set inyVault, thenwithdrawJPEG()is called, which sends funds to the new farm. Users of the old farm would be unable to withdraw their deposits.
+it.only("will revert old farms' deposits and withdrawals if yVault migrates farm",async()=>{// 0. setupawaittoken.mint(owner.address,units(1000));awaittoken.approve(yVault.address,units(1000));awaityVault.depositAll();awaityVault.approve(lpFarming.address,units(1000));// send some JPEG to strategy prior to depositawaitjpeg.mint(strategy.address,units(100));// deposit twice, so that the second deposit will invoke _update()awaitlpFarming.deposit(units(250));awaitlpFarming.deposit(units(250));// 1. change farm and call withdrawJPEG()awaityVault.setFarmingPool(user1.address);awaityVault.withdrawJPEG();// deposit and withdrawal will failawaitexpect(lpFarming.deposit(units(500))).to.be.revertedWith('reverted with panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)');awaitexpect(lpFarming.withdraw(units(500))).to.be.revertedWith('reverted with panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)');});
+Strategy migration occurs, but JPEG funds held by the old strategy were not claimed, causingvault.balanceOfJPEG()to report a smaller amount than previously recordedjpegcould be accidentally included in the StrategyConfig, resulting in JPEG being converted to other assetsA future implementation takes a fee on thejpegto be claimed
+Recommended Mitigation Steps
+A simple fix would be toreturnifcurrentBalance ≤ previousBalance. A full fix would properly handle potential shortfall.
+if(currentBalance<=previousBalance)return;
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity and commented:
+The issue can be reproduced, but due to the extremely specific cases in which this happens the severity should be lowered to 2.
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#7.
+LSDan (judge) commented:
+I disagree with the sponsor. This is high risk.
+
+[H-06] Setting new controller can breakYVaultLPFarming
+Submitted by cmichel
+yVaultLPFarming.sol#L170yVault.sol#L108
+The accruals inyVaultLPFarmingwill fail ifcurrentBalance < previousBalancein_computeUpdate.
+currentBalance=vault.balanceOfJPEG() +jpeg.balanceOf(address(this));uint256newRewards=currentBalance-previousBalance;
+No funds can be withdrawn anymore as thewithdrawfunctions first trigger an_update.
+ThecurrentBalance < previousBalancecase can, for example, be triggerd by decreasing thevault.balanceOfJPEG()due to callingyVault.setController:
+functionsetController(address_controller)publiconlyOwner{// @audit can reduce balanceofJpeg which breaks other masterchef contractrequire(_controller!=address(0),"INVALID_CONTROLLER");controller=IController(_controller);}functionbalanceOfJPEG()externalviewreturns(uint256) {// @audit new controller could return a smaller balancereturncontroller.balanceOfJPEG(address(token));}
+Recommended Mitigation Steps
+Setting a new controller on a vault must be done very carefully and requires a migration.
+LSDan (judge) commented:
+This is not a duplicate of H-05. Though both of them deal with issues related to balanceOfJPEG, they describe different causes.
+spaghettieth (JPEG’d) acknowledged
+
+[H-07] Controller: Strategy migration will fail
+Submitted by hickuphh3, also found by rayn
+Controller.sol#L95StrategyPUSDConvex.sol#L266
+The controller calls thewithdraw()method to withdraw JPEGs from the contract, but the strategy might blacklist the JPEG asset, which is what the PUSDConvex strategy has done.
+The migration would therefore revert.
+Proof of Concept
+Insert this test intoStrategyPUSDConvex.ts.
+it.only("will revert when attempting to migrate strategy",async()=>{awaitcontroller.setVault(want.address,yVault.address);awaitexpect(controller.setStrategy(want.address,strategy.address)).to.be.revertedWith("jpeg");});
+Recommended Mitigation Steps
+Replace_current.withdraw(address(jpeg));with_current.withdrawJPEG(vaults[_token]).
+spaghettieth (JPEG’d) confirmed and commented:
+The proposed migration steps would modify the intended behaviour, which is to withdraw JPEG to the controller and not the vault. A correct solution would be replacing_current.withdraw(address(jpeg))with_current.withdrawJPEG(address(this)).
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#6.
+
+[H-08]StrategyPUSDConvex.balanceOfJPEGuses incorrect function signature while callingextraReward.earned, causing the function to unexpectedly revert everytime
+Submitted by rayn
+StrategyPUSDConvex.sol#L234
+As specified in ConvexBaseRewardPool.solandVirtualRewardPool.sol, the function signature ofearnedisearned(address). However,balanceOfJPEGdid not pass any arguments toearned, which would causebalanceOfJPEGto always revert.
+This bug will propagate throughControllerandYVaultuntil finally reaching the source of the call inYVaultLPFarming ._computeUpdate, and render the entire farming contract unuseable.
+Proof of Concept
+BothBaseRewardPool.earnedandVirtualBalanceRewardPool.earnedtakes an address as argument
+function earned(address account) public view returns (uint256) {returnbalanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);}function earned(address account) public view returns (uint256) {returnbalanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);}
+ButbalanceOfJPEGdoes not pass any address toextraReward.earned, causing the entire function to revert when called
+function balanceOfJPEG() external view returns (uint256) {uint256 availableBalance = jpeg.balanceOf(address(this));IBaseRewardPool baseRewardPool = convexConfig.baseRewardPool;uint256 length = baseRewardPool.extraRewardsLength();for (uint256 i = 0; i < length; i++) {IBaseRewardPool extraReward = IBaseRewardPool(baseRewardPool.extraRewards(i));if (address(jpeg) == extraReward.rewardToken()) {availableBalance += extraReward.earned();//we found jpeg, no need to continue the loopbreak;}}return availableBalance;}
+Tools Used
+vim, ganache-cli
+Recommended Mitigation Steps
+Passaddress(this)as argument ofearned.
+Notice how we modify the fetching of reward. This is reported in a separate bug report, but for completeness, the entire fix is shown in both report entries.
+function balanceOfJPEG() external view returns (uint256) {uint256 availableBalance = jpeg.balanceOf(address(this));IBaseRewardPool baseRewardPool = convexConfig.baseRewardPool;availableBalance += baseRewardPool.earned(address(this));uint256 length = baseRewardPool.extraRewardsLength();for (uint256 i = 0; i < length; i++) {IBaseRewardPool extraReward = IBaseRewardPool(baseRewardPool.extraRewards(i));if (address(jpeg) == extraReward.rewardToken()) {availableBalance += extraReward.earned(address(this));}}return availableBalance;}
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#15.
+LSDan (judge) commented:
+Leaving this as high risk. The issue would cause a loss of funds.
+
+[H-09] Bad debts should not continue to accrue interest
+Submitted by WatchPug
+NFTVault.sol#L844-L851
+uint256debtAmount=_getDebtAmount(_nftIndex);require(debtAmount>=_getLiquidationLimit(_nftIndex),"position_not_liquidatable");// burn all paymentstablecoin.burnFrom(msg.sender,debtAmount);
+In the current design/implementation, the liquidator must fully repay the user’s outstanding debt in order to get the NFT.
+When the market value of the NFT fell rapidly, the liquidators may not be able to successfully liquidate as they can not sell the NFT for more than the debt amount.
+In that case, the protocol will have positions that are considered bad debts.
+However, these loans, which may never be repaid, are still accruing interest. And every time the DAO collects interest, newstablecoinwill be minted.
+When the proportion of bad debts is large enough since the interest generated by these bad debts is not backed. It will damage the authenticity of the stablecoin.
+Proof of Concept
+Given:
+NFT 1worth 30,000 USDcreditLimitRate= 60%liquidationLimitRate= 50%debtInterestApr= 10%Alice borrowed10,000 USDwithNFT #1;After 1 year,NFT 1’s market value in USD has suddenly dropped to10,000USD, no liquidator is willing to repay 11,000 USD forNFT #1;The DAOcollect()and minted1,000stablecoin;After 1 year, the DAO callcollect()will mint1,100stablecoin. and so on…
+Recommended Mitigation Steps
+Consider adding a stored value to record the amount of bad debt, and add a public function that allows anyone to mark a bad debt to get some reward. and changeaccrueto:
+uint256internalbadDebtPortion;functionaccrue()public{uint256additionalInterest=_calculateAdditionalInterest();totalDebtAccruedAt=block.timestamp;totalDebtAmount+=additionalInterest;uint256collectibleInterest=additionalInterest* (totalDebtPortion-badDebtPortion) /totalDebtPortion;totalFeeCollected+=collectibleInterest;}
+spaghettieth (JPEG’d) acknowledged, but disagreed with High severity
+LSDan (judge) commented:
+I agree with the warden. Left unchecked, this issue is almost certain to occur and will cause substantial negative impacts on the protocol. The only way this would not occur is if the NFT market never crashes.
+

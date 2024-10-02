@@ -1,0 +1,13 @@
+Type of vulnerability: Allowance Misuse
+Cause of vulnerability: The contract uses the `part` to check the allowance, but actually pulls the corresponding `elastic` amount, which can be greater than the `part` due to the ratio between `elastic` and `base` in `totalBorrow`.
+Execution process: An attacker allows a certain amount to a spender, and when the `totalBorrow.elastic` is greater than `totalBorrow.base`, the spender can pull more assets than the allowed amount using the `repay` function.
+Vulnerable code: 
+```solidity
+function _repay(address from, address to, uint256 part) internal returns (uint256 amount) {
+    (totalBorrow, amount) = totalBorrow.sub(part, true);
+    userBorrowPart[to] -= part;
+    uint256 toWithdraw = (amount - part); // accrued
+    uint256 toBurn = amount - toWithdraw;
+    yieldBox.withdraw(assetId, from, address(this), amount, 0);
+}
+```

@@ -1,0 +1,30 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: The contract fails to add a Short Order to the market when a Short Record is partially filled, leading to the creation of a Short Record without an associated Short Order.
+Execution process: When a Short Order is partially filled, it does not meet the condition to be added to the market due to the `minAskEth` check. This results in a Short Record being marked as partially filled without a corresponding Short Order, preventing users from exiting or liquidators from liquidating the position.
+Vulnerable code: 
+```solidity
+LibOrders.sol#L591-L597
+❌matchIncomingSell(asset,incomingAsk,matchTotal);❌
+if(incomingAsk.ercAmount.mul(incomingAsk.price) >=minAskEth) {
+    addSellOrder(incomingAsk,asset,orderHintArray);
+}
+s.bids[asset][C.HEAD].nextId=C.TAIL;
+return;
+```
+Additional vulnerable code in exit and liquidation functions:
+```solidity
+ExitShortFacet.sol#L41
+function exitShortWallet(address asset, uint8 id, uint88 buybackAmount, ❌ uint16 shortOrderId)
+
+ExitShortFacet.sol#L87
+function exitShortErcEscrowed(address asset, uint8 id, uint88 buybackAmount, ❌ uint16 shortOrderId)
+
+ExitShortFacet.sol#L142
+function exitShort(address asset, uint8 id, uint88 buybackAmount, uint80 price, uint16[] memory shortHintArray, ❌ uint16 shortOrderId)
+
+PrimaryLiquidationFacet.sol#L47
+function liquidate(address asset, address shorter, uint8 id, uint16[] memory shortHintArray, ❌ uint16 shortOrderId)
+
+SecondaryLiquidationFacet.sol#L39
+function liquidateSecondary(address asset, ❌ MTypes.BatchLiquidation[] memory batches, uint88 liquidateAmount, bool isWallet)
+```

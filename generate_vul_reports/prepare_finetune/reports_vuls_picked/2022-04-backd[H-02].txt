@@ -1,0 +1,21 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: The function `TopUpActionLibrary.lockFunds` does not update the action-locked balance of the payer in the `stakerVault`, leading to incorrect balance calculations and potential fund loss or bypass of restrictions.
+Execution process: 
+1. User deposits funds to Pool and gets LP token.
+2. User stakes LP token in StakerVault.
+3. User approves TopUpAction address to transfer their stakes in StakerVault.
+4. User uses all their stakes to create a position with `TopUpAction.register()`.
+5. `register()` calls `lockFunds` to transfer and lock user stakes.
+6. `lockFunds()` transfers user stakes with `stakerVault.transferFrom()` but does not call `stakerVault.increaseActionLockedBalance()`, causing `StakerVault.actionLockedBalances[user]` to remain zero.
+7. `StakerVault.stakedAndActionLockedBalanceOf(user)` returns zero, leading to incorrect calculations in various functions.
+Vulnerable code: 
+```solidity
+function lockFunds(
+    address payer,
+    address stakerVault,
+    uint256 amount
+) internal {
+    IStakerVault(stakerVault).transferFrom(payer, address(this), amount);
+    // Missing call to increaseActionLockedBalance(payer, amount);
+}
+```

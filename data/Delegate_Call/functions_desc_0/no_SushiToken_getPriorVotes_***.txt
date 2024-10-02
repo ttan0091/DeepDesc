@@ -1,0 +1,32 @@
+This code defines an external view function named getPriorVotes, which is designed to retrieve the number of votes that a specific account had at a given historical block number. This function is particularly useful in decentralized governance systems where the voting power of an account can change over time due to various factors such as token transfers or additional stakes.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Control:
+    The function getPriorVotes is marked as external, meaning it can only be called from outside the contract.
+    It is also marked as view, indicating that it does not modify the state of the blockchain and can be called without incurring gas fees.
+    The function takes two parameters: address account (the Ethereum address of the account whose prior votes are being queried) and uint blockNumber (the historical block number at which the votes are to be determined).
+
+2. Input Validation:
+    The function begins with a require statement that checks if the provided blockNumber is less than the current block number (block.number). If the blockNumber is not yet determined (i.e., it is greater than or equal to the current block number), the function throws an error with the message "SUSHI::getPriorVotes: not yet determined".
+
+3. Checkpoint Retrieval:
+    The function then retrieves the number of checkpoints (nCheckpoints) associated with the given account from the numCheckpoints mapping. Checkpoints are records that store the voting power of an account at specific block numbers.
+
+4. Initial Check for No Checkpoints:
+    If there are no checkpoints for the account (nCheckpoints == 0), the function immediately returns 0, indicating that the account had no voting power at any point.
+
+5. Checking the Most Recent Checkpoint:
+    If there are checkpoints, the function first checks the most recent checkpoint (checkpoints[account][nCheckpoints  1]). If the fromBlock of this checkpoint is less than or equal to the provided blockNumber, it returns the votes from this checkpoint, as it represents the most recent known voting power of the account that is still valid for the given block number.
+
+6. Checking for Implicit Zero Balance:
+    If the fromBlock of the first checkpoint (checkpoints[account][0]) is greater than the provided blockNumber, it means that the account had no voting power before this block, so the function returns 0.
+
+7. Binary Search for Historical Checkpoint:
+    If neither of the above conditions is met, the function performs a binary search through the checkpoints to find the exact checkpoint that matches the provided blockNumber.
+    It initializes two indices, lower and upper, representing the range of checkpoints to search.
+    The function enters a loop where it calculates the center index (center) and retrieves the checkpoint at this index (cp).
+    Depending on the comparison between cp.fromBlock and blockNumber, it adjusts the lower or upper indices to narrow down the search range.
+    The loop continues until upper is no longer greater than lower, at which point the function returns the votes from the checkpoint at the lower index, which is the closest checkpoint before or at the provided blockNumber.
+
+This function leverages efficient data structures and search algorithms to provide a quick and accurate retrieval of historical voting power, which is crucial for maintaining the integrity and responsiveness of decentralized governance systems.

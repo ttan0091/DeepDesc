@@ -1,0 +1,31 @@
+This code defines a public function named updatePool, which is used to update the state of a specific pool identified by its pool ID (_pid). This function is crucial for maintaining the accuracy of rewards distribution in a liquidity mining or staking contract.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Control:
+    The function updatePool takes one parameter: _pid (uint256), which represents the ID of the pool to be updated.
+    The function is marked as public, meaning it can be called from any external or internal source, including other contracts.
+
+2. Pool Information Retrieval:
+    The function starts by retrieving the pool information from the poolInfo mapping using the provided pool ID (_pid). This information is stored in a variable named pool of type PoolInfo storage. The storage keyword indicates that pool is a reference to the storage location of the pool data, allowing modifications to directly affect the state of the contract.
+
+3. Block Number Check:
+    The function checks if the current block number (block.number) is less than or equal to the lastRewardBlock of the pool. If this condition is true, it means no new blocks have been mined since the last update, so the function returns immediately, as there are no new rewards to distribute.
+
+4. Liquidity Provider (LP) Token Supply Check:
+    The function then retrieves the balance of LP tokens held by the contract for the given pool using pool.lpToken.balanceOf(address(this)). This balance is stored in the variable lpSupply.
+    If lpSupply is zero, it means there are no LP tokens in the pool, so no rewards can be distributed. In this case, the function updates the lastRewardBlock of the pool to the current block number and returns.
+
+5. Reward Calculation:
+    If there are LP tokens in the pool, the function calculates the multiplier using the getMultiplier function, which presumably calculates the number of blocks since the last reward update.
+    The total rewards accumulated (rewardsAccum) are then calculated by multiplying the multiplier by the rewardsPerBlock and the allocPoint of the pool, and then dividing by the totalAllocPoint. This calculation distributes rewards proportionally based on the pool's allocation points relative to the total allocation points of all pools.
+
+6. Developer Reward Calculation:
+    If devPercentage is greater than zero, a portion of the accumulated rewards is allocated to the developer. This amount is calculated by multiplying rewardsAccum by devPercentage and dividing by 1000 (to handle percentage values). This amount is added to tips.
+
+7. Updating Pool State:
+    The totalRewardDebt is updated by adding the rewardsAccum to it. This variable likely tracks the total rewards that have been accounted for but not yet distributed.
+    The accRewardsPerShare of the pool is updated by adding the result of rewardsAccum multiplied by 1e12 (to maintain precision) and divided by lpSupply. This value represents the accumulated rewards per share of LP tokens.
+    Finally, the lastRewardBlock of the pool is updated to the current block number, marking the completion of the reward update for this pool.
+
+This function is essential for ensuring that rewards are accurately calculated and updated based on the number of blocks mined and the distribution logic defined in the contract.

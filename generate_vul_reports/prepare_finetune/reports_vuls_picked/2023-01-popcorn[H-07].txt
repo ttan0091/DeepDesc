@@ -1,0 +1,22 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: The contract allows any user who creates a vault with a pre-existing adapter to pause that adapter, affecting all other vaults using the same adapter.
+Execution process: An attacker creates a vault using an existing adapter, then calls the `pauseAdapters` function to pause the adapter, disrupting all vaults that use the same adapter.
+Vulnerable code: 
+```solidity
+function pauseAdapters(address[] calldata vaults) external {
+    uint8 len = uint8(vaults.length);
+    for (uint256 i = 0; i < len; i++) {
+        _verifyCreatorOrOwner(vaults[i]);
+        (bool success, bytes memory returnData) = adminProxy.execute(
+            IVault(vaults[i]).adapter(),
+            abi.encodeWithSelector(IPausable.pause.selector)
+        );
+        if (!success) revert UnderlyingError(returnData);
+    }
+}
+
+function _verifyCreatorOrOwner(address vault) internal returns (VaultMetadata memory metadata) {
+    metadata = vaultRegistry.getVault(vault);
+    if (msg.sender != metadata.creator || msg.sender != owner) revert NotSubmitterNorOwner(msg.sender);
+}
+```

@@ -1,0 +1,37 @@
+This code defines an internal function named removeFacetSelectors, which is used to remove selectors from a diamond contract's facet structure. The function is part of a diamond contract implementation, which is a pattern for upgrading smart contracts by allowing multiple facets (contracts) to be added, replaced, or removed.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    Layout storage l: A storage pointer to the layout of the diamond contract, which contains mappings and arrays storing the facets and their selectors.
+    uint256 selectorCount: The current count of selectors.
+    bytes32 selectorSlot: The current slot in which selectors are stored.
+    IDiamondCuttable.FacetCut memory facetCut: A memory structure containing the target address (which should be zero for removal operations) and an array of selectors to be removed.
+
+2. Initial Checks:
+    The function starts by ensuring that the target address in facetCut is the zero address, which is a requirement for removal operations.
+
+3. Selector Slot Calculations:
+    selectorSlotCount is calculated by shifting selectorCount right by 3 bits, effectively dividing it by 8 to determine how many full slots are used.
+    selectorInSlotIndex is determined by taking the bitwise AND of selectorCount with 7, which gives the index within the current slot.
+
+4. Loop Through Selectors:
+    The function iterates over each selector in facetCut.selectors.
+    For each selector, it retrieves the corresponding facet from l.facets.
+    It checks that the selector exists and is not immutable (i.e., not associated with the contract itself).
+
+5. Selector Replacement and Slot Adjustment:
+    If selectorSlot is zero, it means the current slot is fully used, so it moves to the previous slot and sets the index to 7.
+    Otherwise, it decrements the index within the current slot.
+    It then replaces the current selector with the last selector in the slot, updating the facet mapping and slot storage accordingly.
+
+6. Selector Removal and Slot Update:
+    The function deletes the selector from l.facets.
+    It adjusts the slot storage to remove the selector, either by modifying the current slot or a previous slot if necessary.
+    If the current slot becomes empty, it deletes the slot from l.selectorSlots.
+
+7. Final Selector Count and Slot:
+    The function recalculates selectorCount based on the updated slot count and index.
+    It returns the updated selectorCount and selectorSlot.
+
+This function is crucial for managing the dynamic nature of diamond contracts, allowing for selective removal of functions (selectors) from the contract's functionality. The use of bitwise operations and careful management of storage slots ensures efficient storage and retrieval of selectors.

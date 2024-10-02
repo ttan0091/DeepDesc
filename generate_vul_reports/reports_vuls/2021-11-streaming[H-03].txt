@@ -1,0 +1,17 @@
+[H-03] Reward token not correctly recovered
+Submitted by cmichel, also found by GeekyLumberjack, kenzo, pedroais, and hyh
+TheStreamingcontract allows recovering the reward token by callingrecoverTokens(rewardToken, recipient).
+However, the excess amount is computed incorrectly asERC20(token).balanceOf(address(this)) - (rewardTokenAmount + rewardTokenFeeAmount):
+functionrecoverTokens(addresstoken,addressrecipient)publiclock{if(token==rewardToken) {require(block.timestamp>endRewardLock,"time");// check what isnt claimable by depositors and governance// @audit-issue rewardTokenAmount increased on fundStream, but never decreased! this excess underflowsuint256excess=ERC20(token).balanceOf(address(this)) - (rewardTokenAmount+rewardTokenFeeAmount);ERC20(token).safeTransfer(recipient,excess);emitRecoveredTokens(token,recipient,excess);return;}// ...
+Note thatrewardTokenAmountonly everincreases(when callingfundStream) but it never decreases when claiming the rewards throughclaimReward.
+However,claimRewardtransfers out the reward token.
+Therefore, therewardTokenAmountnever tracks the contract’s reward balance and the excess cannot be computed that way.
+Proof Of Concept
+Assume no reward fees for simplicity and only a single user staking.
+Someone funds1000reward tokens throughfundStream(1000). ThenrewardTokenAmount = 1000The stream and reward lock period is over, i.e.block.timestamp > endRewardLockThe user claims their full reward and receives1000reward tokens by callingclaimReward(). The reward contract balance is now0butrewardTokenAmount = 1000Some fool sends 1000 reward tokens to the contract by accident. These cannot be recovered as theexcess = balance - rewardTokenAmount = 0
+Impact
+Reward token recovery does not work.
+Recommended Mitigation Steps
+The claimed rewards need to be tracked as well, just like the claimed deposits are tracked.
+I think you can even decreaserewardTokenAmountinclaimRewardbecause at this pointrewardTokenAmountis not used to update thecumulativeRewardPerTokenanymore.
+brockelmore (Streaming Protocol) confirmed

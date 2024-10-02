@@ -1,0 +1,9 @@
+[H-30]utilizationfor_getInterestRate()does not factor in interest
+Submitted byItsNio, also found byItsNioandSaeedAlipoor01988
+The calculation forutilizationin_getInterestRate()does not factor in the accrued interest. This leads to_accrueInfo.interestPerSecondbeing under-represented, and leading to incorrect interest rate calculation and potentially endangering conditions such asutilization > maximumTargetUtilizationon line124.
+Proof of Concept
+The calculation forutilizationin the_getInterestRate()function forSGLCommon.soloccurs on lines61-64as a portion of thefullAssetAmount(which is also problematic) and the_totalBorrow.elastic. However,_totalBorrow.elasticis accrued by interest on line99. This accrued amount is not factored into the calculation forutilization, which will be used to update the new interest rate, as purposed by the comment on line111.
+Recommended Mitigation Steps
+Factor in the interest accrual into theutilizationcalculation:
+...// Accrue interestextraAmount =(uint256(_totalBorrow.elastic) *_accrueInfo.interestPerSecond *elapsedTime) /1e18;_totalBorrow.elastic += uint128(extraAmount);+    uint256 fullAssetAmount = yieldBox.toAmount(+        assetId,+        _totalAsset.elastic,+        false+    ) + _totalBorrow.elastic;//@audit utilization factors in accrual+    utilization = fullAssetAmount == 0+   ? 0+        : (uint256(_totalBorrow.elastic) * UTILIZATION_PRECISION) /+        fullAssetAmount;...
+0xRektora (Tapioca) confirmed

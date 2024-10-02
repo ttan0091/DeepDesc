@@ -1,0 +1,14 @@
+[H-02]BeefyAdapter()malicious vault owner can use malicious\_beefyBoosterto steal the adapter’s token
+Submitted bybin2chen, also found byCh_301,rvierdiiev, and0xTraub
+Malicious vault owner can use Malicious\_beefyBoosterto steal the adapter’s token.
+Proof of Concept
+When creating a BeefyAdapter, the vault owner can specify the\_beefyBooster.
+The current implementation does not check if the\_beefyBoosteris legitimate or not, and worse, it\_beefyVault.approveto the\_beefyBoosterduring initialization.
+The code is as follows:
+contractBeefyAdapterisAdapterBase,WithRewards{...functioninitialize(bytesmemoryadapterInitData,addressregistry,bytesmemorybeefyInitData)externalinitializer{(address_beefyVault,address_beefyBooster) =abi.decode(beefyInitData,//@audit <--------- beefyInitData comes from the owner's input: adapterData.data(address,address));//@audit <-------- not check _beefyBooster is legalif(_beefyBooster!=address(0) &&IBeefyBooster(_beefyBooster).stakedToken() !=_beefyVault)revertInvalidBeefyBooster(_beefyBooster);...if(_beefyBooster!=address(0))IERC20(_beefyVault).approve(_beefyBooster,type(uint256).max);//@audit <---------  _beefyVault approve _beefyBooster}function_protocolDeposit(uint256amount,uint256)internalvirtualoverride{beefyVault.deposit(amount);if(address(beefyBooster) !=address(0))beefyBooster.stake(beefyVault.balanceOf(address(this)));//@audit <--------- A malicious beefyBooster can transfer the token}
+As a result, a malicious user can pass a malicious\_beefyBoostercontract, and when the user deposits to the vault, the vault is saved to the\_beefyVault.
+This malicious\_beefyBoostercan execute\_beefyVault.transferFrom(BeefyAdapter), and take all the tokens stored by the adapter to\_beefyVault.
+Recommended Mitigation Steps
+Check\_beefyBoosterjust like you check\_beefyVault:
+functioninitialize(bytesmemoryadapterInitData,addressregistry,bytesmemorybeefyInitData)externalinitializer{...if(!IPermissionRegistry(registry).endorsed(_beefyVault))revertNotEndorsed(_beefyVault);...+if(!IPermissionRegistry(registry).endorsed(_beefyBooster))+revertNotEndorsed(_beefyBooster);if(_beefyBooster!=address(0) &&IBeefyBooster(_beefyBooster).stakedToken() !=_beefyVault)revertInvalidBeefyBooster(_beefyBooster);
+RedVeil (Popcorn) confirmed

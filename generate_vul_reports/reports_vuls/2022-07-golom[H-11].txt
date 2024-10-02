@@ -1,0 +1,23 @@
+[H-11] Cannot remove delegation from a token to another token
+Submitted by Bahurum, also found by 0x52, 0xA5DF, 0xsanson, berndartmueller, cccz, CertoraInc, dipp, GalloDaSballo, GimelSec, Green, IllIllI, kenzo, MEP, panprog, and scaraven
+VoteEscrowDelegation.sol#L213
+A user who has delegated the vote of a veGolom token (that he/she owns) to another veGolom token cannot remove the delegation, so the delegatee token will permanently hold the voting power of the delegator token.
+Proof of Concept
+A user tries to remove the delegation fromtokenIdhe/she owns to the delegated token, callingremoveDelegation(uint256 tokenId).The delegation should be removed at the lines:
+Checkpointstoragecheckpoint=checkpoints[tokenId][nCheckpoints-1];removeElement(checkpoint.delegatedTokenIds,tokenId);
+but the arraycheckpoint.delegatedTokenIdsis the list ofdelegatorstotokenIditself. So, unless the delegation was from the token to itself,removeDelegationdoes nothing.
+Recommended Mitigation Steps
+Two fixes are proposed:
+Add the delegatee as an argument toremoveDelegationand removetokenIdfrom its list of delegators:
+-   function removeDelegation(uint256 tokenId) external {+   function removeDelegation(uint256 tokenId, uint256 toTokenId) external {require(ownerOf(tokenId) == msg.sender, 'VEDelegation: Not allowed');uint256 nCheckpoints = numCheckpoints[tokenId];-       Checkpoint storage checkpoint = checkpoints[tokenId][nCheckpoints - 1];+       Checkpoint storage checkpoint = checkpoints[toTokenId][nCheckpoints - 1];removeElement(checkpoint.delegatedTokenIds, tokenId);_writeCheckpoint(tokenId, nCheckpoints, checkpoint.delegatedTokenIds);}
+or
+Load the delegatee from the mappingdelegateswhich maps each delegator to its current delegatee:
+function removeDelegation(uint256 tokenId) external {require(ownerOf(tokenId) == msg.sender, 'VEDelegation: Not allowed');+       uint256 toTokenId = delegates[tokenId];uint256 nCheckpoints = numCheckpoints[tokenId];-       Checkpoint storage checkpoint = checkpoints[tokenId][nCheckpoints - 1];+       Checkpoint storage checkpoint = checkpoints[toTokenId][nCheckpoints - 1];removeElement(checkpoint.delegatedTokenIds, tokenId);_writeCheckpoint(tokenId, nCheckpoints, checkpoint.delegatedTokenIds);}
+kenzo (warden) commented:
+Note that in the mitigation,nCheckpointsshould accesstoTokenIdinstead oftokenId.
+zeroexdead (Golom) confirmed
+zeroexdead (Golom) commented:
+Fixed.https://github.com/golom-protocol/contracts/commit/4b19fce83ad53bc56b1bad058e1e88d90acda444
+0xsaruman (Golom) resolved
+LSDan (judge) increased severity to High and commented:
+I agree with the other wardens who rated this high risk. It has a direct impact on the functioning of the protocol and allows for a myriad of governance attacks.

@@ -1,0 +1,31 @@
+Type of vulnerability: Inability to Claim Surplus Collateral
+
+Cause of vulnerability: The LeverageMacroReference contract lacks a built-in feature to claim surplus collateral from the CollSurplusPool, and it is restricted from making arbitrary calls to the system contracts, including the `claimSurplusCollShares` function in `borrowerOperations`.
+
+Execution process:
+1. A user deploys a new instance of `LeverageMacroReference` using the `deployNewMacro` function.
+2. The user opens a Cdp (collateralized debt position) using the deployed macro.
+3. The Cdp is either fully redeemed or liquidated, resulting in surplus collateral being sent to the `CollSurplusPool`.
+4. The user attempts to claim the surplus collateral by calling the `claimSurplusCollShares` function in `borrowerOperations`.
+5. The attempt fails because the `LeverageMacroReference` contract prevents arbitrary calls to system contracts, including `borrowerOperations`.
+
+Vulnerable code:
+```solidity
+/// @dev Prevents doing arbitrary calls to protected targets
+function _ensureNotSystem(address addy) internal {
+    require(addy != address(borrowerOperations));
+    require(addy != address(sortedCdps));
+    require(addy != address(activePool));
+    require(addy != address(cdpManager));
+    require(addy != address(this));
+}
+
+function _doSwap(SwapOperation memory swapData) internal {
+    // Ensure call is safe
+    // Block all system contracts
+    _ensureNotSystem(swapData.addressForSwap);
+    // Call and perform swap
+    (bool success, ) = excessivelySafeCall(swapData.addressForSwap, gasleft(), 0, 0, swapData.calldataForSwap);
+    require(success, "Call has failed");
+}
+```

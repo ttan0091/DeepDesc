@@ -1,0 +1,203 @@
+[H-01] Wrong reward token calculation in MasterChef contract
+Submitted by throttle, also found by cccz, cmichel, and leastwood
+MasterChef.sol#L86
+When adding new token pool for staking in MasterChef contract
+functionadd(address_token,uint_allocationPoints,uint16_depositFee,uint_startBlock)
+All other, already added, pools should be updated but currently they are not.Instead, only totalPoints is updated. Therefore, old (and not updated) pools will lose it’s share during the next update.Therefore, user rewards are not computed correctly (will be always smaller).
+Proof of Concept
+Scenario 1:
+Owner adds new pool (first pool) for staking with points = 100 (totalPoints=100)and 1 block later Alice stakes 10 tokens in the first pool.1 week passesAlice withdraws her 10 tokens and claims X amount of reward tokens.and 1 block later Bob stakes 10 tokens in the first pool.1 week passesOwner adds new pool (second pool) for staking with points = 100 (totalPoints=200)and 1 block later Bob withdraws his 10 tokens and claims X/2 amount of reward tokens.But he should get X amount
+Scenario 2:
+Owner adds new pool (first pool) for staking with points = 100 (totalPoints=100).1 block later Alice, Bob and Charlie stake 10 tokens there (at the same time).1 week passesOwner adds new pool (second pool) for staking with points = 400 (totalPoints=500)Right after that, when Alice, Bob or Charlie wants to withdraw tokens and claim rewards they will only be able to claim 20% of what they should be eligible for, because their pool is updated with 20% (100/500) rewards instead of 100% (100/100) rewards for the past week.
+Recommended Mitigation Steps
+Update all existing pools before adding new pool. Use the massUdpate() function which is already present … but unused.
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a fallacy in howadds logic work.Ultimately rewards in this contract have to be linearly vested over time, adding a new pool would change the rate at which vesting in all pools will go.For that reason, it is necessary to accrue the rewards that each pool generated up to that point, before changing the slope at which rewards will be distributed.In this case add should massUpdateFirst.Because this vulnerability ultimately breaks the accounting of the protocol, I believe High Severity to be appropriate.
+
+[H-02] Masterchef: Improper handling of deposit fee
+Submitted by hickuphh3, also found by leastwood
+MasterChef.sol#L170-L172
+If a pool’s deposit fee is non-zero, it is subtracted from the amount to be credited to the user.
+if(pool.depositFeeBP>0) {uintdepositFee=_amount.mul(pool.depositFeeBP).div(_perMille);user.amount=SafeCast.toUint128(user.amount+_amount-depositFee);}
+However, the deposit fee is not credited to anyone, leading to permanent lockups of deposit fees in the relevant depositor contracts (StakingRewards and ConvexStakingWrapper for now).
+Proof of Concept
+Example 1: ConvexStakingWrapper
+Assume the following
+Thecurve cDai / cUSDC / cUSDT LP tokencorresponds topid = 1in the convex booster contract.Pool is added in Masterchef withdepositFeeBP = 100 (10%).Alice deposits 1000 LP tokens via the ConvexStakingWrapper contract. A deposit fee of 100 LP tokens is charged. Note that thedepositsmapping of the ConvexStakingWrapper contract credits 1000 LP tokens to her.However, Alice will only be able to withdraw 900 LP tokens. The 100 LP tokens is not credited to any party, and is therefore locked up permanently (essentially becomes protocol-owned liquidity). While she is able to dorequestWithdraw()for 1000 LP tokens, attempts to executewithdraw()with amount = 1000 will revert because she is only credited 900 LP tokens in the Masterchef contract.
+Example 2: StakingRewards
+CRV pool is added in Masterchef withdepositFeeBP = 100 (10%).Alice deposits 1000 CRV into the StakingRewards contract. A deposit fee of 100 CRV is charged.Alice is only able to withdraw 900 CRV tokens, while the 100 CRV is not credited to any party, and is therefore locked up permanently.
+These examples are non-exhaustive as more depositors can be added / removed from the Masterchef contract.
+Recommended Mitigation Steps
+I recommend shifting the deposit fee logic out of the masterchef contract into the depositor contracts themselves, as additional logic would have to be added in the masterchef to update the fee recipient’s state (rewardDebt, send pending concur rewards, update amount), which further complicates matters. As the fee recipient is likely to be the treasury, it is also not desirable for it to accrue concur rewards.
+if(pool.depositFeeBP>0) {uintdepositFee=_amount.mul(pool.depositFeeBP).div(_perMille);user.amount=SafeCast.toUint128(user.amount+_amount-depositFee);UserInfostoragefeeRecipient=userInfo[_pid][feeRecipient];// TODO: update and send feeRecipient pending concur rewardsfeeRecipient.amount=SafeCast.toUint128(feeRecipient.amount+depositFee);// TODO: update fee recipient's rewardDebt}
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a way for funds to be forever lost, because of that reason I believe High Severity to be appropriate.Mitigation could be as simple as transferring the fee to afeeReceiveror adding a way to pull those fees.
+
+[H-03] Repeated Calls to Shelter.withdraw Can Drain All Funds in Shelter
+Submitted by mtz, also found by 0x1f8b, 0xliumin, bitbopper, cccz, cmichel, csanuragjain, Czar102, danb, Alex the Entreprenerd, GeekyLumberjack, gzeon, hickuphh3, hyh, leastwood, Randyyy, Rhynorater, Ruhum, and ShadowyNoobDev
+Shelter.sol#L52-L57
+tl;dr Anyone who can callwithdrawto withdraw their own funds can call it repeatedly to withdraw the funds of others.withdrawshould only succeed if the user hasn’t withdrawn the token already.
+The shelter can be used for users to withdraw funds in the event of an emergency. Thewithdrawfunction allows callers to withdraw tokens based on the tokens they have deposited into the shelter client: ConvexStakingWrapper. However,withdrawdoes not check if a user has already withdrawn their tokens. Thus a user that canwithdrawtokens, can call withdraw repeatedly to steal the tokens of others.
+Proof of Concept
+tl;dr an attacker that can successfully callwithdrawonce on a shelter, can call it repeatedly to steal the funds of others. Below is a detailed scenario where this situation can be exploited.
+Mallory deposits 1wETHintoConvexStakingWrapperusingdeposit. Let’s also assume that other users have deposited 2wETHinto the same contract.An emergency happens and the owner ofConvexStakingWrappercallssetShelter(shelter)andenterShelter([pidOfWETHToken, ...]). Nowshelterhas 3wETHand is activated forwETH.Mallory callsshelter.withdraw(wETHAddr, MalloryAddr), Mallory will rightfully receive 1 wETH because her share of wETH in the shelter is 1/3.Mallory callsshelter.withdraw(wETHAddr, MalloryAddr)again, receiving 1/3*2 = 2/3 wETH.withdrawdoes not check that she has already withdrawn. This time, the wETH does not belong to her, she has stolen the wETH of the other users. She can continue callingwithdrawto steal the rest of the funds
+Recommended Mitigation Steps
+To mitigate this,withdrawmust first check thatmsg.senderhas not withdrawn this token before andwithdrawmust also record thatmsg.senderhas withdrawn the token.
+The exact steps for this are below:
+Add the following line to the beginning ofwithdraw(line 53):
+require(!claimed[_token][msg.sender], "already claimed")
+Replaceline 55with the following:
+claimed[_token][msg.sender] = true;
+This replacement is necessary because we want to record who is withdrawing, not where they are sending the token which isn’t really useful info.
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a logical fallacy in theSheltercontract.This would allow a caller to claim their tokens multiple times, as long as they send them to a new address.Mitigation is as simple as checking claims againstmsg.sender, however because all funds can be drained, this finding is of High Severity.
+
+[H-04]ConvexStakingWrapper,StakingRewardsWrong implementation will sendconcurrewards to the wrong receiver
+Submitted by WatchPug, also found by bobi, CertoraInc, csanuragjain, danb, hickuphh3, and leastwood
+ConvexStakingWrapper.sol#L246StakingRewards.sol#L99MasterChef.sol#L159-L167
+UserInfostorageuser=userInfo[_pid][_msgSender()];updatePool(_pid);if(user.amount>0) {uintpending=user.amount*pool.accConcurPerShare/_concurShareMultiplier-user.rewardDebt;if(pending>0) {safeConcurTransfer(_recipient,pending);}}
+ConvexStakingWrapper,StakingRewardsis usingmasterChef.deposit(),masterChef.withdraw(), and these two functions onmasterChefwill take_msgSender()as the user address, which is actually the address ofConvexStakingWrapperandStakingRewards.
+As a result, when callingConvexStakingWrapper.deposit(),ConvexStakingWrapper.withdraw(),StakingRewards.stake(),StakingRewards.withdraw(), theconcurrewards belongs to all the users of ConvexStakingWrapper / StakingRewards will be sent to the caller wrongfully.
+Proof of Concept
+Alice deposits1,000,000token topid 1
+Actual results onmasterChef:
+userInfo[1][address(ConvexStakingWrapper)] =1,000,000
+Expected results:
+userInfo[1][address(Alice)] =1,000,0001 day later, Bob deposits1token topid 1
+Actual results onmasterChef:
+userInfo[1][address(ConvexStakingWrapper)] =1,000,001allpending rewardssent to Bob
+Expected results:
+userInfo[1][address(Alice)] =1,000,000userInfo[1][address(Bob)] =1allpending rewardsshould be sent to Alice
+Recommended Mitigation Steps
+Consider adding two new functions to MasterChef:depositFor()andwithdrawFor().
+ConvexStakingWrapper,StakingRewardscan utilize these two functions and get the accounting right.
+functiondepositFor(address_user,uint_pid,uint_amount)externalnonReentrantonlyDepositor{PoolInfostoragepool=poolInfo[_pid];UserInfostorageuser=userInfo[_pid][_user];
+ryuheimat (Concur) confirmed
+
+[H-05]USDMPegRecoveryRisk of fund locked, due to discrepancy between curveLP token value against internal contract math
+Submitted by Alex the Entreprenerd, also found by gzeon, IllIllI, and leastwood
+USDMPegRecovery.sol#L90USDMPegRecovery.sol#L110USDMPegRecovery.sol#L73USDMPegRecovery.sol#L84
+InUSDMPegRecoverydepositandwithdrawallow for direct deposits of a specific token (3crv or usdm).
+The balances are directly changed and tracked in storage.
+provideseems to be using the real balances (not the ones store) to provide liquidity.Because of how curve works, you’ll be able (first deposit) to provide exactly matching liquidity.But after (even just 1 or) multiple swaps, the pool will be slightly imbalanced, adding or removing liquidity at that point will drastically change the balances in the contract from the ones tracked in storage.
+Eventually users won’t be able to withdraw the exact amounts they deposited.
+This will culminate with real balances not matching user deposits, sometimes to user advantage and other times to user disadvantage, ultimately to the protocol dismay.
+Proof of Concept
+Deposit equal usdm and 3crvLPDo one trade on CRVWithdraw the LP
+The real balances are not matching the balances in storage.
+User tries to withdraw all their balances, inevitable revert.
+Recommended Mitigation Steps
+Either find a way to price the user contribution based on the LP tokens (use virtual_price)Or simply have people deposit the LP token directly (avoiding the IL math which is a massive headache)
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+I’m forfeitting winnings as I am judging the contest.The sponsor confirmed.I believe the closest findings are#191and#94these both focus on the provide aspect.However, this finding shows how the Curve LP Math will cause the internal balances to break after just one LP provision.Because this breaks accounting of the protocol and will cause funds to be stuck I believe High Severity to be appropriate.
+
+[H-06]ConvexStakingWrapper.sol#_calcRewardIntegralWrong implementation can disrupt rewards calculation and distribution
+Submitted by WatchPug, also found by cmichel, harleythedog, hickuphh3, kirk-baird, and leastwood
+ConvexStakingWrapper.sol#L175-L204
+uint256bal=IERC20(reward.token).balanceOf(address(this));uint256d_reward=bal-reward.remaining;// send 20 % of cvx / crv reward to treasuryif(reward.token==cvx||reward.token==crv) {IERC20(reward.token).transfer(treasury,d_reward/5);d_reward= (d_reward*4) /5;}IERC20(reward.token).transfer(address(claimContract),d_reward);if(_supply>0&&d_reward>0) {reward.integral=reward.integral+uint128((d_reward*1e20) /_supply);}//update user integralsuint256userI=userReward[_pid][_index][_account].integral;if(userI<reward.integral) {userReward[_pid][_index][_account].integral=reward.integral;claimContract.pushReward(_account,reward.token,(_balance* (reward.integral-userI)) /1e20);}//update remaining reward here since balance could have changed if claimingif(bal!=reward.remaining) {reward.remaining=uint128(bal);}
+The problems in the current implementation:
+reward.remainingis not a global state; thereward.remainingof otherrewards with the same rewardToken are not updated;balshould be refreshed beforereward.remaining = uint128(bal);;L175 should not usebalanceOfbut take the diff before and aftergetReward().
+Proof of Concept
+convexPool[1] is incentivized with CRV as the reward token,1000 lpTokencan get10 CRVper day;convexPool[2] is incentivized with CRV as the reward token,1000 lpTokencan get20 CRVper day.Alice deposits1,000lpToken to_pid=11 day later, Alice deposits500lpToken to_pid=1convexPoolgetReward()sends10 CRVas reward to contractd_reward= 10,2 CRVsends totreasury,8 CRVsend toclaimContractrewards[1][0].remaining= 100.5 day later, Alice deposits500lpToken to_pid=1, and the tx will fail:convexPoolgetReward()sends7.5 CRVas reward to contractreward.remaining= 10bal= 7.5bal - reward.remainingwill fail due to underflow0.5 day later, Alice deposits500lpToken to_pid=1, most of the reward tokens will be left in the contract:convexPoolgetReward()sends15 CRVas reward to the contract;d_reward = bal - reward.remaining= 51 CRVgot sent totreasury,4 CRVsent toclaimContract,10 CRVleft in the contract;rewards[1][0].remaining= 15
+Expected Results:
+All the15 CRVget distributed:3 CRVto thetreasury, and12 CRVtoclaimContract.
+Actual Results:
+Only5 CRVgot distributed. The other10 CRVgot left in the contract which can be frozen in the contract, see below for the details:
+Bob deposits1,000lpToken to_pid=2convexPoolgetReward()sends0 CRVas reward to the contractd_reward = bal - reward.remaining= 102 CRVsent totreasury,8 CRVsent toclaimContractwithout callingpushReward(), so the8 CRVare now frozen inclaimContract;rewards[2][0].remaining= 10
+Impact
+The two most important methods:deposit()andwithdraw()will frequently fail as the tx will revert at_calcRewardIntegral();Rewards distributed to users can often be fewer than expected;If there are different pools that use the same token as rewards, part of the rewards can be frozen atclaimContractand no one can claim them.
+Recommended Mitigation Steps
+Consider comparing thebalanceOfreward token before and aftergetReward()to get the actual rewarded amount, andreward.remainingshould be removed.
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how_calcRewardIntegralcan be broken in multiple ways.While I believe a set of similar findings have been reported, this one is extremely well written so I think this can stand on it’s own.Because_calRewardIntegralis a core functionality of the contract (giving out reward) and the warden has shown how it can be broken, I agree with High Severity.
+
+[H-07] Shelterclaimedmapping is set with_toaddress and notmsg.sender
+Submitted by 0xliumin, also found by cmichel, leastwood, and pauliax
+Any user can withdraw all the funds from the shelter. This is done by calling withdraw repeatedly until all funds are drained. You only need to have a small share.
+Even if theclaimedmapping was checked, there would still be a vulnerability. This is because theclaimedmapping is updated with the_toaddress, not themsg.senderaddress.
+Recommended Mitigation Steps
+Remediation is to change the_totomsg.sender.Shelter.sol#L55
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+Am marking this as a unique finding as this one shows another issue with the Shelter withdraw function.Because this also allows for draining of all rewards, am raising to High Severity.
+
+[H-08]MasterChef.solUsers won’t be able to receive theconcurrewards
+Submitted by WatchPug, also found by hickuphh3 and leastwood
+According to:
+READMEImplementation ofdeposit():/contracts/MasterChef.sol#L157-L180
+MasterChef is only recording the deposited amount in the states, it’s not actually holding thedepositToken.
+depositTokenwon’t be transferred from_msgSender()to the MasterChef contract.
+Therefore, inupdatePool()L140lpSupply = pool.depositToken.balanceOf(address(this))will always be0. And theupdatePool()will be returned at L147.
+MasterChef.sol#L135-L154
+functionupdatePool(uint_pid)public{PoolInfostoragepool=poolInfo[_pid];if(block.number<=pool.lastRewardBlock) {return;}uintlpSupply=pool.depositToken.balanceOf(address(this));if(lpSupply==0||pool.allocPoint==0) {pool.lastRewardBlock=block.number;return;}if(block.number>=endBlock) {pool.lastRewardBlock=block.number;return;}uintmultiplier=getMultiplier(pool.lastRewardBlock,block.number);uintconcurReward=multiplier.mul(concurPerBlock).mul(pool.allocPoint).div(totalAllocPoint);pool.accConcurPerShare=pool.accConcurPerShare.add(concurReward.mul(_concurShareMultiplier).div(lpSupply));pool.lastRewardBlock=block.number;}
+Impact
+The MasterChef contract fail to implement the most essential function;Users won’t be able to receive anyConcurrewards from MasterChef;
+Recommended Mitigation Steps
+Consider creating a receipt token to represent the invested token and use the receipt tokens in MasterChef.
+See:https://github.com/convex-eth/platform/blob/883ffd4ebcaee12e64d18f75bdfe404bcd900616/contracts/contracts/Booster.sol#L272-L277
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a logical flaw in theMasterchefcontract.The contract is expectinglpTokens(deposited in another depositor contract) to be in theMasterchefat the time in whichupdatePoolis called.However, due to the fact that thelpTokenwill be somewhere else, a more appropriate check would be to ask the depositor contract for the total supply.Given this finding, the Masterchef contract will always reward 0 tokens.This should classify the finding as Medium Severity (loss of Yield).However, because the finding shows how this can happen reliably, and effectively breaks the purpose of the contract, I believe High Severity to be more appropriate.
+
+[H-09] deposit inConvexStakingWrapperwill most certainly revert
+Submitted by wuwe1, also found by WatchPug
+ConvexStakingWrapper.sol#L94-L99
+addressmainPool=IRewardStaking(convexBooster).poolInfo(_pid).crvRewards;if(rewards[_pid].length==0) {pids[IRewardStaking(convexBooster).poolInfo(_pid).lptoken] =_pid;convexPool[_pid] =mainPool;
+convexPool[_pid]is set toIRewardStaking(convexBooster).poolInfo(_pid).crvRewards;
+crvRewardsis aBaseRewardPoollike this one:https://etherscan.io/address/0x8B55351ea358e5Eda371575B031ee24F462d503e#code.
+BaseRewardPooldoes not implementpoolInfo
+ConvexStakingWrapper.sol#L238
+IRewardStaking(convexPool[_pid]).poolInfo(_pid).lptoken
+Above line callspoolInfoofcrvRewardswhich causes revert.
+Recommended Mitigation Steps
+According to Booster’s code
+https://etherscan.io/address/0xF403C135812408BFbE8713b5A23a04b3D48AAE31#code
+//deposit lp tokens and stakefunctiondeposit(uint256_pid,uint256_amount,bool_stake)publicreturns(bool){require(!isShutdown,"shutdown");PoolInfostoragepool=poolInfo[_pid];require(pool.shutdown==false,"pool is closed");//send to proxy to stakeaddresslptoken=pool.lptoken;IERC20(lptoken).safeTransferFrom(msg.sender,staker,_amount);
+convexBoosterrequirespoolInfo[_pid].lptoken.
+change L238 to
+IRewardStaking(convexBooster).poolInfo(_pid).lptoken
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how an improper assumption about the pool contract can cause reverts.While the risk of loss of funds is non-existent because all calls will revert, I believe the core functionality of the code is broken. For that reason, I think High Severity to be the proper severity.
+
+[H-10]ConvexStakingWrapper.exitShelter()Will Lock LP Tokens, Preventing Users From Withdrawing
+Submitted by leastwood
+The shelter mechanism provides emergency functionality in an effort to protect users’ funds. TheenterShelterfunction will withdraw all LP tokens from the pool, transfer them to the shelter contract and activate the shelter for the target LP token. Conversely, theexitShelterfunction will deactivate the shelter and transfer all LP tokens back to theConvexStakingWrapper.solcontract.
+Unfortunately, LP tokens aren’t restaked in the pool, causing LP tokens to be stuck within the contract. Users will be unable to withdraw their LP tokens as thewithdrawfunction attempts towithdrawAndUnwrapLP tokens from the staking pool. As a result, this function will always revert due to insufficient staked balance. If other users decide to deposit their LP tokens, then these tokens can be swiped by users who have had their LP tokens locked in the contract.
+This guarantees poor UX for the protocol and will most definitely lead to LP token loss.
+Proof of Concept
+ConvexStakingWrapper.sol#L121-L130
+function exitShelter(uint256[] calldata _pids) external onlyOwner {for(uint256 i = 0; i<_pids.length; i++){IRewardStaking pool = IRewardStaking(convexPool[_pids[i]]);IERC20 lpToken = IERC20(pool.poolInfo(_pids[i]).lptoken);amountInShelter[lpToken] = 0;shelter.deactivate(lpToken);}}
+ConvexStakingWrapper.sol#L309-L331
+function withdraw(uint256 _pid, uint256 _amount)externalnonReentrantwhenNotInShelter(_pid){WithdrawRequest memory request = withdrawRequest[_pid][msg.sender];require(request.epoch < currentEpoch() && deposits[_pid][msg.sender].epoch + 1 < currentEpoch(), "wait");require(request.amount >= _amount, "too much");_checkpoint(_pid, msg.sender);deposits[_pid][msg.sender].amount -= uint192(_amount);if (_amount > 0) {IRewardStaking(convexPool[_pid]).withdrawAndUnwrap(_amount, false);IERC20 lpToken = IERC20(IRewardStaking(convexPool[_pid]).poolInfo(_pid).lptoken);lpToken.safeTransfer(msg.sender, _amount);uint256 pid = masterChef.pid(address(lpToken));masterChef.withdraw(msg.sender, pid, _amount);}delete withdrawRequest[_pid][msg.sender];//eventsemit Withdrawn(msg.sender, _amount);}
+Tools Used
+Manual code review.Confirmation from Taek.
+Recommended Mitigation Steps
+Consider re-depositing LP tokens upon callingexitShelter. This should ensure the same tokens can be reclaimed by users wishing to exit theConvexStakingWrapper.solcontract.
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified how through a combination of using the shelter and sending funds back, the funds would actually end up being stuck and non-withdrawable by depositors.I believe that generally speaking this would be a Medium Severity finding as the funds would be stuck if the sponsor were to activate the shelter and then send the tokens back (conditionality).However, the warden has shown that the system of Contract + Shelter is effectively broken, and for this reason I believe the finding is of High Severity.
+
+[H-11]ConvexStakingWrapper._calcRewardIntegral()Can Be Manipulated To Steal Tokens From Other Pools
+Submitted by leastwood, also found by cmichel and kirk-baird
+TheConvexStakingWrapper.solimplementation makes several modifications to the original design. One of the key changes is the ability to add multiple pools into the wrapper contract, where each pool is represented by a unique_pid. By doing this, we are able to aggregate pools and their LP tokens to simplify the token distribution process.
+However, the interdependence between pools introduces new problems. Because the original implementation uses the contract’s reward token balance to track newly claimed tokens, it is possible for a malicious user to abuse the unguardedgetRewardfunction to maximise the profit they are able to generate. By callinggetRewardon multiple pools with the same reward token (i.e.cvx), users are able to siphon rewards from other pools. This inevitably leads to certain loss of rewards for users who have deposited LP tokens into these victim pools. Ascrvandcvxare reward tokens by default, it is very likely that someone will want to exploit this issue.
+Proof of Concept
+Let’s consider the following scenario:
+There are two convex pools with_pid0 and 1.Both pools currently only distributecvxtokens.Alice deposits LP tokens into the pool with_pid0.Both pools earn 100cvxtokens which are to be distributed to the holders of the two pools.While Alice is a sole staker of the pool with_pid0, the pool with_pid1 has several stakers.Alice decides she wants to maximise her potential rewards, so she directly calls the unguardedIRewardStaking(convexPool[_pid]).getRewardfunction on both pools, resulting in 200cvxtokens being sent to the contract.She then decides to deposit the 0 amount to execute the_calcRewardIntegralfunction on the pool with_pid0. However, this function will calculated_rewardasbal - reward.remainingwhich is effectively the change in contract balance. As we have directly claimedcvxtokens over the two pools, thisd_rewardwill be equal to 200.Alice is then entitled to the entire 200 tokens as she is the sole staker of her pool. So instead of receiving 100 tokens, she is able to siphon rewards from other pools.
+Altogether, this will lead to the loss of rewards for other stakers as they are unable to then claim their rewards.
+ConvexStakingWrapper.sol#L216-L259
+function _calcRewardIntegral(uint256 _pid,uint256 _index,address _account,uint256 _balance,uint256 _supply) internal {RewardType memory reward = rewards[_pid][_index];//get difference in balance and remaining rewards//getReward is unguarded so we use remaining to keep track of how much was actually claimeduint256 bal = IERC20(reward.token).balanceOf(address(this));uint256 d_reward = bal - reward.remaining;// send 20 % of cvx / crv reward to treasuryif (reward.token == cvx || reward.token == crv) {IERC20(reward.token).transfer(treasury, d_reward / 5);d_reward = (d_reward * 4) / 5;}IERC20(reward.token).transfer(address(claimContract), d_reward);if (_supply > 0 && d_reward > 0) {reward.integral =reward.integral +uint128((d_reward * 1e20) / _supply);}//update user integralsuint256 userI = userReward[_pid][_index][_account].integral;if (userI < reward.integral) {userReward[_pid][_index][_account].integral = reward.integral;claimContract.pushReward(_account,reward.token,(_balance * (reward.integral - userI)) / 1e20);}//update remaining reward here since balance could have changed if claimingif (bal != reward.remaining) {reward.remaining = uint128(bal);}rewards[_pid][_index] = reward;}
+Tools Used
+Manual code review.Confirmation from Taek.
+Recommended Mitigation Steps
+Consider redesigning this mechanism such that all pools have theirgetRewardfunction called in_checkpoint. The_calcRewardIntegralfunction can then ensure that each pool is allocated only a fraction of the total rewards instead of the change in contract balance. Other implementations might be more ideal, so it is important that careful consideration is taken when making these changes.
+leekt (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, by having the same token as rewards for multiple pools, the math for claiming can be broken, allowing the depositor of one pool to claim a portion of the token reward earned by all pools.Normally this would be contingent on implementation or overlap of the tokens, however, because we’re dealing with CVX we already know for certain that CVX and cvxCRV is going to be a reward for the majority of the pools.This finding ultimately shows how to break the accounting of the reward contract while stealing yield from all other pools, and for that reason, I believe High Severity to be valid.
+

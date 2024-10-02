@@ -1,0 +1,12 @@
+[H-03] Locked funds from tokenization are credited twice to user leading to protocol fund loss
+The tokens optionally locked during tokenization are released twice on acquiring conviction back from an NFT. (The incorrect double debit of locked funds during tokenization has been filed as a separate finding because it is not necessarily related and occurs in different parts of the code.)
+When a user wants to acquire back the conviction score captured by an NFT, the FSD tokens locked, if any, are released to the user as well. However, this is incorrectly done twice. Released amount is transferred once on Line123 in_release()(viaacquireConviction->burn) of FairSideConviction.sol and again immediately after the burn on Line316 inacquireConviction()ofERC20ConvictionScore.sol.
+This leads to loss of protocol funds.
+Alice tokenizes her conviction score into an NFT and locks 100 FSDs. Bob buys the NFT from Alice and acquires the conviction score back from the NFT. But instead of 100 FSDs that were supposed to be locked with the NFT, Bob receives 100+100 = 200 FSDs from FairSide protocol.
+Recommend removing the redundant transfer of FSD tokens from protocol to the user on Line316 inacquireConviction()ofERC20ConvictionScore.sol.
+fairside-core (FairSide) questioned:
+This is directly related to #29 as it refers to the same workflow, as seen in #74 as a single submission. I believe splitting this into two findings is unfair for the first party, and secondly, it does not make sense because there is a valid argument for disagreeing with the severity seen on #74. Can we close this and merge it with #29?
+fairside-core (FairSide) commented:
+Fixed inPR#3.
+cemozerr (Judge) commented:
+Labeling issues #29 and #30 as separate issues because they both pose major issues, which lead to temporary loss of funds, in two different workflows. One when tokenizing convictions and another when acquiring convictions.

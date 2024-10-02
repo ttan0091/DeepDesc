@@ -1,0 +1,17 @@
+[H-01]  Someone can create non-liquidatable auction if the collateral asset fails on transferring toaddress(0)
+Submitted by antonttc, also found by 0x52
+Witch.sol#L176Witch.sol#L399
+Might lead to systematic debt. Cause errors for liquidators to run normally.
+Proof of Concept
+In the functionauction, there is an input validation around whether thetoisaddress(0)or not. And if theauctioneerRewardis set to an value > 0 (as default),  each liquidate call will callJoinmodule to pay out toauctioneerwith the following line:
+if(auctioneerCut>0) {ilkJoin.exit(auction_.auctioneer,auctioneerCut.u128());}
+This line will revert ifauctioneeris set toaddress(0)on some tokens (revert on transferring to address(0) is adefault behaviour of the OpenZeppelin template). So if someone start anauctionwithto = address(0), this auction becomes un-liquidatable.
+A malicious user can run a bot to monitor his own vault, and if they got underwater and they don’t have enough collateral to top up, they can immediately start an auction on their own vault and set actioneer to0to avoid actually being liquidated, which breaks the design of the system.
+Recommended Mitigation Steps
+Add check while starting an auction:
+functionauction(bytes12vaultId,addressto)externalreturns(DataTypes.Auctionmemoryauction_){require(to!=address(0),"invalid auctioneer");...}
+alcueca (Yield) confirmed and commented:
+Best finding of the contest
+PierrickGT (judge) commented:
+Most critical vulnerability found during the audit since a malicious user could open a vault and never get liquidated, it would force the protocol to take on bad debts.
+The warden did a great job of describing the issue and providing the sponsor with a detailed fix.

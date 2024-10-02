@@ -1,0 +1,25 @@
+Type of vulnerability: Insecure Direct Object References (IDOR)
+Cause of vulnerability: Lack of validation that the user-supplied `proposalId` and `vault` match the actual vault that the proposal belongs to.
+Execution process: 
+1. Malicious user creates a new vault with worthless tokens and uses an existing `proposalId`.
+2. The malicious user deposits worthless tokens into the migration for the new vault.
+3. The malicious user calls the `leave` function with the original vault address and the same `proposalId`.
+4. The function incorrectly processes the withdrawal from the original vault, sending valuable tokens to the malicious user.
+
+Vulnerable code:
+- `join` function:
+  ```solidity
+  function join(uint256 _proposalId, address _vault, uint256 _amount) {
+      // Code that pulls tokens from the user and updates userProposalFractions
+      userProposalFractions[_proposalId][msg.sender] += _amount;
+  }
+  ```
+- `leave` function:
+  ```solidity
+  function leave(uint256 _proposalId, address _vault, uint256 _amount) {
+      // Code that sends tokens to the user and updates userProposalFractions and migrationInfo
+      uint256 amountToWithdraw = userProposalFractions[_proposalId][msg.sender];
+      migrationInfo[_vault][_proposalId] -= amountToWithdraw;
+      // Send tokens to the user
+  }
+  ```

@@ -1,0 +1,13 @@
+[H-26] Not enough TAP tokens to exercise if a user participates and exercises in the same epoch
+Submitted byKIntern_NA
+Users were unable to purchase their deserved amount of TAPs
+Proof of Concept
+During eachepochand for a specificsglAssetID, there is a fixed amount of TAP tokens that will be minted and stored in the STORAGE mappingsingularityGauges[epoch][sglAssetID]. Users have the option to purchase these TAP tokens by first calling the functionTapiocaOptionBroker.participate()and then executingTapiocaOptionBroker.exerciseOption()before the position expires to buy TAPs at a discounted price. The amount of TAP tokens that a user can purchase with each position can be calculated using the formula:
+eligibleTapAmount = position.amount * gaugeTotalForEpoch / totalPoolDeposited- position.amount: The locked amount of the position in `sglAssetId`.- gaugeTotalForEpoch: The total number of TAP tokens that can be minted for the `(epoch, sglAssetId)`.- totalPoolDeposited: The total locked amount of all positions in `sglAssetId`.
+The flaw arises when a user who participates insglAssetIdin the current epoch can immediately callexerciseOption()to purchase the TAP tokens. This results in a situation where the participants cannot exercise their expected TAP tokens.
+For example:
+Both Alice and Bob participate in the broker withposition.amount = 1.The amount of TAP tokens allocated for the current epoch isgaugeTotalForEpoch = 60.Alice callsexerciseOption()to buyeligibleAmount = 1 * 60 / 2 = 30TAPs.In the same epoch, Candice participates in the broker withposition.amount = 1and immediately callsexerciseOption(). She will buyeligibleAmount = 1 * 60 / 3 = 20TAPs.When Bob callsexerciseOption, he can buyeligibleAmount = 1 * 60 / 3 = 20TAPs, but this cannot happen since if Bob decides to buy 20 TAPs, the total minted amount of TAPs will exceedgaugeTotalForEpoch(30 + 20 + 20 = 70 > 60), resulting in a revert.
+Recommended Mitigation Steps
+Consider developing a technique similar to the one implemented intwTAP.solfor storing thenetAmounts. When a user participates in the broker, perform the following actions:
+netAmounts[block.timestamp+1] += lock.amountnetAmounts[lockTime+lockDuration] += lock.amount
+0xRektora (Tapioca) confirmed

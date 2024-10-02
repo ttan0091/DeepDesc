@@ -1,0 +1,78 @@
+[H-01] Avoidance of Liquidation Via Malicious Oracle
+Submitted by BowTiedWardens, also found by gzeon, and hyh
+Issue: Arbitrary oracles are permitted on construction of loans, and there is no check that the lender agrees to the used oracle.
+Consequences: A borrower who requests a loan with a malicious oracle can avoid legitimate liquidation.
+Proof of Concept
+Borrower requests loan with an malicious oracleLender accepts loan unknowinglyBorrowers’s bad oracle is set to never return a liquidating rate onoracle.getcall.Lender cannot callremoveCollateralto liquidate the NFT when it should be allowed, as it will fail the check onL288To liquidate the NFT, the lender would have to whitehat along the lines of H-01, by atomically updating to an honest oracle and callingremoveCollateral.
+Mitigations
+Addrequire(params.oracle == accepted.oracle)as a condition in_lendConsider only allowing whitelisted oracles, to avoid injection of malicious oracles at the initial loan request stage
+cryptolyndon (AbraNFT) confirmed and commented:
+Oracle not compared to lender agreed value: confirmed, and I think this is the first time I’ve seen this particular vulnerability pointed out. Not marking the entire issue as a duplicate for that reason.Oracle not checked on loan request: Not an issue, first reported in #62.
+
+[H-02] The return valuesuccessof the get function of the INFTOracle interface is not checked
+Submitted by cccz, also found by Ruhum, catchup, IllIllI, WatchPug, berndartmueller, plotchy, antonttc, hyh, and 0xf15ers
+function get(address pair, uint256 tokenId) external returns (bool success, uint256 rate);
+The get function of the INFTOracle interface returns two values, but the success value is not checked when used in the NFTPairWithOracle contract. When success is false, NFTOracle may return stale data.
+Proof of Concept
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/interfaces/INFTOracle.sol#L10-L10
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L287-L287
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L321-L321
+Recommended Mitigation Steps
+(bool success, uint256 rate) = loanParams.oracle.get(address(this), tokenId);require(success);
+cryptolyndon (AbraNFT) confirmed and commented:
+Agreed, and the first report of this issue.
+0xean (judge) increased severity to High and commented:
+I am upgrading this to High severity.This is a direct path to assets being lost.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+
+[H-03] Critical Oracle Manipulation Risk by Lender
+Submitted by 0x1337, also found by catchup, cccz, kenzo, GimelSec, BowTiedWardens, gzeon, horsefacts, and hyh
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L286-L288
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L200-L211
+The intended use of the Oracle is to protect the lender from a drop in the borrower’s collateral value. If the collateral value goes up significantly and higher than borrowed amount + interest, the lender should not be able to seize the collateral at the expense of the borrower. However, in theNFTPairWithOraclecontract, the lender could change the Oracle once a loan is outstanding, and therefore seize the collateral at the expense of the borrower, if the actual value of the collateral has increased significantly. This is a critical risk because borrowers asset could be lost to malicious lenders.
+Proof of Concept
+InNFTPairWithOracle, theparamsare set by theborrowerwhen they callrequestLoan(), including the Oracle used. Once a lender agrees with the parameters and calls thelend()function, theloan.statuschanges toLOAN_OUTSTANDING.
+Then, the lender can call theupdateLoanParams()function and pass in its ownparamsincluding the Oracle used. Therequirestatement from line 205 to 211 does not check ifparams.oracleandcur.oracleare the same. A malicious lender could pass in his ownoracleafter the loan becomes outstanding, and the change would be reflected in line 221.
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L200-L211
+In a situation where the actual value of the collateral has gone up by a lot, exceeding the amount the lender is owed (principal + interest), the lender would have an incentive to seize the collateral. If the Oracle is not tampered with, lender should not be able to do this, because line 288 should fail. But a lender could freely change Oracle once the loan is outstanding, then a tampered Oracle could produce a very lowratein line 287 such that line 288 would pass, allowing the lender to seize the collateral, hurting the borrower.
+https://github.com/code-423n4/2022-04-abranft/blob/5cd4edc3298c05748e952f8a8c93e42f930a78c2/contracts/NFTPairWithOracle.sol#L286-L288
+Recommended Mitigation Steps
+Once a loan is agreed to, the oracle used should not change. I’d recommend adding a check in therequirestatement in line 205 - 211 thatparams.oracle == cur.oracle
+cryptolyndon (AbraNFT) confirmed and commented:
+Confirmed, this is bad. First report of this particular exploit.
+
+[H-04] Lender is able to seize the collateral by changing the loan parameters
+Submitted by Ruhum, also found by IllIllI, WatchPug, BowTiedWardens, gzeon, plotchy, and scaraven
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L198-L223
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L200-L212
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L288
+The lender should only be able to seize the collateral if:
+the borrower didn’t repay in timethe collateral loses too much of its value
+But, the lender is able to seize the collateral at any time by modifying the loan parameters.
+Proof of Concept
+TheupdateLoanParams()allows the lender to modify the parameters of an active loan in favor of the borrower. But, by setting theltvBPSvalue to0they are able to seize the collateral.
+IfltvBPSis0the following require statement inremoveCollateral()will always be true:
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L288
+rate * 0 / BPS < amountis alwaystrue.
+That allows the lender to seize the collateral although its value didn’t decrease nor did the time to repay the loan come.
+So the required steps are:
+lend the funds to the borrowercallupdateLoanParams()to set theltvBPSvalue to0callremoveCollateral()to steal the collateral from the contract
+Recommended Mitigation Steps
+Don’t allowupdateLoanParams()to change theltvBPSvalue.
+cryptolyndon (AbraNFT) confirmed and commented:
+Confirmed, and the first to report this particular exploit.
+
+[H-05] Mistake while checking LTV to lender accepted LTV
+Submitted by catchup, also found by WatchPug, gzeon, and hyh
+It comments in the\_lend()function that lender accepted conditions must be at least as good as the borrower is asking for.
+The line which checks the accepted LTV (lender’s LTV) against borrower asking LTV is:params.ltvBPS >= accepted.ltvBPS,
+This means lender should be offering a lower LTV, which must be the opposite way around.
+I think this may have the potential to strand the lender, if he enters a lower LTV.
+For example borrower asking LTV is 86%. However, lender enters his accepted LTV as 80%.
+lend() will execute with 86% LTV and punish the lender, whereas it should revert and acknowledge the lender that his bid is not good enough.
+Proof of Concept
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L316
+Recommended Mitigation Steps
+The condition should be changed as:params.ltvBPS <= accepted.ltvBPS,
+cryptolyndon (AbraNFT) confirmed and commented:
+Confirmed, and the first to note this particular issue.
+

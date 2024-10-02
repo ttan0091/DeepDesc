@@ -1,0 +1,27 @@
+[H-01]borrowmustaccrueInterestfirst
+Submitted by cmichel
+TheUToken.borrowfunction first checks the borrowed balance and the old credit limitbeforeaccruing the actual interest on the market:
+// @audit this uses the old valuerequire(borrowBalanceView(msg.sender) +amount+fee<=maxBorrow,"UToken: amount large than borrow size max");require(// @audit this calls uToken.calculateInterest(account) which returns old valueuint256(_getCreditLimit(msg.sender)) >=amount+fee,"UToken: The loan amount plus fee is greater than credit limit");// @audit accrual only happens hererequire(accrueInterest(),"UToken: accrue interest failed");
+Thus the borrowed balance of the user does not include the latest interest as it uses the old globalborrowIndexbut the newborrowIndexis only set inaccrueInterest.
+Impact
+In low-activity markets, it could be that theborrowIndexaccruals (accrueInterestcalls) happen infrequently and a long time is between them.
+A borrower could borrow tokens, and borrow more tokens later at a different time without first having their latest debt accrued.
+This will lead to borrowers being able to borrow more thanmaxBorrowandmore than their credit limitas these checks are performed before updating accruing interest.
+Recommended Mitigation Steps
+Therequire(accrueInterest(), "UToken: accrue interest failed");call should happen at the beginning of the function.
+GeraldHost (Union Finance) confirmed
+GalloDaSballo (judge) commented:
+Agree with the finding, this fundamentally breaks the accounting of the protocolIn protocols that calculate interest, and that have to recalculate state after something changed, it is vital that you accrue all changes up to this point before proceeding with any other state-changing logic
+[H-02] Wrong implementation ofCreditLimitByMedian.sol#getLockedAmount()makes it unable to unlocklockedAmountinCreditLimitByMedianmodel
+Submitted by WatchPug
+CreditLimitByMedian.solL27-L78
+functiongetLockedAmount(LockedInfo[]memoryarray,addressaccount,uint256amount,boolisIncrease)publicpureoverridereturns(uint256) {if(array.length==0)return0;uint256newLockedAmount;if(isIncrease) {...}else{for(uint256i=0;i<array.length;i++) {if(array[i].lockedAmount>amount) {newLockedAmount=array[i].lockedAmount-1;}else{newLockedAmount=0;}if(account==array[i].staker) {returnnewLockedAmount;}}}return0;}
+getLockedAmount()is used byUserManager.sol#updateLockedData()to update locked amounts.
+Based on the context, at L66,newLockedAmount = array[i].lockedAmount - 1;should benewLockedAmount = array[i].lockedAmount - amount;.
+The current implementation is wrong and makes it impossible to unlocklockedAmountinCreditLimitByMedianmodel.
+Recommendation
+Change to:
+newLockedAmount = array[i].lockedAmount - amount;
+kingjacob (Union) acknowledged
+GalloDaSballo (judge) commented:
+The warden identified a mistake in the accounting that would make it impossible to unlock funds, mitigation seems to be straightfoward

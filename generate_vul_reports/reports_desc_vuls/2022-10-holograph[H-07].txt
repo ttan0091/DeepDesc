@@ -1,0 +1,17 @@
+Type of vulnerability: Inability to Retry Failed Jobs
+Cause of vulnerability: The job hash is deleted from `_operatorJobs` before determining if the job has failed, making the job non-replayable and potentially leading to loss of NFTs.
+Execution process: When `executeJob` is called, it first deletes the job hash from `_operatorJobs`. If the `nonRevertingBridgeCall` fails, the job hash is marked as failed in `_failedJobs` and an event is emitted. Since the job hash is already deleted from `_operatorJobs`, it cannot be retried, leading to a permanent loss of NFTs.
+Vulnerable code: 
+```solidity
+function executeJob(bytes calldata bridgeInRequestPayload) external payable {
+    ...
+    delete _operatorJobs[hash];
+    ...
+    try HolographOperatorInterface(address(this)).nonRevertingBridgeCall{value: msg.value}(msg.sender, bridgeInRequestPayload) {
+        /// @dev do nothing
+    } catch {
+        _failedJobs[hash] = true;
+        emit FailedOperatorJob(hash);
+    }
+}
+```

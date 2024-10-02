@@ -1,0 +1,154 @@
+[H-01] Contract BasicSale is missing an approve(address(vestLock), 2**256-1) call
+Submitted by Reigada, also found by WatchPug
+Impact
+As we can see in the contractsAirdropDistributionandInvestorDistribution, they both have the followingapprove() call: mainToken.approve(address(vestLock), 2\*\*256-1);
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/AirdropDistribution.sol#L499https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/InvestorDistribution.sol#L80
+This is necessary because both contracts transfer tokens to the vesting contract by calling itsvest()function:
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/AirdropDistribution.sol#L544https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/AirdropDistribution.sol#L569https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/InvestorDistribution.sol#L134https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/InvestorDistribution.sol#L158
+The code of thevest()function in the Vesting contract performs a transfer frommsg.senderto Vesting contract address ->vestingToken.transferFrom(msg.sender, address(this), \_amount);https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L95
+Same is done in the BasicSale contract:https://github.com/code-423n4/2021-11-bootfinance/blob/main/tge/contracts/PublicSale.sol#L225
+The problem is that this contract is missing theapprove()call. For that reason, the contract is totally useless as the function\_withdrawShare()will always revert with the following message:
+revert reason: ERC20: transfer amount exceeds allowance. This means that all themainTokensent to the contract would be stuck there forever. No way to retrieve them.
+How this issue was not detected in the testing phase?
+Very simple. The mock used by the team has an emptyvest()function that performs no transfer call.https://github.com/code-423n4/2021-11-bootfinance/blob/main/tge/contracts/helper/MockVesting.sol#L10
+Proof of Concept
+See below Brownie’s custom output:
+Calling -> publicsale.withdrawShare(1, 1, {'from': user2})Transaction sent: 0x9976e4f48bd14f9be8e3e0f4d80fdb8f660afab96a7cbd64fa252510154e7fdeGas price: 0.0 gwei   Gas limit: 6721975   Nonce: 5BasicSale.withdrawShare confirmed (ERC20: transfer amount exceeds allowance)   Block: 13577532   Gas used: 323334 (4.81%)Call trace for '0x9976e4f48bd14f9be8e3e0f4d80fdb8f660afab96a7cbd64fa252510154e7fde':Initial call cost  \[21344 gas]BasicSale.withdrawShare  0:3724  \[16114 / -193010 gas]├── BasicSale.\_withdrawShare  111:1109  \[8643 / 63957 gas]│   ├── BasicSale.\_updateEmission  116:405  \[53294 / 55739 gas]│   │   └── BasicSale.getDayEmission  233:248  \[2445 gas]│   ├── BasicSale.\_processWithdrawal  437:993  \[-7726 / -616 gas]│   │   ├── BasicSale.getEmissionShare  484:859  \[4956 / 6919 gas]│   │   │   ││   │   │   └── MockERC20.balanceOf  \[STATICCALL]  616:738  \[1963 gas]│   │   │           ├── address: mockerc20.address│   │   │           ├── input arguments:│   │   │           │   └── account: publicsale.address│   │   │           └── return value: 100000000000000000000│   │   ││   │   └── SafeMath.sub  924:984  \[191 gas]│   └── SafeMath.sub  1040:1100  \[191 gas]│├── MockERC20.transfer  \[CALL]  1269:1554  \[1115 / 30109 gas]│   │   ├── address: mockerc20.address│   │   ├── value: 0│   │   ├── input arguments:│   │   │   ├── recipient: user2.address│   │   │   └── amount: 27272727272727272727│   │   └── return value: True│   ││   └── ERC20.transfer  1366:1534  \[50 / 28994 gas]│       └── ERC20.\_transfer  1374:1526  \[28944 gas]└── Vesting.vest  \[CALL]  1705:3712  \[-330491 / -303190 gas]│   ├── address: vesting.address│   ├── value: 0│   ├── input arguments:│   │   ├── \_beneficiary: user2.address│   │   ├── \_amount: 63636363636363636363│   │   └── \_isRevocable: 0│   └── revert reason: ERC20: transfer amount exceeds allowance <-------------│├── SafeMath.add  1855:1883  \[94 gas]├── SafeMath.add  3182:3210  \[94 gas]├── SafeMath.add  3236:3264  \[94 gas]│└── MockERC20.transferFrom  \[CALL]  3341:3700  \[99923 / 27019 gas]│   ├── address: mockerc20.address│   ├── value: 0│   ├── input arguments:│   │   ├── sender: publicsale.address│   │   ├── recipient: vesting.address│   │   └── amount: 63636363636363636363│   └── revert reason: ERC20: transfer amount exceeds allowance│└── ERC20.transferFrom  3465:3700  \[-97648 / -72904 gas]└── ERC20.\_transfer  3473:3625  \[24744 gas]
+Tools Used
+Manual testing
+Recommended Mitigation Steps
+The followingapprove()call should be added in the constructor of the BasicSale contract:mainToken.approve(address(vestLock), 2\*\*256-1);
+chickenpie347 (Boot Finance) confirmed
+[H-02] Can not update target price
+Submitted by jonah1005, also found by WatchPug
+Impact
+The sanity checks inrampTargetPriceare brokenSwapUtils.sol#L1571-L1581
+if(futureTargetPricePrecise<initialTargetPricePrecise) {require(futureTargetPricePrecise.mul(MAX_RELATIVE_PRICE_CHANGE).div(WEI_UNIT) >=initialTargetPricePrecise,"futureTargetPrice_ is too small");}else{require(futureTargetPricePrecise<=initialTargetPricePrecise.mul(MAX_RELATIVE_PRICE_CHANGE).div(WEI_UNIT),"futureTargetPrice_ is too large");}
+IffutureTargetPricePreciseis smaller thaninitialTargetPricePrecise0.01 offutureTargetPricePrecisewould never larger thaninitialTargetPricePrecise.
+Admin would not be able to ramp the target price. As it’s one of the most important features of the customswap, I consider this is a high-risk issue
+Proof of Concept
+Here’s a web3.py script to demo that it’s not possible to change the target price even by 1 wei.
+p1, p2, _, _ =swap.functions.targetPriceStorage().call()future = w3.eth.getBlock(w3.eth.block_number)['timestamp'] +200*24*3600# futureTargetPrice_ is too smallswap.functions.rampTargetPrice(p1 -1, future).transact()# futureTargetPrice_ is too largeswap.functions.rampTargetPrice(p1 +1, future).transact()
+Tools Used
+None
+Recommended Mitigation Steps
+Would it be something like:
+if(futureTargetPricePrecise<initialTargetPricePrecise) {require(futureTargetPricePrecise.mul(MAX_RELATIVE_PRICE_CHANGE+WEI_UNIT).div(WEI_UNIT) >=initialTargetPricePrecise,"futureTargetPrice_ is too small");}else{require(futureTargetPricePrecise<=initialTargetPricePrecise.mul(MAX_RELATIVE_PRICE_CHANGE+WEI_UNIT).div(WEI_UNIT),"futureTargetPrice_ is too large");}
+I believe the dev would spot this mistake if there’s a more relaxed timeline.
+chickenpie347 (Boot Finance) confirmed
+[H-03]SwapUtils.solWrong implementation
+Submitted by WatchPug
+Based on the context, thetokenPrecisionMultipliersused in price calculation should be calculated in realtime based oninitialTargetPrice,futureTargetPrice,futureTargetPriceTimeand current time, just likegetA()andgetA2().
+However, in the current implementation,tokenPrecisionMultipliersused in price calculation is the stored value, it will only be changed when the owner calledrampTargetPrice()andstopRampTargetPrice().
+As a result, thetargetPriceset by the owner will not be effective until anothertargetPriceis being set orstopRampTargetPrice()is called.
+Recommendation
+Consider addingSwap.targetPriceand changing the_xp()at L661 from:
+https://github.com/code-423n4/2021-11-bootfinance/blob/f102ee73eb320532c5a7c1e833f225c479577e39/customswap/contracts/SwapUtils.sol#L661-L667
+function_xp(Swapstorageself,uint256[]memorybalances)internalviewreturns(uint256[]memory){return_xp(balances,self.tokenPrecisionMultipliers);}
+To:
+function_xp(Swapstorageself,uint256[]memorybalances)internalviewreturns(uint256[]memory){uint256[2]memorytokenPrecisionMultipliers=self.tokenPrecisionMultipliers;tokenPrecisionMultipliers[0] =self.targetPrice.originalPrecisionMultipliers[0].mul(_getTargetPricePrecise(self)).div(WEI_UNIT)return_xp(balances,tokenPrecisionMultipliers);}
+chickenpie347 (Boot Finance) confirmed
+[H-04] Swaps are not split when trade crosses target price
+Submitted by cmichel, also found by gzeon
+The protocol uses two amplifier values A1 and A2 for the swap, depending on the target price, seeSwapUtils.determineA.
+The swap curve is therefore a join of two different curves at the target price.
+When doing a trade that crosses the target price, it should first perform the trade partially with A1 up to the target price, and then the rest of the trade order with A2.
+However, theSwapUtils.swap / _calculateSwapfunction does not do this, it only uses the “new A”, seegetYCstep 5.
+// 5. Check if we switched A's during the swapif(aNew==a){// We have used the correct Areturny;}else{// We have switched A's, do it again with the new AreturngetY(self,tokenIndexFrom,tokenIndexTo,x,xp,aNew,d);}
+Impact
+Trades that cross the target price and would lead to a new amplifier being used are not split up and use the new amplifier for theentire trade.
+This can lead to a worse (better) average execution price than manually splitting the trade into two transactions, first up to but below the target price, and a second one with the rest of the trader order size, using both A1 and A2 values.
+In the worst case, it could even be possible to make the entire trade with one amplifier and then sell the swap result again using the other amplifier making a profit.
+Recommended Mitigation Steps
+Trades that lead to a change in amplifier value need to be split up into two trades using both amplifiers to correctly calculate the swap result.
+chickenpie347 (Boot Finance) confirmed
+[H-05] Claim airdrop repeatedly
+Submitted by gpersoon, also found by elprofesor, fr0zn, and pauliax
+Impact
+Suppose someone claims the last part of his airdrop viaclaimExact()ofAirdropDistribution.solThenairdrop\[msg.sender].amountwill be set to 0.
+Suppose you then call validate() again.
+The checkairdrop\[msg.sender].amount == 0will allow you to continue, because amount has just be set to 0.
+In the next part of the function,airdrop\[msg.sender]is overwritten with fresh values andairdrop\[msg.sender].claimed will be reset to 0.
+Now you can claim your airdrop again (as long as there are tokens present in the contract)
+Note: The functionclaim()prevents this from happening viaassert(airdrop\[msg.sender].amount - claimable != 0);, which has its own problems, see other reported issues.
+Proof of Concept
+//https://github.com/code-423n4/2021-11-bootfinance/blob/7c457b2b5ba6b2c887dafdf7428fd577e405d652/vesting/contracts/AirdropDistribution.sol#L555-L563
+functionclaimExact(uint256\_value)externalnonReentrant{require(msg.sender!=address(0));require(airdrop\[msg.sender].amount!=0);`uint256 avail = _available_supply();uint256 claimable = avail * airdrop[msg.sender].fraction / 10**18; //if (airdrop[msg.sender].claimed != 0){claimable -= airdrop[msg.sender].claimed;}require(airdrop[msg.sender].amount >= claimable); // amount can be equal to claimablerequire(_value <= claimable);                       // _value can be equal to claimableairdrop[msg.sender].amount -= _value;      // amount will be set to 0 with the last claim
+//https://github.com/code-423n4/2021-11-bootfinance/blob/7c457b2b5ba6b2c887dafdf7428fd577e405d652/vesting/contracts/AirdropDistribution.sol#L504-L517
+functionvalidate()externalnonReentrant{...require(airdrop\[msg.sender].amount==0,"Already validated.");...AirdropmemorynewAirdrop=Airdrop(airdroppable,0,airdroppable,10\*\*18\*airdroppable/airdrop_supply);airdrop\[msg.sender] =newAirdrop;validated\[msg.sender] =1;// this is set, but isn't checked on entry of this function
+Recommended Mitigation Steps
+Add the following tovalidate() : require(validated\[msg.sender]== 0, "Already validated.");
+chickenpie347 (Boot Finance) confirmed and resolved:
+Addressed in issue #101
+[H-06] Ideal balance is not calculated correctly when providing imbalanced liquidity
+Submitted by jonah1005
+Impact
+When a user provides imbalanced liquidity, the fee is calculated according to the ideal balance. In saddle finance, the optimal balance should be the same ratio as in the Pool.
+Take, for example, if there’s 10000 USD and 10000 DAI in the saddle’s USD/DAI pool, the user should get the optimal lp if he provides lp with ratio = 1.
+However, if thecustomSwappool is created with a target price = 2. The user would get 2 times more lp if he deposits DAI.SwapUtils.sol#L1227-L1245The current implementation does not calculates ideal balance correctly.
+If the target price is set to be 10, the ideal balance deviates by 10.
+The fee deviates a lot. I consider this is a high-risk issues.
+Proof of Concept
+We can observe the issue if we initiates two pools DAI/LINK pool and set the target price to be 4.
+For the first pool, we deposit more DAI.
+swap = deploy_contract('Swap'[dai.address, link.address], [18,18],'lp','lp',1,85,10**7,0,0,4*10**18)link.functions.approve(swap.address, deposit_amount).transact()dai.functions.approve(swap.address, deposit_amount).transact()previous_lp = lptoken.functions.balanceOf(user).call()swap.functions.addLiquidity([deposit_amount, deposit_amount //10],10,10**18).transact()post_lp = lptoken.functions.balanceOf(user).call()print('get lp', post_lp - previous_lp)
+For the second pool, one we deposit more DAI.
+swap = deploy_contract('Swap'[dai.address, link.address], [18,18],'lp','lp',1,85,10**7,0,0,4*10**18)link.functions.approve(swap.address, deposit_amount).transact()dai.functions.approve(swap.address, deposit_amount).transact()previous_lp = lptoken.functions.balanceOf(user).call()swap.functions.addLiquidity([deposit_amount, deposit_amount //10],10,10**18).transact()post_lp = lptoken.functions.balanceOf(user).call()print('get lp', post_lp - previous_lp)
+We can get roughly 4x more lp in the first case
+Tools Used
+None
+Recommended Mitigation Steps
+The current implementation usesself.balances
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/customswap/contracts/SwapUtils.sol#L1231-L1236
+for(uint256i=0;i<self.pooledTokens.length;i++) {uint256idealBalance=v.d1.mul(self.balances[i]).div(v.d0);fees[i] =feePerToken.mul(idealBalance.difference(newBalances[i])).div(FEE_DENOMINATOR);self.balances[i] =newBalances[i].sub(fees[i].mul(self.adminFee).div(FEE_DENOMINATOR));newBalances[i] =newBalances[i].sub(fees[i]);}
+Replacesself.balanceswith_xp(self, newBalances)would be a simple fix.
+I consider the team can take balance’s weighted pool as a reference.WeightedMath.sol#L149-L179
+chickenpie347 (Boot Finance) confirmed
+[H-07]customPrecisionMultiplierswould be rounded to zero and break the pool
+Submitted by jonah1005
+Impact
+CustomPrecisionMultipliersare set in the constructor:
+customPrecisionMultipliers[0] =targetPriceStorage.originalPrecisionMultipliers[0].mul(_targetPrice).div(10**18);
+originalPrecisionMultipliersequal to 1 if the token’s decimal = 18. The targe price could only be an integer.
+If the target price is bigger than 10**18, the user can deposit and trade in the pool. Though, the functionality would be far from the spec.
+If the target price is set to be smaller than 10**18, the pool would be broken and all funds would be stuck.
+I consider this is a high-risk issue.
+Proof of Concept
+Please refer to the implementation.Swap.sol#L184-L187
+We can also trigger the bug by setting a pool with target price = 0.5. (0.5 * 10**18)
+Tools Used
+None
+Recommended Mitigation Steps
+I recommend providing extra 10**18 in both multipliers.
+customPrecisionMultipliers[0] =targetPriceStorage.originalPrecisionMultipliers[0].mul(_targetPrice).mul(10**18).div(10**18);customPrecisionMultipliers[1] =targetPriceStorage.originalPrecisionMultipliers[1].mul(10**18);
+The customswap only supports two tokens in a pool, there’s should be enough space. Recommend the devs to go through the trade-off saddle finance has paid to support multiple tokens. The code could be more clean and efficient if the pools’ not support multiple tokens.
+chickenpie347 (Boot Finance) confirmed
+[H-08] Unable to claim vesting due to unbounded timelock loop
+Submitted by nathaniel, also found by WatchPug, leastwood, and pauliax
+Impact
+The timelocks for anybeneficiaryare unbounded, and can be vested by someone who is not thebeneficiary. When the array becomes significantly big enough, the vestments will no longer be claimable for thebeneficiary.
+Thevest()function in Vesting.sol does not check thebeneficiary, hence anyone can vest for anyone else, pushing a new timelock to thetimelocks[_beneficiary].
+The_claimableAmount()function (used byclaim()function), then loops through thetimelocks[_beneficiary]to determine the amount to be claimed.
+A malicious actor can easy repeatedly call thevest()function with minute amounts to make the array large enough, such that when it comes to claiming, it will exceed the gas limit and revert, rendering the vestment for the beneficiary unclaimable.
+The malicious actor could do this to eachbeneficiary, locking up all the vestments.
+Proof of Concept
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L81https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L195https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/Vesting.sol#L148
+Tools Used
+Manual code review
+Recommended Mitigation Steps
+Create a minimum on the vestment amounts, such that it won’t be feasible for a malicious actor to create a large amount of vestments.Restrict the vestment contribution of abeneficiarywhererequire(beneficiary == msg.sender)
+chickenpie347 (Boot Finance) confirmed
+[H-09] addInvestor() Does Not Check Availability of investors_supply
+Submitted by Meta0xNull
+Impact
+When add investor,addInvestor()does not check how many tokens is available frominvestors_supply. The total tokens allocated for Investors could more thaninvestors_supply.
+Possible Attack Scenario:
+Attacker who have Admin Private key calladdInvestor()andInput \_amount >= investors_supply.Attacker can Claim All Available Tokens Now.
+Proof of Concept
+https://github.com/code-423n4/2021-11-bootfinance/blob/main/vesting/contracts/InvestorDistribution.sol#L85-L94
+Tools Used
+Manual Review
+Recommended
+Addrequire(\_amount <= (investors_supply - Allocated_Amount))When Add an Investor add the amount toAllocated_Amountwith SafeMath
+chickenpie347 (Boot Finance) acknowledged:
+While this is true, the addInvestor would be a one-time routine at deployment which would precisely send the allocated number of tokens to the contract as per to the allocatations.

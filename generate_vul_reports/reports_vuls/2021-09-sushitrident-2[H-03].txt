@@ -1,0 +1,11 @@
+[H-03]ConcentratedLiquidityPoolManager’s incentives can be stolen
+Submitted by cmichel, also found by broccoli, hickuphh3, pauliax, and WatchPug
+TheConcentratedLiquidityPoolManagerkeeps all tokens for all incentives in the same contract. ThereclaimIncentivefunction does not reduce theincentive.rewardsUnclaimedfield and thus one can reclaim tokens several times.
+This allows anyone to steal all tokens from all incentives by creating an incentive themself, and once it’s expired, repeatedly claim the unclaimed rewards until the token balance is empty.
+POC
+Attacker creates an incentive for a non-existent pool using a random address forpool(This is done such that no other user can claim rewards as we need a non-zerorewardsUnclaimedbalance for expiry). They choose theincentive.tokento be the token they want to steal from other incentives. (for example,WETH,USDC, orSUSHI) They choose thestartTime, endTime, expirysuch that the checks pass, i.e., starting and ending in a few seconds from now, expiring in 5 weeks. Then they choose a non-zerorewardsUnclaimedand transfer theincentive.tokento thePoolManager.Attacker waits for 5 weeks until the incentive is expiredAttacker can now callreclaimIncentive(pool, incentiveId, amount=incentive.rewardsUnclaimed, attacker, false)to withdrawincentive.rewardsUnclaimedofincentive.tokenfrom the pool manager.As theincentive.rewardsUnclaimedvariable has not been decreased, they can keep callingreclaimIncentiveuntil the pool is drained.
+Impact
+An attacker can steal all tokens in thePoolManager.
+Recommended Mitigation Steps
+InreclaimIncentive, reduceincentive.rewardsUnclaimedby the withdrawnamount.
+sarangparikh22 (Sushi) confirmed

@@ -1,0 +1,32 @@
+This code defines an internal view function named _withdrawCollateralLiquidityTokens, which is designed to handle the withdrawal of collateral liquidity tokens from a portfolio. The function takes four parameters: portfolioState, factors, blockTime, and collateralToWithdraw. The function returns an integer value representing the remaining collateral to withdraw.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function starts by checking if there are no new assets in the portfolio using require(portfolioState.newAssets.length == 0);. This is a safety check to ensure that the portfolio state is consistent.
+
+2. Initialization:
+    The function initializes an array of MarketParameters in the factors struct to store market data for each market index up to factors.cashGroup.maxMarketIndex.
+
+3. Iterating Through Portfolio Assets:
+    The function iterates through each asset in the portfolioState.storedAssets array.
+    For each asset, it checks if the asset should be deleted (asset.storageState == AssetStorageState.Delete) or if it is not a liquidity token (!AssetHandler.isLiquidityToken(asset.assetType)) or if it belongs to a different currency (asset.currencyId != factors.cashGroup.currencyId). If any of these conditions are true, the asset is skipped.
+
+4. Loading Market Data:
+    For valid assets, the function calculates the marketIndex based on the asset type and loads the corresponding market data using factors.cashGroup.loadMarket(...). This is done to ensure that the market data is available for subsequent calculations.
+
+5. Calculating Cash Claims:
+    The function then calculates the cash and fCash claims for the asset using asset.getCashClaims(...).
+
+6. Withdrawing Collateral:
+    If the cash claim is less than or equal to the collateral to withdraw, the function deletes the asset from the portfolio, removes the liquidity from the market, and updates the remaining collateral to withdraw.
+    If the cash claim is greater than the collateral to withdraw, the function calculates the number of tokens to remove proportionally, updates the asset's notional value, and sets the remaining collateral to withdraw to zero.
+
+7. Updating Portfolio State:
+    After processing the asset, the function adds the net fCash asset to the portfolio using portfolioState.addAsset(...).
+    If the remaining collateral to withdraw is zero, the function returns zero immediately.
+
+8. Returning Remaining Collateral:
+    If there are still collateral tokens to withdraw after processing all assets, the function returns the remaining amount.
+
+This function is designed to ensure that the withdrawal of collateral liquidity tokens is handled correctly, maintaining the integrity of the portfolio and market data. The use of a view function ensures that no state changes are made, which is crucial for maintaining the consistency and security of the smart contract.

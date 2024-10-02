@@ -1,0 +1,18 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Lack of validation on the `share` amount in the cross-chain `sendToStrategy` function call, allowing an attacker to specify a `share` amount that corresponds to a much larger `amount` than what is debited from them.
+Execution process: An attacker deposits the minimum possible amount (1) but specifies the maximum possible `share` value corresponding to the `erc20` balance of the `(m)TapiocaOFT` contract. This enables the attacker to steal all the `erc20` balance of the `(m)TapiocaOFT` contract.
+Vulnerable code: 
+```solidity
+function sendToStrategy(address _from, address _to, uint256 amount, uint256 share, uint256 assetId, uint16 lzDstChainId, ICommonData.ISendOptions calldata options) external payable {
+    require(amount > 0, "TOFT_0");
+    bytes32 toAddress = LzLib.addressToBytes32(_to);
+    _debitFrom(_from, lzEndpoint.getChainId(), toAddress, amount);
+    ...
+}
+
+function depositToYieldbox(uint256 _assetId, uint256 _amount, uint256 _share, IERC20 _erc20, address _from, address _to) public {
+    _amount = _share > 0 ? yieldBox.toAmount(_assetId, _share, false) : _amount;
+    _erc20.approve(address(yieldBox), _amount);
+    yieldBox.depositAsset(_assetId, _from, _to, _amount, _share);
+}
+```

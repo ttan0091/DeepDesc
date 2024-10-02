@@ -1,0 +1,13 @@
+[H-02]Pool.sol&Synth.sol: Failing Max Value Allowance
+Submitted by hickuphh3, also found by shw, jonah1005, 0xRajeev and cmichel
+In the_approvefunction, if the allowance passed in istype(uint256).max, nothing happens (ie. allowance will still remain at previous value). Contract integrations (DEXes for example) tend to hardcode this value to set maximum allowance initially, but this will result in zero allowance given instead.
+This also makes the comment// No need to re-approve if already maxmisleading, because the max allowance attainable istype(uint256).max - 1, and re-approval does happen in this case.
+This affects theapproveAndCallimplementation since it usestype(uint256).maxas the allowance amount, but the resulting allowance set is zero.
+Recommend keeping it simple and removing the condition.
+function_approve(addressowner,addressspender,uint256amount)internalvirtual{require(owner!=address(0),"!owner");require(spender!=address(0),"!spender");_allowances[owner][spender] =amount;emitApproval(owner,spender,amount);}
+SamusElderg (Spartan) confirmed:
+We acknowledge the issue in the max approval for approveAndCall, which we don’t use.
+Furthermore, the issue is only a problem if a user directly approves a maximum possible amount which would mean they are assuming trust in the contract.We will also change _approve in the pool and synth contracts.
+Risk, as outlined above, is low.
+ghoul-sol (judge) commented:
+This is high risk as explained in #152

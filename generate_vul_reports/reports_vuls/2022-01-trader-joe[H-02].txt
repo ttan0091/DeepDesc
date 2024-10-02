@@ -1,0 +1,18 @@
+[H-02] Wrong token allocation computation for token decimals != 18 if floor price not reached
+Submitted by cmichel
+InLaunchEvent.createPair, when the floor price is not reached (floorPrice > wavaxReserve * 1e18 / tokenAllocated), the tokens to be sent to the pool are lowered to match the raised WAVAX at the floor price.
+Note that thefloorPriceis supposed to have a precision of 18:
+/// @param _floorPrice Price of each token in AVAX, scaled to 1e18
+ThefloorPrice > (wavaxReserve * 1e18) / tokenAllocatedcheck is correct but thetokenAllocatedcomputation involves thetokendecimals:
+// @audit should be wavaxReserve * 1e18 / floorPricetokenAllocated= (wavaxReserve*10**token.decimals()) /floorPrice;
+This computation does not work fortokens that don’t have 18 decimals.
+Example
+Assume I want to sell1.0 wBTC = 1e8 wBTC(8 decimals) at2,000.0 AVAX = 2,000 * 1e18 AVAX.
+ThefloorPriceis2000e18 * 1e18 / 1e8 = 2e31
+Assume the Launch event only raised1,000.0 AVAX- half of the floor price for the issued token amount of1.0 WBTC(it should therefore allocate only half a WBTC) - and the token amount will be reduced as:floorPrice = 2e31 > 1000e18 * 1e18 / 1e8 = 1e31 = actualPrice.
+Then,tokenAllocated = 1000e18 * 1e8 / 2e31 = 1e29 / 2e31 = 0and no tokens would be allocated, instead of0.5 WBTC = 0.5e8 WBTC.
+The computation should betokenAllocated = wavaxReserve * 1e18 / floorPrice = 1000e18 * 1e18 / 2e31 = 1e39 / 2e31 = 10e38 / 2e31 = 5e7 = 0.5e8.
+Recommendation
+The newtokenAllocatedcomputation should betokenAllocated = wavaxReserve * 1e18 / floorPrice;.
+cryptofish7 (Trader Joe) confirmed and commented:
+Fix:https://github.com/traderjoe-xyz/rocket-joe/pull/76

@@ -1,0 +1,8 @@
+Type of vulnerability: Padding Oracle Attack
+Cause of vulnerability: The observe() function assumes that likeBar.bestYieldToken() and bdp.bestYieldToken() will return a nonzero result when a badger vault is present. An attacker can set up their own contract to return a zero address, fooling observe() into treating badger vaults as if they hold like tokens rather than the real ones, leading to degradation.
+Working process of the vulnerability: 
+1. The attacker sets up the mock.bestYieldToken() function on the BadgerV2YieldStrategy instance to return a zero address instead of the actual best yield token.
+2. The Minter instance calls likeGauge.badger_bestYieldToken(), which delegates the call to the GaugeController, then to the GaugeManager. If the reward contract isn’t deployed, it gets deployed with 0xB0a055e45750579773D221e4a4EBbb89CFF1E9B3 as rewards source.
+3. The check in observe() for whether the reward contract exists returns ´false´, causing it to assume that the like token is the same as the reward token (ETHlike strategy).
+4. Calculations in the function then set balanceOfBadgerVaultsInLike() to 0.
+5. The Minter instance then assumes that more like tokens have been claimed than what has actually been claimed and sets reserves accordingly.

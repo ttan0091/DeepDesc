@@ -1,0 +1,28 @@
+Type of vulnerability: Reentrancy or Logic Error (depending on perspective)
+Cause of vulnerability: Rounding down in the `convertToShares` function leading to zero shares being calculated for small asset withdrawals.
+Execution process: A user calls the `withdraw` function with a small enough asset amount that results in the `convertToShares` function returning zero shares. No shares are burned, and the user receives assets for free.
+Vulnerable code: 
+```solidity
+function withdraw(
+    uint256 assets,
+    address receiver,
+    address owner
+) public override returns (uint256 shares) {
+    // Compound rewards and ensure they are properly accounted for prior to withdrawal calculation
+    compound(poolFee, 1, 0, true);
+
+    shares = previewWithdraw(assets); // No need to check for rounding error, previewWithdraw rounds up.
+
+    if (msg.sender != owner) {
+        uint256 allowed = allowance[owner][msg.sender]; // Saves gas for limited approvals.
+
+        if (allowed != type(uint256).max)
+            allowance[owner][msg.sender] = allowed - shares;
+    }
+
+    _burn(owner, shares);
+
+    emit Withdraw(msg.sender, receiver, owner, assets, shares);
+    asset.safeTransfer(receiver, assets);
+}
+```

@@ -1,0 +1,203 @@
+[H-01] Withdrawals can be locked forever if recipient is a contract
+Submitted byLessDupes, also found byBauchibredandgrearlake
+TheWithdrawQueuecontract allows users to request withdrawals of their ezETH tokens in exchange for a selected asset, such as ETH or an ERC20 token. After a cooldown period, users can call theclaim()function to receive their withdrawn assets.
+When the selected asset is ETH, theclaim()function sends the ETH using the low-leveltransfer()function:
+payable(msg.sender).transfer(_withdrawRequest.amountToRedeem);
+However,transfer()only forwards 2300 gas, which is not enough for the recipient to execute any non-trivial logic in areceive()or fallback function. For instance, it is not enough for Safes (such asthis onein use by the protocol) to receive funds, which require>6k gas for the call to reach the implementation contract and emit an event:
+Note: to view the provided image, please see the original submissionhere.
+In this case, the impact is higher than that reported by4naly3erbecauseclaim()requires the caller to be the same address that initiated the original withdrawal request viawithdraw().
+If a user callswithdraw()from a contract account like a multisig or smart contract wallet that has areceive()function requiring>2300gas, their subsequentclaim()call will fail permanently. The withdrawn ETH will be locked in theWithdrawQueuecontract forever, leading to loss of funds.
+Proof of Concept
+Alice callswithdraw()from her multisig wallet contract to withdraw 10 ETH worth of ezETH. The multisig contract is themsg.senderand gets saved as the withdrawal requester.After the cooldown period, Alice tries to callclaim()from the multisig contract. However, the multisig has areceive()function that uses>2300gas.Whenclaim()executespayable(msg.sender).transfer(_withdrawRequest.amountToRedeem), the multisig’sreceive()fails due to out of gas, and the transaction reverts.The 10 ETH is now permanently locked inWithdrawQueue, with no way for Alice to claim it.
+Recommended Mitigation Steps
+Usecall()instead oftransfer()to send ETH inclaim():
+(bool success, ) = payable(msg.sender).call{value: _withdrawRequest.amountToRedeem}("");require(success, "ETH transfer failed");
+This forwards all available gas and allows contract recipients to execute arbitrary logic.
+Assessed type
+ETH-Transfer
+jatinj615 (Renzo) confirmed
+alcueca (judge) commented:
+Theruling from the Supreme Courtis only consultative.From my point of view, a bot report that can be reasonably upgraded in severity due to the specific context of the code is a valid finding. Other judges might see this differently, so this ruling shouldn’t be seen as authoritative by itself in future audits. Instead, jurisprudence should arise from a broader consensus.The4naly3erreport states that:The use of the deprecatedtransfer()function for an address may make the transaction failThat description of impact merits a Medium severity; however, in this case the severity is higher due to the two-step withdrawal process. The withdrawal address is locked in thewithdrawstep, which will work fine for smart contract wallets. However, upon callingclaim, the transaction will revert.The actual impact for the sponsor would be severe. The first few users trying this would have their funds locked. Even after efforts of communication by the team, this would be an ongoing issue that would bring considerable trouble.I’m ruling this as a valid High, and all the duplicates that mention the two-step withdrawal process as valid duplicates.
+Note: For full discussion, seehere.
+Renzo mitigated:
+The PR allows contracts like multisigs to be able to claim the withdraw request in Native ETH by sending it through call instead of transfer.
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.
+
+[H-02] Incorrect calculation of queued withdrawals can deflate TVL and increase ezETH mint rate
+Submitted byLessDupes, also found byadam-idarrha,araj,zigtur,jokr,SBSecurity,fyamf,0xCiphky,Tendency,p0wd3r,bigtone,maxim371,NentoR,kennedy1030,mussucal,0xnightfall,FastChecker,baz1ka,aman,0xAadi,0xhacksmithh,0rpse, andKupiaSec
+The functionOperatorDelegator.getTokenBalanceFromStrategy()is used by theRestakeManagerto calculate the protocol TVL, which in turn is used to calculate the amount of ezETH to mint against a given value in collateral tokens.
+This function, however, incorrectly checks for the queued amount ofaddress(this)instead ofaddress(token); therefore, consistently failing to consider collaterals in the withdrawal process for calculation:
+File:OperatorDelegator.sol326:/// @dev Gets the underlying token amount from the amount of shares + queued withdrawal shares327:functiongetTokenBalanceFromStrategy(IERC20token)externalviewreturns(uint256) {328:return329:queuedShares[address(this)] ==0330:                 ?tokenStrategyMapping[token].userUnderlyingView(address(this))331:                 :tokenStrategyMapping[token].userUnderlyingView(address(this)) +332:tokenStrategyMapping[token].sharesToUnderlyingView(333:queuedShares[address(token)]334:                     );335:     }
+Within this code,queuedShares[address(this)]will always return0; therefore, missing the opportunity to count the contribution ofqueuedShares[address(token)].
+Impact
+Any amount of collateral in theOperatorDelegatorwithdrawal process will not be counted for TVL calculation. This causes the TVL to be low, so more ezETH will be minted for the same amount of collateral, unfairly favoring people who mint ezETH during anOperatorDelegatorwithdrawal, penalizing holders, and those who initiate aRestakeManagerwithdraw.
+Proof of Concept
+The following PoC in Foundry shows how the issue can lead to a decrease in TVL. The PoC can be run in Foundry by using the setup and mock infra providedhere.
+pragmasolidity^0.8.19;import"contracts/Errors/Errors.sol";import"./Setup.sol";contractH2isSetup{functiontestH2()public{// we'll only be using stETH with unitary price for simplicitystEthPriceOracle.setAnswer(1e18);// and we start with 0 TVL(, ,uinttvl) =restakeManager.calculateTVLs();assertEq(0,tvl);// now we have Alice depositing some stETHaddressalice=address(1234567890);stETH.mint(alice,100e18);vm.startPrank(alice);stETH.approve(address(restakeManager),100e18);restakeManager.deposit(IERC20(address(stETH)),100e18);// ✅ TVL and balance are as expected(, ,tvl) =restakeManager.calculateTVLs();assertEq(100e18,tvl);assertEq(100e18,ezETH.balanceOf(alice));// Now some liquidity enters the withdraw sequencevm.startPrank(OWNER);IERC20[]memorytokens=newIERC20[](1);uint256[]memorytokenAmounts=newuint256[](1);tokens[0] =IERC20(address(stETH));tokenAmounts[0] =50e18;operatorDelegator1.queueWithdrawals(tokens,tokenAmounts);// 🚨 The collateral queued for withdrawal does not show up in TVL,// so the mint rate is altered(, ,tvl) =restakeManager.calculateTVLs();assertEq(50e18,tvl);}}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Consider changing the address used for the mapping lookup:
+/// @dev Gets the underlying token amount from the amount of shares + queued withdrawal sharesfunction getTokenBalanceFromStrategy(IERC20 token) external view returns (uint256) {return-           queuedShares[address(this)] == 0+           queuedShares[address(token)] == 0? tokenStrategyMapping[token].userUnderlyingView(address(this)): tokenStrategyMapping[token].userUnderlyingView(address(this)) +tokenStrategyMapping[token].sharesToUnderlyingView(queuedShares[address(token)]);}
+jatinj615 (Renzo) confirmed
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.
+
+[H-03] ETH withdrawals from EigenLayer always fail due toOperatorDelegator’s nonReentrantreceive()
+Submitted byLessDupes, also found byblutorque,ilchovski,0x73696d616f,zzykxx,kennedy1030, andKupiaSec
+https://github.com/code-423n4/2024-04-renzo/blob/519e518f2d8dec9acf6482b84a181e403070d22d/contracts/Delegation/OperatorDelegator.sol#L269
+https://github.com/code-423n4/2024-04-renzo/blob/519e518f2d8dec9acf6482b84a181e403070d22d/contracts/Delegation/OperatorDelegator.sol#L501
+Vulnerability details
+TheOperatorDelegator.completeQueuedWithdrawal()function is used by admins to finalize previously initiated withdraws of shares from EigenLayer.
+We note that both this and the OperatorDelegator’sreceive()functions arenonReentrant:
+File:OperatorDelegator.sol265:functioncompleteQueuedWithdrawal(266:IDelegationManager.Withdrawalcalldatawithdrawal,267:IERC20[]calldatatokens,268:uint256middlewareTimesIndex269:     )externalnonReentrantonlyNativeEthRestakeAdmin{270:uint256gasBefore=gasleft();271:if(tokens.length!=withdrawal.strategies.length)revertMismatchedArrayLengths();272:273:// complete the queued withdrawal from EigenLayer with receiveAsToken set to true274:delegationManager.completeQueuedWithdrawal(withdrawal,tokens,middlewareTimesIndex,true);---501:receive()externalpayablenonReentrant{502:// check if sender contract is EigenPod. forward full withdrawal eth received503:if(msg.sender==address(eigenPod)) {504:restakeManager.depositQueue().forwardFullWithdrawalETH{ value:msg.value}();
+However, thereceive()function is normally called by theEigenPodin the call stack originated by the L274completeQueuedWithdrawal()whenreceiveAsTokens == truelike in this case. This particular instance of reentrancy is not only acceptable but also required to allow ETH redemptions from EigenLayer. However, thenonReentrantmodifier prevents it.
+Impact
+All withdrawals that include any amount of ETH will be permanently stuck in EigenLayer and won’t be redeemable. Only amounts coming from new deposits can be redeemed and the team will have no way to fill the withdrawal queues. To unblock them, the team will necessarily have to upgradeOperatorDelegator.
+Proof of Concept
+To prove the concept, it’s sufficient to upgradeOperatorDelegatoron a mainnet fork and initiate a withdrawal that has ETH among the withdrawn strategies.
+While it would be too bulky to provide a coded PoC, you can find inthis GH Gistthe Foundry traces of such failed call on a mainnet fork.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Consider removingnonReentrantfrom OperatorDelegator’sreceive, or applying the modifier only in casemsg.sender != eigenPod.
+Assessed type
+Reentrancy
+jatinj615 (Renzo) confirmed via duplicate Issue #571
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.
+
+[H-04] Withdrawals logic allows MEV exploits of TVL changes and zero-slippage zero-fee swaps
+Submitted byguhu95, also found bycu5t0mpeo,bill,t0x1c,0xCiphky, gjaldon (1,2), 0xabhay (1,2), WildSniper (1,2,3),0rpse, GoatedAudits (1,2,3), honey-k12 (1,2), Bauchibred (1,2),jokr, blutorque (1,2), Tendency (1,2), crypticdefense (1,2), Fassi_Security (1,2), SBSecurity (1,2,3), peanuts (1,2), tapir (1,2,3),MSaptarshi, kennedy1030 (1,2),OMEN, LessDupes (1,2),0x007,ilchovski, zzykxx (1,2,3),gumgumzum,stonejiajia,Audinarey,RamenPeople,Ocean_Sky,0x73696d616f,underdog,josephdara,p0wd3r,aslanbek,d3e4,KupiaSec, grearlake (1,2), andGalloDaSballo
+Deposit and withdrawal requests can be done immediately with no costs or fees, and both use the current oracle prices and TVL calculation (deposit, andwithdraw). Crucially, thewithdrawal amount is calculated at withdrawal request submission timeinstead of at withdrawal claim time. Any small change in either ezETH value or in the price of a collateral token can be exploited at no cost by MEV. Specifically, if the price increases, a deposit is made before the increase, and a withdrawal request immediately after.
+Additionally, in case of a supported LST’s sudden change in price (for example, due to price manipulation, an exploit of that LST, due to consensus layer penalties (slashing), or liquidity issues), external holders of that LST may frontrun the change, deposit the LST into Renzo, and immediately request a withdrawal of another asset (e.g., native ETH). In such situations, Renzo functions as azero-slippage zero-fees oracle-price-based DEXfor LSTs and ETH up to the TVL cap for the affected LST. Zero-slippage zero-fee oracle-price-based designs are notoriously vulnerable to both oracle manipulation and oracle latency attacks if not carefully prevented.
+Impact
+The newly introduced frontrunning vector, due to incurring only gas fees, and no fee that is proportional to the size of the “trade”, allows profitably exploiting most TVL and oracle price changes, and exploiting previously exploitable updates (via Balancer’susage ofgetRate()) and even more profitably via the new vector.
+The impact is that value, that otherwise should be distributed to ezETH holders, is constantly lost to MEV.
+Additionally, ezETH holders lose value due to facilitating asset swaps with no slippage and no fees based on outdated oracle prices.
+Proof of Concept
+Scenario 1 (MEV, price increase):
+A transaction that will increase the TVL value without minting or burning ezETH, such as a Chainlink oracle update or EigenLayer rewards withdrawal, is observed.An attacker sandwiches the transaction by depositing asset A right before it (minting ezETH to themselves).The attacker completes the sandwich by submitting a withdrawal request for asset A after the “target” transaction. This sends the ezETH toWithdrawQueue, and credits the attacker with a larger amount of A than was just deposited, corresponding to the updated price of ezETH.The attacker realizes an immediate, same block profit - a larger amount of the same asset, due to the price increase and credit of future withdrawal amount, and no fee being charged.Value that would otherwise be distributed to holders of ezETH was lost to the attacker.
+Scenario 2 (malicious):
+Asset A experiences a sharp price decline due to slashing, exploit, or other factors.An attacker borrows LST asset A from on-chain lending protocols. This is done to reduce the assets available for others to short the price manipulation of the next step.The attacker buys up even more of the LST on CEX and DEX, running up the price of that asset, such that a manipulated price is reported by oracles.The attacker deposits all asset A into Renzo, being credited with an outsized amount of ezETH due to the inflated price of the collateral.The attacker immediately submits a withdrawal request of asset B, which upon conversion uses the inflated value of asset A in Renzo’s TVL.7 days later, upon withdrawal claiming, the attacker withdraws the inflated amount of asset B.
+Scenario 3 (MEV, price decrease, zero-slippage zero-fees DEX):
+A supported LST experiences a sudden change in price due to factors such as price manipulation, an exploit of that LST, consensus layer penalties (slashing), or liquidity issues.Existing external holders of the LST, or arbitrageurs borrowing the asset, frontrun the transaction that changes the oracle price by depositing the LST into Renzo, and immediately requesting a withdrawal of another asset (e.g., native ETH or another LST). Using Renzo as a zero-slippage oracle-price-based DEX.After the withdrawal delay, the attackers claim their withdrawal, receiving the other asset at the pre-change price, effectively exploiting the ezETH holders.
+Recommended Mitigation Steps
+The redemption conversion should be performed at both request and claim time. If it results in a lower redeem value, that value should be used for the claim instead of the initial redeem amount. Additionally, a rate limit or a short delay on deposits with similar protection can be added as well.
+function claim(uint256 withdrawRequestIndex) external nonReentrant {...+   // All the code converting from ezETH amount to amountToRedeem as is done in withdraw()+   if (amountToRedeem < _withdrawRequest.amountToRedeem) {+       _withdrawRequest.amountToRedeem = amountToRedeem;+   }}
+Assessed type
+MEV
+alcueca (judge) commented:
+The sponsor’s comment in#259is relevant here, on why withdrawals are priced onwithdraw,  and notclaim. The resulting implementation might have to take a trade-off between being arbitraged one way or another, or opt for a different implementation altogether.
+jatinj615 (Renzo) confirmed
+Renzo mitigated:
+The PR reduces the risk of arbitrage at withdraw by calculating the amount of withdrawing asset at time of withdraw as well as claim and returns the min of both amount to user.
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake, andBauchibred.
+
+[H-05] Withdrawals of rebasing tokens can lead to insolvency and unfair distribution of protocol reserves
+Submitted byLessDupes, also found bySBSecurity,peanuts, guhu95 (1,2),bill,ilchovski, andRamenPeople
+TheWithdrawQueuecontract allows users to withdraw their funds in various tokens, including liquid staking derivatives (LSDs) such as stETH. Thewithdraw()function calculates the amount of the specified_assetOuttoken equivalent to the ezETH being withdrawnusingtherenzoOracle.lookupTokenAmountFromValue()function. This amount is then stored in theamountToRedeemfield of a newWithdrawRequeststruct, which is added to the user’swithdrawRequestsarray and the token’sclaimReserve.
+When the user later callsclaim(), the contract transfers theamountToRedeemto the user via theIERC20.transfer()function.
+However, this implementation does not properly handle rebasing tokens like stETH. The stETH balance of theWithdrawQueuecan change between the time a withdrawal is recorded and when it is claimed, even though the contract’s stETH shares remain constant.
+If the stETH balance decreases during this period due to a rebasing event (e.g., a slashing of the staked ETH), theamountToRedeemstored in theWithdrawRequestmay exceed the contract’s actual stETH balance at the time of claiming. As a result, the withdrawal can fail or result in the user receiving a larger share of the total protocol reserves than intended.
+The issue can be illustrated by comparing the behavior of withdrawals for non-rebasing and rebasing LSDs:
+Non-rebasing LSD (e.g., wBETH):User A requests a withdrawal of 10 wBETH (worth 10 ETH) from the protocol.While the withdrawal is pending, wBETH’s underlying staked ETH suffers a 50% slashing event.The price of wBETH drops to 0.5 ETH per token due to the slashing.When User A claims their withdrawal, they receive 10 wBETH, which is now worth only 5 ETH.User A bears the loss from the slashing event.Rebasing LSD (e.g., stETH):User B requests a withdrawal of 10 stETH (worth 10 ETH) from the protocol.While the withdrawal is pending, the underlying staked ETH suffers a 50% slashing event.Everyone’s stETH balances are rebased to maintain the ETH peg, so the protocol’s stETH balance is halved.When User B claims their withdrawal, they receive the original 10 stETH (still worth 10 ETH) as recorded in the withdrawal request.The protocol bears the loss from the slashing event, as it has sent out more than its fair share of the rebased stETH balance.
+Impact
+The current withdrawal mechanism for rebasing tokens like stETH can lead to:
+Unfair distribution of funds:Users who claim their withdrawals after a rebasing event that decreases the contract’s balance will receive a larger share of the reserves than intended, at the expense of other users.Withdrawal failures:If the contract’s balance falls below the totalamountToRedeemof all pending withdrawals due to rebasing, users will face transaction failures when attempting to claim their withdrawals.
+Proof of Concept
+We can validate the vulnerability through a Foundry test case POC. This test case will simulate the exploit scenario and confirm the issue by performing the following actions:
+Alice and Bob initiate withdrawals of their ezETH shares for stETH.Simulate a negative rebasing event by transferring 10% of stETH balance from thewithdrawQueuecontract.Alice claims her withdrawal successfully, receiving her original stETH amount.Bob’s attempt to claim his withdrawal fails due to insufficient stETH balance.Verify that ezETH supply remains unchanged while TVL is significantly reduced, demonstrating ezETH becoming uncollateralized.
+The PoC can be run in Foundry by using the setup and mock infra providedhere.
+pragmasolidity^0.8.19;import"contracts/Errors/Errors.sol";import"./Setup.sol";contractH6isSetup{functiontestH6()public{// we set the buffer to something reasonably highWithdrawQueueStorageV1.TokenWithdrawBuffer[]memorybuffers=newWithdrawQueueStorageV1.TokenWithdrawBuffer[](2);buffers[0] =WithdrawQueueStorageV1.TokenWithdrawBuffer(address(stETH),100e18-1);buffers[1] =WithdrawQueueStorageV1.TokenWithdrawBuffer(address(cbETH),100e18-1);vm.startPrank(OWNER);withdrawQueue.updateWithdrawBufferTarget(buffers);// we'll be using stETH and cbETH with unitary price for simplicitystEthPriceOracle.setAnswer(1e18);cbEthPriceOracle.setAnswer(1e18);// and we start with 0 TVL(, ,uinttvl) =restakeManager.calculateTVLs();assertEq(0,tvl);// let's then imagine that Alice and Bob hold 90 and 10 ezETH eachaddressalice=address(1234567890);addressbob=address(1234567891);stETH.mint(alice,100e18);vm.startPrank(alice);stETH.approve(address(restakeManager),100e18);restakeManager.deposit(IERC20(address(stETH)),100e18);ezETH.transfer(bob,10e18);// ✅ TVL and balance are as expected(, ,tvl) =restakeManager.calculateTVLs();assertEq(100e18,tvl);assertEq(90e18,ezETH.balanceOf(alice));assertEq(10e18,ezETH.balanceOf(bob));// Now Bob initiates withdrawal of their sharesvm.startPrank(bob);ezETH.approve(address(withdrawQueue),10e18);withdrawQueue.withdraw(10e18,address(stETH));// Alice, too, initiates withdrawal of their sharesvm.startPrank(alice);ezETH.approve(address(withdrawQueue),90e18-1);withdrawQueue.withdraw(90e18-1,address(stETH));// ☢️ time passes, and an stETH negative rebasing happens, wiping// 10% of the balancevm.startPrank(address(withdrawQueue));stETH.transfer(address(1),10e18);vm.warp(block.timestamp+10days);// 🚨 now, since WithdrawQueue checked availability at withdrawal initiation// only and didn not account for the possibility of rebases, the 10% loss// has been completely dodged by Alice and is attributed to the last// user exiting.vm.startPrank(alice);withdrawQueue.claim(0);assertEq(90e18-1,stETH.balanceOf(alice));// 🚨 not only Bob can't withdrawvm.startPrank(bob);vm.expectRevert();withdrawQueue.claim(0);// 🚨 but ezETH as a whole also became completely uncollateralizedassertEq(10e18+1,ezETH.totalSupply());(, ,tvl) =restakeManager.calculateTVLs();assertEq(1,tvl);}}
+Recommended Mitigation Steps
+To address the issue of unfair distribution of funds when withdrawing rebasing tokens like stETH, theWithdrawQueuecontract should store and transfer the user’s withdrawal as stETH shares instead of a fixed stETH amount.
+When a user initiates a withdrawal with stETH as the_assetOut, the contract should convert the calculatedamountToRedeemto stETH shares using thestETH.getSharesByPooledEth()function:
+uint256 sharesAmount = IStETH(stETHAddress).getSharesByPooledEth(amountToRedeem);
+The resultingsharesAmountshould be stored in theWithdrawRequeststruct instead of theamountToRedeem.
+When the user callsclaim(), the contract should transfer the stETH shares directly to the user using thestETH.transferShares()function:
+IStETH(stETHAddress).transferShares(msg.sender, sharesAmount);
+By storing and transferring stETH shares instead of a fixed stETH amount, the contract ensures that each user receives their fair share of the stETH balance, regardless of any rebasing events that occur between the time of the withdrawal request and the claim.
+To implement this mitigation, the contract should:
+Check if the_assetOutis stETH when processing a withdrawal request.If so, convert theamountToRedeemto stETH shares usingstETH.getSharesByPooledEth()and store the shares amount in theWithdrawRequeststruct.Update theclaim()function to check if the withdrawal is in stETH and, if so, transfer the shares directly usingstETH.transferShares()instead of using the standardIERC20.transfer()function.
+Note that this mitigation is specific to stETH and may need to be adapted for other rebasing tokens that use a similar shares-based system.
+Furthermore, theclaimReserveandwithdrawalBufferTargetfor stETH would also need to be stored in shares and converted to underlying in TVL and withdraw buffer calculations, respectively.
+alcueca (judge) commented:
+I’m going to sustain the high severity on the grounds that:If the stEth balance increases, as it normally does, users lose value in comparison to non-rebasing LSTs.If the stEth balance decreases, the protocol loses value in comparison to non-rebasing LSTs.If the stEth balance decreases, the protocol might DoS.The users that win in a slashing event are not the same users that lose during normal operation.
+jatinj615 (Renzo) acknowledged
+
+[H-06] The amount ofxezETHin circulation will not represent the amount ofezETHtokens 1:1
+Submitted byzzykxx, also found by0x007,GoatedAudits,0xCiphky,jokr,mt030d,fyamf,LessDupes, andGalloDaSballo
+The protocol allows to depositETH/WETH(or the specific chain native currency) on a supported L2 in order to mintezETHtokens, this is the process:
+User mintsxezETHon L2s viaxRenzoDeposit::deposit()in exchange for eitherETHorWETH. ThexezETHare minted based on thecurrentezETHvaluation.After some time the bridge sweepers transfer theETH/WETHcollected to the L1, viaxRenzoDeposit::sweep(). The funds are transferred to thexRenzoBridgecontract on L1 via Connext.Connext callsxRenzoBridge::xReceive()on L1 which will receive theETH/WETHand deposit them in the protocol viaRestakeManager::depositETH(). This will mintezETHtokens based on thecurrentezETHvaluation, theezETHtokens will then be locked in the lockbox in exchange forxezETH, which are then immediately burned because an equivalent amount should have already been minted on the L2 during step1.
+Theoretically, the amount ofxezETHtokens minted during step1should be the same as the amount ofezETHtokens minted during step3, but because on both steps the tokens are minted at the current valuation, and the valuation changes over time, there will be a discrepancy between the amount ofxezETHandezETHtokens in circulation.
+This is an issue becauseXERC20Lockbox::withdraw()always exchangesxezETHforezETH1:1.
+Impact
+The price ofezETHis expected to increase over time. This will create a situation where there will be morexezETHin circulation thanezETH, rendering somexezETHworthless and impossible to redeem forezETH.
+A situation in which theezETHvaluation decreases instead of increasing is also problematic, because the protocol will mint lessxezETHthan it should.
+The discrepancy will become bigger and bigger with time.
+Proof of Concept
+As an example, let’s assumeezETHvaluation is currently1 ETH:
+Alice deposits1 ETHon L2 and receives1 xezETH.Some time passes and the valuation ofezETHincreases to2ETH(unrealistic, but allows simple math).The bridge sweeper callssweep(), transferring the1 ETHto thexRenzoBridgecontract on L1.ThexRenzoBridgedeposits the received1 ETHin theRestakeManager, which mints0.5 ezETHbecause theezETHvaluation doubled.The0.5 ezETHis locked in the lockbox,0.5 xezETHare minted in return and immediately burned.
+The situation now is the following:
+Alice has1 xezETHon L2.The lockbox contains0.5 ezETHon L1.
+Alice can at best redeem0.5 xezETHin exchange for0.5 ezETH, and the remaining0.5 xezETHis worthless. The amount of value she can redeem is the correct one, (1 ETH), but now there arexezETHin circulation that are not backed byezETH.
+Recommended Mitigation Steps
+The protocol should track the amount ofxezETHtokens minted viaxRenzoDeposit::deposit()on the L2 and mint the equivalent amount ofezETHtokens on L1 whenxRenzoBridge::xReceive()is executed by passing the necessary data on thexcall()to Connext.
+If this is implemented it’s possible for the valuation ofezETHtokens to change instantly afterxRenzoBridge::xReceive()is executed, this is because the amount ofezETHtokens is not minted based on the current valuation anymore. As explained in other reports, the protocol will be subject to instantezETHvaluation changes (increase/decrease) no matter what (rewards, slashing, penalties), and should gracefully handle these situations via appropriate deposit and withdrawals queues.
+jatinj615 (Renzo) acknowledged and commented:
+Yes, theoretically it is correct. But the protocol tackles this by sending the updated mint rate of ezETH frequently to L2s and also sweeps funds every hour if above batch size keeping the collateralization in place for ezETH. Also thebridgeRouterFee(5 bps) deducted on L2 if the transactions goes through slow path (during which mint rate of ezETH can rise) the extra 5 bps routerFee deducted on L2 is accumulated in minting ezETH on L1 inxRenzoBridge::xReceiveinstead of getting deducted by connext routers.
+alcueca (judge) commented:
+The long term effect of this is akin to bad debt in lending protocols. Eventually, the protocol or the (last) users need to assume the losses.
+0xTenma (warden) commented:
+I think severity of this issue should be Medium instead of High because there is no direct loss of funds possible here. If the ratio of xezETH to ezETH is not equal 1:1 in any case then it is only possible and the protocol sends the updated mint rate of ezETH frequently to L2s to avoid this situation.
+Furthermore, According to C4 docs:2 — Med: Assets not at direct risk, but the function of the protocol or its availability could be impacted, or leak value with a hypothetical attack path with stated assumptions, but external requirements.Stated assumptions and external requirement such as oracle delay are required to face to this issue.
+jatinj615 (Renzo) commented:
+@alcueca - to add more to it as I have explained in the comment above and discussion in#70. The ezETH in prod is over collateralised due to the fact that in some cases (when connext routers don’t have enough liquidity to process fast path) the 5bps deducted on L2 is used to collateralise ezETH on L1 which is why lockbox currently has more ezETH against the xezETH minted on L1. Team has been monitoring and keeping a track on it.Considering the above argument, please confirm on the severity.
+0xCiphky (warden) commented:
+Respectfully, I believe this should remain as High severity:The finding clearly demonstrates a realistic scenario where the system could become insolvent, resulting in a loss of funds for users. Despite the current over-collateralization and precautions, there remains a long-term risk.The audited implementation contains blockages that will affect efforts to maintain collateralization for ezETH. For example, if the MaxTVL is reached, the protocol cannot deposit in L1, causing an accumulation of minted L2 tokens until it becomes possible to deposit again, which could take a significant amount of time.This issue can be intentionally exploited by users whenever the price on the L1 side is higher than on the L2 side.
+
+[H-07] DOS ofcompleteQueuedWithdrawalwhen ERC20 buffer is filled
+Submitted byAymen0909, also found by tapir (1,2,3),crypticdefense,gjaldon,eeshenggoh,gumgumzum,0x73696d616f,LessDupes,GoatedAudits, andpauliax
+https://github.com/code-423n4/2024-04-renzo/blob/main/contracts/Delegation/OperatorDelegator.sol#L299-L303
+https://github.com/code-423n4/2024-04-renzo/blob/main/contracts/Deposits/DepositQueue.sol#L134-L137
+Issue Description
+When theOperatorDelegator::completeQueuedWithdrawalfunction is invoked to finalize a withdrawal from EL, it attempts to utilize the accumulated ERC20 tokens to fill the ERC20 withdrawal buffer, as demonstrated in the code snippet below:
+functioncompleteQueuedWithdrawal(IDelegationManager.Withdrawalcalldatawithdrawal,IERC20[]calldatatokens,uint256middlewareTimesIndex)externalnonReentrantonlyNativeEthRestakeAdmin{uint256gasBefore=gasleft();if(tokens.length!=withdrawal.strategies.length)revertMismatchedArrayLengths();// Complete the queued withdrawal from EigenLayer with receiveAsToken set to truedelegationManager.completeQueuedWithdrawal(withdrawal,tokens,middlewareTimesIndex,true);IWithdrawQueuewithdrawQueue=restakeManager.depositQueue().withdrawQueue();for(uint256i;i<tokens.length; ) {if(address(tokens[i]) ==address(0))revertInvalidZeroInput();// Deduct queued shares for tracking TVLqueuedShares[address(tokens[i])] -=withdrawal.shares[i];// Check if the token is not Native ETHif(address(tokens[i]) !=IS_NATIVE) {// Check the withdrawal buffer and fill if below buffer targetuint256bufferToFill=withdrawQueue.getBufferDeficit(address(tokens[i]));// Get the balance of this contractuint256balanceOfToken=tokens[i].balanceOf(address(this));if(bufferToFill>0) {bufferToFill= (balanceOfToken<=bufferToFill) ?balanceOfToken:bufferToFill;// Update the amount to send to the operator DelegatorbalanceOfToken-=bufferToFill;// Safely approve for depositQueuetokens[i].safeApprove(address(restakeManager.depositQueue()),bufferToFill);// Fill the Withdraw Buffer via depositQueuerestakeManager.depositQueue().fillERC20withdrawBuffer(address(tokens[i]),bufferToFill);}// Deposit remaining tokens back to EigenLayerif(balanceOfToken>0) {_deposit(tokens[i],balanceOfToken);}}unchecked{++i;}}// Emit the Withdraw Completed event with withdrawalRootemitWithdrawCompleted(delegationManager.calculateWithdrawalRoot(withdrawal),withdrawal.strategies,withdrawal.shares);// Record the current spent gas_recordGas(gasBefore);}
+The function iterates over the withdrawn tokens array and, for each token, checks if the withdrawal buffer needs filling. If required, the function attempts to call thedepositQueue::fillERC20withdrawBufferfunction, which is responsible for directing the ERC20 to the withdrawal queue contract to fill the buffer.
+The issue arises because thedepositQueue::fillERC20withdrawBufferfunction can only be accessed by theRestakeManagercontract, as it enforces theonlyRestakeManagermodifier, as depicted below:
+/// @dev Allows only the RestakeManager address to call functionsmodifieronlyRestakeManager() {if(msg.sender!=address(restakeManager))revertNotRestakeManager();_;}functionfillERC20withdrawBuffer(address_asset,uint256_amount)externalnonReentrantonlyRestakeManager{...}
+Consequently, when thecompleteQueuedWithdrawalfunction attempts this call, it reverts becauseOperatorDelegatorlacks access to thedepositQueue::fillERC20withdrawBufferfunction. This results in the entire withdrawal completion call reverting, rendering it impossible for the admin to retrieve funds from EL.
+In summary, this issue triggers a persistent DOS of theOperatorDelegator::completeQueuedWithdrawalfunction, preventing the protocol and users from withdrawing funds from EL and resulting in a loss of funds.
+Impact
+Persistent DOS of theOperatorDelegator::completeQueuedWithdrawalfunction, preventing the protocol from withdrawing funds from EL and leading to fund losses for the protocol and users.
+Tools Used
+VS Code
+Recommended Mitigation
+The simplest resolution is to grant access to thedepositQueue::fillERC20withdrawBufferfunction to everyone by removing theonlyRestakeManagermodifier. This adjustment introduces no vulnerabilities to the protocol since any user calling it effectively donates funds to the protocol (to the withdrawal queue).
+Assessed type
+DoS
+jatinj615 (Renzo) confirmed
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.
+
+[H-08] Incorrect withdraw queue balance in TVL calculation
+Submitted bypauliax, also found byBiasedMerc,NentoR,gjaldon,crypticdefense,zhaojohnson,twcctop,bigtone,b0g0,DanielArmstrong,fyamf,GoatedAudits,0xCiphky,zigtur,xg,SBSecurity,lanrebayode77,blutorque,aslanbek,Aamir,araj,TheFabled,t0x1c,tapir,eeshenggoh,p0wd3r,peanuts,Greed,0xordersol,14si2o_Flint,guhu95, m_Rassska (1,2),ustazz,maxim371,Fassi_Security,shui,mt030d,aman,rbserver,mussucal,josephdara,zzykxx,honey-k12,0xnightfall,Maroutis,Aymen0909,OMEN,Stefanov,FastChecker,hunter_w3b,gesha17,baz1ka,kinda_very_good,carlitox477,0xAadi,0rpse,ak1,0x73696d616f,0xhacksmithh,ilchovski,LessDupes,adam-idarrha,siguint,0xnev,0xPwned,carrotsmuggler,KupiaSec,grearlake, and oakcobalt (1,2)
+When calculating TVL it iterates over all the operator delegators and inside it iterates over all the collateral tokens.
+for(uint256i=0;i<odLength; ) {...// Iterate through the tokens and get the value of eachuint256tokenLength=collateralTokens.length;for(uint256j=0;j<tokenLength; ) {...// record token value of withdraw queueif(!withdrawQueueTokenBalanceRecorded) {totalWithdrawalQueueValue+=renzoOracle.lookupTokenValue(collateralTokens[i],collateralTokens[j].balanceOf(withdrawQueue));}unchecked{++j;}}...unchecked{++i;}}
+However, the balance ofwithdrawQueueis incorrectly fetched, specifically this line:
+totalWithdrawalQueueValue+=renzoOracle.lookupTokenValue(collateralTokens[i],collateralTokens[j].balanceOf(withdrawQueue));
+It uses an incorrect index of the outer loopito access thecollateralTokens.ibelongs to the operator delegator index, thus the returned value will not represent the real value of the token. For instance, if there is 1 OD and 3 collateral tokens, it will add the balance of the first token 3 times and neglect the other 2 tokens. If there are more ODs than collateral tokens, the the execution will revert (index out of bounds).
+This calculation impacts the TVL which is the essential data when calculating mint/redeem and other critical values. A miscalculation in TVL could have devastating results.
+Proof of Concept
+A simplified version of the function to showcase that the same token (in this caseaddress(1)) is emitted multiple times and other tokens are untouched:
+contractRestakeManager{address[]publicoperatorDelegators;address[]publiccollateralTokens;eventCollateralTokenLookup(addresstoken);constructor() {operatorDelegators.push(msg.sender);collateralTokens.push(address(1));collateralTokens.push(address(2));collateralTokens.push(address(3));}functioncalculateTVLs()public{// Iterate through the ODsuint256odLength=operatorDelegators.length;for(uint256i=0;i<odLength; ) {// Iterate through the tokens and get the value of eachuint256tokenLength=collateralTokens.length;for(uint256j=0;j<tokenLength; ) {emitCollateralTokenLookup(collateralTokens[i]);unchecked{++j;}}unchecked{++i;}}}}
+Recommended Mitigation Steps
+Change tocollateralTokens[j].
+Assessed type
+Math
+jatinj615 (Renzo) confirmed and commented:
+Yeah, the index should bejnoti.
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.
+

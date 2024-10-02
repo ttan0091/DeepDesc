@@ -1,0 +1,27 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `onERC721Received` function allows reentrancy by calling `_cleanupLoan` before `_updateAndCheckCollateral`, which can be exploited by a malicious owner to manipulate the collateral token configs shares.
+Execution process: A malicious owner can use the `onERC721Received` callback when receiving the old token to call the `borrow` function, which modifies `loans[tokenId].debtShares` and calls `_updateAndCheckCollateral`. This results in incorrect accounting of internal token configs debt shares.
+Vulnerable code: 
+```solidity
+function onERC721Received(address, address from, uint256 tokenId, bytes calldata data) external override returns (bytes4) {
+    ...
+    if {...} else {
+        uint256 oldTokenId = transformedTokenId;
+        // if in transform mode - and a new position is sent - current position is replaced and returned
+        if (tokenId != oldTokenId) {
+            address owner = tokenOwner[oldTokenId];
+            // set transformed token to new one
+            transformedTokenId = tokenId;
+            // copy debt to new token
+            loans[tokenId] = Loan(loans[oldTokenId].debtShares);
+            _addTokenToOwner(owner, tokenId);
+            emit Add(tokenId, owner, oldTokenId);
+            // clears data of old loan
+            _cleanupLoan(oldTokenId, debtExchangeRateX96, lendExchangeRateX96, owner);
+            // sets data of new loan
+            _updateAndCheckCollateral(tokenId, debtExchangeRateX96, lendExchangeRateX96, 0, loans[tokenId].debtShares);
+        }
+    }
+    return IERC721Receiver.onERC721Received.selector;
+}
+```

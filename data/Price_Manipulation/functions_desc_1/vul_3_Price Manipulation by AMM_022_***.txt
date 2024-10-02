@@ -1,0 +1,36 @@
+This code defines an external function named claimAllReward, which allows users to claim all their accumulated rewards from their staked positions. Here’s a detailed explanation of how this function works:
+
+1. Preliminary Checks:
+    The function first checks if the user has any stakes by verifying that userInfo[msg.sender].userStakeList.length is greater than 0. If not, it reverts with the message 'no stake'.
+    It also checks if the user is blacklisted by checking the black[msg.sender] variable. If the user is blacklisted, the function reverts with the message 'black'.
+
+2. Initialization:
+    The function initializes a variable list which is a reference to the user's stake list stored in userInfo[msg.sender].userStakeList.
+    It declares variables rew and outAmount to keep track of the total rewards and the number of removed stakes, respectively.
+    It calculates the range of the loop by getting the length of the list.
+
+3. Loop Through Stakes:
+    The function iterates over each stake in the user's list using a for loop.
+    For each stake, it retrieves the corresponding UserSlot information from userSlot[msg.sender][list[i  outAmount]].
+    It checks if the totalQuota of the stake is not zero, otherwise, it reverts with the message 'wrong index'.
+
+4. Calculate and Update Rewards:
+    It calculates the reward quota by multiplying the time elapsed since the last claim (block.timestamp  info.claimTime) by the rate (info.rates).
+    If the calculated quota exceeds the remaining quota (info.leftQuota), it caps the quota to the remaining quota.
+    It then calculates the actual reward (rew) by multiplying the quota by 1e18 and dividing by the current EGD price obtained from getEGDPrice().
+    It updates the claimTime to the current timestamp, reduces the leftQuota by the claimed quota, and increases the claimedQuota by the claimed quota.
+
+5. Handle Fully Claimed Stakes:
+    If the leftQuota becomes zero, it means the stake is fully claimed:
+      It reduces the totalAmount in userInfo[msg.sender] by the totalQuota of the stake.
+      It deletes the UserSlot entry from userSlot[msg.sender].
+      It replaces the current stake in list with the last stake in the list and removes the last element using list.pop().
+      It increments outAmount to adjust the index for the next iteration.
+
+6. Finalize and Transfer Rewards:
+    After the loop, it updates the user's stake list in userInfo[msg.sender] with the modified list.
+    It transfers the total calculated reward (rew) to the user using EGD.transfer(msg.sender, rew).
+    It updates the totalClaimed amount in userInfo[msg.sender] by adding the claimed reward.
+    It emits a Claim event with the sender's address and the claimed reward amount.
+
+This function efficiently handles the claiming of rewards for all stakes of a user, updating their stake information, and transferring the rewards while ensuring data integrity and correctness.

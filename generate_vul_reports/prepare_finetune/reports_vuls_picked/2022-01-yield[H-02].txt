@@ -1,0 +1,31 @@
+Type of vulnerability: Accounting Inconsistency and Yield Extraction
+
+Cause of vulnerability: Lazy accounting in the `ConvexYieldWrapper` contract allows the same vault to be registered under multiple accounts, leading to double counting of collateral and yield.
+
+Execution process:
+1. Alice owns a vault with collateral and checkpoints her balance.
+2. Alice transfers the vault ownership to Bob using `Ladle.give()`.
+3. Bob calls `ConvexYieldWrapper.addVault()` and `user_checkpoint()` to update his checkpointed balance.
+4. Both Alice and Bob claim yield from the same collateral, effectively extracting more yield than intended.
+
+Vulnerable code:
+```solidity
+function _getDepositedBalance(address account_) internal view override returns (uint256) {
+    if (account_ == address(0) || account_ == collateralVault) {
+        return 0;
+    }
+    bytes12[] memory userVault = vaults[account_];
+    // add up all balances of all vaults registered in the wrapper and owned by the account
+    uint256 collateral;
+    DataTypes.Balances memory balance;
+    uint256 userVaultLength = userVault.length;
+    for (uint256 i = 0; i < userVaultLength; i++) {
+        if (cauldron.vaults(userVault[i]).owner == account_) {
+            balance = cauldron.balances(userVault[i]);
+            collateral = collateral + balance.ink;
+        }
+    }
+    // add to balance of this token
+    return _balanceOf[account_] + collateral;
+}
+```

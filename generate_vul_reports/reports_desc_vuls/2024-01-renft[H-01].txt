@@ -1,0 +1,30 @@
+Type of vulnerability: Order Hijacking via Tipping with Malicious ERC20 Tokens
+
+Cause of vulnerability: The Seaport protocol allows for "tipping" in the form of ERC20 tokens as part of the order fulfillment process by extending the `consideration` array in the order. The `Create` contract, which acts as a Seaport `Zone`, does not properly allocate consideration extensions, allowing a fulfiller to add malicious ERC20 tokens that can revert on transfer, thereby locking rental assets indefinitely.
+
+Execution process:
+1. Create a BASE order with Alice as the offerer.
+2. Finalize the order creation.
+3. Create an order fulfillment with Bob as the fulfiller.
+4. Append a malicious ERC20 token to the `consideration` array of the order.
+5. Finalize the order fulfillment.
+6. Attempt to stop the rent, which will fail due to the revert on transfer from the escrow.
+
+Vulnerable code:
+```solidity
+struct OrderParameters {
+    address offerer; // 0x00
+    address zone; // 0x20
+    OfferItem[] offer; // 0x40
+    ConsiderationItem[] consideration; // 0x60
+    OrderType orderType; // 0x80
+    uint256 startTime; // 0xa0
+    uint256 endTime; // 0xc0
+    bytes32 zoneHash; // 0xe0
+    uint256 salt; // 0x100
+    bytes32 conduitKey; // 0x120
+    uint256 totalOriginalConsiderationItems; // 0x140
+    // offer.length                          // 0x160
+}
+```
+The vulnerability arises because the order hash derivation in `_deriveOrderHash()` only considers the original length of the consideration items (`totalOriginalConsiderationItems`), ignoring any additional items added during fulfillment, which allows for the inclusion of malicious ERC20 tokens.

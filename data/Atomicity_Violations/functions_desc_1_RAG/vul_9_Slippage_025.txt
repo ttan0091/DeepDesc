@@ -1,0 +1,80 @@
+This code defines an external function named mint, which is used to mint new liquidity tokens in a decentralized finance (DeFi) pool. The function is marked as override to indicate that it overrides a function from an interface, and nonReentrant to prevent reentrancy attacks. The function returns the amount of liquidity tokens minted.
+
+Here’s a detailed explanation of how this function works:
+
+1. Retrieve Reserves and Balances:
+   solidity
+   (uint112 reserveNative, uint112 reserveForeign, ) = getReserves(); // gas savings
+   uint256 balanceNative = nativeAsset.balanceOf(address(this));
+   uint256 balanceForeign = foreignAsset.balanceOf(address(this));
+   
+    The function starts by calling getReserves() to retrieve the current reserves of native and foreign assets in the pool. This function typically returns the reserves and the last timestamp when the reserves were updated.
+    It then gets the current balances of the native and foreign assets in the contract using nativeAsset.balanceOf(address(this)) and foreignAsset.balanceOf(address(this)).
+
+2. Calculate Deposits:
+   solidity
+   uint256 nativeDeposit = balanceNative  reserveNative;
+   uint256 foreignDeposit = balanceForeign  reserveForeign;
+   
+    The function calculates the amount of native and foreign assets deposited by subtracting the current reserves from the current balances.
+
+3. Calculate Liquidity Units:
+   solidity
+   uint256 totalLiquidityUnits = totalSupply;
+   if (totalLiquidityUnits == 0)
+       liquidity = nativeDeposit; // TODO: Contact ThorChain on proper approach
+   else
+       liquidity = VaderMath.calculateLiquidityUnits(
+           nativeDeposit,
+           reserveNative,
+           foreignDeposit,
+           reserveForeign,
+           totalLiquidityUnits
+       );
+   
+    The function checks if the total supply of liquidity tokens is zero. If it is, it sets the liquidity to the amount of native deposit. This is a placeholder and should be reviewed with ThorChain for the proper approach.
+    If the total supply is not zero, it calculates the liquidity units using the VaderMath.calculateLiquidityUnits function, which takes the deposits, reserves, and total liquidity units as inputs.
+
+4. Require Sufficient Liquidity:
+   solidity
+   require(
+       liquidity > 0,
+       "BasePool::mint: Insufficient Liquidity Provided"
+   );
+   
+    The function requires that the calculated liquidity is greater than zero, ensuring that sufficient liquidity has been provided.
+
+5. Mint Liquidity Tokens:
+   solidity
+   uint256 id = positionId++;
+   totalSupply += liquidity;
+   _mint(to, id);
+   
+    The function generates a new position ID using positionId++ and increments the total supply of liquidity tokens by the calculated liquidity.
+    It then mints the new liquidity tokens to the specified address to using the _mint function.
+
+6. Store Position Information:
+   solidity
+   positions[id] = Position(
+       block.timestamp,
+       liquidity,
+       nativeDeposit,
+       foreignDeposit
+   );
+   
+    The function stores the details of the new position in the positions mapping, including the timestamp, liquidity, native deposit, and foreign deposit.
+
+7. Update Reserves:
+   solidity
+   _update(balanceNative, balanceForeign, reserveNative, reserveForeign);
+   
+    The function updates the reserves with the new balances of native and foreign assets using the _update function.
+
+8. Emit Events:
+   solidity
+   emit Mint(msg.sender, to, nativeDeposit, foreignDeposit);
+   emit PositionOpened(msg.sender, id, liquidity);
+   
+    Finally, the function emits two events: Mint to indicate that new liquidity tokens have been minted, and PositionOpened to indicate that a new position has been opened.
+
+This function is critical for adding liquidity to the pool and minting corresponding liquidity tokens, which represent the share of the pool owned by the liquidity provider.

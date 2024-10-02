@@ -1,0 +1,20 @@
+Type of contract: ERC20 Token
+
+**Purpose of the contract:**
+The ESS contract allows an account to contribute funds to a contract that does not contain any logic for reporting this contribution fundewise. The ESS contract itself provides the logic for reporting the contribution.
+
+**Functions in the contract:**
+1. `contribute(address _jetfuel, uint256 _contribution)`: Allows a user to contribute funds to the ESS, designated for _jetfuel. The user will be added to the `holders` array and `_contribution` will be stored to the account that this ESS token corresponds to based on the current `jetfuel.howBigEther(msg.sender)`.
+2. `withdrawPUB()`: Checks if the current time is past `pubEnd`, and allows the `msg.sender` to withdraw their share of `sold[msg.sender]` from the token via a call to `token.transfer()`. If `pubEnd` is 0 (presumably indicating that the sale has ended), the function immediately returns true without handling any tokens.
+
+**Critical aspects of the contract:**
+1. `contribute()` stores contributions in `sold[]` in the parent contract `jetfuel_3_minutes.ess.sol`. This ensures that every account that paid for their ticket will appear in `holders` array, even if the account holds only 1‱ of total supply. 
+2. The mechanism of marking a contract as `mildlyFaulty` if the contribution size is too small.
+3. Updating the `pubEnd` only upon the first contribution.
+4. Records made by the ESS contract can be "trued up" by dividing `sold[msg.sender]` amount for every contributor by `howBigEther[msg.sender]`.
+5. `withdrawPUB` function ensures that only `sold` amounts can be withdrawn which correspond to the value of the `contribution` which was charged to the user (to prevent abuse of the system).
+
+**Summary of the process:**
+1. A user contributes funds using `contribute()` which stores the contribution in `sold[]` in the parent contract.
+2. Funds are allocated based on `howBigEther[msg.sender]` values.
+3. Once `pubEnd` is set (when the first contribution is made), tokens can be withdrawn using `withdrawPUB()`.

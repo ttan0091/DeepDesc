@@ -1,0 +1,32 @@
+This code defines an internal function named concatStorage, which concatenates the contents of a bytes storage array (_preBytes) with a bytes memory array (_postBytes). The function modifies the storage array to include the additional bytes from the memory array. Here’s a detailed explanation of how this function works:
+
+1. Reading the Length of _preBytes:
+    The function starts by reading the first 32 bytes of the _preBytes storage slot, which contains the length of the array. This is done using sload(_preBytes.slot).
+    The length is calculated based on whether the slot value is even or odd. If the slot is even, the length is derived by bitwise ANDing the slot with 255 and dividing by two. If the slot is odd, the length is derived by bitwise ANDing the slot with 1 and dividing by two.
+
+2. Calculating the New Length:
+    The length of the _postBytes array is obtained using mload(_postBytes).
+    The new length of the concatenated array is calculated by adding the lengths of _preBytes and _postBytes.
+
+3. Handling Different Cases Based on Lengths:
+    The function uses a switch statement to handle three different cases based on the lengths of the arrays:
+      Case 2: Both the original and the new array fit within a single storage slot.
+        The function updates the contents of the storage slot by adding the new bytes from _postBytes to the existing bytes in _preBytes.
+        This is done by shifting the bytes from _postBytes to the left and adding them to the existing slot contents.
+      Case 1: The original array fits in a slot, but the combined array exceeds it.
+        The function calculates the Keccak hash to determine the storage location for the new bytes.
+        It updates the length and then copies the bytes from _postBytes into the storage slots, handling the overlap and masking as needed.
+      Default Case: The combined array spans multiple storage slots.
+        Similar to Case 1, the function calculates the Keccak hash and updates the length.
+        It then copies the bytes from _postBytes into the storage slots, handling the overlap and masking.
+
+4. Updating Storage:
+    For each case, the function updates the storage slots to include the new bytes from _postBytes.
+    It uses sstore to write the updated values back to storage, ensuring that the new length and contents are correctly reflected.
+
+### Key Points:
+ The function uses inline assembly to efficiently manipulate storage slots and handle the concatenation of bytes arrays.
+ It carefully handles the different scenarios where the arrays fit within a single slot, exceed a single slot, or span multiple slots.
+ The function ensures that the new length and contents are correctly stored in the _preBytes storage array.
+
+This function is designed to be efficient and handle various edge cases related to the storage and concatenation of bytes arrays in Solidity.

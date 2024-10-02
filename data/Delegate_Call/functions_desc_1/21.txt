@@ -1,0 +1,36 @@
+This code defines a smart contract named PreICOProxyBuyer, which manages investor balances and allows for refunds. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping(address => uint) public balances;: This line declares a public state variable balances which is a mapping that associates Ethereum addresses with unsigned integer values. This mapping is used to store the balance of each investor.
+    address investor = msg.sender;: This line declares a state variable investor and initializes it with the address of the message sender (msg.sender). This variable is used to track the address of the investor interacting with the contract.
+
+2. Function refund():
+    Function Declaration:
+     solidity
+     function refund() {
+     
+     This line declares a function named refund which does not take any parameters and does not return any values.
+
+    Check for Zero Balance:
+     solidity
+     if(balances[investor] == 0) throw;
+     
+     This line checks if the balance of the investor (balances[investor]) is zero. If it is, the function throws an exception, which reverts the state changes and stops execution. This ensures that an investor with a zero balance cannot request a refund.
+
+    Retrieve and Reset Balance:
+     solidity
+     uint amount = balances[investor];
+     balances[investor] = 0;
+     
+     These lines first retrieve the balance of the investor into a local variable amount. Then, it sets the investor's balance to zero in the balances mapping. This ensures that the investor's balance is reset before the refund is processed, preventing double spending.
+
+    Send Ether to Investor:
+     solidity
+     if(!(investor.call.value(amount)())) throw;
+     
+     This line uses the call method to send Ether to the investor. The call.value(amount)() function sends the specified amount of Ether to the investor address. The ! operator checks if the call was unsuccessful (i.e., if it returns false). If the call fails, the function throws an exception, which reverts the state changes and stops execution. This ensures that the contract does not proceed if the refund fails.
+
+3. Summary:
+   The refund function allows an investor to withdraw their balance from the contract. It first checks if the investor has a nonzero balance, retrieves the balance, resets it to zero, and then sends the corresponding amount of Ether to the investor. If any step fails, the function throws an exception, reverting any state changes to prevent inconsistent states.
+
+This contract design ensures that investors can only withdraw their balances if they have a nonzero balance and that the contract does not proceed if the refund transaction fails. However, it's important to note that using call.value() can be risky due to potential reentrancy issues, which should be addressed with proper checks and balances or by using the transfer method which is safer but has a lower gas limit.

@@ -1,0 +1,16 @@
+Type of vulnerability: Incorrect Liquidation Reward Computation
+
+Cause of vulnerability: The liquidator reward is incorrectly computed using `userBorrowPart[user]`, which does not include accumulated fees (interests). This leads to an overestimation of the liquidator's reward.
+
+Execution process: When a liquidator calls the `_liquidateUser()` function, the reward is calculated using `_getCallerReward()`. However, this function uses `userBorrowPart[user]` which does not account for accumulated fees, leading to a higher reward than intended.
+
+Vulnerable code: 
+```solidity
+uint256 callerReward = _getCallerReward(
+    // @audit - userBorrowPart[user] is incorrect as it does not include accumulated fees
+    userBorrowPart[user],
+    startTVLInAsset,
+    maxTVLInAsset
+);
+```
+This code snippet from `BigBang.sol` and similar snippets in `SGLLiquidation.sol` and `Market.sol` are vulnerable as they do not correctly account for the full borrowed amount including fees.

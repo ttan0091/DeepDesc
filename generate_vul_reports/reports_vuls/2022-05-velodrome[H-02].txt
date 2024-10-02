@@ -1,0 +1,26 @@
+[H-02]VotingEscrow’s merge and withdraw aren’t available for approved users
+Submitted by hyh, also found by hansfriese, rotcivegaf, and WatchPug
+Users who are approved, but do not own a particular NFT, are supposed to be eligible to call merge and withdraw from the NFT.
+Currently _burn(), used by merge() and withdraw() to remove the NFT from the system, will revert unless the sender is the owner of NFT as the function tries to update the accounting for the sender, not the owner.
+Setting the severity to medium as the impact is merge() and withdraw() permanent unavailability for any approved sender, who isn’t the owner of the involved NFT.
+Proof of Concept
+_removeTokenFrom() requires_fromto be the NFT owner as it removes_tokenIdfrom the_fromaccount:
+VotingEscrow.sol#L504-L515
+/// @dev Remove a NFT from a given address///      Throws if `_from` is not the current owner.function_removeTokenFrom(address_from,uint_tokenId)internal{// Throws if `_from` is not the current ownerassert(idToOwner[_tokenId] ==_from);// Change the owneridToOwner[_tokenId] =address(0);// Update owner token index tracking_removeTokenFromOwnerList(_from,_tokenId);// Change count trackingownerToNFTokenCount[_from] -=1;}
+_burn() allows_tokenIdto approved or owner, but calls _removeTokenFrom() withmsg.senderas_from:
+VotingEscrow.sol#L517-L528
+function_burn(uint_tokenId)internal{require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");addressowner=ownerOf(_tokenId);// Clear approvalapprove(address(0),_tokenId);// TODO add delegates// Remove token_removeTokenFrom(msg.sender,_tokenId);emitTransfer(owner,address(0),_tokenId);}
+This way if _burn() is called by an approved account who isn’t an owner, it will revert on _removeTokenFrom()‘sassert(idToOwner[_tokenId] == _from)check.
+Now burn() is used by merge():
+VotingEscrow.sol#L1084-L1097
+functionmerge(uint_from,uint_to)external{require(attachments[_from] ==0&& !voted[_from],"attached");require(_from!=_to);require(_isApprovedOrOwner(msg.sender,_from));require(_isApprovedOrOwner(msg.sender,_to));LockedBalancememory_locked0=locked[_from];LockedBalancememory_locked1=locked[_to];uintvalue0=uint(int256(_locked0.amount));uintend=_locked0.end>=_locked1.end?_locked0.end:_locked1.end;locked[_from] =LockedBalance(0,0);_checkpoint(_from,_locked0,LockedBalance(0,0));_burn(_from);
+And withdraw():
+VotingEscrow.sol#L842-L864
+/// @notice Withdraw all tokens for `_tokenId`/// @dev Only possible if the lock has expiredfunctionwithdraw(uint_tokenId)externalnonreentrant{assert(_isApprovedOrOwner(msg.sender,_tokenId));require(attachments[_tokenId] ==0&& !voted[_tokenId],"attached");LockedBalancememory_locked=locked[_tokenId];require(block.timestamp>=_locked.end,"The lock didn't expire");uintvalue=uint(int256(_locked.amount));locked[_tokenId] =LockedBalance(0,0);uintsupply_before=supply;supply=supply_before-value;// old_locked can have either expired <= timestamp or zero end// _locked has only 0 end// Both can have >= 0 amount_checkpoint(_tokenId,_locked,LockedBalance(0,0));assert(IERC20(token).transfer(msg.sender,value));// Burn the NFT_burn(_tokenId);
+Recommended Mitigation Steps
+Consider changing _removeTokenFrom() argument to be the owner:
+VotingEscrow.sol#L517-L528
+function_burn(uint_tokenId)internal{require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");addressowner=ownerOf(_tokenId);// Clear approvalapprove(address(0),_tokenId);// TODO add delegates// Remove token-_removeTokenFrom(msg.sender,_tokenId);+_removeTokenFrom(owner,_tokenId);emitTransfer(owner,address(0),_tokenId);}
+pooltypes (Velodrome) disputed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has shown how an approved user is unable to execute ordinary operations due to a logic flaw. While the impact may make Medium Severity valid, as the owner can still operate, but delegated users cannot, I believe the finding shows a logical flaw in the system in that it doesn’t work as intended.For that reason I believe this finding is of High Severity.

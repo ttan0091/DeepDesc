@@ -1,0 +1,47 @@
+[H-05] Multiple issues with decimal scaling will cause incorrect accounting of hTokens and underlying tokens
+Submitted bypeakbolt, also found by BPZ (1,2,3),RED-LOTUS-REACH,0xTheC0der, ltyu (1,2,3,4,5), bin2chen (1,2), kodyvim (1,2), 0xStalin (1,2),LokiThe5th,ubermensch,adeolu,jasonxiale, andkutugu
+Lines of code
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L313https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L696https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L745
+Vulnerability details
+Functions_normalizeDecimals()and_denormalizeDecimals()are used to handle non-18 decimal tokens when bridging a deposit by scaling them to a normalized 18 decimal form forhTokenaccounting, and then de-normalizing them to the token’s decimals when interacting with the underlying token.
+However, there are 3 issues as follows:
+Implementations of_normalizeDecimals()and_denormalizeDecimals()are reversed.The function_denormalizeDecimals()is missing inArbitrumBranchPort.depositToPort().The function_normalizeDecimals()is missing in functions withinBranchBridgeAgent.
+These issues will cause an incorrect accounting ofhTokensand underlying tokens in the system.
+Impact
+An incorrect decimal scaling will lead to a loss of funds, as the amount deposited and withdrawn for bridging will be inaccurate. This can be abused by an attacker or result in users incurring losses.
+For example, an attacker can abuse theArbitrumBranchPort.depositToPort()issue and steal from the system by first depositing a token that has more than 18 decimals. The attacker will receive morehTokensthan the deposited underlying token amount. The attacker can then make a profit by withdrawing from the port with the excesshTokens.
+On the other hand, if the underlying token is less than 18 decimals, the depositor can incur losses, as the amount of underlying tokens deposited will be more than the amount ofhTokensreceived.
+Issue #1
+The functionsBranchBridgeAgent._normalizeDecimals()andBranchPort._denormalizeDecimals()(shown below) are incorrect, as they are implemented in a reversed manner; such that_denormalizeDecimals()is normalizing to 18 decimals while_normalizeDecimals()is de-normalizing to the underlying token decimals.
+The result is that for tokens with > 18 decimals,_normalizeDecimals()will overscale the decimals, while for tokens with < 18 decimals,_normalizeDecimals()will underscale the decimals.
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L1340-L1342
+function_normalizeDecimals(uint256_amount,uint8_decimals)internalpurereturns(uint256) {return_decimals==18?_amount:_amount* (10**_decimals) /1ether;}
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchPort.sol#L388-L390
+function_denormalizeDecimals(uint256_amount,uint8_decimals)internalpurereturns(uint256) {return_decimals==18?_amount:_amount*1ether/ (10**_decimals);}
+Issue #2
+The functionArbitrumBranchPort.depositToPort()is missing the call_denormalizeDecimals()to scale back the decimals of the underlying token amounts before transferring. This will cause the wrong amount of the underlying tokens to be transferred.
+As shown below, the functionArbitrumBranchBridgeAgent.depositToPort()has normalized the “amount” to 18 decimals before passing intoArbitrumBranchPort.depositToPort().
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/ArbitrumBranchBridgeAgent.sol#L104
+functiondepositToPort(addressunderlyingAddress,uint256amount)externalpayablelock{//@audit - amount is normalized to 18 decimals hereIArbPort(localPortAddress).depositToPort(msg.sender,msg.sender,underlyingAddress,_normalizeDecimals(amount,ERC20(underlyingAddress).decimals()));}
+That means, the_depositamount forArbitrumBranchPort.depositToPort()(see below) will be incorrect, as it is not de-normalized back to the underlying token’s decimal, causing the wrong value to be transferred from the depositor.
+If the underlying token is more than 18 decimals, the depositor will transfer less underlying tokens than thehTokenreceived, resulting in excesshTokens. The depositor can then callwithdrawFromPort()to receive more underlying tokens than deposited.
+If the underlying token is less than 18 decimals, that will inflate the amount to be transferred from the depositor, causing the depositor to deposit more underlying tokens than the amount ofhTokenreceived. The depositor will incur a loss when withdrawing from the port.
+Instead, the_depositshould be de-normalized inArbitrumBranchPort.depositToPort()when passing to_underlyingAddress.safeTransferFrom(), so that it is scaled back to the underlying token’s decimals when transferring.
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/ArbitrumBranchPort.sol#L52-L54
+functiondepositToPort(address_depositor,address_recipient,address_underlyingAddress,uint256_deposit)externalrequiresBridgeAgent{addressglobalToken=IRootPort(rootPortAddress).getLocalTokenFromUnder(_underlyingAddress,localChainId);if(globalToken==address(0))revertUnknownUnderlyingToken();//@audit - the amount of underlying token should be denormalized first before transferring_underlyingAddress.safeTransferFrom(_depositor,address(this),_deposit);IRootPort(rootPortAddress).mintToLocalBranch(_recipient,globalToken,_deposit);}
+Issue #3
+InBranchBridgeAgent, the deposit amount passed into_depositAndCall()and_depositAndCallMultiple()are missing_normalizeDecimals().
+The example below showscallOutSignedAndBridge(), but the issue is also present incallOutAndBridge(),callOutSignedAndBridgeMultiple()andcallOutAndBridgeMultiple().
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L269
+functioncallOutSignedAndBridge(bytescalldata_params,DepositInputmemory_dParams,uint128_remoteExecutionGas)externalpayablelockrequiresFallbackGas{//Encode Data for cross-chain call.bytesmemorypackedData=abi.encodePacked(bytes1(0x05),msg.sender,depositNonce,_dParams.hToken,_dParams.token,_dParams.amount,_normalizeDecimals(_dParams.deposit,ERC20(_dParams.token).decimals()),_dParams.toChain,_params,msg.value.toUint128(),_remoteExecutionGas);//Wrap the gas allocated for omnichain execution.wrappedNativeToken.deposit{value:msg.value}();//Create Deposit and Send Cross-Chain request_depositAndCall(msg.sender,packedData,_dParams.hToken,_dParams.token,_dParams.amount,//@audit - the deposit amount of underlying token should be noramlized first_dParams.deposit,msg.value.toUint128());}
+This will affect_createDepositSingle()and_createDepositMultiple(), leading to incorrect decimals forIPort(localPortAddress).bridgeOut(), which will affecthTokenburning and the deposit of underlying tokens.
+At the same time, the deposits to be stored ingetDeposit[]are also not normalized, causing a mismatch of decimals whenclearToken()is called viaredeemDeposit().
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L857-L891
+function_createDepositSingle(address_user,address_hToken,address_token,uint256_amount,uint256_deposit,uint128_gasToBridgeOut)internal{//Deposit / Lock Tokens into PortIPort(localPortAddress).bridgeOut(_user,_hToken,_token,_amount,_deposit);//Deposit Gas to Port_depositGas(_gasToBridgeOut);// Cast to dynamic memory arrayaddress[]memoryhTokens=newaddress[](1);hTokens[0] =_hToken;address[]memorytokens=newaddress[](1);tokens[0] =_token;uint256[]memoryamounts=newuint256[](1);amounts[0] =_amount;uint256[]memorydeposits=newuint256[](1);deposits[0] =_deposit;// Update StategetDeposit[_getAndIncrementDepositNonce()] =Deposit({owner:_user,hTokens:hTokens,tokens:tokens,amounts:amounts,//@audit the deposits stored is not normalized, causing a mismatch of decimals when `clearToken()` is called via `redeemDeposit()`deposits:deposits,status:DepositStatus.Success,depositedGas:_gasToBridgeOut});}
+Recommended Mitigation Steps
+Switch the implementation of_normalizeDecimals()to_denormalizeDecimals()and vice versa.Add_denormalizeDecimals()toArbitrumBranchPort.depositToPort()when callingIRootPort(rootPortAddress).mintToLocalBranch().Utilize_normalizeDecimals()when passing deposit amounts to_depositAndCall()and_depositAndCallMultiple()withinBranchBridgeAgent.
+Assessed type
+Decimal
+0xLightt (Maia) confirmed
+0xBugsy (Maia) commented:
+We recognize the audit’s findings on Decimal Conversion for Ulysses AMM. These will not be rectified due to the upcoming migration of this section to Balancer Stable Pools.

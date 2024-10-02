@@ -1,0 +1,17 @@
+Type of contract: Keep3rV1Liquidity
+Design pattern: Flashloan
+Vulnerability: Price manipulation in Behodler due to moving peg
+Functionality: Make Flare Loans to buy options, ensure that options get hit by selling in the money ones for profit
+Working process:
+1. Get CallData first to figure out what the Keep3rV1Liquidity should do.
+2. Currently, there is only one case: leverage (snippetId 7) which contains the following steps:
+    a. getLatestFLNQuote(): uses Behodler withdraw liquidity method >> to get DAI_SCX and DAI balance on Behodler
+    b. daiToEth() and daiToEthWithoutFee() to get the price of DAI
+    c. getUniswapPrice(): Will be used to see how much the Keep3rV1V2 has to sell, fetches the current Uniswap price through Uniswap itself
+    d. Provides the maximum input as 10% of the contract
+    e. DaiBalanceFromPrice, sumTokensInPeg are used to get the right amount of SCX from the depths of Behodler
+    f. Launch FlareLoan.buyItOption() which is the flashloan, the other parameters are selfexplanatory
+3. Watch out for postCall, this will pop the parameters off the Pact.pay call out of memory. This call is invoked after FlareLoan.buyItOption is finished directly.
+4. 1% of the profit has to be transferred to the Keep3rContract, sends 1% of the LP to the Keep3r to notify others of withdrawals
+5. Launch the buyItOption method from deployer to proceed with the loan
+6. Done

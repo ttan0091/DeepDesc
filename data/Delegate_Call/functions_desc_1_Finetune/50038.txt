@@ -1,0 +1,12 @@
+Type of vulnerability or security issue: DelegateCall Misuse
+
+Cause of vulnerability: 
+1. The sweep method of the Controller contract uses delegatecall to delegate the execution of a method call to a target address and executes the target method in the context of the msg.sender.
+2. The target contract PowerIndexFactory is designed to receive Ether payments with a fallback function, which allows any value passed with a method call to be sent to PowerIndexFactory as an Ether payment.
+3. The sweep method incorrectly includes the _amount value as part of the delegatecall, which is interpreted as calldata that the PowerIndexFactory contract cannot process.
+
+Potential exploitation: 
+An attacker could call the Controller contract's sweep method with a supported token address and an arbitrary amount, leading to the transfer of the specified amount of the token to the PowerIndexFactory contract. However, since the PowerIndexFactory does not support the receive method for token payments, these tokens would be stuck in the contract permanently.
+
+Mitigation: 
+The sweep method should be either removed or replaced to avoid the misuse of delegatecall. Alternatively, the PowerIndexFactory contract could be updated to support the receive method for token payments, allowing the contract to transfer the tokens out, though this may involve additional risks and considerations.

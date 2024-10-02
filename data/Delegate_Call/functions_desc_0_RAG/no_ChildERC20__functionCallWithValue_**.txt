@@ -1,0 +1,25 @@
+This code defines a private function named _functionCallWithValue, which is designed to execute a lowlevel call to another contract with specified data and value (in wei). This function is commonly used in smart contracts to interact with other contracts in a flexible manner, handling potential errors and reverts gracefully.
+
+Here’s a detailed explanation of how this function works:
+
+1. Parameter Validation:
+    address target: The address of the contract or account to which the call is being made.
+    bytes memory data: The data payload to send with the call, typically ABIencoded function calls and parameters.
+    uint256 weiValue: The amount of Ether (in wei) to send along with the call.
+    string memory errorMessage: A custom error message to revert with if the call fails without a specific revert reason.
+
+2. Contract Check:
+    The function begins by checking if the target is indeed a contract address using the isContract(target) function. This is crucial to ensure that the call is not being made to a noncontract address, which could lead to unexpected behavior or security risks. If the target is not a contract, the function reverts with the message "Address: call to noncontract".
+
+3. LowLevel Call Execution:
+    The function then proceeds to execute a lowlevel call using target.call{ value: weiValue }(data). This call sends the specified weiValue along with the data payload to the target address. The result of this call is captured in two variables: success (a boolean indicating whether the call was successful) and returndata (the data returned by the call, if any).
+
+4. Handling Call Results:
+    If the call is successful (success is true), the function returns the returndata received from the call.
+    If the call fails (success is false), the function checks if there is any returndata returned. If returndata has a length greater than 0, it indicates that the call reverted with a specific reason. In this case, the function uses inline assembly to extract and revert with the revert reason from returndata.
+    If there is no returndata (indicating a revert without a specific reason), the function reverts with the provided errorMessage.
+
+5. Error Handling with Inline Assembly:
+    The inline assembly block (assembly { ... }) is used to handle the revert reason efficiently. It reads the size of the returndata and uses it to revert the transaction, effectively bubbling up the revert reason to the caller of _functionCallWithValue.
+
+This function is a robust mechanism for making lowlevel calls in Solidity, ensuring that any errors or reverts are handled gracefully and that detailed error information is propagated back to the caller. This is particularly useful in complex smart contract systems where interactions with external contracts are frequent and critical.

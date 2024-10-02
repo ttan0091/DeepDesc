@@ -1,0 +1,18 @@
+[H-37] Liquidation transactions can potentially fail for all markets
+Submitted byzzzitron, also found byGalloDaSballo
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L315-L316
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L340-L344
+As an example, when callingBigBang.liquidate()the tx potentially fails, because the subsequent call toMarket.updateExchangeRate(BigBang.sol line 316) can face a revert condition on line 344 in Market.sol.
+InMarket.updateExchangeRate()a revert is triggered ifrateis not bigger than 0 - see line 344 in Market.sol.
+Liquidations should never fail and instead use the old exchange rate - see BigBang.sol line 315 comment:
+// Oracle can fail but we still need to allow liquidations
+But the liquidation transaction can potentially fail when trying to fetch the new exchange rate viaMarket.updateExchangeRate()as shown above.
+This issue applies for all markets (Singularity, BigBang) since the revert during the liquidation happens in the Market.sol contract from which all markets inherit.
+Because of this issue user’s collateral values may fall below their debt values, without being able to liquidate them, pushing the protocol into insolvency.
+This is classified as high risk because liquidation is an essential functionality of the protocol.
+Proof of Concept
+Here is a POC that shows that a liquidation tx reverts according to the issue described above:
+https://gist.github.com/zzzitron/90206267434a90990ff2ee12e7deebb0
+Recommended Mitigation Steps
+Instead of reverting on line 344 in Market.sol when fetching the exchange rate, consider to return the old rate instead, so that the liquidation can be executed successfully.
+0xRektora (Tapioca) confirmed

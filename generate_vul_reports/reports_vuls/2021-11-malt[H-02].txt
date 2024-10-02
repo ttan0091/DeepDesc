@@ -1,0 +1,10 @@
+[H-02] Unable to remove liquidity in Recovery Mode
+Submitted by gzeon
+According tohttps://github.com/code-423n4/2021-11-malt#high-level-overview-of-the-malt-protocol
+When the Malt price TWAP drops below a specified threshold (eg 2% below peg) then the protocol will revert any transaction that tries to remove Malt from the AMM pool (ie buying Malt or removing liquidity). Users wanting to remove liquidity can still do so via the UniswapHandler contract that is whitelisted in recovery mode.
+However, inhttps://github.com/code-423n4/2021-11-malt/blob/c3a204a2c0f7c653c6c2dda9f4563fd1dc1cecf3/src/contracts/DexHandlers/UniswapHandler.sol#L236liquidity removed is directly sent to msg.sender, which would revert if it is not whitelistedhttps://github.com/code-423n4/2021-11-malt/blob/c3a204a2c0f7c653c6c2dda9f4563fd1dc1cecf3/src/contracts/PoolTransferVerification.sol#L53
+Recommended Mitigation Steps
+Liquidity should be removed to UniswapHandler contract, then the proceed is sent to msg.sender
+0xScotch (sponsor) confirmed
+Alex the Entreprenerd (judge) commented:
+I believe this finding to be correct, because of the whitelisting onverifyTransfer, during recovery mode the removal of liquidity from UniSwapV2Pair will perform safeTransfers:https://github.com/Uniswap/v2-core/blob/4dd59067c76dea4a0e8e4bfdda41877a6b16dedc/contracts/UniswapV2Pair.sol#L148This means that the_beforeTokenTransferwill be called which eventually will callverifyTransferwhich, if the price is below peg will revert.Transfering the funds to the whitelisted contract should avoid this issue.I’d like to remind the sponsor that anyone could deploy similar swapping contracts (or different ones such as curve), so if a person is motivate enough, all the whitelisting could technically be sidestepped.That said, given the condition of LPing on Uniswap, the check and the current system would make it impossible to withdraw funds.Because this does indeed compromises the availability of funds (effectively requiring the admin to unstock them manually via Whitelisting each user), I agree with High Severity

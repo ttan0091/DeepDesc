@@ -1,0 +1,16 @@
+This code defines a smart contract named SIMPLE_PIGGY_BANK, which implements a basic piggy bank functionality. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping (address => uint) public Bal;: This is a mapping that associates each address (user) with a balance of tokens. The public keyword automatically generates a getter function for each entry in the mapping, allowing external contracts or users to query the balance of any address.
+    uint public MinSum = 1 ether;: This variable defines the minimum sum (in wei) that a user must have in their balance to be able to collect (withdraw) funds. The value is set to 1 ether, which is equivalent to 1,000,000,000,000,000,000 wei.
+
+2. Function:
+    function Collect(uint _am) public payable {: This function allows users to collect (withdraw) a specified amount (_am) from their balance. The public keyword makes the function callable from outside the contract, and payable indicates that the function can receive Ether.
+      if(Bal[msg.sender] >= MinSum) {: This condition checks if the balance of the sender (msg.sender) is greater than or equal to the minimum sum required (MinSum).
+        msg.sender.call.value(_am);: If the condition is met, this line sends the specified amount (_am) of Ether to the sender using the call method. The call method is a lowlevel function that forwards all available gas, which can be dangerous if not handled properly (see Reentrancy Attack below).
+        Bal[msg.sender] = _am;: After successfully sending the Ether, this line deducts the collected amount from the sender's balance.
+
+Potential Security Concern:
+ Reentrancy Attack: The use of call.value(_am) is susceptible to reentrancy attacks. If the recipient of the Ether is a malicious contract that calls back into the Collect function before the balance is updated, it could repeatedly withdraw funds without the balance being correctly reduced. This can be mitigated by updating the balance before making the transfer or by using the transfer method which forwards a fixed amount of gas and prevents reentrancy.
+
+In summary, the SIMPLE_PIGGY_BANK contract allows users to deposit and collect Ether, provided they have a balance greater than or equal to a predefined minimum sum. However, the contract should be updated to address the potential reentrancy vulnerability for secure deployment.

@@ -1,0 +1,45 @@
+The code provided defines a smart contract named TelcoinSaleCapEscrow which includes a mapping to track deposits and a function to reject a participant's deposit. Here’s a detailed explanation of how this function works:
+
+### Contract Overview
+The TelcoinSaleCapEscrow contract maintains a public mapping named deposited that maps addresses to uint256 values. This mapping is used to keep track of the amount of Wei deposited by each participant.
+
+### Function reject
+The reject function is designed to handle the rejection of a participant's deposit. It takes one parameter, _participant, which is the address of the participant whose deposit is being rejected.
+
+#### Detailed Steps:
+1. Retrieve Deposit Amount:
+   solidity
+   uint256 weiAmount = deposited[_participant];
+   
+   This line retrieves the amount of Wei deposited by the participant and stores it in the variable weiAmount.
+
+2. Require Statement:
+   solidity
+   require(_participant.call.value(weiAmount)());
+   
+   This line is crucial and involves a lowlevel call to the participant's address, sending the amount of Wei stored in weiAmount. The require statement ensures that this call is successful. If the call fails (e.g., if the participant's contract does not implement a payable fallback function or runs out of gas), the transaction will revert, and no changes will be made to the state.
+
+3. Reset Deposit Amount:
+   solidity
+   deposited[_participant] = 0;
+   
+   After successfully sending the Wei back to the participant, this line resets the deposit amount for the participant to zero, effectively clearing their deposit record.
+
+### Potential Vulnerabilities
+While the code is straightforward, it does have a notable vulnerability related to the use of the lowlevel call function. This function can be susceptible to reentrancy attacks if not handled properly. Specifically, if the participant's contract executes a function that calls back into the reject function before the state is fully updated (i.e., before deposited[_participant] = 0 is executed), it could potentially allow the participant to withdraw their deposit multiple times.
+
+### Mitigation
+To mitigate the risk of reentrancy, the function could be updated to follow the "checkseffectsinteractions" pattern, which ensures that all state changes are made before any external calls are executed. Here’s how the function could be modified:
+
+solidity
+function reject(address _participant) public {
+    uint256 weiAmount = deposited[_participant];
+    deposited[_participant] = 0; // Reset deposit amount before making the call
+    require(_participant.call.value(weiAmount)());
+}
+
+
+By resetting the deposit amount before making the call, the contract ensures that any subsequent calls back into the reject function will not find any Wei to withdraw, thus preventing reentrancy attacks.
+
+### Conclusion
+The TelcoinSaleCapEscrow contract's reject function is designed to return a participant's deposit and clear their deposit record. However, it should be updated to follow best practices to prevent potential reentrancy attacks.

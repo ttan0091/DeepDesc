@@ -1,0 +1,24 @@
+Type of vulnerability: Denial of Service (DoS) and Incorrect Calculation
+Cause of vulnerability: The `syncVaderPrice` function skips initializing the weights for pairs if the update period has not been reached, leading to incorrect total liquidity weight calculations and potential division by zero errors.
+Execution process: An attacker can exploit this by calling `syncVaderPrice` twice in the same block, causing the total liquidity weight to be set to zero and subsequent calls to price functions to revert due to division by zero.
+Vulnerable code: 
+```solidity
+function syncVaderPrice() public override returns (uint256[] memory pastLiquidityWeights, uint256 pastTotalLiquidityWeight) {
+    uint256 _totalLiquidityWeight;
+    uint256 totalPairs = vaderPairs.length;
+    pastLiquidityWeights = new uint256[](totalPairs);
+    pastTotalLiquidityWeight = totalLiquidityWeight[uint256(Paths.VADER)];
+    for (uint256 i; i < totalPairs; ++i) {
+        IUniswapV2Pair pair = vaderPairs[i];
+        ExchangePair storage pairData = twapData[address(pair)];
+        uint256 timeElapsed = block.timestamp - pairData.lastMeasurement;
+        if (timeElapsed < pairData.updatePeriod) continue;
+        uint256 pastLiquidityEvaluation = pairData.pastLiquidityEvaluation;
+        uint256 currentLiquidityEvaluation = _updateVaderPrice(pair, pairData, timeElapsed);
+        pastLiquidityWeights[i] = pastLiquidityEvaluation;
+        pairData.pastLiquidityEvaluation = currentLiquidityEvaluation;
+        _totalLiquidityWeight += currentLiquidityEvaluation;
+    }
+    totalLiquidityWeight[uint256(Paths.VADER)] = _totalLiquidityWeight;
+}
+```

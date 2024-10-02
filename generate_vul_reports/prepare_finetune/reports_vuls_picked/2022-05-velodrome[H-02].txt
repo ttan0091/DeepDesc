@@ -1,0 +1,16 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: The `_removeTokenFrom` function requires the sender to be the owner of the NFT, which prevents approved users from calling `merge` and `withdraw` functions.
+Execution process: An approved user attempts to call `merge` or `withdraw` functions, which internally call `_burn`. The `_burn` function calls `_removeTokenFrom` with `msg.sender` as the argument, causing the `assert(idToOwner[_tokenId] == _from)` check to fail if the sender is not the owner.
+Vulnerable code: 
+```solidity
+function _burn(uint _tokenId) internal {
+    require(_isApprovedOrOwner(msg.sender, _tokenId), "caller is not owner nor approved");
+    address owner = ownerOf(_tokenId);
+    // Clear approval
+    approve(address(0), _tokenId);
+    // TODO add delegates
+    // Remove token
+    _removeTokenFrom(msg.sender, _tokenId);
+    emit Transfer(owner, address(0), _tokenId);
+}
+```

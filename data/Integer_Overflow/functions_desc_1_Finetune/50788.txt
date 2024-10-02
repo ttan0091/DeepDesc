@@ -1,0 +1,13 @@
+Type of vulnerability: Contract Interaction Vulnerability
+Cause of vulnerability: The contract incorrectly assumes inheritance or interface implementation, which allows attackers to create malicious contracts that do not transfer value upon a `call.value()` and still satisfy the syntax requirements to steal funds.
+Explanation of vulnerability: The `NinjaToken` contract incorrectly assumes `fundingAccount` to be a contract that can handle value transfers, using the `call.value()` syntax. However, there is no guarantee or check that `fundingAccount` is indeed a contract implementing a function to receive funds. An attacker can create a standard address (EOA) as a funding account, causing the `call.value()` to revert, ultimately preventing the `buy()` function from transferring the tokens to the buyer, while still decrementing the `balances` of the funding account.
+Impact of vulnerability: The vulnerability allows a malicious funding account to prevent buyers' funds from being transferred, effectively locking the contract and causing financial loss to the buyers.
+Vulnerable code snippet:
+```
+mapping(address=>uint) public balances;
+
+function buy(string _commit) payable {
+    if (!fundingAccount.call.value(msg.value)()) throw;
+    balances[fundingAccount] = balances[fundingAccount].sub(msg.value);
+}
+```

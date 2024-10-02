@@ -1,0 +1,15 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The vulnerability arises due to the ability of an ERC777 token to trigger a `tokensToSend` hook during a transfer, which allows an attacker to execute additional contract calls before the state is fully updated.
+Execution process: An attacker deploys a contract that implements the `tokensToSend` hook. During the minting process of a short option in the SFPM, the attacker's contract triggers the hook to transfer the ERC1155 token back to the attacker before the fees base is updated. This results in the attacker having a position with non-zero liquidity but a fees base of zero, enabling them to steal all available fees when the position is burned.
+Vulnerable code:
+```solidity
+function mintTokenizedPosition(uint256 _tokenId, uint128 _positionSize, int24 slippageTickLimitLow, int24 slippageTickLimitHigh) public {
+    tokenId = _tokenId;
+    positionSize = _positionSize;
+    sfpm.mintTokenizedPosition(tokenId, positionSize, slippageTickLimitLow, slippageTickLimitHigh);
+}
+
+function tokensToSend(address operator, address from, address to, uint256 amount, bytes calldata userData, bytes calldata operatorData) external {
+    sfpm.safeTransferFrom(address(this), owner, tokenId, positionSize, bytes(""));
+}
+```

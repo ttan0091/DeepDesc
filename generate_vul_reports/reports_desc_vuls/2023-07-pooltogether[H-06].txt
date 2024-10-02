@@ -1,0 +1,15 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The contract allows delegation to the zero address, which results in user funds being mistakenly transferred to the zero address and lost forever.
+Execution process: A user delegates their balance to another address, then attempts to reset their delegation back to themselves by specifying the zero address. This causes the user's funds to be transferred to the zero address, and subsequent attempts to delegate back to their own address or to another address fail due to validation checks.
+Vulnerable code: 
+```solidity
+function _delegate(address _vault, address _from, address _to) internal {
+    address _currentDelegate = _delegateOf(_vault, _from);
+    if (_to == _currentDelegate) {
+        revert SameDelegateAlreadySet(_to);
+    }
+    delegates[_vault][_from] = _to;
+    _transferDelegateBalance(_vault, _currentDelegate, _to, uint96(userObservations[_vault][_from].details.balance));
+    emit Delegated(_vault, _from, _to);
+}
+```

@@ -1,0 +1,25 @@
+Type of vulnerability: Front-running and Initialization Attack
+Cause of vulnerability: Initial manipulation of `pricePerShare` due to lack of minimum deposit requirement and precision issues in share calculation.
+Execution process: An attacker deposits a minimal amount of tokens to receive a proportional amount of shares. Subsequently, the attacker inflates the `pricePerShare` by depositing a large amount of tokens, which drastically increases the share price. This manipulation allows the attacker to receive an unfairly large share of future deposits, effectively diluting the shares of later users.
+Vulnerable code: 
+```solidity
+function _tokenToShares(uint256 _tokens) internal view returns (uint256) {
+    uint256 _supply = totalSupply();
+    // shares = (tokens * totalShares) / yieldSourceATokenTotalSupply
+    return _supply == 0 ? _tokens : _tokens.mul(_supply).div(aToken.balanceOf(address(this)));
+}
+
+function _sharesToToken(uint256 _shares) internal view returns (uint256) {
+    uint256 _supply = totalSupply();
+    // tokens = (shares * yieldSourceATokenTotalSupply) / totalShares
+    return _supply == 0 ? _shares : _shares.mul(aToken.balanceOf(address(this))).div(_supply);
+}
+
+function redeemToken(uint256 _redeemAmount) external override nonReentrant returns (uint256) {
+    address _underlyingAssetAddress = _tokenAddress();
+    IERC20 _assetToken = IERC20(_underlyingAssetAddress);
+    uint256 _shares = _tokenToShares(_redeemAmount);
+    _burn(msg.sender, _shares);
+    ...
+}
+```

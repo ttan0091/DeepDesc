@@ -1,0 +1,22 @@
+[H-03] Signature replay attacks for different identities (nonce on wrong party)
+Submitted by cmichel, also found by WatchPug
+A singleQuickAccountcan serve as the “privilege” for multiple identities, see the comment inQuickAccManager.sol:
+NOTE: a single accHash can control multiple identities, as long as those identities set it’s hash in privileges[address(this)]. this is by design
+If there exist two different identities thatboth share the same QuickAccount(identity1.privileges(address(this)) == identity2.privileges(address(this)) == accHash) the following attack is possible inQuickAccManager.send:
+Upon observing a validsendon the first identity, the same transactions can be replayed on the second identity by an attacker callingsendwith the same arguments and just changing theidentityto the second identity.
+This is because theidentityis not part of thehash. Including thenonce ofthe identity in the hash is not enough.
+Two fresh identities will both take on nonces on zero and lead to the same hash.
+Impact
+Transactions on one identity can be replayed on another one if it uses the sameQuickAccount.
+For example, a transaction paying a contractor can be replayed by the contract on the second identity earning the payment twice.
+Recommended Mitigation Steps
+Nonces should not be indexed by the identity but by theaccHash. This is because nonces are used to stop replay attacks and thus need to be on thesigner(QuickAccountin this case), not on the target contract to call.Theidentityaddressitself needs to be part ofhashas otherwise thesendcan be frontrun and executed by anyone on the other identity by switching out theidentityparameter.
+Other occurrences
+This issue of using the wrong nonce (on theidentitywhich means the nonces repeat per identity) and not includingidentityaddress leads to other attacks throughout theQuickAccManager:
+cancel: attacker can use the same signature to cancel the same transactions on the second identityexecScheduled: can frontrun this call and execute it on the second identity instead. This will make the original transaction fail asscheduled[hash]is deleted.sendTransfer: same transfers can be replayed on second identitysendTxns: same transactions can be replayed on second identity
+Ivshti (Ambire) confirmed:
+duplicate of #24, but it’s better documented
+Ivshti (Ambire) patched:
+mitigation step 1 is not going to be done, since there’s already plenty of upper level code relying on indexing by identity, and it doesn’t really hurt if the replay attack is mitigatedplus, it makes it harder to look up the nonce value, as we have to compute the accHash in the client-side codethe replay attack has been fixed herehttps://github.com/AmbireTech/adex-protocol-eth/commit/f70ca38f368da30c9881d1ee5554fd0161c94486
+GalloDaSballo (judge) commented:
+The warden identified a Signature Replay attack, allowing to re-use a signature throughout the system.Requiring the identity to be part of the signatures mitigates the vulnerabilityThe sponsor has mitigated in a subsequent PR

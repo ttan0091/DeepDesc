@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The contract allows the `msg.sender` to withdraw the Ether multiple times within the same transaction, and the `balances[msg.sender]` is not zeroed out before the contract transfers the Ether to `msg.sender`. This enables the another contract's fallback function to reenter and execute the `withdraw` function multiple times, draining the contract of its Ether.
+Working process of the vulnerability: 
+1. A user deposits Ether into the contract.
+2. The contract records the balance of the user's address.
+3. The user withdraws the Ether using the `withdraw` function, which sends the Ether to the user's address.
+4. If the user's address is a malicious contract, the debug opcode `REVERT` is used to simulate a transaction failure, causing the balance to remain in the contract but not in the user's address.
+5. If the user's address is now a contract (for example, after depositing to an exchange), the contract's fallback function is called when initiating a withdrawal to transfer the Ether to the user's balance.
+6. The contract uses `send` to transfer the Ether to the user’s balance, and then zeros out the user's balance in the contract.
+7. If the sending of Ether to the user's balance fails but does not revert, it reverts the balance back to its previous amount but only after recording that the user's balance has been zeroed out.
+8. This allows another call to `withdraw` in the same transaction where the Ether was sent but not zeroed out, and the balance reverts to the current amount minus the Ether that was just sent, so the contract loses a second copy of the Ether.

@@ -1,0 +1,8 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `refund` function allows multiple withdrawals of the same balance due to the lack of a check to prevent this multiple withdrawal. This is further exacerbated by the fact that the `balances` mapping value is set to zero after the first withdrawal, making subsequent calls to `refund` ineffective for the same investor.
+Working process of the vulnerability: 
+1. An attacker sends some ETH to the contract, sharing the same execution context as the `refund` function.
+2. The `balances[]` mapping for the investor is set to a non-zero value.
+3. The `balances[]` value for the investor is checked. If it's non-zero, the balance is refunded, and the mapping value is set to zero.
+4. The `onlyOwner` modifier incorrectly identifies the investor as the `msg.sender`, allowing the attacker to call `refund` on behalf of the investor and withdraw the balance.
+5. The `refunded` flag is irrelevant as an attacker can still perform this reentrancy attack.

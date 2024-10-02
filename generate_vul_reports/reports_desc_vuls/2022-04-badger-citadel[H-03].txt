@@ -1,0 +1,36 @@
+Type of vulnerability: Precision Loss Attack / Initial Token Supply Manipulation
+
+Cause of vulnerability: Lack of minimum deposit requirement and precision issues in token minting calculations.
+
+Execution process:
+1. Attacker becomes the first depositor by depositing a tiny amount (1 wei) of Citadel tokens.
+2. Attacker then transfers a large amount of Citadel tokens directly to the StakedCitadel contract, setting the cost of 1 vault token to an inflated value.
+3. Subsequent depositors will have their deposits rounded to the inflated value, causing significant precision loss.
+4. The attacker retains a disproportionate share of the vault tokens, effectively stealing value from subsequent depositors.
+
+Vulnerable code:
+- `deposit()` function:
+  ```solidity
+  function deposit(uint256 amount) public {
+      _depositFor(amount, msg.sender);
+  }
+  ```
+- `_depositFor()` function:
+  ```solidity
+  function _depositFor(uint256 amount, address account) internal {
+      _mintSharesFor(account, amount);
+  }
+  ```
+- `_mintSharesFor()` function:
+  ```solidity
+  function _mintSharesFor(address account, uint256 amount) internal {
+      uint256 shares = (amount * totalSupply()) / balance();
+      _mint(account, shares);
+  }
+  ```
+- Initial pool balance check:
+  ```solidity
+  function balance() public view returns (uint256) {
+      return token.balanceOf(address(this));
+  }
+  ```

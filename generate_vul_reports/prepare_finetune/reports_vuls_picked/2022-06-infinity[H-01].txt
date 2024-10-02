@@ -1,0 +1,21 @@
+Type of vulnerability: Logic Error in Order Matching and Execution
+Cause of vulnerability: The contract allows a maker buy order with an empty array of tokenIds to be matched with a sell order, leading to the buyer paying for NFTs but not receiving any due to the absence of specified tokenIds in the transfer function.
+Execution process: A maker buy order with an empty array of tokenIds is submitted. During the matching process, this order is paired with a sell order that specifies tokenIds. The buy order passes the intersection check because `doTokenIdsIntersect()` returns true for empty tokenIds. The execution function then transfers NFTs based on the empty tokenIds array, resulting in no NFTs being transferred to the buyer despite payment.
+Vulnerable code: 
+```solidity
+function _execMatchOneMakerSellToManyMakerBuys(bytes32 sellOrderHash, bytes32 buyOrderHash, OrderTypes.MakerOrder calldata sell, OrderTypes.MakerOrder calldata buy, uint256 startGasPerOrder, uint256 execPrice, uint16 protocolFeeBps, uint32 wethTransferGasUnits, address weth) internal {
+    isUserOrderNonceExecutedOrCancelled[buy.signer][buy.constraints[5]] = true;
+    uint256 protocolFee = (protocolFeeBps * execPrice) / 10000;
+    uint256 remainingAmount = execPrice - protocolFee;
+    _execMatchOneToManyOrders(sell.signer, buy.signer, buy.nfts, buy.execParams[1], remainingAmount);
+    _emitMatchEvent(sellOrderHash, buyOrderHash, sell.signer, buy.signer, buy.execParams[0], buy.execParams[1], execPrice);
+}
+
+function _transferERC721s(address from, address to, OrderTypes.OrderItem calldata item) internal {
+    uint256 numTokens = item.tokens.length;
+    for (uint256 i = 0; i < numTokens; ) {
+        IERC721(item.collection).safeTransferFrom(from, to, item.tokens[i].tokenId);
+        unchecked { ++i; }
+    }
+}
+```

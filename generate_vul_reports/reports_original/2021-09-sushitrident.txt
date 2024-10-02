@@ -1,0 +1,220 @@
+[H-01] Flash swap call back prior to transferring tokens inindexPool
+Submitted by broccoli, also found by 0xsanson and cmichel
+Impact
+In theIndexPoolcontract,flashSwapdoes not work.
+The callback function is called prior to token transfer. The sender won’t receive tokens in the callBack function.ITridentCallee(msg.sender).tridentSwapCallback(context);
+Flashswapis not implemented correctly. It may need a migration to redeploy allindexPoolsif the issue is found after main-net launch.
+I consider this a high-risk issue.
+Proof of Concept
+IndexPool.sol#L196-L223
+ITridentCallee(msg.sender).tridentSwapCallback(context);// @dev Check Trident router has sent `amountIn` for skim into pool.unchecked{// @dev This is safe from under/overflow - only logged amounts handled.require(_balance(tokenIn) >=amountIn+inRecord.reserve,"NOT_RECEIVED");inRecord.reserve+=uint120(amountIn);outRecord.reserve-=uint120(amountOut);}_transfer(tokenOut,amountOut,recipient,unwrapBento);
+Recommended Mitigation Steps
+_transfer(tokenOut,amountOut,recipient,unwrapBento);ITridentCallee(msg.sender).tridentSwapCallback(context);// @dev Check Trident router has sent `amountIn` for skim into pool.unchecked{// @dev This is safe from under/overflow - only logged amounts handled.require(_balance(tokenIn) >=amountIn+inRecord.reserve,"NOT_RECEIVED");inRecord.reserve+=uint120(amountIn);outRecord.reserve-=uint120(amountOut);}
+maxsam4 (Sushi) commented:
+Duplicate ofhttps://github.com/code-423n4/2021-09-sushitrident-findings/issues/157andhttps://github.com/code-423n4/2021-09-sushitrident-findings/issues/80
+[H-02] Index Pool always swap to Zero
+Submitted by broccoli, also found by 0xsanson, cmichel, and WatchPug
+Impact
+When an Index pool is initiated with two tokens A: B and the weight rate = 1:2, then no user can buy token A with token B.
+The root cause is the error in pow. It seems like the dev tries to implementExponentiation by squaring.IndexPool.sol#L286-L291
+function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2)a=a*a;if(n%2!=0)output=output*a;}
+There’s no bracket forfor.
+TheIndexPoolis not functional. I consider this is a high-risk issue.
+Proof of Concept
+When we initiated the pool with 2:1.
+deployed_code = encode_abi(["address[]","uint136[]","uint256"], [(link.address, dai.address),(2*10**18,10**18),10**13])
+No one can buy dai with link.
+# (address tokenIn, address tokenOut, address recipient, bool unwrapBento, uint256 amountIn)previous_balance = bento.functions.balanceOf(dai.address, admin).call()swap_amount =10**18bento.functions.transfer(link.address, admin, pool.address, swap_amount).transact()pool.functions.swap(encode_abi(['address','address','address','bool','uint256'],[link.address, dai.address, admin,False, swap_amount])).transact()current_balance = bento.functions.balanceOf(dai.address, admin).call()token_received = current_balance - previous_balance# always = 0print(token_received)
+Recommended Mitigation Steps
+The brackets offorwere missed.
+function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2) {a=a*a;if(n%2!=0)output=output*a;}}
+[H-03]IndexPoolpow overflows whenweightRatio> 10.
+Submitted by broccoli
+Impact
+In theIndexPoolcontract, pow is used in calculating price. (IndexPool.solL255-L266).
+However, Pow is easy to cause overflow. If theweightRatiois large (e.g. 10), there’s always overflow.
+Lp providers can still provide liquidity to the pool where no one can swap. All pools need to redeploy. I consider this a high-risk issue.
+Proof of concept
+It’s easy to trigger this bug by deploying a 1:10IndexPool.
+deployed_code = encode_abi(["address[]","uint136[]","uint256"], [(link.address, dai.address),(10**18,10*10**18),10**13])tx_hash = master_deployer.functions.deployPool(index_pool_factory.address, deployed_code).transact()
+Transactions would be reverted when buyinglinkwithdai.
+Recommended Mitigation Steps
+TheweightRatiois an 18 decimals number. It should be divided by(BASE)^exp. The scale in the contract is not consistent. Recommend the dev to check all the scales/ decimals.
+maxsam4 (Sushi) confirmed
+[H-04] IndexPool’sINIT_POOL_SUPPLYis not fair.
+Submitted by broccoli, also found by WatchPug
+Impact
+TheindexPoolmintINIT_POOL_SUPPLYto address 0 in the constructor. However, the value of the burned lp is decided by the first lp provider. According to the formula inIndexPool.solL106.
+AmountIn = first_lp_amount / INIT_POOL_SUPPLYand the burned lp worth =AmountIn * (INIT_POOL_SUPPLY) / (first_lp_amount + INIT_POOL_SUPPLY).
+If a pool is not initialized with optimal parameters, it would be a great number of tokens been burn. All lp providers in the pool would receive less profit.
+The optimal parameter is10**8. It’s likely no one would initialize with10**8wei in most pools. I consider this is a high-risk issue.
+Proof of concept
+There are two scenarios that the first lp provider can do. The lp provider provides the same amount of token in both cases. However, in the first scenario, he gets about10 ** 18 * 10**18lp while in the other scenario he gets100 * 10**18lp.
+deposit_amount =10**18bento.functions.transfer(link.address, admin, pool.address, deposit_amount).transact()bento.functions.transfer(dai.address, admin, pool.address, deposit_amount).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin,10**8]# minimum)).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin,10000000000009999*10**20])).transact()
+deposit_amount =10**18bento.functions.transfer(link.address, admin, pool.address, deposit_amount).transact()bento.functions.transfer(dai.address, admin, pool.address, deposit_amount).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin, deposit_amount *100])).transact()
+Recommended Mitigation Steps
+Recommend to handleINIT_POOL_SUPPLYin uniswap-v2’s way. Determine an optimized parameter for the user would be a better UX design.
+[H-05] hybrid pool uses wrongnon_optimal_mint_fee
+Submitted by broccoli
+Impact
+When an lp provider deposits an imbalance amount of token, a swap fee is applied.HybridPooluses the same_nonOptimalMintFeeasconstantProductPool; however, since two pools use different AMM curve, the ideal balance is not the same.  ref:StableSwap3Pool.vyL322-L337
+Stable swap Pools are designed for 1B+ TVL. Any issue related to pricing/fee is serious. I consider this is a high-risk issue
+Proof of Concept
+StableSwap3Pool.vy#L322-L337HybridPool.sol#L425-L441
+Recommended Mitigation Steps
+Calculate the swapping fee based on the stable swap curve. refer toStableSwap3Pool.vy#L322-L337.
+maxsam4 (Sushi) confirmed
+[H-06]IndexPool:  Poor conversion from Balancer V1’s corresponding functions
+Submitted by GreyArt
+Impact
+A number of functions suffer from the erroneous conversion of Balancer V1’s implementation.
+_compute()(equivalent to Balancer’sbpow())if (remain == 0) output = wholePow;when a return statement should be used instead._computeSingleOutGivenPoolIn()(equivalent to Balancer’s_calcSingleOutGivenPoolIn())tokenOutRatioshould be calculated with_compute()instead of_pow()zazshould be calculated with_mul()instead of the native*_pow()(equivalent to Balancer’sbpowi())Missing brackets{}for the for loop causes a different interpretation_mulshould be used instead of the native*
+Recommended Mitigation Steps
+The fixed implementation is provided below.
+function_computeSingleOutGivenPoolIn(uint256tokenOutBalance,uint256tokenOutWeight,uint256_totalSupply,uint256_totalWeight,uint256toBurn,uint256_swapFee)internalpurereturns(uint256amountOut) {uint256normalizedWeight=_div(tokenOutWeight,_totalWeight);uint256newPoolSupply=_totalSupply-toBurn;uint256poolRatio=_div(newPoolSupply,_totalSupply);uint256tokenOutRatio=_compute(poolRatio,_div(BASE,normalizedWeight));uint256newBalanceOut=_mul(tokenOutRatio,tokenOutBalance);uint256tokenAmountOutBeforeSwapFee=tokenOutBalance-newBalanceOut;uint256zaz=_mul(BASE-normalizedWeight,_swapFee);amountOut=_mul(tokenAmountOutBeforeSwapFee, (BASE-zaz));}function_compute(uint256base,uint256exp)internalpurereturns(uint256output) {require(MIN_POW_BASE<=base&&base<=MAX_POW_BASE,"INVALID_BASE");uint256whole= (exp/BASE) *BASE;uint256remain=exp-whole;uint256wholePow=_pow(base,whole/BASE);if(remain==0)returnwholePow;uint256partialResult=_powApprox(base,remain,POW_PRECISION);output=_mul(wholePow,partialResult);}function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2) {a=_mul(a,a);if(n%2!=0)output=_mul(output,a);}}
+maxsam4 (Sushi) acknowledged
+[H-07]IndexPool.mintThe first liquidity provider is forced to supply assets in the same amount, which may cause a significant amount of fund loss
+Submitted by WatchPug, also found by broccoli
+Whenreserve == 0,amountInfor all the tokens will be set to the same amount:ratio, regardless of the weights, decimals and market prices of the assets.
+The first liquidity provider may not be aware of this so that it may create an arbitrage opportunity for flashbots to take a significant portion of the value of The first liquidity provider’s liquidity.
+IndexPool.sol#L93L105
+/// @dev Mints LP tokens - should be called via the router after transferring `bento` tokens./// The router must ensure that sufficient LP tokens are minted by using the return value.functionmint(bytescalldatadata)publicoverridelockreturns(uint256liquidity) {(addressrecipient,uint256toMint) =abi.decode(data, (address,uint256));uint120ratio=uint120(_div(toMint,totalSupply));for(uint256i=0;i<tokens.length;i++) {addresstokenIn=tokens[i];uint120reserve=records[tokenIn].reserve;// @dev If token balance is '0', initialize with `ratio`.uint120amountIn=reserve!=0?uint120(_mul(ratio,reserve)) :ratio;require(amountIn>=MIN_BALANCE,"MIN_BALANCE");// @dev Check Trident router has sent `amountIn` for skim into pool.unchecked{// @dev This is safe from overflow - only logged amounts handled.require(_balance(tokenIn) >=amountIn+reserve,"NOT_RECEIVED");records[tokenIn].reserve+=amountIn;}emitMint(msg.sender,tokenIn,amountIn,recipient);}_mint(recipient,toMint);liquidity=toMint;}
+Proof of Concept
+Given:
+AIndexPoolof 99% USDT and 1% WBTC;Alice is the first liquidity provider.Alice transfers 1e18 WBTC and 1e18 USDT to mint 100e18 of liquidity;Bob can use 100e18 USDT (~$100) to swap out most of the balance of WBTC.
+Impact
+A significant portion (>90% in the case above) of the user’s funds can be lost due to arbitrage.
+Recommendation
+Consider allowing the first liquidity provider to use customamountInvalues for each token or always takes the MIN_BALANCE of each token.
+[H-08]HybridPool’s reserve is converted to “amount” twice
+Submitted by cmichel, also found by 0xsanson and WatchPug
+TheHybridPool’s reserves are stored as Bento “amounts” (not Bento shares) in_updateReservesbecause_balance()converts the current share balance to amount balances.
+However, when retrieving thereserve0/1storage fields in_getReserves, they are converted to amounts a second time.
+Impact
+TheHybridPoolreturns wrong reserves which affects all minting/burning and swap functions.
+They all return wrong results making the pool eventually economically exploitable or leading to users receiving less tokens than they should.
+POC
+Imagine the current Bento amount / share price being1.5.
+The pool’s Bentosharebalance being1000._updateReserveswill store a reserve of1.5 * 1000 = 1500.
+When anyone trades using theswapfunction,_getReserves()is called and multiplies it by1.5again, leading to using a reserve of 2250 instead of 1500.
+A higher reserve for the output token leads to receiving more tokens as the swap output.
+Thus the pool lost tokens and the LPs suffer this loss.
+Recommended Mitigation Steps
+Make sure that the reserves are in the correct amounts.
+maxsam4 (Sushi) confirmed
+[H-09] Unsafe cast inIndexPoolmint leads to attack
+Submitted by cmichel, also found by cmichel and pauliax
+TheIndexPool.mintfunction performs an unsafe cast ofratioto theuint120type:
+uint120ratio=uint120(_div(toMint,totalSupply));
+Note thattoMintis chosen by the caller and when choosingtoMint = 2**120 * totalSupply / BASE, theratiovariable will be2**120and then truncated to 0 due to the cast.
+This allows an attacker to mint LP tokens for free.
+They just need to choose theratiosuch that theamountIn = ratio * reserve / BASEvariable passes therequire(amountIn >= MIN_BALANCE, "MIN_BALANCE");check.
+For example, when choosingratio = 2**120 * totalSupply / BASE + 1e16, an attacker has to pay 1/100th of the current reserves but heavily inflates the LP token supply.
+They can then use the inflated LP tokens they received inburnto withdraw the entire pool reserves.
+POC
+I createdthis POCthat implements a hardhat test and shows how to steal the pool tokens:
+Impact
+An attacker can inflate the LP token pool supply and mint themselves a lot of LP tokens by providing almost no tokens themselves.
+The entire pool tokens can be stolen.
+Recommended Mitigation Steps
+Even though Solidity 0.8.x is used, type casts do not throw an error.
+ASafeCastlibrarymust be used everywhere a typecast is done.
+maxsam4 (Sushi) confirmed
+[H-10]IndexPoolinitial LP supply computation is wrong
+Submitted by cmichel
+TheIndexPool.constructorfunction already mintsINIT_POOL_SUPPLY = 100 * 1e18 = 1e20LP tokens to the zero address.
+When trying to use the pool, someone has to provide the actual initial reserve tokens inmint.
+On the firstmint, the pool reserves are zero and the token amount required to mint is just thisratioitself:uint120 amountIn = reserve != 0 ? uint120(_mul(ratio, reserve)) : ratio;
+Note that theamountInisindependent of the tokenwhich does not make much sense.
+This implies that all tokens must be provided in equal “raw amounts”, regardless of their decimals and value.
+POC
+Issue 1
+Imagine I want to create a DAI/WBTC pool.
+If I want to initialize the pool with 100$ of DAI,amountIn = rationeeds to be100*1e18=1e20as DAI has 18 decimals.
+However, I now also need to supply1e20of WBTC (which has 8 decimals) and I’d need to pay1e20/1e8 * priceOfBTC, over a quadrillion dollars to match it with the 100$ of DAI.
+Issue 2
+Even in a pool where all tokens have the same decimals and the same value, likeUSDC <> USDT, it leads to issues:
+Initial minter callsmintwithtoMint = 1e20which setsratio = 1e20 * 1e18 / 1e20 = 1e18and thusamountIn = 1e18as well. The total supply increases to2e20.Second minter needs to paylesstokens to receive the same amount of1e18LP tokens as the first minter. This should never be the case.toMint = 1e20=>ratio = 1e20 * 1e18 / 2e20 = 0.5e18. ThenamountIn = ratio * reserve / 1e18 = 0.5*reserve = 0.5e18. They only pay half of what the first LP provider had to pay.
+Impact
+It’s unclear why it’s assumed that the pool’s tokens are all in equal value - this isnota StableSwap-like pool.
+Any pool that uses tokens that don’t have the same value and share the same decimals cannot be used because initial liquidity cannot be provided in an economically justifiable way.
+It also leads to issues where the second LP supplier has to payless tokensto receive the exact same amount of LP tokens that the initial minter receives. They can steal from the initial LP provider by burning these tokens again.
+Recommended Mitigation Steps
+Do not mint the initial token supply to the zero address in the constructor.
+Do it like Uniswap/Balancer and let the first liquidity provider provide arbitrary token amounts, then mint the initial pool supply.
+Ifreserve == 0,amountInshould just take the pool balances that were transferred to this account.
+In case the initial mint to the zero address in the constructor was done to prevent the “Uniswap-attack” where the price of a single wei of LP token can be very high and price out LPs, send a small fraction of this initial LP supply (~1000) to the zero addressafterit was minted to the first supplier inmint.
+maxsam4 (Sushi) confirmed
+[H-11]ConstantProductPool.burnSingleswap amount computations should use balance
+Submitted by cmichel
+TheConstantProductPool.burnSinglefunction is basically aburnfollowed by aswapand must therefore act the same way as calling these two functions sequentially.
+The token amounts to redeem (amount0,amount1) are computed on thebalance(not the reserve).
+However, the swap amount is then computed on thereservesand not the balance.
+Theburnfunction would have updated thereserveto the balances and thereforebalanceshould be used here:
+amount1+=_getAmountOut(amount0,_reserve0-amount0,_reserve1-amount1);
+⚠️ The same issue occurs in theHybridPool.burnSingle.
+Impact
+For a burn, usually thereserveshould equal thebalance, however if any new tokens are sent to the contract andbalance > reserve, this function will return slightly less swap amounts.
+Recommended Mitigation Steps
+Call_getAmountOutwith the balances instead of the reserves:_getAmountOut(amount0, balance0 - amount0, balance1 - amount1)
+maxsam4 (Sushi) confirmed:
+Please bump this to High sev. This bug can actually lead to loss of funds from the pool. The author found the right issue but failed to analyze the full impact. Regardless, I think they deserve “High” for pointing this out.
+alcueca (judge) commented:
+This is what we come to C4 for
+[H-12] absolute difference is not calculated properly when a > b in MathUtils
+Submitted by hack3r-0m, also found by broccoli
+the difference is computed incorrectly when a > b.MathUtils.solL22
+As it only used inwithin1function, scope narrows down to wheredifference(a, b) <= 1;is exploitable.
+cases wheredifference(a, b) <= 1should be true but is reported false:
+where b = a-1 (returned value istype(uint256).max)
+cases wheredifference(a, b) <= 1should be false but is reported true:
+where a =type(uint256).max and b = 0, it returns 1 but it should ideally returntype(uint256).max
+within1is used at the following locations:
+HybridPool.solL359HybridPool.solL383HybridPool.solL413
+It is possible to decrease the denominator and increase the value of the numerator (when calculating y) using constants and input to makewithin1fail
+Mitigation:
+Addelsecondition to mitigate it.
+unchecked{if(a>b) {diff=a-b;}else{diff=b-a;}}
+maxsam4 (Sushi) confirmed
+[H-13] Overflow in themintfunction ofIndexPoolcauses LPs’ funds to be stolen
+Submitted by broccoli, also found by WatchPug
+Impact
+It is possible to overflow the addition in the balance check (i.e.,_balance(tokenIn) >= amountIn + reserve) in the mint function by setting theamountInto a large amount. As a result, the attacker could gain a large number of LP tokens by not even providing any liquidity. The attacker’s liquidity would be much greater than any other LPs, causing him could effectively steal others’ funds by burning his liquidity (since the funds he receives are proportional to his liquidity).
+Proof of Concept
+mint_overflow.js
+Referenced code:
+IndexPool.sol L110
+Recommended Mitigation Steps
+Consider removing theuncheckstatement to prevent integer overflows from happening.
+maxsam4 (Sushi) acknowledged:
+FWIW The problem here isn’t that we used unchecked but that we didn’t cast amountIn to uint256. It’s possible to overflow uint120 but not uint256.
+[H-14] Incorrect usage of_powin_computeSingleOutGivenPoolInofIndexPool
+Submitted by broccoli
+Impact
+The_computeSingleOutGivenPoolInfunction ofIndexPooluses the_powfunction to calculatetokenOutRatiowith the exponent inWAD(i.e., in 18 decimals of precision). However, the_powfunction assumes that the given exponentnis not inWAD. (for example,_pow(5, BASE)returns5 ** (10 ** 18)instead of5 ** 1). The misuse of the_powfunction could causes an integer overflow in the_computeSingleOutGivenPoolInfunction and thus prevent any function from calling it.
+Proof of Concept
+Referenced code:IndexPool.sol#L279
+Recommended Mitigation Steps
+Change the_powfunction to the_computefunction, which supports exponents inWAD.
+maxsam4 (Sushi) confirmed
+[H-15] Incorrect multiplication in_computeSingleOutGivenPoolInofIndexPool
+Submitted by broccoli
+Impact
+The_computeSingleOutGivenPoolInfunction ofIndexPooluses the raw multiplication (i.e.,*) to calculate thezazvariable. However, since both(BASE - normalizedWeight)and_swapFeeare inWAD, the_mulfunction should be used instead to calculate the correct value ofzaz. Otherwise,zazwould be10 ** 18times larger than the expected value and causes an integer underflow when calculatingamountOut. The incorrect usage of multiplication prevents anyone from calling the function successfully.
+Proof of Concept
+Referenced code:IndexPool.sol#L282
+Recommended Mitigation Steps
+Change(BASE - normalizedWeight) * _swapFeeto_mul((BASE - normalizedWeight), _swapFee).
+maxsam4 (Sushi) confirmed
+[H-16] Funds in the pool could be stolen by exploitingflashSwapinHybridPool
+Submitted by broccoli
+Impact
+An attacker can call thebento.harvestfunction during the callback function of a flash swap of theHybridPoolto reduce the number of input tokens that he has to pay to the pool, as long as there is any unrealized profit in the strategy contract of the underlying asset.
+Proof of Concept
+TheHybridPoolaccounts for the reserve and balance of the pool using thebento.toAmountfunction, which represents the actual amount of assets that the pool owns instead of the relative share. The value oftoAmountcould increase or decrease if thebento.harvestfunction is called (by anyone), depending on whether the strategy contract earns or loses money.Supposing that the DAI strategy contract ofBentohas a profit not accounted for yet. To account for the profit, anyone could callharvestonBentowith the corresponding parameters, which, as a result, increases theelasticof the DAI token.Now, an attacker wants to utilize the unrealized profit to steal funds from a DAI-WETH hybrid pool. He callsflashSwapto initiate a flash swap from WETH to DAI. First, the pool transfers the corresponding amount of DAI to him, calls thetridentSwapCallbackfunction on the attacker’s contract, and expects that enough DAI is received at the end.During thetridentSwapCallbackfunction, the attacker callsbento.harvestto realize the profit of DAI. As a result, the pool’sbento.toAmountincreases, and the amount of DAI that the attacker has to pay to the pool is decreased. The attacker could get the same amount of ETH but paying less DAI by exploiting this bug.
+Referenced code:
+HybridPool.solL218-L220HybridPool.solL249-L250HybridPool.solL272-L285BentoBoxV1Flat.solL1105BentoBoxV1Flat.solL786-L792BentoBoxV1Flat.solL264-L277
+Recommended Mitigation Steps
+Consider not usingbento.toAmountto track the reservers and balances, but usebalanceOfinstead (as done in the other two pools).
+maxsam4 (Sushi) confirmed:
+Stableswap needs to usetoAmountbalances rather shares to work. This issue allows skimming yield profits from the pool. There’s no user funds at risk but still an issue.We plan on resolving this by using a fixed toElastic ratio during the whole swap.

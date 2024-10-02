@@ -1,0 +1,25 @@
+[H-01] Users will be able to purchase fewer NFTs than the project had anticipated
+Submitted byvolodya, also found bym9800,Emmanuel,IgorZuk,dec3ntraliz3d,igingu,adriro,Rappie, anddescharre
+Users will be able to purchase fewer NFTs than the project had anticipated. The project had expected that users would be able to purchase a range of variations using both text and emoji characters. However, in reality, users will only be able to purchase a range of variations using emoji characters.
+For example, the list of characters available for users to choose from is as follows
+For instance, if a user chooses to mint an NFT namespace using font class 2 and the single letter 𝒶, then theoretically all other users should be able to mint font class 0 using the first emoji in the list, font class 1 using the single letter “a,” font class 3 using the single letter 𝓪, and so on, the first letter on every class will be. However, in reality, they will not be able to do so.
+I consider this to be a critical issue because the project may not be able to sell as many NFTs as expected, potentially resulting in a loss of funds.
+Here is an how nft name and their svg will look like from what I described above. As you can see emoji replaced letters in the name.
+
+This is a function that creates namespace out of tray.
+canto-namespace-protocol/src/Namespace.sol#L110functionfuse(CharacterData[]calldata_characterList)external{uint256numCharacters=_characterList.length;if(numCharacters>13||numCharacters==0)revertInvalidNumberOfCharacters(numCharacters);uint256fusingCosts=2**(13-numCharacters) *1e18;SafeTransferLib.safeTransferFrom(note,msg.sender,revenueAddress,fusingCosts);uint256namespaceIDToMint= ++nextNamespaceIDToMint;Tray.TileData[]storagenftToMintCharacters=nftCharacters[namespaceIDToMint];bytesmemorybName=newbytes(numCharacters*33);// Used to convert into a string. Can be 33 times longer than the string at most (longest zalgo characters is 33 bytes)uint256numBytes;// Extract unique trays for burning them later onuint256numUniqueTrays;uint256[]memoryuniqueTrays=newuint256[](_characterList.length);for(uint256i;i<numCharacters; ++i) {boolisLastTrayEntry=true;uint256trayID=_characterList[i].trayID;uint8tileOffset=_characterList[i].tileOffset;// Check for duplicate characters in the provided list. 1/2 * n^2 loop iterations, but n is bounded to 13 and we do not perform any storage operationsfor(uint256j=i+1;j<numCharacters; ++j) {if(_characterList[j].trayID==trayID) {isLastTrayEntry=false;if(_characterList[j].tileOffset==tileOffset)revertFusingDuplicateCharactersNotAllowed();}}Tray.TileDatamemorytileData=tray.getTile(trayID,tileOffset);// Will revert if tileOffset is too highuint8characterModifier=tileData.characterModifier;if(tileData.fontClass!=0&&_characterList[i].skinToneModifier!=0) {revertCannotFuseCharacterWithSkinTone();}if(tileData.fontClass==0) {// EmojicharacterModifier=_characterList[i].skinToneModifier;}bytesmemorycharAsBytes=Utils.characterToUnicodeBytes(0,tileData.characterIndex,characterModifier);...
+canto-namespace-protocol/src/Namespace.sol#L110
+There is a bug in this line of code where a character is retrieved from tile data. Instead of passingtileData.fontClass, we are passing0.
+bytesmemorycharAsBytes=Utils.characterToUnicodeBytes(0,tileData.characterIndex,characterModifier);
+Due to this bug, the names for all four different font classes will be the same. As a result, they will point to an existing namespace, and later, there will be a check for the existence of that name (token) using NameAlreadyRegistered.
+stringmemorynameToRegister=string(bName);uint256currentRegisteredID=nameToToken[nameToRegister];if(currentRegisteredID!=0)revertNameAlreadyRegistered(currentRegisteredID);
+Proof of Concept
+Here is the test that you can run
+functiontestFailMintSameCharacterIndex()public{addressuser=user1;note.mint(user,10000e18);endPrelaunchAndBuyOne(user);uint256[]memorytrayIds=buyTray(user,3);vm.startPrank(user);note.approve(address(ns),type(uint256).max);Namespace.CharacterData[]memorylist=newNamespace.CharacterData[](1);//      fuse tile with fontClass=8,characterIndex=1list[0] =Namespace.CharacterData(trayIds[1],4,0);Tray.TileDatamemorytileData=tray.getTile(trayIds[1],4);console.log(tileData.characterIndex);//1console.log(tileData.fontClass);//8ns.fuse(list);//      fuse tile with fontClass=4,characterIndex=1list[0] =Namespace.CharacterData(trayIds[2],3,0);tileData=tray.getTile(trayIds[2],3);console.log(tileData.characterIndex);//1console.log(tileData.fontClass);//4vm.expectRevert(abi.encodeWithSelector(Namespace.NameAlreadyRegistered.selector,1));ns.fuse(list);}
+Tools Used
+Manual review, forge tests
+Recommended Mitigation Steps
+Pass font class instead of 0
+-            bytes memory charAsBytes = Utils.characterToUnicodeBytes(0, tileData.characterIndex, characterModifier);+            bytes memory charAsBytes = Utils.characterToUnicodeBytes(tileData.fontClass, tileData.characterIndex, characterModifier);
+OpenCoreCH (Canto Identity) confirmed and commented:
+Agree, leftover from earlier, will be changed.

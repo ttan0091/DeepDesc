@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy and Logic Error
+Cause of vulnerability: The `idleETH` is reduced before burning the `lpTokenETH`, which allows the attacker to manipulate the `accumulatedETHPerLPShare` and steal more ETH than they should.
+Execution process: The attacker calls the `withdrawETH` function, which decreases the `idleETH` before burning the `lpTokenETH`. This triggers the `beforeTokenTransfer` function, which updates the accumulated ETH per LP share based on the manipulated `idleETH` value, allowing the attacker to receive more ETH than their share.
+Vulnerable code: 
+```solidity
+function withdrawETH(uint256 _amount) external {
+    idleETH -= _amount; // idleETH is reduced before burning token
+    lpTokenETH.burn(msg.sender, _amount);
+    // Transfer ETH to the user
+    (bool success, ) = msg.sender.call{value: _amount}("");
+    require(success, "Transfer failed");
+}
+```

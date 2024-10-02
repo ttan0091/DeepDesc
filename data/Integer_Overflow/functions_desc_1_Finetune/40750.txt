@@ -1,0 +1,25 @@
+Type of vulnerability: Reentrancy
+
+Cause of vulnerability: The `sumTokensInPeg` function calls the `vault.deposit` function before modifying the `totalPeg` state variable. This allows an attacker to withdraw tokens from the contract before their balance is included in `totalPeg`.
+
+Working process of the attack:
+
+1. An attacker deploys the `Attack` contract and sets the `victim` address to the `StableDebtLockerBackdoor` contract.
+
+2. The attacker calls the `updateAndClaim` function on the `StableDebtLockerBackdoor` contract, providing a malicious `zTokenAddress` that is actually the attacker's address.
+
+3. The `StableDebtLockerBackdoor.updateAndClaim` function invokes the `sumTokensInPeg` function on the `RealAssetLocker`, passing the `zTokenAmount` as the `amount`.
+
+4. The `RealAssetLocker.sumTokensInPeg` function calculates the `vaultKey` balance for the `RealAssetLocker`. It then calls the `vault.deposit` function, which transfers stablecoins from the `RealAssetLocker` to the `syncToken` vault.
+
+5. Before updating the `totalPeg` variable with the `zToken` balance, the `RealAssetLocker.sumTokensInPeg` function invokes the `totalPeg` function to update the `usdAssetLockerTotalPeg`.
+
+6. The `usdAssetLockerTotalPeg` is then cached in the `SyntheticTokenLockerBackdoor`, and the `totalPeg` is updated.
+
+7. Lastly, the `RealAssetLocker.sumTokensInPeg` function returns the `totalPeg`, which the `StableDebtLockerBackdoor.updateAndClaim` function returns to `StableDebtLocker`'s `claim` function.
+
+8. The `StableDebtLocker.claim` function updates `beneficiaries.pay` and `totalPegSnapshots` according to the return value of `sumTokensInPeg`.
+
+9. The attacker, by being the largest holder of `usdAssetLockerTotalPeg`, transfers all stablecoins from their own vault to the `syncToken` vault.
+
+10. This means far more stablecoins are transferred than `deductedZTokenAmount`, profiting the attacker.

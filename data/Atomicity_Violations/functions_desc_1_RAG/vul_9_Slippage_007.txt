@@ -1,0 +1,47 @@
+This code defines a public view function named calculateInGivenOut, which calculates the amount of input tokens required to receive a specified amount of output tokens in a swap, given a path of token addresses. The function is designed to handle both singlehop and multihop swaps.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    uint256 amountOut: The amount of output tokens that the user wants to receive.
+    address[] calldata path: An array of token addresses representing the path of tokens to be swapped. The first element is the input token, and the last element is the output token.
+
+2. Function Logic:
+    The function first checks the length of the path array to determine if it is a singlehop swap (length == 2) or a multihop swap (length == 3).
+
+3. SingleHop Swap:
+    If path.length == 2, the function retrieves the native asset address from the factory contract.
+    It then gets the pool for the pair of tokens in the path using the factory.getPool function.
+    The function retrieves the reserves of the native and foreign tokens in the pool using the getReserves function of the pool.
+    Depending on whether the first token in the path is the native asset or not, it calculates the required input amount using the VaderMath.calculateSwapReverse function. This function computes the amount of input tokens needed to receive the specified amountOut of output tokens based on the current reserves.
+
+4. MultiHop Swap:
+    If path.length == 3, the function retrieves two pools: one for the first pair of tokens and another for the second pair of tokens.
+    It retrieves the reserves for both pools.
+    The function first calculates the intermediate amount of tokens needed to receive the specified amountOut in the second pool using VaderMath.calculateSwapReverse.
+    It then uses this intermediate amount to calculate the final amount of input tokens needed in the first pool using VaderMath.calculateSwapReverse again.
+
+5. Return Value:
+    The function returns the calculated amountIn, which is the amount of input tokens required to receive the specified amountOut of output tokens.
+
+### Detailed Steps for SingleHop Swap:
+ Retrieve Native Asset: address nativeAsset = factory.nativeAsset();
+ Get Pool: IVaderPool pool = factory.getPool(path[0], path[1]);
+ Get Reserves: (uint256 nativeReserve, uint256 foreignReserve, ) = pool.getReserves();
+ Calculate Input Amount:
+   If path[0] == nativeAsset:
+     return VaderMath.calculateSwapReverse(amountOut, nativeReserve, foreignReserve);
+   Otherwise:
+     return VaderMath.calculateSwapReverse(amountOut, foreignReserve, nativeReserve);
+
+### Detailed Steps for MultiHop Swap:
+ Get Pools:
+   IVaderPool pool0 = factory.getPool(path[0], path[1]);
+   IVaderPool pool1 = factory.getPool(path[1], path[2]);
+ Get Reserves:
+   (uint256 nativeReserve0, uint256 foreignReserve0, ) = pool0.getReserves();
+   (uint256 nativeReserve1, uint256 foreignReserve1, ) = pool1.getReserves();
+ Calculate Intermediate and Final Input Amount:
+   return VaderMath.calculateSwapReverse(VaderMath.calculateSwapReverse(amountOut, nativeReserve1, foreignReserve1), foreignReserve0, nativeReserve0);
+
+This function is crucial for providing users with the necessary information to perform swaps on the Vader protocol, ensuring they know the exact amount of input tokens required to receive their desired output tokens.

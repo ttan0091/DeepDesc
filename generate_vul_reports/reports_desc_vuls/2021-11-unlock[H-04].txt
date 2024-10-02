@@ -1,0 +1,35 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Incomplete clearing of approvals during key transfer when the recipient's key has expired and the key manager is already set to zero.
+Execution process: An attacker sets approvals for a controlled account, transfers the key to a victim whose previous key has expired, and then reclaims the key using the previously set approval.
+Vulnerable code: 
+```solidity
+function transferFrom(address _from, address _recipient, uint _tokenId) public onlyIfAlive hasValidKey(_from) onlyKeyManagerOrApproved(_tokenId) {
+    // @audit this is skipped if user had a key that expired
+    if (toKey.tokenId == 0) {
+        toKey.tokenId = _tokenId;
+        _recordOwner(_recipient, _tokenId);
+        // Clear any previous approvals
+        _clearApproval(_tokenId);
+    }
+    if (previousExpiration <= block.timestamp) {
+        // The recipient did not have a key, or had a key but it expired. The new expiration is the sender's key expiration
+        // An expired key is no longer a valid key, so the new tokenID is the sender's tokenID
+        toKey.expirationTimestamp = fromKey.expirationTimestamp;
+        toKey.tokenId = _tokenId;
+        // Reset the key Manager to the key owner
+        // @audit doesn't clear approval if key manager already was 0
+        _setKeyManagerOf(_tokenId, address(0));
+        _recordOwner(_recipient, _tokenId);
+    }
+    // ...
+}
+
+function _setKeyManagerOf(uint _tokenId, address _keyManager) internal {
+    // @audit-ok only clears approved if key manager updated
+    if (keyManagerOf[_tokenId] != _keyManager) {
+        keyManagerOf[_tokenId] = _keyManager;
+        _clearApproval(_tokenId);
+        emit KeyManagerChanged(_tokenId, address(0));
+    }
+}
+```

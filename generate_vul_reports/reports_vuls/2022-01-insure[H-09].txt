@@ -1,0 +1,17 @@
+[H-09]Vault#setController()owner of the Vault contracts can drain funds from the Vault
+Submitted by WatchPug
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L485-L496
+functionsetController(address_controller)publicoverrideonlyOwner{require(_controller!=address(0),"ERROR_ZERO_ADDRESS");if(address(controller) !=address(0)) {controller.migrate(address(_controller));controller=IController(_controller);}else{controller=IController(_controller);}emitControllerSet(_controller);}
+The owner of the Vault contract can set an arbitrary address as thecontroller.
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L342-L352
+functionutilize()externaloverridereturns(uint256_amount) {if(keeper!=address(0)) {require(msg.sender==keeper,"ERROR_NOT_KEEPER");}_amount=available();//balanceif(_amount>0) {IERC20(token).safeTransfer(address(controller),_amount);balance-=_amount;controller.earn(address(token),_amount);}}
+A maliciouscontrollercontract can transfer funds from the Vault to the attacker.
+Proof of Concept
+A malicious/compromised can:
+CallVault#setController()and setcontrollerto a malicious contract;L489 the old controller will transfer funds to the new, malicious controller.CallVault#utilize()to deposit all the balance in the Vault contract into the malicious controller contract.Withdraw all the funds from the malicious controller contract.
+Recommendation
+Consider disallowingVault#setController()to set a new address if a controller is existing, which terminates the possibility of migrating funds to a specified address provided by the owner. Or, putting a timelock to this function at least.
+oishun1112 (Insure) acknowledged and disagreed with severity:
+we assume ownership control is driven safely
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

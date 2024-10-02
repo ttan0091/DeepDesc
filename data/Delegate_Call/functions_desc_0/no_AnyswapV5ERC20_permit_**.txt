@@ -1,0 +1,47 @@
+This code defines an external function named permit, which is used to approve a certain amount of tokens to be spent by a spender on behalf of the token owner, using a signed message (EIP712) for authentication. This function is typically used in decentralized applications to allow users to approve token transfers without directly interacting with the token contract, thus reducing the number of transactions needed.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+   solidity
+   function permit(address target, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external override
+   
+    target: The address of the token owner who is granting the approval.
+    spender: The address that is being granted approval to spend tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which this permit is no longer valid.
+    v, r, s: Components of the ECDSA signature provided by the target to authorize this permit.
+
+2. Time Validity Check:
+   solidity
+   require(block.timestamp <= deadline, "AnyswapV3ERC20: Expired permit");
+   
+    This line checks if the current block timestamp is less than or equal to the deadline. If the permit has expired (i.e., the current time is past the deadline), the function will revert with the error message "AnyswapV3ERC20: Expired permit".
+
+3. Hash Calculation:
+   solidity
+   bytes32 hashStruct = keccak256(
+       abi.encode(
+           PERMIT_TYPEHASH,
+           target,
+           spender,
+           value,
+           nonces[target]++,
+           deadline));
+   
+    This section calculates the hash of the structured data that needs to be signed. PERMIT_TYPEHASH is a constant that defines the structure of the permit data. abi.encode is used to encode the data into a format that can be hashed. nonces[target]++ increments the nonce for the target address, ensuring that each permit is unique and cannot be replayed.
+
+4. Signature Verification:
+   solidity
+   require(verifyEIP712(target, hashStruct, v, r, s) || verifyPersonalSign(target, hashStruct, v, r, s));
+   
+    This line verifies the signature provided by the target. It checks if the signature is valid under EIP712 standards or under a personal sign format. If neither verification passes, the function will revert.
+
+5. Approval Update and Event Emitting:
+   solidity
+   allowance[target][spender] = value;
+   emit Approval(target, spender, value);
+   
+    If all checks pass, the function updates the allowance mapping to reflect that spender is allowed to spend value amount of tokens on behalf of target. It then emits an Approval event to notify listeners of the blockchain that an approval has been granted.
+
+This function is crucial for enabling offchain token approvals, enhancing user experience by reducing the need for onchain transactions for approvals.

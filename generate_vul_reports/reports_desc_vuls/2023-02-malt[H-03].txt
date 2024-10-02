@@ -1,0 +1,23 @@
+Type of vulnerability: Reentrancy and Front-Running
+Cause of vulnerability: The contract allows for manipulation of the `livePrice` within a short timeframe (2 blocks) due to the `usePrimedWindow` mechanism, which resets after a specific number of blocks, allowing an attacker to exploit the system for multiple incentives.
+Execution process: An attacker can first call `stabilize()` when the TWAP is below the lower peg threshold to receive the `defaultIncentive`. Then, in the next block, the attacker manipulates the `livePrice` using a flash loan to be above the `entryPrice`, allowing another call to `stabilize()` for another `defaultIncentive`, after which the attacker repays the flash loan.
+Vulnerable code: 
+```solidity
+function _validateSwingTraderTrigger(uint256 livePrice, uint256 entryPrice) internal returns (bool) {
+    if (usePrimedWindow) {
+        if (livePrice > entryPrice) {
+            return false;
+        }
+        if (block.number > primedBlock + primedWindow) {
+            primedBlock = block.number;
+            malt.mint(msg.sender, defaultIncentive * (10**malt.decimals()));
+            emit MintMalt(defaultIncentive * (10**malt.decimals()));
+            return false;
+        }
+        if (primedBlock == block.number) {
+            return false;
+        }
+    }
+    return true;
+}
+```

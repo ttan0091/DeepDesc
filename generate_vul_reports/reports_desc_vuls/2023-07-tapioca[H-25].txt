@@ -1,0 +1,14 @@
+Type of vulnerability: Integer Overflow
+Cause of vulnerability: The multiplication of `share` and `totalAmount` in the `_toAmount` function can exceed the maximum value that can be stored in a uint256 variable, leading to an overflow.
+Execution process: When a user performs actions like borrow, repay, or removeCollateral, the function `_isSolvent` in the Market contract calculates the amount using `yieldBox.toAmount`. This calculation involves multiplying `collateralShare` with `EXCHANGE_RATE_PRECISION / FEE_PRECISION` and `collateralizationRate`, then multiplying the result by `totalAmount`. If the product exceeds the uint256 limit, it causes an overflow, which can revert the transaction, freezing the user's funds.
+Vulnerable code: 
+```solidity
+function _toAmount(uint256 share, uint256 totalShares_, uint256 totalAmount, bool roundUp) internal pure returns (uint256 amount) {
+    totalAmount++;
+    totalShares_ += 1e8;
+    amount = (share * totalAmount) / totalShares_;
+    if (roundUp && (amount * totalShares_) / totalAmount < share) {
+        amount++;
+    }
+}
+```

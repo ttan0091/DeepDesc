@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `finishDistribution` function allows the contract owner (msg.sender) to withdraw funds using the `call.value` pattern without accounting for addressing the balance reduction.
+Working of the exploit: An attacker creates a contract with the fallback function that reverts on the first call and then reverts on value transfers. The attacker contributes funds to the auction and calls `finishDistribution` to withdraw the deposited value. The function `require(msg.sender.call.value(amountRaised)());` executes the fallback function of the attacker contract, triggering reverts and causing the balance not to be reset. This allows the attacker to keep the contribution and thus affect the sale.
+```solidity
+// Function vulnerable to reentrancy attack
+function finishDistribution() public returns (bool) {
+    require(msg.sender.call.value(amountRaised)()); // Call attacker contract's fallback, leading to reverts
+	balances[msg.sender] = balances[msg.sender] - amountRaised; // This line is never reached due to reverts, so attacker's balance is not reset
+    return true;
+}
+```

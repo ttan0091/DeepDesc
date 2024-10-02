@@ -1,0 +1,23 @@
+Type of vulnerability: Inability to Trigger Fallback Function
+
+Cause of vulnerability: The `retrieveDeposit` function relies on the `fallback` function being triggered by the `anycall` contract in the branch bridge. However, due to insufficient gas stipend for the `fallback` execution, it may fail even if the initial call to the root bridge succeeds. This results in the deposit nonce being marked as executed in the `executionHistory`, preventing the user from ever triggering the `retrieveDeposit` function to redeem their deposit.
+
+Execution process: 
+1. A user attempts to redeem a deposit using the `retrieveDeposit` function.
+2. The function checks if the deposit nonce has been executed in the `executionHistory`.
+3. If the nonce is marked as executed, the function assumes the transaction is completed and does not attempt to trigger the `fallback` function.
+4. Due to insufficient gas for the `fallback` execution, the deposit status remains unchanged, and the user cannot redeem their deposit.
+
+Vulnerable code:
+```solidity
+if (!executionHistory[fromChainId][uint32(bytes4(data[1:5]))]) {
+    // Toggle Nonce as executed
+    executionHistory[fromChainId][nonce] = true;
+    // Retry failed fallback
+    (success, result) = (false, "");
+} else {
+    _forceRevert();
+    // Return true to avoid triggering anyFallback in case of `_forceRevert()` failure
+    return (true, "already executed tx");
+}
+```

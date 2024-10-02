@@ -1,0 +1,22 @@
+Type of vulnerability: Reentrancy or Unauthorized Token Transfer
+Cause of vulnerability: The vulnerability arises due to the ability of a malicious market creator to set an approved reference address for a vault deposit in the `initialize` function of `PoolTemplate.sol`. This can be exploited if the approved reference address has set an unlimited approval for `Vault.sol`, allowing the malicious user to transfer tokens from this address to an incorrect market.
+Execution process: A malicious user can observe the pending transaction of a market creation and front-run it by setting the `_references[4]` to an approved reference address that has unlimited approval for `Vault.sol`. When the market creation transaction is executed, the `_depositFrom` function is called, transferring tokens from the approved reference address to the incorrect market.
+Vulnerable code: 
+```solidity
+function initialize(string calldata _metaData, uint256[] calldata _conditions, address[] calldata _references) external override {
+    require(initialized == false && bytes(_metaData).length > 0 && _references[0] != address(0) && _references[1] != address(0) && _references[2] != address(0) && _references[3] != address(0) && _references[4] != address(0) && _conditions[0] <= _conditions[1], "ERROR: INITIALIZATION_BAD_CONDITIONS");
+    initialized = true;
+    string memory _name = string(abi.encodePacked("InsureDAO-", IERC20Metadata(_references[1]).name(), "-PoolInsurance"));
+    string memory _symbol = string(abi.encodePacked("i-", IERC20Metadata(_references[1]).symbol()));
+    uint8 _decimals = IERC20Metadata(_references[0]).decimals();
+    initializeToken(_name, _symbol, _decimals);
+    registry = IRegistry(_references[2]);
+    parameters = IParameters(_references[3]);
+    vault = IVault(parameters.getVault(_references[1]));
+    metadata = _metaData;
+    marketStatus = MarketStatus.Trading;
+    if (_conditions[1] > 0) {
+        _depositFrom(_conditions[1], _references[4]);
+    }
+}
+```

@@ -1,0 +1,8 @@
+[H-02] Flash attack mitigation does not work as intended in USDV.sol
+One of the stated protocol (review) goals is to detect susceptibility to “Any attack vectors using flash loans on Anchor price, synths or lending.” As such, USDV contract aims to protect against flash attacks usingflashProof()modifier which uses the following check inisMature()to determine if currently executing contract context is at leastblockDelayduration ahead of the previous context:lastBlock[tx.origin] + blockDelay <= block.number
+However,blockDelaystate variable is not initialized which means it has a default uint value of 0. So unless it is set to >= 1 bysetParams()which can be called only by the DAO (which currently does not have the capability to callsetParams()function),blockDelaywill be 0, which allows current executing context (block.number) to be the same as the previous one (lastBlock[tx.origin]). This effectively allows multiple calls on this contract to be executed in the same transaction of a block which enables flash attacks as opposed to what is expected as commented onL41: ”// Stops an EOA from doing a flash attack in the same block”
+Even if the DAO can callsetParams()to changeblockDelayto >= 1, there is a big window of opportunity for flash attacks until the DAO votes, finalizes and approves such a proposal. Moreover, such proposals can be cancelled by a DAO minority or replaced by a malicious DAO minority to launch flash attacks.
+Recommend initalizingblockDelayto >= 1 at declaration or in constructor.
+strictly-scarce (vader) confirmed:
+The actual issue is simply:
+blockDelaystate variable is not initializedIt is intended to be initialised to 1, so this is a bug. Severity: 2

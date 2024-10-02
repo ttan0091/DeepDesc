@@ -1,0 +1,15 @@
+Type of vulnerability: DenialofService (DoS)
+Cause of vulnerability: Lack of timebased burning on the PresaleContract
+How the vulnerability is exploited: By having a large allowance and balance that can be called by an admincontrolled malicious sale contract
+Potential impact of the vulnerability: Inability to upgrade Nimble, Tron ver. because old contracts would need to be migrated handling contracts lots of allowance could be stolen
+Proposed fix for the vulnerability: Implement a timebased burning in the PresaleContract after an adminupgrade function is called, preventing future call to the contract if a migration has been done but old contracts have not been migrated yet
+Pseudocode or detailed explanation of the fix: 
+1. Implement a canExecute() check in all the functions of the contract that require _isVoted to pass (besides the voting process itself and setUpForTransfer()) that _isVoted[from].voteTime < now
+ If isVoteUnderGovernanceSafe[from] is true, constantly check the process to skip migrating:
+	 Should have a global modifier that _voteTime < now, and should execute the setUpForTransfer() if the deadline has been reached 
+     This way the PresaleContract can always be migrated out, otherwise the function would obviously be exploited if everything could be performed through MVPersonDoomed assertState restricted call
+     There is no way to do that much on the Nimble Tron version, besides on VotingCoordinator which is timed in external call types, everything else is synchronous!
+2. As the ability to migrate away is only once possible, after the setUpForTransfer() has been performed regardless of the voting status:
+     Modern Palladium will not allow locking even if migrated because everything will be executed from MVPersonDoomed and the function is a restricted call
+     Timeout is not required for pending votes, because everything will be executed from the restricted contract
+3. As the function can be performed directly from lockout without any voting gas, traditional DOS can be performed, so probably modern Palladium should be used to migrate or the contract should be voted under governance after voteTime +5 days anyway.

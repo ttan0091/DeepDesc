@@ -1,0 +1,40 @@
+This code defines an external function named withdraw, which is accessible only to the contract owner and is not deprecated. The function allows the owner to withdraw funds from a specified account and returns a boolean indicating the success of the operation.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Control:
+    external: The function can be called from outside the contract.
+    onlyOwner: A modifier that ensures only the owner of the contract can call this function.
+    onlyNotDeprecated: A modifier that ensures the function is not deprecated.
+    override virtual: Indicates that this function overrides a virtual function in a base contract, allowing it to be further overridden by derived contracts.
+    returns (bool): The function returns a boolean value indicating whether the withdrawal was successful.
+
+2. Variable Initialization:
+    uint256 oldDeposit = _deposits[account];: Retrieves the deposit amount associated with the specified account.
+    uint256 rewardIndex = _rewardIndexForAccount[account];: Retrieves the reward index associated with the specified account.
+
+3. Conditional Logic Based on Reward Index:
+    if (rewardIndex == _percents.length  1): Checks if the reward index is the last index in the _percents array.
+      Case 1: Last Reward Index:
+        uint256 balance = _balances[account];: Retrieves the balance of the specified account.
+        require(balance <= _liquidTotalSupply, "subtraction overflow for total supply");: Ensures that the balance is less than or equal to the liquid total supply to prevent underflow.
+        _liquidTotalSupply = _liquidTotalSupply  balance;: Updates the liquid total supply by subtracting the account's balance.
+        require(oldDeposit <= _liquidDeposit, "subtraction overflow for liquid deposit");: Ensures that the old deposit is less than or equal to the liquid deposit to prevent underflow.
+        _liquidDeposit = _liquidDeposit  oldDeposit;: Updates the liquid deposit by subtracting the old deposit.
+        require(balance + oldDeposit >= balance, "addition overflow for total balance + oldDeposit");: Ensures that the sum of balance and old deposit does not overflow.
+        emit Transfer(account, address(0), balance + oldDeposit);: Emits a transfer event indicating the withdrawal of the sum of balance and old deposit to the zero address (burn).
+      Case 2: Not the Last Reward Index:
+        uint256 balance = balanceOf(account);: Retrieves the balance of the specified account using the balanceOf function.
+        uint256 liquidTotalSupply = _liquidTotalSupply;: Stores the current liquid total supply in a local variable.
+        require(balance <= liquidTotalSupply, "subtraction overflow for total supply");: Ensures that the balance is less than or equal to the liquid total supply to prevent underflow.
+        _liquidTotalSupply = liquidTotalSupply  balance;: Updates the liquid total supply by subtracting the account's balance.
+        emit Transfer(account, address(0), balance);: Emits a transfer event indicating the withdrawal of the balance to the zero address (burn).
+
+4. Resetting Account Balances:
+    _balances[account] = 0;: Resets the balance of the specified account to zero.
+    _deposits[account] = 0;: Resets the deposit of the specified account to zero.
+
+5. Return Statement:
+    return true;: Returns true to indicate that the withdrawal was successful.
+
+This function ensures that the owner can safely withdraw funds from an account, updating the total supply and deposits accordingly, and emitting appropriate events to reflect the changes. The use of require statements helps prevent underflow and overflow errors, ensuring the integrity of the contract's state.

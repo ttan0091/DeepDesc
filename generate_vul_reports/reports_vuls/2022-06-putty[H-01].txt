@@ -1,0 +1,24 @@
+[H-01] Fee is being deducted when Put is expired and not when it is exercised.
+Submitted by zishansami, also found by 0x52, 0xsanson, auditor0517, berndartmueller, csanuragjain, and zzzitron
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L495-L503
+https://github.com/code-423n4/2022-06-putty/blob/3b6b844bc39e897bd0bbb69897f2deff12dc3893/contracts/src/PuttyV2.sol#L451
+Impact
+Fee is being deducted when Put is expired and not when it is exercised inPuttyV2.sol.
+Comment section of thesetFee()function mentions"fee rate that is applied on exercise"which signifies that the fee amount is meant to be deducted from strike only when a position is being exercised (or has been exercised).
+But, in functionwithdraw()atPuttyV2.solL#495-L503the fee is being deducted even when the Put position is not exercised and has expired.
+Also, in functionexercise()there is no fee deduction from theorder.strikewhen the Put position is exercised and the strike is being transferred to the caller (PuttyV2.solL#451).
+This unintended deduction from assets of Put Shorter and the absence of fee deduction from strike when Put is exercised are directly impacting the assets and therefore marked as Medium Risk.
+Proof of Concept
+ifcondition present atPuttyV2.solL#495passes iforder.isCallisfalseandisExercisedis false.
+feeAmountbecomes positive iffee > 0and it gets deducted from theorder.strikewhich gets transferred tomsg.senderat line numberPuttyV2.solL#503.
+Recommended Mitigation Steps
+Updateifcondition atPuttyV2.sol#L498with(fee > 0 && order.isCall && isExercised)Add feeAmount calculation and deduction after put is exercised and strike is transferred atPuttyV2.sol#L451as follows:
+uint256feeAmount=0;if(fee>0) {feeAmount= (order.strike*fee) /1000;ERC20(order.baseAsset).safeTransfer(owner(),feeAmount);}ERC20(order.baseAsset).safeTransfer(msg.sender,order.strike-feeAmount);
+outdoteth (Putty Finance) confirmed and commented:
+Report: Fees are only applied on puts if they are expired.
+HickupHH3 (judge) increased severity to High and commented:
+Due to incorrect logic, there are 2 consequences of separate severities:Expired put option being charged the admin fee. As @berndartmueller mentioned in#380, the fee should be charged on the premium (actually this is another issue, see#373). Since it is possible for the fee amount to be greater than expected, I consider this to be a loss of assets and therefore given a high severity rating.Put option not being charged fee upon exercising it. This can be considered to the “protocol leaked value” and thus be given a medium severity rating.Issues that mention (1) or both (1) and (2) will be given a high severity rating, those that mention only (2) will be given a medium.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/4.
+hyh (warden) reviewed mitigation:
+Fixed by changing the fee base to beorder.premiumPR#4, which is now paid uniformly for all option types on order filling. Utilizingorder.strikeas the fee base was the root cause forM-04,M-06,M-11,M-15, so the change toorder.premiumwas a shared mitigation for all of them.

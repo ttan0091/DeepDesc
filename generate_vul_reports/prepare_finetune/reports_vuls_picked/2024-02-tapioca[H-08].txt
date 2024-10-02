@@ -1,0 +1,15 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Incorrect interpretation of calldata for the `execute` signature, allowing arbitrary length specification to match whitelisted addresses or easily generatable addresses.
+Execution process: An attacker forges calldata to match the length of a whitelisted address or an address they can generate, bypassing the `_checkSender` check and allowing arbitrary execution of market operations as Magnetar.
+Vulnerable code: 
+```solidity
+function _processMarketOperation(address _target, bytes calldata _actionCalldata, uint256 _actionValue, bool _allowFailure) private {
+    if (!cluster.isWhitelisted(0, _target)) revert Magnetar_NotAuthorized(_target, _target);
+    bytes4 funcSig = bytes4(_actionCalldata[:4]);
+    if (funcSig == IMarket.execute.selector || funcSig == ISingularity.addAsset.selector || funcSig == ISingularity.removeAsset.selector) {
+        _checkSender(abi.decode(_actionCalldata[4:36], (address)));
+        _executeCall(_target, _actionCalldata, _actionValue, _allowFailure);
+        return;
+    }
+}
+```

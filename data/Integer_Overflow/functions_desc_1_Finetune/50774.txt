@@ -1,0 +1,11 @@
+Type of vulnerability: Nested Call and Incorrect Use of SafeMath Library
+Cause of vulnerability: The vulnerability arises from the improper handling of the call stack and the incorrect usage of the `SafeMath` library within the `A2ACrowdsale` contract.
+Working process of the vulnerability: 
+1. The `mintETHRewards` function is called during the execution of the `beforeSwappingA2ABecomesPublic` function of the `AGillCrowdsale` contract.
+2. The `mintETHRewards` function itself calls another function using the `call` mechanism, passing in `_amount` as the value and `_contract` as the recipient.
+3. Inside the `mintETHRewards` function, the balance of the selected contract (`AGillBeeStaking`) is incorrectly updated using `SafeMath.sub`, leading to underflow.
+4. The underflow condition causes the transaction to revert, preventing the execution of the internal `_burn` function, which in turn stops the transfer of A2A tokens to the `_beeStakingOwner`.
+5. This results in the loss of both ETH and A2A tokens for `_companyHoneyPool`.
+Recommendation for fix: 
+1. Use `unchecked { eth.transfer(_companyHoneyPool, _amount); }` instead of `require(_contract.call.value(_amount)());` to prevent the `SafeMath.sub` issue and not propagate the revert when the value transfer fails.
+2. Modify the `_burn` function to accept a `success` parameter, allowing it to complete successfully even if the balance update in `AGillBeeStaking` fails.

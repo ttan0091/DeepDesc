@@ -1,0 +1,19 @@
+[H-02] Masterchef: Improper handling of deposit fee
+Submitted by hickuphh3, also found by leastwood
+MasterChef.sol#L170-L172
+If a pool’s deposit fee is non-zero, it is subtracted from the amount to be credited to the user.
+if(pool.depositFeeBP>0) {uintdepositFee=_amount.mul(pool.depositFeeBP).div(_perMille);user.amount=SafeCast.toUint128(user.amount+_amount-depositFee);}
+However, the deposit fee is not credited to anyone, leading to permanent lockups of deposit fees in the relevant depositor contracts (StakingRewards and ConvexStakingWrapper for now).
+Proof of Concept
+Example 1: ConvexStakingWrapper
+Assume the following
+Thecurve cDai / cUSDC / cUSDT LP tokencorresponds topid = 1in the convex booster contract.Pool is added in Masterchef withdepositFeeBP = 100 (10%).Alice deposits 1000 LP tokens via the ConvexStakingWrapper contract. A deposit fee of 100 LP tokens is charged. Note that thedepositsmapping of the ConvexStakingWrapper contract credits 1000 LP tokens to her.However, Alice will only be able to withdraw 900 LP tokens. The 100 LP tokens is not credited to any party, and is therefore locked up permanently (essentially becomes protocol-owned liquidity). While she is able to dorequestWithdraw()for 1000 LP tokens, attempts to executewithdraw()with amount = 1000 will revert because she is only credited 900 LP tokens in the Masterchef contract.
+Example 2: StakingRewards
+CRV pool is added in Masterchef withdepositFeeBP = 100 (10%).Alice deposits 1000 CRV into the StakingRewards contract. A deposit fee of 100 CRV is charged.Alice is only able to withdraw 900 CRV tokens, while the 100 CRV is not credited to any party, and is therefore locked up permanently.
+These examples are non-exhaustive as more depositors can be added / removed from the Masterchef contract.
+Recommended Mitigation Steps
+I recommend shifting the deposit fee logic out of the masterchef contract into the depositor contracts themselves, as additional logic would have to be added in the masterchef to update the fee recipient’s state (rewardDebt, send pending concur rewards, update amount), which further complicates matters. As the fee recipient is likely to be the treasury, it is also not desirable for it to accrue concur rewards.
+if(pool.depositFeeBP>0) {uintdepositFee=_amount.mul(pool.depositFeeBP).div(_perMille);user.amount=SafeCast.toUint128(user.amount+_amount-depositFee);UserInfostoragefeeRecipient=userInfo[_pid][feeRecipient];// TODO: update and send feeRecipient pending concur rewardsfeeRecipient.amount=SafeCast.toUint128(feeRecipient.amount+depositFee);// TODO: update fee recipient's rewardDebt}
+ryuheimat (Concur) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a way for funds to be forever lost, because of that reason I believe High Severity to be appropriate.Mitigation could be as simple as transferring the fee to afeeReceiveror adding a way to pull those fees.

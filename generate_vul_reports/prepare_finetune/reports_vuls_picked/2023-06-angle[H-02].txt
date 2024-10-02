@@ -1,0 +1,25 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: The contract allows multiple disputes to be initiated while a previous dispute is still active, and only refunds the last disputer, leading to potential loss of funds for earlier valid disputers.
+Execution process: A valid disputer initiates a dispute using `disputeTree()`. A malicious user front-runs this transaction with another `disputeTree()` call. When the governor resolves the dispute with `resolveDispute(true)`, the refund is sent to the second disputer, causing the first valid disputer to lose their funds.
+Vulnerable code: 
+```solidity
+function disputeTree(string memory reason) external {
+    if (block.timestamp >= endOfDisputePeriod) revert InvalidDispute();
+    IERC20(disputeToken).safeTransferFrom(msg.sender, address(this), disputeAmount);
+    disputer = msg.sender;
+    emit Disputed(reason);
+}
+
+function resolveDispute(bool valid) external onlyGovernorOrGuardian {
+    if (disputer == address(0)) revert NoDispute();
+    if (valid) {
+        IERC20(disputeToken).safeTransfer(disputer, disputeAmount);
+        _revokeTree();
+    } else {
+        IERC20(disputeToken).safeTransfer(msg.sender, disputeAmount);
+        endOfDisputePeriod = _endOfDisputePeriod(uint48(block.timestamp));
+    }
+    disputer = address(0);
+    emit DisputeResolved(valid);
+}
+```

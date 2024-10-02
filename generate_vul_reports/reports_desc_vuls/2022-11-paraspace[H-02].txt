@@ -1,0 +1,18 @@
+Type of vulnerability: Authorization Bypass
+Cause of vulnerability: Lack of ownership verification in the `supplyPunk` function allows any user to call the function and specify where the nTokens are minted, enabling them to steal CryptoPunks.
+Execution process: 
+1. User A owns a CryptoPunk and wants to deposit it. They call `offerPunkForSaleToAddress` with a price of 0, effectively approving the `WPunkGateway` to transfer their CryptoPunk.
+2. User B monitors the transactions and immediately calls `supplyPunk` with themselves as `onBehalfOf`.
+3. This completes the transfer of the CryptoPunk and deposits it into the pool, but mints the nTokens to User B, allowing them to effectively steal the CryptoPunk.
+Vulnerable code: 
+```solidity
+function supplyPunk(DataTypes.ERC721SupplyParams[] calldata punkIndexes, address onBehalfOf, uint16 referralCode) external nonReentrant {
+    for (uint256 i = 0; i < punkIndexes.length; i++) {
+        Punk.buyPunk(punkIndexes[i].tokenId);
+        Punk.transferPunk(proxy, punkIndexes[i].tokenId);
+        // gatewayProxy is the sender of this function, not the original gateway
+        WPunk.mint(punkIndexes[i].tokenId);
+    }
+    Pool.supplyERC721(address(WPunk), punkIndexes, onBehalfOf, referralCode);
+}
+```

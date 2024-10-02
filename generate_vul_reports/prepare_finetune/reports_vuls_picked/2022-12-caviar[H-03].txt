@@ -1,0 +1,25 @@
+Type of vulnerability: First depositor attack (Initial liquidity manipulation)
+
+Cause of vulnerability: The contract allows the first depositor to manipulate the initial liquidity by depositing a minimal amount of tokens and then transferring a large amount of tokens directly to the contract, causing subsequent depositors to receive zero or minimal shares due to rounding errors in the share calculation.
+
+Execution process:
+1. An attacker deposits a minimal amount of baseToken and quoteToken (e.g., 1 wei each) to the pair, minting 1 wei LP token.
+2. The attacker then transfers a large amount of baseToken and quoteToken (e.g., 1e9 each) directly to the pair contract, without minting new LP tokens.
+3. As a result, the 1 wei LP token now represents a disproportionately large value of the pool.
+4. Subsequent users who deposit tokens less than the manipulated amount (1e9) will receive zero LP tokens due to the rounding division in the share calculation.
+
+Vulnerable code:
+```solidity
+function addQuote(uint256 baseTokenAmount, uint256 fractionalTokenAmount) public view returns (uint256) {
+    uint256 lpTokenSupply = lpToken.totalSupply();
+    if (lpTokenSupply > 0) {
+        // calculate amount of lp tokens as a fraction of existing reserves
+        uint256 baseTokenShare = (baseTokenAmount * lpTokenSupply) / baseTokenReserves();
+        uint256 fractionalTokenShare = (fractionalTokenAmount * lpTokenSupply) / fractionalTokenReserves();
+        return Math.min(baseTokenShare, fractionalTokenShare);
+    } else {
+        // if there is no liquidity then init
+        return Math.sqrt(baseTokenAmount * fractionalTokenAmount);
+    }
+}
+```

@@ -1,0 +1,16 @@
+[H-02] Inability to perform partial liquidations allows huge positions to accrue bad debt in the system
+Submitted byMrPotatoMagic, also found byMaroutis,peanuts,ArmedGoose,d3e4,OMEN,NentoR,0xtankr,SpicyMeatball,KYP,Shubham,dimulski,Giorgio,Sabit,Egis_Security, andT1MOH
+Theliquidate()function allows liquidators to burn DYAD on behalf of an DNft id and receive collateral in return.
+The issue is that the current functionality only allows burning of the whole DYAD amount minted by the DNft id. This means that partial liquidations cannot be performed and prevents liquidators from liquidating DYAD minted by whales that hold huge positions in the system. Since the liquidations cannot be performed unless the liquidator can match up to the collateral deposited and DYAD minted by the whale, the system will be undercollaterized causing bad debt to accrue.
+The effect of this issue will increase as more such positions exist in the system that cannot be liquidated by the liquidators.
+Proof of Concept
+In theliquidate()function below, we can see on Line 235 that when theburn()function is called on the DYAD token contract, it burns the whole minted DYAD instead of allowing the liquidator to supply a specific amount they can burn to improve the collateral ratio of the id and the overall health of the system.
+But since this is not allowed, liquidators trying to liquidate whales, who have minted a huge amount of DYAD, would fail due to the position being extremely big and the inability of partially liquidate.
+File:VaultManagerV2.sol225:functionliquidate(226:uintid,227:uintto228:   )229:external230:isValidDNft(id)231:isValidDNft(to)232:     {233:uintcr=collatRatio(id);234:if(cr>=MIN_COLLATERIZATION_RATIO)revertCrTooHigh();235:dyad.burn(id,msg.sender,dyad.mintedDyad(address(this),id));236:237:238:uintcappedCr=cr<1e18?1e18:cr;239:uintliquidationEquityShare= (cappedCr-1e18).mulWadDown(LIQUIDATION_REWARD);240:uintliquidationAssetShare= (liquidationEquityShare+1e18).divWadDown(cappedCr);241:242:uintnumberOfVaults=vaults[id].length();243:for(uinti=0;i<numberOfVaults;i++) {244:Vaultvault=Vault(vaults[id].at(i));245:uintcollateral=vault.id2asset(id).mulWadUp(liquidationAssetShare);246:247:vault.move(id,to,collateral);248:       }249:emitLiquidate(id,msg.sender,to);250:   }
+Recommended Mitigation Steps
+Implement a mechanism to allow liquidators to partially liquidate positions. This would also require refactoring the collateral paid out to them based on the amount they cover.
+shafu0x (DYAD) commented:
+Hmm, but can’t this be solved by flash loaning DYAD?
+0xMax1 (DYAD) commented:
+Not if loan exceeds market liquidity. Partial liquidations is a feature we should implement.
+shafu0x (DYAD) confirmed

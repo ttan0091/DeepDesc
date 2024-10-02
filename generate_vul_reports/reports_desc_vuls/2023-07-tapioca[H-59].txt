@@ -1,0 +1,19 @@
+Type of vulnerability: Incorrect Fee Calculation
+Cause of vulnerability: The contract incorrectly calculates the fees by using the `part` variable instead of the original debt, leading to an overestimation of fees.
+Execution process: When a user repays their loan, the contract calculates the fees based on the `part` variable, which does not account for the accrued fees over time, resulting in the contract taking more fees than it should.
+Vulnerable code: 
+```solidity
+function _repay(address from, address to, uint256 part) internal returns (uint256 amount) {
+    (totalBorrow, amount) = totalBorrow.sub(part, true);
+    userBorrowPart[to] -= part;
+    uint256 toWithdraw = (amount - part); // accrued
+    // @audit-issue Takes more fees than it should
+    uint256 toBurn = amount - toWithdraw;
+    yieldBox.withdraw(assetId, from, address(this), amount, 0);
+    // burn USDO
+    if (toBurn > 0) {
+        IUSDOBase(address(asset)).burn(address(this), toBurn);
+    }
+    emit LogRepay(from, to, amount, part);
+}
+```

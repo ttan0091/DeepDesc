@@ -1,0 +1,37 @@
+This code defines an internal function named retroCatchUp, which is designed to handle the renewal of rewards after a period has expired. The function ensures that the contract has sufficient funds to cover the rewards for the new period and updates relevant state variables to reflect the new rewards period.
+
+Here’s a detailed explanation of how this function works:
+
+1. Failsafe Check:
+   solidity
+   require(block.timestamp > periodFinish, "Period has not expired yet!");
+   
+   This line checks if the current block timestamp (block.timestamp) is greater than the periodFinish timestamp. If the period has not yet expired, the function will revert with the message "Period has not expired yet!". This ensures that the function is only executed after the current rewards period has ended.
+
+2. Balance and Reward Rate Check:
+   solidity
+   uint256 num_periods_elapsed = uint256(block.timestamp.sub(periodFinish)) / rewardsDuration; // Floor division to the nearest period
+   uint balance = rewardsToken.balanceOf(address(this));
+   require(rewardRate.mul(rewardsDuration).mul(crBoostMultiplier()).mul(num_periods_elapsed + 1).div(PRICE_PRECISION) <= balance, "Not enough FXS available for rewards!");
+   
+    num_periods_elapsed calculates the number of full reward periods that have elapsed since the last periodFinish by performing integer division of the time difference between the current timestamp and periodFinish by rewardsDuration.
+    balance retrieves the current balance of the rewards token held by the contract.
+    The require statement checks if the calculated reward amount for the new period, including any leftover from previous periods, does not exceed the contract's balance. This calculation involves multiplying the rewardRate by rewardsDuration, adjusting by a boost multiplier (crBoostMultiplier()), and then dividing by PRICE_PRECISION to normalize the value. If the calculated reward amount is greater than the balance, the function will revert with the message "Not enough FXS available for rewards!".
+
+3. Updating Period Finish and State Variables:
+   solidity
+   periodFinish = periodFinish.add((num_periods_elapsed.add(1)).mul(rewardsDuration));
+   rewardPerTokenStored = rewardPerToken();
+   lastUpdateTime = lastTimeRewardApplicable();
+   
+    periodFinish is updated to reflect the end of the new rewards period. It is set to the current periodFinish plus the duration of the new period, which is calculated as (num_periods_elapsed + 1)  rewardsDuration.
+    rewardPerTokenStored is updated to the current value of rewardPerToken(), which calculates the reward per token based on the new period's parameters.
+    lastUpdateTime is updated to the current time that is applicable for rewards, typically the lesser of the current block timestamp and the new periodFinish.
+
+4. Event Emission:
+   solidity
+   emit RewardsPeriodRenewed(address(stakingToken));
+   
+   This line emits an event RewardsPeriodRenewed with the address of the staking token. This event can be used to notify external systems or interfaces that the rewards period has been renewed.
+
+Overall, the retroCatchUp function ensures that the contract can safely transition to a new rewards period by verifying the availability of funds and updating the necessary state variables to reflect the new period's parameters.

@@ -1,0 +1,12 @@
+[H-16] Funds in the pool could be stolen by exploitingflashSwapinHybridPool
+Submitted by broccoli
+Impact
+An attacker can call thebento.harvestfunction during the callback function of a flash swap of theHybridPoolto reduce the number of input tokens that he has to pay to the pool, as long as there is any unrealized profit in the strategy contract of the underlying asset.
+Proof of Concept
+TheHybridPoolaccounts for the reserve and balance of the pool using thebento.toAmountfunction, which represents the actual amount of assets that the pool owns instead of the relative share. The value oftoAmountcould increase or decrease if thebento.harvestfunction is called (by anyone), depending on whether the strategy contract earns or loses money.Supposing that the DAI strategy contract ofBentohas a profit not accounted for yet. To account for the profit, anyone could callharvestonBentowith the corresponding parameters, which, as a result, increases theelasticof the DAI token.Now, an attacker wants to utilize the unrealized profit to steal funds from a DAI-WETH hybrid pool. He callsflashSwapto initiate a flash swap from WETH to DAI. First, the pool transfers the corresponding amount of DAI to him, calls thetridentSwapCallbackfunction on the attacker’s contract, and expects that enough DAI is received at the end.During thetridentSwapCallbackfunction, the attacker callsbento.harvestto realize the profit of DAI. As a result, the pool’sbento.toAmountincreases, and the amount of DAI that the attacker has to pay to the pool is decreased. The attacker could get the same amount of ETH but paying less DAI by exploiting this bug.
+Referenced code:
+HybridPool.solL218-L220HybridPool.solL249-L250HybridPool.solL272-L285BentoBoxV1Flat.solL1105BentoBoxV1Flat.solL786-L792BentoBoxV1Flat.solL264-L277
+Recommended Mitigation Steps
+Consider not usingbento.toAmountto track the reservers and balances, but usebalanceOfinstead (as done in the other two pools).
+maxsam4 (Sushi) confirmed:
+Stableswap needs to usetoAmountbalances rather shares to work. This issue allows skimming yield profits from the pool. There’s no user funds at risk but still an issue.We plan on resolving this by using a fixed toElastic ratio during the whole swap.

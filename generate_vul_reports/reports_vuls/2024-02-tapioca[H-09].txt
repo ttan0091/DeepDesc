@@ -1,0 +1,23 @@
+[H-09] Funds can be stolen through remote transfer functionality
+Submitted byrvierdiiev
+User can send LZ message through anyOfttoken using theTapiocaOmnichainSender.sendPacketfunction. User provides params that should be used and also providescomposed messageif he needs to send it.
+What is important for composed message isduring crafting message,msg.senderis stored assrcChainSender_. In this way we know who have triggered composed call.
+functionencode(bytes32_sendTo,uint64_amountShared,bytesmemory_composeMsg)internalviewreturns(bytesmemory_msg,boolhasCompose) {hasCompose=_composeMsg.length>0;// @dev Remote chains will want to know the composed function caller ie. msg.sender on the src._msg=hasCompose?abi.encodePacked(_sendTo,_amountShared,addressToBytes32(msg.sender),_composeMsg):abi.encodePacked(_sendTo,_amountShared);}
+The amount that should be sent to other chain is burnt (if any) and LZ callis sent. On another chain, the call will be handledbyTapiocaOmnichainReceiver._lzReceivefunction. This functionwill mint tokens to recipient. If the composed message was included, then it willsent it to endpoint, so it can be triggered later.
+When composed message is triggered, thenlzComposefunctionhandles it. As you can see, the function retrievessrcChainSender_to know who was initiator of compose call on source chain. Then_lzComposefunctioncontinue processing of message.
+UsingmsgTypeuser can provide operation he wants to execute on target chain. One of operationsisMSG_REMOTE_TRANSFERthat allows to remotely send tokens to another chain. The flow is next: on chain A user initiates compose call to chain B, that will send his tokens on chain B to chain A, or will use allowance to send tokens of other user on chain B to chain A. Let’s check how it works.
+First, the function shouldtransfer tokens from owner toaddress(this). This function receives owner of funds and_srcChainSenderas inputsto check allowance. As you can see, in the case of if_srcChainSenderis owner then we don’t need any approve.
+After transfer is done toaddress(this)then thecontract can send them back to chain A. So the functionburns tokensand crafts message to another chain and it can have composed call again; which means thatit will include_srcChainSender, so the contract on chain A knows who initiated the call.
+The problem is that_srcChainSenderthat will be included isowner of funds on chain B, which is incorrect.
+Here’s the described attack flow:
+Victim has funds on chain A, that attacker is going to steal to chain B.Attacker on chain A initiates compose call with victim as owner of funds and provides amount0as amount to transfer of chain B.Compose call succeed on chain B as it is possible to transfer0tokens and then another compose message was included, which transfers all tokens from victim to attacker on chain B.Because_srcChainSenderwas set to victim on first compose call. Then the next compose call on chain A will think that victim is initiator of remote transfer, which means that no allowance will be checked.Funds are stolen to attacker address on chain B.
+Impact
+Possible to steal funds.
+Tools Used
+VsCode
+Recommended Mitigation Steps
+Provide_srcChainSenderas initiator of compose call.
+_internalRemoteTransferSendPacket(_srcChainSender, remoteTransferMsg_.lzSendParam, remoteTransferMsg_.composeMsg);
+Assessed type
+Error
+0xWeiss (Tapioca) confirmed

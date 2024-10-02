@@ -1,0 +1,29 @@
+This code defines an external view function named getPriorVotes, which is designed to retrieve the number of votes an account had at a specific block number. The function is part of a smart contract system that likely manages a governance token or similar voting mechanism, where votes can change over time due to various events (e.g., transfers, delegations).
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    getPriorVotes(address account, uint blockNumber): This function takes two parameters: account, which is the address of the account whose prior votes are being queried, and blockNumber, which specifies the block number at which the votes are to be determined.
+    The function is marked as external, meaning it can only be called from outside the contract, and view, indicating that it does not modify the state of the blockchain and can be called without a transaction.
+
+2. Precondition Check:
+    require(blockNumber < block.number, "BONE::getPriorVotes: not yet determined");: This line checks if the specified blockNumber is in the past. If blockNumber is not less than the current block number (block.number), the function reverts with an error message indicating that the block number is in the future and thus the votes are not yet determined.
+
+3. Checkpoints Initialization:
+    uint32 nCheckpoints = numCheckpoints[account];: This retrieves the number of checkpoints (historical records of votes) associated with the account.
+    If nCheckpoints is 0, it means there are no recorded checkpoints for this account, and the function returns 0 immediately.
+
+4. Recent Checkpoint Check:
+    If there are checkpoints, the function first checks the most recent one (checkpoints[account][nCheckpoints  1]). If the fromBlock of this checkpoint is less than or equal to blockNumber, it means the most recent checkpoint is valid for the specified block, and the function returns the votes recorded in this checkpoint.
+
+5. Implicit Zero Balance Check:
+    If the fromBlock of the first checkpoint (checkpoints[account][0]) is greater than blockNumber, it indicates that the account had no votes at the specified block number, and the function returns 0.
+
+6. Binary Search for Checkpoint:
+    If neither of the above conditions is met, the function performs a binary search on the checkpoints to find the correct one for the specified blockNumber.
+    The binary search is implemented using a while loop that continues as long as upper is greater than lower.
+    Inside the loop, the function calculates the center index (center) and retrieves the checkpoint at this index.
+    Depending on whether the fromBlock of the center checkpoint is equal to, less than, or greater than blockNumber, the function adjusts the lower or upper bounds accordingly.
+    The loop continues until upper is no longer greater than lower, at which point the function returns the votes from the checkpoint at the lower index.
+
+This function is efficient and leverages a binary search to quickly find the correct checkpoint, ensuring that the query for prior votes is performed in logarithmic time relative to the number of checkpoints. This is crucial for maintaining performance in systems with frequent vote changes or a large number of accounts.

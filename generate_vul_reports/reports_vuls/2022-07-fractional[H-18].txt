@@ -1,0 +1,16 @@
+[H-18] The time constraint of selling fractions can be bypassed by directly transferring fraction tokens to the buyout contract
+Submitted by PwnedNoMore, also found by Treasure-Seeker
+Theendfunction in theBuyoutcontract usesIERC1155(token).balanceOf(address(this), id)to determine the amount of deposited fraction tokens without distinguishing whether those fraction tokens are depositied by thesellFractionsfunction or by direct transferring. Note that only thesellFractionsfunction is constrained byPROPOSAL_PERIOD.
+This vulnerability lets a 51-holder gain the whole batch of NFTs without paying for the rest 49% fractions.
+Assume a vault X creates 100 fraction tokens and the market-decided price of a fraction token is 1 ether (i.e., the ideal value of the locked NFTs in vault X is 100 ether). Let’s also assume that Alice holds 51 tokens (maybe by paying 51 ether on opensea).
+Followings are two scenarios, where the benign one follows the normal workflow and the malicious one exploits the vulnerability.
+Benign Scenario
+Alice starts a buyout by depositing her 51 fraction tokens and 49 ether, making thefractionPrice1 etherOther users are satisfied with the provided price, and hence no one buys or sells their fraction tokensThe buyout succeeds:Alice gets the locked NFTsOther fraction holders can invokecashto redeem their fraction tokens with a price of 1 etherAs a result, Alice paid 100 ether in total to get the locked NFTs.
+Malicious Scenario
+Alice starts a buyout by depositing 0 fraction tokens and 1 wei, making thefractionPrice0.01 wei.Note that Alice can create a separated account whose balance for the fraction token is 0, to start the buyoutNo one is satisfied with the price (0.01 wei v/s 1 ether) and hence they will try to buy fraction tokens to reject the buyoutSince there is not any fraction tokens locked in theBuyoutcontract from Alice, other users do not need to do anythingAlice invokes theendfunctionBut before invoking theendfunction,Alice directly invokesIERC1155(token).safeTransferFromto send the rest 51 fraction token to theBuyoutcontractTheendfunction will treat the buyout successful, since theIERC1155(token).balanceOf(address(this), id)is bigger than 50%The above two message calls happen in a single transaction, hence no one can front-runAs a resultAlice only paid 51 ether to get the locked NFTs whose value is 100 etherOther fraction holders get nothing (but they had paid for the fraction token before)
+In short, a malicious users can buy any NFT by just paying half of the NFT’s market price.
+Recommended Mitigation Steps
+For each buyout, add a new field to record the amount of fraction tokens deposited bysellFractions. And in theendfunction, use the newly-added field to determine whether the buyout can be processed or not.
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Assets can be transferred in after a failed buyout to treat it as successful. Agree this is High risk.

@@ -1,0 +1,16 @@
+[H-03] Wrong formula when add feeincentivePoolcan lead to loss of funds.
+Submitted by minhquanym, also found by cmichel, hickuphh3, and WatchPug
+LiquidityPool.sol#L319-L322
+ThegetAmountToTransferfunction ofLiquidityPoolupdatesincentivePool[tokenAddress]by adding some fee to it but the formula is wrong and the value ofincentivePool[tokenAddress]will be divided byBASE_DIVISOR(10000000000) each time.
+After just a few time, the value ofincentivePool[tokenAddress]will become zero and that amount oftokenAddresstoken will be locked in contract.
+Proof of concept
+Line 319-322
+incentivePool[tokenAddress] = (incentivePool[tokenAddress] + (amount * (transferFeePerc - tokenManager.getTokensInfo(tokenAddress).equilibriumFee))) / BASE_DIVISOR;
+Letx = incentivePool[tokenAddress],y = amount,z = transferFeePercandt = tokenManager.getTokensInfo(tokenAddress).equilibriumFee. Then that be written as
+x = (x + (y * (z - t))) / BASE_DIVISOR;x = x / BASE_DIVISOR + (y * (z - t)) / BASE_DIVISOR;
+Recommended Mitigation Steps
+Fix the bug by changing lines 319-322 to:
+incentivePool[tokenAddress] += (amount * (transferFeePerc - tokenManager.getTokensInfo(tokenAddress).equilibriumFee)) / BASE_DIVISOR;
+ankurdubey521 (Biconomy) confirmed
+pauliax (judge) commented:
+Great find, the wrong order of arithmetic operations deserves a severity of high as it would have serious negative consequences.

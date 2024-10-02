@@ -1,0 +1,15 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: Lack of proper authorization checks in the `updateLenderAuthorization` function allows lenders to grant themselves the `WithdrawOnlyRole` on any account.
+Execution process: A lender whose account is sanctioned in the Chainalysis Oracle transfers their MarketTokens to different accounts using the `WildcatMarketToken::transfer()` function. Then, they call the `updateLenderAuthorization` function to set the `WithdrawOnlyRole` on these new accounts, allowing them to withdraw funds.
+Vulnerable code: 
+```solidity
+function updateLenderAuthorization(address lender, address[] memory markets) external {
+    for (uint256 i; i < markets.length; i++) {
+        address market = markets[i];
+        if (!_controlledMarkets.contains(market)) {
+            revert NotControlledMarket();
+        }
+        WildcatMarket(market).updateAccountAuthorization(lender, _authorizedLenders.contains(lender));
+    }
+}
+```

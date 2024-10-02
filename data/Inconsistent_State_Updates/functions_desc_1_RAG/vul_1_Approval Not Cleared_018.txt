@@ -1,0 +1,33 @@
+This code defines a public function named burnAsset, which is used to burn a specified amount of a given asset and create a corresponding amount of "fate" tokens for the caller. The function includes several checks and calculations to ensure the process is valid and secure. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    burnAsset(address asset, uint256 amount): This function takes two parameters: asset (the address of the asset to be burned) and amount (the amount of the asset to be burned).
+    public: This function can be called from any external or internal source.
+    isLive: This is a modifier that ensures the function can only be executed if the contract is in a live state.
+    incrementFate: This is a modifier that increments the fate counter, possibly to track the total fate created or used within the contract.
+
+2. Initial Checks:
+    require(assetApproved[asset], "LimboDAO: illegal asset");: This line checks if the asset is approved for burning. If not, the function reverts with an error message.
+    address sender = _msgSender();: This line retrieves the address of the caller using the _msgSender() function, which is a standard way to get the caller's address in contracts that support metatransactions.
+
+3. Transfer of Assets:
+    require(ERC677(asset).transferFrom(sender, address(this), amount), "LimboDAO: transferFailed");: This line attempts to transfer the specified amount of the asset from the sender to the contract itself. If the transfer fails, the function reverts with an error message.
+
+4. Fate Calculation:
+    uint256 fateCreated = fateState[_msgSender()].fateBalance;: This line initializes a variable fateCreated with the current fate balance of the sender.
+    if (asset == domainConfig.eye): This conditional checks if the asset being burned is the primary asset (referred to as "eye").
+      fateCreated = amount  10;: If the asset is "eye", the fate created is calculated as 10 times the amount of the asset burned.
+      ERC677(domainConfig.eye).burn(amount);: This line burns the specified amount of the "eye" asset.
+    else: If the asset is not "eye", the function proceeds with a different calculation method.
+      uint256 actualEyeBalance = IERC20(domainConfig.eye).balanceOf(asset);: This line retrieves the balance of "eye" tokens held by the asset.
+      require(actualEyeBalance > 0, "LimboDAO: No EYE");: This line ensures that the asset holds some "eye" tokens. If not, the function reverts.
+      uint256 totalSupply = IERC20(asset).totalSupply();: This line retrieves the total supply of the asset.
+      uint256 eyePerUnit = (actualEyeBalance  ONE) / totalSupply;: This line calculates the amount of "eye" tokens per unit of the asset.
+      uint256 impliedEye = (eyePerUnit  amount) / ONE;: This line calculates the implied amount of "eye" tokens based on the amount of the asset being burned.
+      fateCreated = impliedEye  20;: This line calculates the fate created as 20 times the implied amount of "eye" tokens.
+
+5. Update Fate Balance and Emit Event:
+    fateState[_msgSender()].fateBalance += fateCreated;: This line updates the fate balance of the sender by adding the newly created fate.
+    emit assetBurnt(_msgSender(), asset, fateCreated);: This line emits an event assetBurnt to notify external systems or applications of the asset burn and the corresponding fate created.
+
+This function is designed to handle the burning of assets and the creation of fate tokens, with specific calculations and checks to ensure the process is secure and valid.

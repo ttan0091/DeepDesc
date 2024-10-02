@@ -1,0 +1,40 @@
+[H-02] Frontrunning by malicious validator
+Submitted by parashar
+Frontrunning by malicious validator changing withdrawal credentials.
+Proof of Concept
+A malicious validator can frontrun depositEther transaction for its pubKey and deposit 1 ether for different withdrawal credential, thereby setting withdrawal credit before deposit of 32 ether by contract and thereby when 32 deposit ether are deposited, the withdrawal credential is also what was set before rather than the one being sent in depositEther transaction.
+Recommended Mitigation Steps
+Set withdrawal credentials for validator by depositing 1 ether with desired withdrawal credentials, before adding it in Operator Registry.
+FortisFortuna (Frax) commented:
+Interesting point, but at the beginning, the only validators we will have will be Frax controlled.
+0xean (judge) commented:
+function deposit(bytes calldata pubkey,bytes calldata withdrawal_credentials,bytes calldata signature,bytes32 deposit_data_root) override external payable {// Extended ABI length checks since dynamic types are used.require(pubkey.length == 48, "DepositContract: invalid pubkey length");require(withdrawal_credentials.length == 32, "DepositContract: invalid withdrawal_credentials length");require(signature.length == 96, "DepositContract: invalid signature length");// Check deposit amountrequire(msg.value >= 1 ether, "DepositContract: deposit value too low");require(msg.value % 1 gwei == 0, "DepositContract: deposit value not multiple of gwei");uint deposit_amount = msg.value / 1 gwei;require(deposit_amount <= type(uint64).max, "DepositContract: deposit value too high");// Emit `DepositEvent` logbytes memory amount = to_little_endian_64(uint64(deposit_amount));emit DepositEvent(pubkey,withdrawal_credentials,amount,signature,to_little_endian_64(uint64(deposit_count)));// Compute deposit data root (`DepositData` hash tree root)bytes32 pubkey_root = sha256(abi.encodePacked(pubkey, bytes16(0)));bytes32 signature_root = sha256(abi.encodePacked(sha256(abi.encodePacked(signature[:64])),sha256(abi.encodePacked(signature[64:], bytes32(0)))));bytes32 node = sha256(abi.encodePacked(sha256(abi.encodePacked(pubkey_root, withdrawal_credentials)),sha256(abi.encodePacked(amount, bytes24(0), signature_root))));// Verify computed and expected deposit data roots matchrequire(node == deposit_data_root, "DepositContract: reconstructed DepositData does not match supplied deposit_data_root");// Avoid overflowing the Merkle tree (and prevent edge case in computing `branch`)require(deposit_count < MAX_DEPOSIT_COUNT, "DepositContract: merkle tree full");// Add deposit data root to Merkle tree (update a single `branch` node)deposit_count += 1;uint size = deposit_count;for (uint height = 0; height < DEPOSIT_CONTRACT_TREE_DEPTH; height++) {if ((size & 1) == 1) {branch[height] = node;return;}node = sha256(abi.encodePacked(branch[height], node));size /= 2;}// As the loop should always end prematurely with the `return` statement,// this code should be unreachable. We assert `false` just to be safe.assert(false);}
+0xean (judge) commented:
+It is unclear both in the code above for the deposit contract as well as the documentation on keyshttps://kb.beaconcha.in/ethereum-2.0-depositinghttps://kb.beaconcha.in/ethereum-2-keysHow exactly multiple deposits two the same validator using different withdrawal keys would work.  While it would make sense that they would allow a one to many mapping, I am unable to confirm or deny this and therefore will leave the risk currently as High on the side of caution.
+Trust (warden) commented:
+Strong find. Indeed in ETHspecswe can see that inprocess_deposit(), if the pubkey is already registered, we just increase its balance, not touching the withdrawal_credentials. However the recommended mitigation does not really address the issue IMO, and the detail is quite lacking.
+FortisFortuna (Frax) commented:
+I think it is technically a non-issue because we will be controlling the addition/removal of validators. Should that eventually become open, we will have to look at the entire code from a different perspective to close security holes.
+Trust (warden) commented:
+I think it is relevant, because the idea is to make the protocol controlled validators work for the attacker, because they inserted their own withdrawal credentials directly on the deposit contract.
+FortisFortuna (Frax) confirmed and commented:
+Ohh I see it now. Good point.More infohttps://research.lido.fi/t/mitigations-for-deposit-front-running-vulnerability/1239Since all of the validators are ours and we have the mnemonic, would it still be an issue though? Lido’s setup is different:https://medium.com/immunefi/rocketpool-lido-frontrunning-bug-fix-postmortem-e701f26d7971
+FortisFortuna (Frax) commented:
+https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#depositsFrom @0xJMIn the scenario that someone frontruns us with a 1 ETH deposit at the same time we do a 32 ETH deposit, their 1 ETH deposit would fail on beaconchain because it would fail bls.Verify. The result would be them losing their 1 ETH.Our 32 ETH would go through normally and the validator would activate
+0xean (judge) commented:
+@FortisFortuna - can you elaborate on why you believe that bls.Verify would fail?if not bls.Verify(pubkey, signing_root, deposit.data.signature):
+FortisFortuna (Frax) commented:
+From @0xJMhttps://github.com/ethereum/staking-deposit-cli/blob/e2a7c942408f7fc446b889097f176238e4a10a76/staking_deposit/credentials.py#L127the signing root includes the deposit message which has the withdrawal credentialshttps://github.com/ethereum/staking-deposit-cli/blob/e2a7c942408f7fc446b889097f176238e4a10a76/staking_deposit/credentials.py#L112hence bls.Verify would fail on Beaconchain as I mentionedthe consensus spec has that signingroot = computesigningroot(depositmessage, domain) which is verified against the signature.
+0xean (judge) commented:
+The signature would be valid.  The validator would still sign the message containing the credentials that they are front running with.
+FortisFortuna (Frax) commented:
+From @denett“The signature would be valid. The validator would still sign the message containing the credentials that they are front running with.”
+Only the validator can create a valid signature and we own the key to the validator.
+0xean (judge) commented:
+Yea, so this is the root of it, the contest does not specify that Frax is the owner of all validators that are meant to be used with this protocol. Without stating that ahead of time for the Wardens to understand, I believe this to be a valid finding and the warden should be awarded.
+FortisFortuna (Frax) commented:
+Ok. So in our current setup, assuming Frax owns all validators, we are safe?
+0xean (judge) commented:
+:) I cannot guarantee anything in DeFi is safe.  My understanding of this particular vulnerability is that it would require a validator to act maliciously by using a smaller than 32 ETH deposit to front run your deposit and enable them to control the withdrawal in the future. If the validator is owned by your team and the keys are never exploited, then I don’t see how the front ran signature could be generated.
+FortisFortuna (Frax) commented:
+Ya, I hear you lol. At least for this particular scenario we are ok then, according to the known bug. We can pay out for the bug because none of our team were aware of it and it is good to know for the future.

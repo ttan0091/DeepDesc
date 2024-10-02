@@ -1,0 +1,26 @@
+[H-01] The_currentExchangeRateof the Vault contract can’t increase and will always be lower than or equal to_assetUnit
+Submitted byKIntern_NA, also found byKupiaSec
+The_currentExchangeRateof the Vault contract can not increase and will always be lower than or equal to_assetUnit. Therefore, when the vault is under-collateralized (_currentExchangeRate<_assetUnit), it can’t be further collateralized.
+Proof of concept
+function_currentExchangeRate()internalviewreturns(uint256) {uint256_totalSupplyAmount=_totalSupply();uint256_totalSupplyToAssets=_convertToAssets(_totalSupplyAmount,_lastRecordedExchangeRate,Math.Rounding.Down);uint256_withdrawableAssets=_yieldVault.maxWithdraw(address(this));if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}return_assetUnit;}
+The_totalSupplyAmount != 0 && _withdrawableAssets != 0,_currentExchangeRatefunction will return a value_withdrawableAssets * _assetUnit / _totalSupplyAmount. However,_withdrawableAssetscan not exceed_totalSupplyToAssets, which is equal to_totalSupplyAmount * _lastRecordedExchangeRate / _assetUnit. Therefore,_currentExchangeRatewill always be lower than or equal to_lastRecordedExchangeRate.
+Add this assert line and runforge test; all tests will pass.
+if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {assert(_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down) <=_assetUnit);return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}
+Recommended Mitigation Steps
+Remove the lines of code that limit the_withdrawableAssets:
+if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}
+Assessed type
+Context
+asselstine (PoolTogether) confirmed and commented:
+Hmm, I’m not sure about this one.  Will mark as confirmed and figure it out later.
+Picodes (judge) commented:
+@asselstine - did you figure it out?It seems to me that because ofif (_withdrawableAssets > _convertToAssets(_totalSupplyAmount, _lastRecordedExchangeRate, Math.Rounding.Down)), the rate indeed can’t increase; which is a huge issue in case of a momentary undercollateralization.
+PierrickGT (PoolTogether) commented:
+@Picodes - Indeed, the exchange rate should not be greater than 1 because users should not be able to claim the yield that has accrued in theYieldVault.That’s why we have the following condition:if (_withdrawableAssets > _totalSupplyToAssets) {_withdrawableAssets = _withdrawableAssets - (_withdrawableAssets - _totalSupplyToAssets);}We subtract the yield from the total amount, with the yield being the difference between_withdrawableAssetsand_totalSupplyToAssets.If theYieldVaultbecomes under-collateralized, users won’t be able to deposit anymore, but will be able to withdraw their share of the deposit. Any yield that as accrued and has not been claimed yet will be shared proportionally amongst users.
+PierrickGT (PoolTogether) commented:
+The code has been improved and clarified in the following PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/13.
+Picodes (judge) commented:
+Keeping high severity here because of the issue in case of temporary undercollateralization.
+PoolTogether mitigated:
+The issue turned out not to be the case; the exchange rate is always<=1 (yield is liquidated). However, comments were added to clarify the behaviour.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/13
+Status: Mitigation confirmed. Full details in reports from0xStalin,dirk_yandrvierdiiev.

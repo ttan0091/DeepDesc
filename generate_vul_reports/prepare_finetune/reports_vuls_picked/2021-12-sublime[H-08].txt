@@ -1,0 +1,24 @@
+Type of vulnerability: Reentrancy and Strategy Manipulation
+Cause of vulnerability: Lack of validation for the current strategy contract, allowing a rogue strategy to be used.
+Execution process:
+1. Attacker deploys a rogue strategy contract that implements `getSharesForTokens()` to return 0 and `unlockTokens()` to return the full balance of the contract.
+2. Attacker calls `switchStrategy()` with the rogue strategy as `_currentStrategy` and any valid strategy as `_newStrategy`.
+3. The rogue strategy's `getSharesForTokens()` returns 0, bypassing the balance check.
+4. The rogue strategy's `unlockTokens()` returns the full balance of the contract, effectively draining it.
+5. The drained assets are then locked in the new strategy, and shares are allocated to the attacker.
+
+Vulnerable code:
+```solidity
+require(_amount != 0, 'SavingsAccount::switchStrategy Amount must be greater than zero');
+_amount = IYield(_currentStrategy).getSharesForTokens(_amount, _token);
+balanceInShares[msg.sender][_token][_currentStrategy] = balanceInShares[msg.sender][_token][_currentStrategy].sub(_amount, 'SavingsAccount::switchStrategy Insufficient balance');
+uint256 _tokensReceived = IYield(_currentStrategy).unlockTokens(_token, _amount);
+if (_token != address(0)) {
+    IERC20(_token).safeApprove(_newStrategy, _tokensReceived);
+} else {
+    _ethValue = _tokensReceived;
+}
+_amount = _tokensReceived;
+uint256 _sharesReceived = IYield(_newStrategy).lockTokens{value: _ethValue}(address(this), _token, _tokensReceived);
+balanceInShares[msg.sender][_token][_newStrategy] = balanceInShares[msg.sender][_token][_newStrategy].add(_sharesReceived);
+```

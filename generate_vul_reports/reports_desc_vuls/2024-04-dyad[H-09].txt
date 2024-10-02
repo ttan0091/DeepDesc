@@ -1,0 +1,19 @@
+Type of vulnerability: Collateral Mismanagement
+Cause of vulnerability: The `liquidate` function in `VaultManagerV2` does not transfer all types of collateral, including Kerosene, to the liquidator during a full liquidation when the collateral ratio is below 100%.
+Execution process: When a position's collateral ratio drops below 100%, the liquidator is supposed to receive all the collateral of the liquidated position. However, due to the oversight in the `liquidate` function, only non-Kerosene collateral is transferred, leaving Kerosene collateral with the liquidated position.
+Vulnerable code: The vulnerable code segment is within the `liquidate` function of the `VaultManagerV2` contract, where only non-Kerosene collateral is being moved to the liquidator:
+```solidity
+function liquidate(uint256 id, uint256 to) public {
+    // Existing logic that moves non-Kerosene collateral
+    // Missing logic to move Kerosene collateral
+}
+```
+The recommended mitigation step involves adding the logic to move Kerosene collateral as well:
+```solidity
+uint256 numberOfKeroseneVaults = vaultsKerosene[id].length();
+for (uint256 i = 0; i < numberOfKeroseneVaults; i++) {
+    Vault vault = Vault(vaultsKerosene[id].at(i));
+    uint256 collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare);
+    vault.move(id, to, collateral);
+}
+```

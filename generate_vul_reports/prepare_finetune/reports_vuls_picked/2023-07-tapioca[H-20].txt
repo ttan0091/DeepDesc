@@ -1,0 +1,15 @@
+Type of vulnerability: Inadequate Slippage Protection
+Cause of vulnerability: Reusing the same minimum swap amount out (`minAssetAmount`) for multiple liquidations without considering the varying collateral values of each borrower.
+Execution process: A liquidator calls the `_liquidateUser` function with a fixed `minAssetAmount` for multiple borrowers. If the `minAssetAmount` is too low, the liquidator and protocol may receive less than expected due to insufficient slippage protection. If the `minAssetAmount` is too high, the liquidation may fail, causing the entire transaction to revert.
+Vulnerable code: 
+```solidity
+function _liquidateUser(...
+    uint256 minAssetAmount = 0;
+    if (dexData.length > 0) {
+        //@audit the same minAssetAmount is incorrectly applied to all liquidations
+        minAssetAmount = abi.decode(dexData, (uint256));
+    }
+    ISwapper.SwapData memory swapData = swapper.buildSwapData(collateralId, assetId, 0, collateralShare, true, true);
+    swapper.swap(swapData, minAssetAmount, address(this), "");
+}
+```

@@ -1,0 +1,23 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: Lack of proper validation in the `ownerOf` and `onlyTokenOwner` functions to ensure that the provided `_cardId` or `_token` is within the valid range of `numberOfCards`.
+Execution process: An attacker can supply a `_cardId` or `_token` that is higher than `numberOfCards` to access and potentially manipulate cards from other markets. Specifically, the `upgradeCard` function can be exploited to move cards from an unapproved market to an approved one.
+Vulnerable code: 
+```solidity
+function ownerOf(uint256 _cardId) public view override returns (address) {
+    uint256 _tokenId = _cardId + totalNftMintCount; // doesn't check if _cardId < numberOfCards
+    return nfthub.ownerOf(_tokenId);
+}
+modifier onlyTokenOwner(uint256 _token) {
+    require(msgSender() == ownerOf(_token), "Not owner"); // _token could be higher than numberOfCards, _;
+}
+function upgradeCard(uint256 _card) external onlyTokenOwner(_card) {
+    // _card could be higher than numberOfCards, _
+    _checkState(States.WITHDRAW);
+    require(!factory.trapIfUnapproved() || factory.isMarketApproved(address(this)), // this can be circumvented by calling the function via another market
+        "Upgrade blocked");
+    uint256 _tokenId = _card + totalNftMintCount; // _card could be higher than numberOfCards, thus accessing a card in another market
+    _transferCard(ownerOf(_card), address(this), _card); // contract becomes final resting place
+    nfthub.withdrawWithMetadata(_tokenId);
+    emit LogNftUpgraded(_card, _tokenId);
+}
+```

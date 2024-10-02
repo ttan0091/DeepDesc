@@ -1,0 +1,13 @@
+[H-02] Wrong implementation ofperformanceFeecan cause users to lose 50% to 100% of their funds
+Submitted by WatchPug
+A certain amount of lp tokens (shares of the vault) will be minted to thestrategyPerformanceTreasuryasperformanceFee, the amount is calculated based on theminLpPriceFactor.
+However, the current formula fortoMintis wrong, which issues more than 100% of the current totalSupply of the lp token to thestrategyPerformanceTreasuryeach time. Causing users to lose 50% to 100% of their funds after a few times.
+https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/LpIssuer.sol#L269-L271
+addresstreasury=strategyParams.strategyPerformanceTreasury;uint256toMint= (baseSupply*minLpPriceFactor) /CommonLibrary.DENOMINATOR;_mint(treasury,toMint);
+Proof of Concept
+Given:
+strategyParams.performanceFee:10e7(1%)Alice deposited1,000 USDC, received1000lpToken; the totalSupply of the lpToken is now:1000;3 days later,baseTvlincreased to1,001 USDC, Bob deposited1 USDCand trigegred_chargeFees():Expected Result:strategyPerformanceTreasuryto receive about0.01lpToken (1% of 1 USDC);Actual Result:minLpPriceFactoris about1.001, andstrategyPerformanceTreasurywill received1001lpToken as performanceFee; Alice lose 50% of deposited funds.
+Recommendation
+Change to:
+addresstreasury=strategyParams.strategyPerformanceTreasury;uint256toMint= (baseSupply* (minLpPriceFactor-CommonLibrary.DENOMINATOR) *performanceFee/CommonLibrary.DENOMINATOR) /CommonLibrary.DENOMINATOR;_mint(treasury,toMint);
+MihanixA (Mellow Protocol) confirmed

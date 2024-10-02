@@ -1,0 +1,25 @@
+[H-03]transfer_share_and_rewardscan be used to transfer out shares without transferring reward debt due to rounding
+Submitted bycarrotsmuggler, also found byAM
+The functiontransfer_share_and_rewardscan be used to split up the position in a single account into multiple accounts. The contract sends some of the shares to be held by the second account, and similarly also updates the reward debt of the receiving account so that the receiver cannot take out more rewards than they deserve.
+This is calculated in the following snippet.move_balanceis the amount of the reward debt that is to be transferred to the receiver.
+letmove_balance = U256::from(balance.to_owned().saturated_into::<u128>())* U256::from(move_share.to_owned().saturated_into::<u128>())/ U256::from(share.to_owned().saturated_into::<u128>());
+Here we see the calculation is simple and by default is rounded down. So ifbalance*move_shareis lower thanshare,move_balanceevaluates to 0. So the receiving account’s reward debt is not increased at all!
+increased_rewards.entry(*reward_currency).and_modify(|increased_reward| {*increased_reward = increased_reward.saturating_add(move_balance);
+Sincemove_balanceis0, theincreased_rewardis not updated. This means the new account now has shares, but no reward debt. So the receiving account can claim rewards that were already claimed.
+This can be done multiple times to drain the reward pool.
+The criteria is thatbalance*move_sharehas to be lower thanshare. This can be achieved by sending a small fraction of the funds to the receiving account, such thatmove_shareis much lower thanshare. Also, ifbalance, the reward debt of the sender is low, this facilitates the attack more.
+Proof of Concept
+A short POC is shown here demonstrating the issue. The attacker sends to the receiver a small share of their total. The receiver is shown to have no reward debt, while the sender does have reward debt. This shows that the receiver can claim rewards already claimed by the sender.
+#[test]fntest_rounding() {ExtBuilder::default().build().execute_with(|| {RewardsModule::add_share(&ALICE, &DOT_POOL,1000);assert_ok!(RewardsModule::accumulate_reward(&DOT_POOL, NATIVE_COIN,100));// RewardsModule::add_share(&BOB, &DOT_POOL, 100);RewardsModule::claim_rewards(&ALICE, &DOT_POOL);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE);println!("ALICE stat before transfer: {:?}", user_stat);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB);println!("BOB stat before transfer: {:?}", user_stat);assert_ok!(RewardsModule::transfer_share_and_rewards(&ALICE, &DOT_POOL,5, &BOB));letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE);println!("ALICE stat after transfer: {:?}", user_stat);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB);println!("BOB stat after transfer: {:?}", user_stat);});}
+Output:
+# Output is of the form ( ${share_balance}, {0: ${reward_debt}} )ALICE stat before transfer: (1000, {0: 100})BOB stat before transfer: (0, {})ALICE stat after transfer: (995, {0: 100})BOB stat after transfer: (5, {0: 0})test tests::test_rounding ... ok
+The output shows that ALICE has 1000 shares and 100 reward debt, since ALICE just claimed her rewards. Alice sends BOB 5 shares. BOB ends up with 5 shares and 0 reward debt. So BOB can claim rewards again, even though it’s the same money!
+Tools Used
+Substrate
+Recommended Mitigation Steps
+The calculation ofmove_balanceshould be changed to saturated round up instead of rounding down. This will ensure that the receiving account’s reward debt is updated correctly. Thesaturatedrounding up is important since the reward debt should never be larger than the reward pool, or it will cause underflow errors when subtracting.
+Another option is to reverttransfer_share_and_rewardsoperations if the reward debt of the receiving account is calculated to be0, unless the sending account ALSO has a reward debt of0.
+Assessed type
+Math
+xlc (Acala) confirmed and commented:
+Just want to highlight thattransfer_share_and_rewardsis not currently used.We will choose to not fix this issue as the impact are relatively small and a complete fix is non-trivial. I don’t think it is possible to make profit that is more than transaction fee anyway.

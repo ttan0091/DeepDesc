@@ -1,0 +1,18 @@
+Type of vulnerability: Oracle Mismanagement
+Cause of vulnerability: The oracle price does not correctly compound the monthly APRs due to the resetting of `startTime` in `requestCPIData` which leads to `timeDelta` being close to zero when `fulfill` is called.
+Execution process: 
+1. The `oraclePrice` is initially set to a value, e.g., 1.0.
+2. When `requestCPIData` is triggered, `startTime` is reset to the current timestamp.
+3. Upon the `fulfill` callback, `timeDelta` (calculated as `block.timestamp - startTime`) is close to zero, causing `priceDelta` to be zero.
+4. This results in `getCurrentOraclePrice()` returning the initial `oraclePrice` without compounding, effectively resetting it to 1.0.
+Vulnerable code: 
+```solidity
+function _updateCPIData(uint256 _oraclePrice) internal {
+    oraclePrice = _oraclePrice;
+}
+
+function requestCPIData() external afterTimeInit {
+    startTime = block.timestamp;
+    // other code
+}
+```

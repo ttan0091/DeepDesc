@@ -1,0 +1,20 @@
+Type of vulnerability: Time-based Limit Bypass
+Cause of vulnerability: Lack of limit checks during the initialization of new periods for both global and user withdrawals.
+Execution process: A whale user can exploit this by timing their withdrawal to coincide with the reset of the global and user periods, allowing them to set the initial withdrawal amount without any limit checks, thereby depleting the reserves and preventing other users from withdrawing.
+Vulnerable code:
+```solidity
+if (lastGlobalPeriodReset + globalPeriodLength < block.timestamp) {
+    lastGlobalPeriodReset = block.timestamp;
+    globalAmountWithdrawnThisPeriod = _amountBeforeFee;
+} else {
+    require(globalAmountWithdrawnThisPeriod + _amountBeforeFee <= globalWithdrawLimitPerPeriod, "global withdraw limit exceeded");
+    globalAmountWithdrawnThisPeriod += _amountBeforeFee;
+}
+if (lastUserPeriodReset + userPeriodLength < block.timestamp) {
+    lastUserPeriodReset = block.timestamp;
+    userToAmountWithdrawnThisPeriod[_sender] = _amountBeforeFee;
+} else {
+    require(userToAmountWithdrawnThisPeriod[_sender] + _amountBeforeFee <= userWithdrawLimitPerPeriod, "user withdraw limit exceeded");
+    userToAmountWithdrawnThisPeriod[_sender] += _amountBeforeFee;
+}
+```

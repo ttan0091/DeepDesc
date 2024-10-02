@@ -1,0 +1,26 @@
+[H-02] CDP.sol update overwrites user’s credit on every positive increment
+Submitted by harleythedog
+Impact
+WithinCDP.sol(https://github.com/code-423n4/2021-11-yaxis/blob/main/contracts/v3/alchemix/libraries/alchemist/CDP.sol) there is a function called update. This function slowly decreases the debt of a position as yield is earned, until the debt is fully paid off, and the idea is then that the credit should begin incrementing as more yield is accumulated. However, the current logic to increment the totalCredit is this line of code (line 39 ofCDP.sol):
+\_self.totalCredit = \_earnedYield.sub(\_currentTotalDebt);
+Notice that that each time update is called, this overwrites the previous totalCredit with the incremental credit accumulated. The line should instead be:
+\_self.totalCredit = \_self.totalCredit.add(\_earnedYield.sub(\_currentTotalDebt));
+Indeed, look at the functiongetUpdatedTotalCredit, it returns the value:
+\_self.totalCredit + (\_unclaimedYield - \_currentTotalDebt);
+So it is obviously intended that thetotalCreditshould keep increasing over time instead of being overwritten on each update with a small value. The impact of this issue is large - the credit of every position will always be overwritten and the correct information will be lost forever. User’s credit should grow over time, but instead it is overwritten with a small value every time update is called.
+Proof of Concept
+See line 39 inCDP.solhere:https://github.com/code-423n4/2021-11-yaxis/blob/main/contracts/v3/alchemix/libraries/alchemist/CDP.sol#:~:text=_self.totalCredit%20%3D%20_earnedYield.sub(_currentTotalDebt)%3B
+Tools Used
+Manual inspection.
+Recommended Mitigation Steps
+Change code as described above to incrementtotalCreditinstead of overwrite it.
+Xuefeng-Zhu (yAxis) disputed:
+If there is debt, the credit should be zero
+0xleastwood (judge) commented:
+It seems like if_self.totalDebtis already zero and yield has been earned by the protocol,_self.totalCreditwill be overwritten. This doesn’t seem ideal, could you clarify why the issue is incorrect?
+0xleastwood (judge) commented:
+If I’m not mistaken, yield can be earned from a positive credit (net 0 debt) position.
+Xuefeng-Zhu (yAxis) commented:
+@0xleastwoodtotalCreditis 0 if there is debt
+0xleastwood (judge) commented:
+After chatting to @Xuefeng-Zhu in Discord, he was able to confirm the issue as valid. So keeping it as is.

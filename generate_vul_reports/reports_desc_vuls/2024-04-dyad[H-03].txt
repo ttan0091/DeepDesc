@@ -1,0 +1,19 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The `deposit()` function uses the `isValidDNft(id)` modifier instead of `isDNftOwner(id)`, allowing any user to call `deposit()` on behalf of any DNft id.
+Execution process: An attacker can front-run a user's `redeemDyad()` or `withdraw()` call by making a `0` value `deposit()` call, which sets `idToBlockOfLastDeposit[id]` to the current block number. This prevents the user from withdrawing or redeeming collateral, potentially leading to liquidation.
+Vulnerable code:
+```solidity
+function deposit(
+    uint id,
+    address vault,
+    uint amount
+)
+    external
+    isValidDNft(id)
+{
+    idToBlockOfLastDeposit[id] = block.number;
+    Vault _vault = Vault(vault);
+    _vault.asset().safeTransferFrom(msg.sender, address(vault), amount);
+    _vault.deposit(id, amount);
+}
+```

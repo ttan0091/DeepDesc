@@ -1,0 +1,20 @@
+[H-02] ERC4626Cloned deposit and mint logic differ on first deposit
+Submitted byadriro, also found byJTs,yongskiws,JC,Josiah,bin2chen,eierina,eierina,Breeje,rbserver,ast3ros, andobront
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L123-L127https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L129-L133
+TheERC4626Clonedcontract is an implementation of the ERC4626 used for vaults. The standard contains adepositfunction to deposit a specific amount of the underlying asset, and amintfunction that will calculate the amount needed of the underlying token to mint a specific number of shares.
+This calculation is done inpreviewDepositandpreviewMint:
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L123-L127
+functionpreviewDeposit(uint256assets)publicviewvirtualreturns(uint256) {returnconvertToShares(assets);}functionconvertToShares(uint256assets)publicviewvirtualreturns(uint256) {uint256supply=totalSupply();// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?assets:assets.mulDivDown(supply,totalAssets());}
+https://github.com/AstariaXYZ/astaria-gpl/blob/4b49fe993d9b807fe68b3421ee7f2fe91267c9ef/src/ERC4626-Cloned.sol#L129-L133
+functionpreviewMint(uint256shares)publicviewvirtualreturns(uint256) {uint256supply=totalSupply();// Saves an extra SLOAD if totalSupply is non-zero.returnsupply==0?10e18:shares.mulDivUp(totalAssets(),supply);}
+In the case of the first deposit (i.e. whensupply == 0),previewDepositwill return the sameassetsamount for the shares (this is the standard implementation), whilepreviewMintwill simply return10e18.
+Impact
+It seems the intention was to mint a high initial number of shares on first deposit, so an attacker couldn’t mint a low number of shares and manipulate the pool to frontrun an initial depositor.
+However, the protocol has failed to replicate this logic in thedepositfunction, as bothdepositandmintlogic differ (see PoC).
+An attacker can still use thedepositfunction to mint any number of shares.
+Proof of Concept
+contractMockERC20isERC20("Mock ERC20","MERC20",18) {functionmint(addressaccount,uint256amount)external{_mint(account,amount);}}contractTestERC4626isERC4626Cloned{ERC20_asset;constructor() {_asset=newMockERC20();}functionasset()publicoverrideviewreturns(addressassetTokenAddress) {returnaddress(_asset);}functionminDepositAmount()publicoverrideviewreturns(uint256) {return0;}functiontotalAssets()publicoverrideviewreturns(uint256) {return_asset.balanceOf(address(this));}functionsymbol()externaloverrideviewreturns(stringmemory) {return"TEST4626";}functionname()externaloverrideviewreturns(stringmemory) {return"TestERC4626";}functiondecimals()externaloverrideviewreturns(uint8) {return18;}}contractAuditTestisTest{functiontest_ERC4626Cloned_DepositMintDiscrepancy()public{TestERC4626vault=newTestERC4626();MockERC20token=MockERC20(vault.asset());// Amount we deposituint256amount=25e18;// Shares we get if we deposit amountuint256shares=vault.previewDeposit(amount);// Amount needed to mint sharesuint256amountNeeded=vault.previewMint(shares);// The following values should be equal but they notassertFalse(amount==amountNeeded);// An attacker can still mint a single share by using deposit to manipulate the pooltoken.mint(address(this),1);token.approve(address(vault),type(uint256).max);uint256mintedShares=vault.deposit(1,address(this));assertEq(mintedShares,1);}}
+Recommendation
+Thedepositfunction should also implement the same logic as themintfunction for the case of the first depositor.
+androolloyd (Astaria) confirmed
+Picodes (judge) increased severity to High

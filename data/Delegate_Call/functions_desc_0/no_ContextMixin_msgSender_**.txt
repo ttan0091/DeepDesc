@@ -1,0 +1,31 @@
+This code defines an internal view function named msgSender, which is designed to return the address of the message sender. The function is particularly useful in scenarios where the contract needs to handle forwarded calls, such as in the context of metatransactions or proxy contracts.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    The function msgSender() is declared as internal and view, meaning it can only be called from within the contract or derived contracts and does not modify the state of the blockchain.
+    It returns an address payable type, which is necessary for sending Ether to the returned address.
+
+2. Conditional Check:
+    The function starts by checking if msg.sender (the direct caller of the function) is equal to address(this) (the address of the contract itself). This check is crucial because it determines whether the function should look into the forwarded data to find the original sender.
+
+3. Handling Forwarded Calls:
+    If msg.sender is the contract itself, it implies that the call was forwarded. In such cases, the function needs to extract the original sender's address from the message data (msg.data).
+    msg.data is a byte array containing the calldata. The function assumes that the original sender's address is located at the end of this array.
+
+4. Assembly Code for Address Extraction:
+    The function uses inline assembly to manipulate the byte array and extract the address:
+      bytes memory array = msg.data; copies the calldata into a local byte array.
+      uint256 index = msg.data.length; gets the length of the calldata.
+      The assembly block:
+        mload(add(array, index)) loads a 32byte word from the memory location pointed to by array + index. This location contains the address at the end of the calldata.
+        and(..., 0xffffffffffffffffffffffffffffffffffffffff) applies a mask to the loaded 32byte word to isolate the lower 20 bytes, which represent the address.
+      The result is assigned to sender.
+
+5. Default Case:
+    If msg.sender is not the contract itself, the function simply assigns msg.sender to sender. This is the typical case where the call is not forwarded.
+
+6. Return Statement:
+    Finally, the function returns the sender address.
+
+This function is particularly useful in scenarios where contracts need to support metatransactions or operate behind a proxy, ensuring that the original sender's address is correctly identified even when the call is forwarded through intermediate contracts.

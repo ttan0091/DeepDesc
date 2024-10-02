@@ -1,0 +1,18 @@
+[H-02] Incorrect amount of Collateral moves for Auction
+Submitted by csanuragjain
+It was observed that the debt and collateral which moves for Auction is calculated incorrectly. In case whereline.proportionis set to small value, chances are art will become lower than min debt. This causes whole collateral to go for auction, which was not expected.
+Proof of Concept
+Assumeline.proportionis set to 10% which is avalid valueAuction is started on Vault associated with collateral & base representing line from Step 1Now debt and collateral to be sold are calculated in_calcAuction
+uint128 art = uint256(balances.art).wmul(line.proportion).u128();if (art < debt.min * (10**debt.dec)) art = balances.art;uint128 ink = (art == balances.art)? balances.ink: uint256(balances.ink).wmul(line.proportion).u128();
+Now lets saydebt (art)on this vault wasamount 10,collateral (ink)wasamount 9, debt.min * (10**debt.dec) wasamount 2Below calculation occurs
+uint128 art = uint256(balances.art).wmul(line.proportion).u128(); // which makes art = 10*10% =1if (art < debt.min * (10**debt.dec)) art = balances.art;   // since 1<2 so art=10uint128 ink = (art == balances.art)                                 // Since art is 10 so ink=9? balances.ink: uint256(balances.ink).wmul(line.proportion).u128();
+So full collateral and full debt are placed for Auction even though only 10% was meant for Auction. Even if it was lower than min debt, auction amount should have only increased up to the point where minimum debt limit is reached
+Recommended Mitigation Steps
+Revise the calculation like below
+uint128 art = uint256(balances.art).wmul(line.proportion).u128();uint128 ink=0;if (art < debt.min * (10**debt.dec)){art = debt.min * (10**debt.dec);(balances.ink<art) ? (ink=balances.ink) : (ink=art)} else {ink=uint256(balances.ink).wmul(line.proportion).u128();}
+hickuphh3 (warden) commented:
+debt.min * (10**debt.dec) was amount 2Only way for this to happen is for the token’s decimals to be 0, which is an edge case.Anyway, the issue is invalid because it is intended for the full collateral to be offered if it is below the minimum debt amount, ie. vault proportion is to be disregarded:// We store the proportion of the vault to auction, which is the whole vault if the debt would be below dust.
+alcueca (Yield) confirmed and commented:
+The finding is valid, but it is a bit complicated.The behaviour should be:If the part of the vault for auction is belowdust, increase todust.If the remaining part of the vault is belowdust, increase to 100%.
+PierrickGT (judge) commented:
+This is the second most critical vulnerability found during the audit.This issue is less critical thanH-01 (#116)since the protocol would not take on bad debts but users may lose their entire collateral when only part of their collateral should have been put to auction.

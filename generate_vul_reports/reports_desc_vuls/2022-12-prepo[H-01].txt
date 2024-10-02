@@ -1,0 +1,14 @@
+Type of vulnerability: Griefing / Blocking / Delaying users to withdraw
+Cause of vulnerability: Incorrect implementation of user withdraw limit reset mechanism
+Execution process: A user with a position greater than userWithdrawLimitPerPeriod needs to be the first to interact with the contract in each new epoch to reset their withdraw limit. If another user interacts first, the affected user's withdraw limit is not reset, causing a delay until the next epoch.
+Vulnerable code: 
+```solidity
+File: apps/smart-contracts/core/contracts/WithdrawHook.sol
+66: if (lastUserPeriodReset + userPeriodLength < block.timestamp) {
+67:   lastUserPeriodReset = block.timestamp;
+68:   userToAmountWithdrawnThisPeriod[_sender] = _amountBeforeFee;
+69: } else {
+70:   require(userToAmountWithdrawnThisPeriod[_sender] + _amountBeforeFee <= userWithdrawLimitPerPeriod, "user withdraw limit exceeded");
+71:   userToAmountWithdrawnThisPeriod[_sender] += _amountBeforeFee;
+72: }
+```

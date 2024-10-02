@@ -1,0 +1,52 @@
+This code defines an external function named permit, which is used to approve a token transfer on behalf of the token owner using a signed message. This function is commonly used in decentralized finance (DeFi) applications to allow users to authorize token transfers without directly interacting with the smart contract, thereby reducing the number of transactions required and saving on gas fees.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting the approval.
+    spender: The address that is being granted approval to spend the tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which this permit is no longer valid.
+    v, r, s: These are components of the digital signature provided by the owner to authorize this transaction.
+
+2. Deadline Check:
+   solidity
+   require(deadline >= block.timestamp, 'UniswapV2: EXPIRED');
+   
+   This line checks if the current block timestamp is less than or equal to the deadline. If the deadline has passed, the function execution is halted, and an error message "UniswapV2: EXPIRED" is thrown.
+
+3. Message Digest Calculation:
+   solidity
+   bytes32 digest = keccak256(
+       abi.encodePacked(
+           '\x19\x01',
+           DOMAIN_SEPARATOR,
+           keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline))
+       )
+   );
+   
+   This part constructs the hash of the message that was signed by the owner. The keccak256 function is used to create a hash of the encoded data. The data includes:
+    \x19\x01: A prefix defined by the Ethereum protocol to prevent replay attacks across different environments.
+    DOMAIN_SEPARATOR: A unique identifier for the contract that prevents signature reuse in other contracts.
+    PERMIT_TYPEHASH: A hash of the permit function's signature, ensuring the correct function is being called.
+    owner, spender, value, nonces[owner]++, deadline: The parameters of the permit function, including a nonce to prevent signature reuse.
+
+4. Signature Recovery:
+   solidity
+   address recoveredAddress = ecrecover(digest, v, r, s);
+   
+   The ecrecover function is used to recover the address from the signature (v, r, s) and the message digest. This recovered address should match the owner if the signature is valid.
+
+5. Signature Validation:
+   solidity
+   require(recoveredAddress != address(0) && recoveredAddress == owner, 'UniswapV2: INVALID_SIGNATURE');
+   
+   This line checks if the recovered address is not zero and matches the owner. If not, it throws an error message "UniswapV2: INVALID_SIGNATURE".
+
+6. Approval:
+   solidity
+   _approve(owner, spender, value);
+   
+   Finally, if all checks pass, the _approve function is called to set the allowance of the spender to value tokens on behalf of the owner.
+
+This function is crucial for enabling offchain approvals, which are more gasefficient and userfriendly compared to onchain transactions. It leverages cryptographic signatures to ensure that only the rightful owner can authorize token transfers.

@@ -1,0 +1,27 @@
+This code defines an external function named permit, which is commonly used in ERC20 token contracts to allow users to approve token transfers using offchain signatures instead of onchain transactions. This method is particularly useful for improving user experience and reducing gas costs.
+
+Here’s a detailed explanation of how this function works:
+
+1. Signature Digest Calculation:
+    The function starts by calculating the digest using the keccak256 hashing function. This digest is a hash of several components concatenated together:
+      The EIP191 prefix "\x19\x01".
+      The DOMAIN_SEPARATOR, which is a unique identifier for the contract and is used to prevent replay attacks across different contracts and environments.
+      A hash of the encoded parameters specific to the permit function: PERMIT_TYPEHASH (a constant that defines the structure of the permit message), holder (the address of the token owner), spender (the address being approved to spend the tokens), nonce (a value used to prevent replay attacks), expiry (the time until which the permit is valid), and allowed (a boolean indicating whether the approval is unlimited or not).
+
+2. Address Validation:
+    The function checks that the holder address is not the zero address (address(0)), which is considered invalid.
+
+3. Signature Verification:
+    The function uses the ecrecover function to recover the address from the signature (v, r, s) and the digest. This recovered address should match the holder address, ensuring that the signature is valid and was indeed created by the holder.
+
+4. Expiry Check:
+    The function checks if the permit has expired by comparing the current block timestamp (now) with the expiry time. If expiry is set to 0, it means the permit does not expire.
+
+5. Nonce Check:
+    The function verifies that the provided nonce matches the current nonce for the holder stored in the nonces mapping. After verification, it increments the nonce to prevent the same permit from being used again.
+
+6. Approval Setting:
+    Depending on the allowed boolean, the function sets the approval amount (wad) to either uint(1) (which represents the maximum possible amount, effectively unlimited approval) or 0 (no approval).
+    Finally, the function calls _approve to update the allowance of the spender by the holder with the specified wad amount.
+
+This function is crucial for enabling metatransactions in ERC20 tokens, allowing users to manage their token allowances without directly interacting with the blockchain, thus enhancing security and usability.

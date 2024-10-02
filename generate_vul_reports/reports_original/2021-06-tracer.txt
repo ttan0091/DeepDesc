@@ -1,0 +1,58 @@
+[H-01] Wrong trading pricing calculations
+Submitted by 0xsanson, also found by shw
+In thePricingcontract, an agent can manipulate the trading prices by spamming a high amount of trades.
+Indeed an agent can create a high amount of orders at an arbitrary price and with a near-zero amount (so the agent doesn’t even need large funds); next he/she pairs the orders with another account and callsTrader.executeTrade; now every order calls aPricing.recordTradeusing the arbitrary price set by the agent.
+Since the trades are all made in the same hour, by the wayhourlyTracerPrices[currentHour]is calculated, it skews the average price towards the price set by the agent. This arbitrary value is used to calculate thefundingRatesand thefairPrice, allowing a malicious agent the ability to manipulate the market.
+Recommend passing thefillAmountparameter torecordTrade(...), and calculatehourlyTracerPrices[currentHour].tradessummingfillAmountinstead of 1 every trade.
+raymogg (Tracer) confirmed:
+Issue is valid, and there appear to be a few other issues that reference similar problems.The Trader contract will have a whitelist allowing only select relayers to push orders on chain. As long as off chain order books have sufficient liquidity, this issue is then mitigated as users can’t just arbitrarily match orders and send them in, they must be matched on a book with liquidity. To alter the price you would then need to eat through significant liquidity (increasing the cost of this attack).
+[H-02] Use of incorrect index leads to incorrect updation of funding rates
+Submitted by 0xRajeev
+TheupdateFundingRate()function updates the funding rate and insurance funding rate. While the instant/new funding rates are calculated correctly, the cumulative funding rate calculation is incorrect because it is always adding the instant to 0, not the previous value. This is due to the use of[currentFundingIndex]which has been updated since the previous call to this function while it should really be using[currentFundingIndex-1]to reference the previous funding rate.
+The impact of this, is that the cumulative funding rate and insurance funding rates are calculated incorrectly without considering the correct previous values. This affects the settling of accounts across the entire protocol. The protocol logic is significantly impacted, accounts will not be settled as expected, protocol shutdown and contracts will need to be redeployed. Users may lose funds and the protocol takes a reputation hit.
+Recommend using[currentFundingIndex-1]for non-zero values ofcurrentFundingIndexto get the value updated in the previous call on lines L155 and L159 ofPricing.sol.
+raymogg (Tracer) confirmed:
+Confirmed as an index issue with funding rate 👍
+[H-03] Malicious owner can drain the market at any time usingSafetyWithdraw
+Submitted by 0xRajeev, also found by pauliax and gpersoon
+ThewithdrawERC20Token()inSafetyWithdrawinherited inTracerPerpetualSwapsis presumably a guarded launch emergency withdrawal mechanism. However, given the trust model where the market creator/owner is potentially untrusted/malicious, this is a dangerous approach to emergency withdrawal in the context of guarded launch.
+Alternatively, if this is meant for the owner to withdraw “external” ERC20 tokens mistakenly deposited to the Tracer market, then the function should excludetracerQuoteTokenfrom being thetokenAddressthat can be used as a parameter towithdrawERC20Token().
+The impact of this is that, if a malicious owner of a market withdraws/rugs alltracerQuoteTokens deposited at any time after market launch, all users lose deposits and the protocol takes a reputational hit and has to refund the users from treasury.
+Therefor, it is recommended that, for a guarded launch circuit breaker, design a pause/unpause feature where deposits are paused (in emergency situations) but withdrawals are allowed by the depositors themselves instead of the owner. Alternatively, if this is meant to be for removing external ERC20 tokens accidentally deposited to market, exclude thetracerQuoteTokenfrom being given as thetokenAddress.
+raymogg (Tracer) confirmed but suggested a severity of 2:
+The only reason for the dispute on severity is that as part of the security model, the owner can manipulate the market in other ways (such as changing the oracle being used), so this trust assumption over the owner already exists. For this reason the team thinks this issue is closer to a mediumThis however is a good issue as it is not the greatest circuit breaking mechanism, and as noted in #7 can reflect badly on the project without the exploit being used. The mechanism is being removed and replaced with more structured circuit breaker.
+cemozerr (Judge) commented:
+Marking this as high risk, as regardless of the owner manipulating in other ways, the threat persists.
+[H-04] Logic error in fee subtraction
+Submitted by 0xsanson
+InLibBalances.applyTrade(), we need to collect a fee from the trade. However, the current code subtracts a fee from the short position and adds it to the long. The correct implementation is to subtract a fee to both (seeTracerPerpetualSwaps.solL272).
+This issue causes withdrawals problems, since Tracer thinks it can withdraw the collect fees, leaving the users with an incorrect amount of quote tokens.
+Recommend changing+feeto-feein thehighlighted line.
+raymogg (Tracer) confirmed:
+Valid issue 👍
+[H-05] Insurance slippage reimbursement can be used to steal insurance fund
+Submitted by cmichel
+TheLiquidationcontract allows the liquidator to submit “bad” trade orders and the insurance reimburses them from the insurance fund, seeLiquidation.claimReceipt.
+The function can be called with anordersarray, which does not check for duplicate orders.
+An attacker can abuse this to make a profit by liquidating themselves, making a small bad trade and repeatedly submitting this bad trade for slippage reimbursement.
+Example:
+Attacker uses two accounts, one as the liquidator and one as the liquidatee.They run some high-leverage trades such that the liquidatee gets liquidated with the next price update. (If not cash out and make a profit this way through trading, and try again.)Liquidator liquidates liquidateeThey now do two trades:One “good” trade at the market price that fills 99% of the liquidation amount. The slippage protection should not kick in for this tradeOne “bad” trade at a horrible market price that fills only 1% of the liquidation amount. This way the slippage protection kicks in for this tradeThe liquidator now callsclaimReceipt(orders)whereordersis an array that contains many duplicates of the “bad” trade, for example 100 times. ThecalcUnitsSoldfunction will returnunitsSold = receipt.amountLiquidatedand a badavgPrice. They are now reimbursed the price difference on the full liquidation amount (instead of only on 1% of it) making an overall profit
+This can be repeated until the insurance fund is drained.
+The attacker has an incentive to do this attack as it’s profitable and the insurance fund will be completely drained.
+Recommend disallowing duplicate orders in theordersargument ofclaimReceipt. This should make the attack at least unprofitable, but it could still be a griefing attack.
+A quick way to ensure thatordersdoes not contain duplicates is by having liquidators submit the orders in a sorted way (by order ID) and then checking in thecalcUnitsSoldforloop that the current order ID is strictly greater than the previous one.
+BenjaminPatch (Tracer) confirmed:
+Valid issue. The recommended mitigation step would also work.
+[H-06] Wrong price scale forGasOracle
+Submitted by cmichel
+TheGasOracleuses two chainlink oracles (GAS in ETH with some decimals, USD per ETH with some decimals) and multiplies their raw return values to get the gas price in USD.
+However, the scaling depends on the underlying decimals of the two oracles and could be anything.
+But the code assumes it’s in 18 decimals.
+“Returned value is USD/Gas * 10^18 for compatibility with rest of calculations”
+There is atoWadfunction that seems to involve scaling but it is never used.
+The impact is that, If the scale is wrong, the gas price can be heavily inflated or under-reported.
+Recommend checkingchainlink.decimals()to know the decimals of the oracle answers and scale the answers to 18 decimals such that no matter the decimals of the underlying oracles, thelatestAnswerfunction always returns the answer in 18 decimals.
+raymogg (Tracer) confirmed and disagreed with severity:
+Disagree with severity as while the statement that the underlying decimals of the oracles could be anything, we will be using production Chainlink feeds for which the decimals are known at the time of deploy.This is still however an issue as you don’t want someone using different oracles (eg non Chainlink) that have different underlying decimals and not realising that this contract will not support that.
+cemozerr (Judge) commented:
+Marking this a high-risk issue as it poses a big threat to users deploying their own markets

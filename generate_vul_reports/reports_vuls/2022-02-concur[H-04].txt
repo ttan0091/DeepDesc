@@ -1,0 +1,21 @@
+[H-04]ConvexStakingWrapper,StakingRewardsWrong implementation will sendconcurrewards to the wrong receiver
+Submitted by WatchPug, also found by bobi, CertoraInc, csanuragjain, danb, hickuphh3, and leastwood
+ConvexStakingWrapper.sol#L246StakingRewards.sol#L99MasterChef.sol#L159-L167
+UserInfostorageuser=userInfo[_pid][_msgSender()];updatePool(_pid);if(user.amount>0) {uintpending=user.amount*pool.accConcurPerShare/_concurShareMultiplier-user.rewardDebt;if(pending>0) {safeConcurTransfer(_recipient,pending);}}
+ConvexStakingWrapper,StakingRewardsis usingmasterChef.deposit(),masterChef.withdraw(), and these two functions onmasterChefwill take_msgSender()as the user address, which is actually the address ofConvexStakingWrapperandStakingRewards.
+As a result, when callingConvexStakingWrapper.deposit(),ConvexStakingWrapper.withdraw(),StakingRewards.stake(),StakingRewards.withdraw(), theconcurrewards belongs to all the users of ConvexStakingWrapper / StakingRewards will be sent to the caller wrongfully.
+Proof of Concept
+Alice deposits1,000,000token topid 1
+Actual results onmasterChef:
+userInfo[1][address(ConvexStakingWrapper)] =1,000,000
+Expected results:
+userInfo[1][address(Alice)] =1,000,0001 day later, Bob deposits1token topid 1
+Actual results onmasterChef:
+userInfo[1][address(ConvexStakingWrapper)] =1,000,001allpending rewardssent to Bob
+Expected results:
+userInfo[1][address(Alice)] =1,000,000userInfo[1][address(Bob)] =1allpending rewardsshould be sent to Alice
+Recommended Mitigation Steps
+Consider adding two new functions to MasterChef:depositFor()andwithdrawFor().
+ConvexStakingWrapper,StakingRewardscan utilize these two functions and get the accounting right.
+functiondepositFor(address_user,uint_pid,uint_amount)externalnonReentrantonlyDepositor{PoolInfostoragepool=poolInfo[_pid];UserInfostorageuser=userInfo[_pid][_user];
+ryuheimat (Concur) confirmed

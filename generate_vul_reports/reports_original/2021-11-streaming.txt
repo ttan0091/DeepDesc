@@ -1,0 +1,178 @@
+[H-01] Wrong calculation of excess depositToken allows stream creator to retrievedepositTokenFlashloanFeeAmount, which may cause fund loss to users
+Submitted by WatchPug, also found by 0x0x0x, ScopeLift, gpersoon, harleythedog, hyh, gzeon, jonah1005, and kenzo
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L654-L654
+uint256excess=ERC20(token).balanceOf(address(this)) - (depositTokenAmount-redeemedDepositTokens);
+In the current implementation,depositTokenFlashloanFeeAmountis not excluded when calculatingexcessdepositToken. Therefore, the stream creator can callrecoverTokens(depositToken, recipient)and retrievedepositTokenFlashloanFeeAmountif there are any.
+As a result:
+When the protocolgovernancecallsclaimFees()and claim accumulateddepositTokenFlashloanFeeAmount, it may fail due to insufficient balance of depositToken.Or, part of users’ funds (depositToken) will be transferred to the protocolgovernanceas fees, causing some users unable to withdraw or can only withdraw part of their deposits.
+Proof of Concept
+Given:
+feeEnabled: truefeePercent: 10 (0.1%)Alice deposited1,000,000depositToken;Bob calledflashloan()and borrowed1,000,000depositToken, then repaid1,001,000;Charlie deposited1,000depositToken;AfterendDepositLock, Alice calledclaimDepositTokens()and withdrawn1,000,000depositToken;streamCreatorcalledrecoverTokens(depositToken, recipient)and retrieved1,000depositToken(2,000 - (1,001,000 - 1,000,000));governancecalledclaimFees()and retrieved another1,000depositToken;Charlie tries toclaimDepositTokens()but since the current balanceOf depositToken is0, the transcation always fails, and Charlie loses all the depositToken.
+Recommendation
+Change to:
+uint256excess=ERC20(token).balanceOf(address(this)) - (depositTokenAmount-redeemedDepositTokens) -depositTokenFlashloanFeeAmount;
+brockelmore (Streaming Protocol) confirmed
+[H-02] Tokens can be stolen whendepositToken == rewardToken
+Submitted by cmichel, also found by 0x0x0x, gzeon, Ruhum, gpersoon, hack3r-0m, and pauliax
+TheStreamingcontract allows thedepositandrewardtokens to be the same token.
+I believe this is intended, think Sushi reward on Sushi as is the case withxSushi.
+The reward and deposit balances are also correctly tracked independently indepositTokenAmountandrewardTokenAmount.
+However, when recovering tokens this leads to issues as the token is recovered twice, once for deposits and another time for rewards:
+functionrecoverTokens(addresstoken,addressrecipient)publiclock{// NOTE: it is the stream creators responsibility to save// tokens on behalf of their users.require(msg.sender==streamCreator,"!creator");if(token==depositToken) {require(block.timestamp>endDepositLock,"time");// get the balance of this contract// check what isnt claimable by either party// @audit-info depositTokenAmount updated on stake/withdraw/exit, redeemedDepositTokens increased on claimDepositTokensuint256excess=ERC20(token).balanceOf(address(this)) - (depositTokenAmount-redeemedDepositTokens);// allow saving of the tokenERC20(token).safeTransfer(recipient,excess);emitRecoveredTokens(token,recipient,excess);return;}if(token==rewardToken) {require(block.timestamp>endRewardLock,"time");// check current balance vs internal balance//// NOTE: if a token rebases, i.e. changes balance out from under us,// most of this contract breaks and rugs depositors. this isn't exclusive// to this function but this function would in theory allow someone to rug// and recover the excess (if it is worth anything)// check what isnt claimable by depositors and governance// @audit-info rewardTokenAmount increased on fundStreamuint256excess=ERC20(token).balanceOf(address(this)) - (rewardTokenAmount+rewardTokenFeeAmount);ERC20(token).safeTransfer(recipient,excess);emitRecoveredTokens(token,recipient,excess);return;}// ...
+Proof Of Concept
+GivenrecoverTokens == depositToken,Streamcreator callsrecoverTokens(token = depositToken, creator).
+Thetokenbalance is the sum of deposited tokens (minus reclaimed) plus the reward token amount.ERC20(token).balanceOf(address(this)) >= (depositTokenAmount - redeemedDepositTokens) + (rewardTokenAmount + rewardTokenFeeAmount)if (token == depositToken)executes, theexcessfrom the deposit amount will be the reward amount (excess >= rewardTokenAmount + rewardTokenFeeAmount). This will be transferred.if (token == rewardToken)executes, the new token balance is just the deposit token amount now (because the reward token amount has been transferred out in the step before). Therefore,ERC20(token).balanceOf(address(this)) >= depositTokenAmount - redeemedDepositTokens. If this is non-negative, the transaction does not revert and the creator makes a profit.
+Example:
+outstanding redeemable deposit token amount:depositTokenAmount - redeemedDepositTokens = 1000fundedrewardTokenAmount(plusrewardTokenFeeAmountfees):rewardTokenAmount + rewardTokenFeeAmount = 500
+Creator receives1500 - 1000 = 500excess deposit and1000 - 500 = 500excess reward.
+Impact
+When using the same deposit and reward token, the stream creator can steal tokens from the users who will be unable to withdraw their profit or claim their rewards.
+Recommended Mitigation Steps
+One needs to be careful with using.balanceOfin this special case as it includes both deposit and reward balances.
+Add a special case forrecoverTokenswhentoken == depositToken == rewardTokenand then the excess should beERC20(token).balanceOf(address(this)) - (depositTokenAmount - redeemedDepositTokens) - (rewardTokenAmount + rewardTokenFeeAmount);
+brockelmore (Streaming Protocol) confirmed
+[H-03] Reward token not correctly recovered
+Submitted by cmichel, also found by GeekyLumberjack, kenzo, pedroais, and hyh
+TheStreamingcontract allows recovering the reward token by callingrecoverTokens(rewardToken, recipient).
+However, the excess amount is computed incorrectly asERC20(token).balanceOf(address(this)) - (rewardTokenAmount + rewardTokenFeeAmount):
+functionrecoverTokens(addresstoken,addressrecipient)publiclock{if(token==rewardToken) {require(block.timestamp>endRewardLock,"time");// check what isnt claimable by depositors and governance// @audit-issue rewardTokenAmount increased on fundStream, but never decreased! this excess underflowsuint256excess=ERC20(token).balanceOf(address(this)) - (rewardTokenAmount+rewardTokenFeeAmount);ERC20(token).safeTransfer(recipient,excess);emitRecoveredTokens(token,recipient,excess);return;}// ...
+Note thatrewardTokenAmountonly everincreases(when callingfundStream) but it never decreases when claiming the rewards throughclaimReward.
+However,claimRewardtransfers out the reward token.
+Therefore, therewardTokenAmountnever tracks the contract’s reward balance and the excess cannot be computed that way.
+Proof Of Concept
+Assume no reward fees for simplicity and only a single user staking.
+Someone funds1000reward tokens throughfundStream(1000). ThenrewardTokenAmount = 1000The stream and reward lock period is over, i.e.block.timestamp > endRewardLockThe user claims their full reward and receives1000reward tokens by callingclaimReward(). The reward contract balance is now0butrewardTokenAmount = 1000Some fool sends 1000 reward tokens to the contract by accident. These cannot be recovered as theexcess = balance - rewardTokenAmount = 0
+Impact
+Reward token recovery does not work.
+Recommended Mitigation Steps
+The claimed rewards need to be tracked as well, just like the claimed deposits are tracked.
+I think you can even decreaserewardTokenAmountinclaimRewardbecause at this pointrewardTokenAmountis not used to update thecumulativeRewardPerTokenanymore.
+brockelmore (Streaming Protocol) confirmed
+[H-04] Improper implementation ofarbitraryCall()allows protocol gov to steal funds from users’ wallets
+Submitted by WatchPug, also found by Jujic and hack3r-0m
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L733-L735
+functionarbitraryCall(addresswho,bytesmemorydata)publiclockexternallyGoverned{// cannot have an active incentive for the calleerequire(incentives[who] ==0,"inc");...
+When an incentiveToken is claimed afterendStream,incentives[who]will be0for thatincentiveToken.
+If the protocol gov is malicious or compromised, they can callarbitraryCall()with the address of the incentiveToken aswhoandtransferFrom()as calldata and steal all the incentiveToken in the victim’s wallet balance up to the allowance amount.
+Proof of Concept
+Alice approvedUSDCto the streaming contract;Alice calledcreateIncentive()and added1,000 USDCof incentive;After the stream is done, the stream creator calledclaimIncentive()and claimed1,000 USDC;
+The compromised protocol gov can callarbitraryCall()and steal all the USDC in Alice’s wallet balance.
+Recommendation
+Consider adding a mapping:isIncentiveToken, settingisIncentiveToken[incentiveToken] = trueincreateIncentive(), andrequire(!isIncentiveToken[who], ...)inarbitraryCall().
+brockelmore (Streaming Protocol) confirmed
+[H-05] Possible incentive theft through the arbitraryCall() function
+Submitted by toastedsteaksandwich, also found by Omik, ScopeLift, bitbopper, pedroais, gzeon, Meta0xNull, and wuwe1
+Impact
+TheLocke.arbitraryCall()function allows the inherited governance contract to perform arbitrary contract calls within certain constraints. Contract calls to tokens provided as incentives through the createIncentive() function are not allowed if there is some still some balance according to the incentives mapping (See line 735 referenced below).
+However, the token can still be called prior any user creating an incentive, so it’s possible for thearbitraryCall()function to be used to set an allowance on an incentive token before the contract has actually received any of the token throughcreateIncentive().
+In summary:
+If some possible incentive tokens are known prior to being provided, thearbitraryCall()function can be used to pre-approve a token allowance for a malicious recipient.Once a user callscreateIncentive()and provides one of the pre-approved tokens, the malicious recipient can calltransferFromon the provided incentive token and withdraw the tokens.
+Proof of Concept
+https://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L735
+Recommended Mitigation Steps
+Recommendation 1
+Limit the types of incentive tokens so it can be checked that it’s not the target contract for the arbitraryCall().
+Recommendation 2
+Validate that the allowance of the target contract (if available) has not changed.
+brockelmore (Streaming Protocol) confirmed
+[H-06] Creating rewardTokens without streaming depositTokens
+Submitted by bitbopper
+Impact
+stakeandwithdrawscan generate rewardTokens without streaming depositTokens.
+It does not matter whether the stream is a sale or not.
+The following lines can increase the reward balance on awithdrawsome time afterstake:https://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L219:L222
+// accumulate reward per token infocumulativeRewardPerToken = rewardPerToken();// update user rewardsts.rewards = earned(ts, cumulativeRewardPerToken);
+While the following line can be gamed in order to not stream any tokens (same withdraw tx).
+Specifically an attacker can arrange to create a fraction less than zero thereby substracting zero.
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L229
+ts.tokens -= uint112(acctTimeDelta * ts.tokens / (endStream - ts.lastUpdate));// WARDEN TRANSLATION: (elapsedSecondsSinceStake * stakeAmount) / (endStreamTimestamp - stakeTimestamp)
+A succesful attack increases the share of rewardTokens of the attacker.
+The attack can be repeated every block increasing the share further.
+The attack could be done from multiple EOA increasing the share further.
+In short: Attackers can create loss of funds for (honest) stakers.
+The economic feasability of the attack depends on:
+staked amount (times number of attacks) vs total staked amountrelative value of rewardToken to gasprice
+Proof of Concept
+code
+The following was added toLocke.t.solfor theStreamTestContract to simulate the attack from one EOA.
+functiontest_quickDepositAndWithdraw()public{//// SETUP// accounting (to proof attack): save the rewardBalance of alice.uintStartBalanceA=testTokenA.balanceOf(address(alice));uint112stakeAmount=10_000;// start stream and fill it(uint32maxDepositLockDuration,uint32maxRewardLockDuration,uint32maxStreamDuration,uint32minStreamDuration) =defaultStreamFactory.streamParams();uint64nextStream=defaultStreamFactory.currStreamId();Streamstream=defaultStreamFactory.createStream(address(testTokenA),address(testTokenB),uint32(block.timestamp+10),maxStreamDuration,maxDepositLockDuration,0,false// false,// bytes32(0));testTokenA.approve(address(stream),type(uint256).max);stream.fundStream(1_000_000_000);// wait till the stream startshevm.warp(block.timestamp+16);hevm.roll(block.number+1);// just interact with contract to fill "lastUpdate" and "ts.lastUpdate"// without changing balances inside of Streaming contractalice.doStake(stream,address(testTokenB),stakeAmount);alice.doWithdraw(stream,stakeAmount);///// ATTACK COMES HERE// stakealice.doStake(stream,address(testTokenB),stakeAmount);// wait a blockhevm.roll(block.number+1);hevm.warp(block.timestamp+16);// withdraw soon thereafteralice.doWithdraw(stream,stakeAmount);// finish the streamhevm.roll(block.number+9999);hevm.warp(block.timestamp+maxDepositLockDuration);// get rewardalice.doClaimReward(stream);// accounting (to proof attack): save the rewardBalance of alice / save balance of stakeTokenuintEndBalanceA=testTokenA.balanceOf(address(alice));uintEndBalanceB=testTokenB.balanceOf(address(alice));// Stream returned everything we gave it// (doStake sets balance of alice out of thin air => we compare end balance against our (thin air) balance)assert(stakeAmount==EndBalanceB);// we gained reward token without riskassert(StartBalanceA==0);assert(StartBalanceA<EndBalanceA);emitlog_named_uint("alice gained",EndBalanceA);}
+commandline
+dapptest--verbosity=2 --match"test_quickDepositAndWithdraw"2> /dev/nullRunning 1 testsforsrc/test/Locke.t.sol:StreamTest[PASS]test_quickDepositAndWithdraw() (gas: 4501209)Success: test_quickDepositAndWithdrawalice gained: 13227
+Tools Used
+dapptools
+Recommended Mitigation Steps
+Ensure staked tokens can not generate reward tokens without streaming deposit tokens. First idea that comes to mind is making following linehttps://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L220dependable on a positive amount > 0 of:https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L229
+brockelmore (Streaming Protocol) confirmed
+[H-07] Business logic bug in __abdicate() function - 2 Bugs
+Submitted by cyberboy, also found by Meta0xNull
+Impact
+The\__abdicate()function athttps://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L46-L50is the logic to remove the governance i.e., to renounce governance. However, the function logic does not consider emergency governor and pending governor, which can be a backdoor as only the “gov” is set to zero address while the emergency and pending gov remains. A pending gov can just claim and become the gov again, replacing the zero address.
+Proof of Concept
+Compile the contract and set the\_GOVERNORand\_EMERGENCY_GOVERNOR.Now set apendingGovbut do not callacceptGov()
+Bug 1
+Call the\__abdicate()function and we will notice only “gov” is set to zero address while emergency gov remains.
+Bug2
+Now use the address used inpendingGovto callacceptGov()function.We will notice the new gov has been updated to the new address from the zero address.
+Hence the\__abdicate()functionality can be used as a backdoor using emergency governor or leaving a pending governor to claim later.
+Tools Used
+Remix to test the proof of concept.
+Recommended Mitigation Steps
+The\__abdicate()function should setemergency_govandpendingGovas well to zero address.
+brockelmore (Streaming Protocol) confirmed and disagreed with severity:
+Yes, the governor can be recovered from abdication if pendingGov != 0 as well as emergency gov needs to be set to 0 before abdication because it won’t be able to abdicate itself.Would consider it to be medium risk because chances of it ever being called are slim as it literally would cutoff the protocol from being able to capture its fees.
+0xean (judge) commented:
+Given that the functionality and vulnerability exists, and the governor does claim fees, this could lead to the loss of funds. Based on the documentation for C4, that would qualify as high severity.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-08] ts.tokens sometimes calculated incorrectly
+Submitted by gpersoon, also found by WatchPug
+Impact
+Suppose someone stakes some tokens and then withdraws all of his tokens (he can still withdraw). This will result in ts.tokens being 0.
+Now after some time he stakes some tokens again.
+At the second stakeupdateStream()is called and the following if condition is false becausets.tokens==0
+if(acctTimeDelta>0&&ts.tokens>0) {
+Thusts.lastUpdateis not updated and stays at the value from the first withdraw.
+Now he does a second withdraw.updateStream()is called an calculates the updated value ofts.tokens.
+However it usests.lastUpdate, which is the time from the first withdraw and not from the second stake. So the value ofts.tokenis calculated incorrectly.
+Thus more tokens can be withdrawn than you are supposed to be able to withdraw.
+Proof of Concept
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L417-L447
+functionstake(uint112amount)publiclockupdateStream(msg.sender) {...uint112trueDepositAmt=uint112(newBal-prevBal);...ts.tokens+=trueDepositAmt;
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L455-L479
+functionwithdraw(uint112amount)publiclockupdateStream(msg.sender) {...ts.tokens-=amount;
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L203-L250
+functionupdateStreamInternal(addresswho)internal{...uint32acctTimeDelta=uint32(block.timestamp) -ts.lastUpdate;if(acctTimeDelta>0&&ts.tokens>0) {// some time has passed since this user last interacted// update ts not yet streamedts.tokens-=uint112(acctTimeDelta*ts.tokens/ (endStream-ts.lastUpdate));ts.lastUpdate=uint32(block.timestamp);}
+Recommended Mitigation Steps
+Change the code in updateStream()  to:
+if(acctTimeDelta>0) {// some time has passed since this user last interacted// update ts not yet streamedif(ts.tokens>0)ts.tokens-=uint112(acctTimeDelta*ts.tokens/ (endStream-ts.lastUpdate));ts.lastUpdate=uint32(block.timestamp);// always update ts.lastUpdate (if time has elapsed)}
+Note: the next if statement with unstreamed and lastUpdate can be changed in a similar way to save some gas
+brockelmore (Streaming Protocol) confirmed:
+Nice catch :)
+[H-09] DOS while dealing with erc20 when value(i.e amount*decimals)  is high but less than type(uint112).max
+Submitted by hack3r-0m
+Impact
+https://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L229
+reverts due to overflow for higher values (but strictly less than type(uint112).max) and hence when user callsexitorwithdrawfunction it will revert and that user will not able to withdraw funds permanentaly.
+Proof of Concept
+Attaching diff to modify tests to reproduce behaviour:
+diff --git a/Streaming/src/test/Locke.t.sol b/Streaming/src/test/Locke.t.solindex 2be8db0..aba19ce 100644--- a/Streaming/src/test/Locke.t.sol+++ b/Streaming/src/test/Locke.t.sol@@ -166,14 +166,14 @@ contract StreamTest is LockeTest {);testTokenA.approve(address(stream), type(uint256).max);-        stream.fundStream((10**14)*10**18);+        stream.fundStream(1000);-        alice.doStake(stream, address(testTokenB), (10**13)*10**18);+        alice.doStake(stream, address(testTokenB), 100);hevm.warp(startTime + minStreamDuration / 2); // move to half done-        bob.doStake(stream, address(testTokenB), (10**13)*10**18);+        bob.doStake(stream, address(testTokenB), 100);hevm.warp(startTime + minStreamDuration / 2 + minStreamDuration / 10);@@ -182,10 +182,10 @@ contract StreamTest is LockeTest {hevm.warp(startTime + minStreamDuration + 1); // warp to end of stream-        // alice.doClaimReward(stream);-        // assertEq(testTokenA.balanceOf(address(alice)), 533*(10**15));-        // bob.doClaimReward(stream);-        // assertEq(testTokenA.balanceOf(address(bob)), 466*(10**15));+        alice.doClaimReward(stream);+        assertEq(testTokenA.balanceOf(address(alice)), 533);+        bob.doClaimReward(stream);+        assertEq(testTokenA.balanceOf(address(bob)), 466);}function test_stake() public {diff --git a/Streaming/src/test/utils/LockeTest.sol b/Streaming/src/test/utils/LockeTest.solindex eb38060..a479875 100644--- a/Streaming/src/test/utils/LockeTest.sol+++ b/Streaming/src/test/utils/LockeTest.sol@@ -90,11 +90,11 @@ abstract contract LockeTest is TestHelpers {testTokenA = ERC20(address(new TestToken("Test Token A", "TTA", 18)));testTokenB = ERC20(address(new TestToken("Test Token B", "TTB", 18)));testTokenC = ERC20(address(new TestToken("Test Token C", "TTC", 18)));-        write_balanceOf_ts(address(testTokenA), address(this), (10**14)*10**18);-        write_balanceOf_ts(address(testTokenB), address(this), (10**14)*10**18);-        write_balanceOf_ts(address(testTokenC), address(this), (10**14)*10**18);-        assertEq(testTokenA.balanceOf(address(this)), (10**14)*10**18);-        assertEq(testTokenB.balanceOf(address(this)), (10**14)*10**18);+        write_balanceOf_ts(address(testTokenA), address(this), 100*10**18);+        write_balanceOf_ts(address(testTokenB), address(this), 100*10**18);+        write_balanceOf_ts(address(testTokenC), address(this), 100*10**18);+        assertEq(testTokenA.balanceOf(address(this)), 100*10**18);+        assertEq(testTokenB.balanceOf(address(this)), 100*10**18);defaultStreamFactory = new StreamFactory(address(this), address(this));
+Tools Used
+Manual Review
+Recommended Mitigation Steps
+Consider doing arithmetic operations in two steps or upcasting to u256 and then downcasting. Alternatively, find a threshold where it breaks and add require condition to not allow total stake per user greater than threshhold.
+brockelmore (Streaming Protocol) confirmed
+[H-10] recoverTokens doesn’t work when isSale is true
+Submitted by harleythedog, also found by kenzo, pedroais, hyh, and pauliax
+Impact
+InrecoverTokens, the logic to calculate the excess number of deposit tokens in the contract is:
+uint256 excess = ERC20(token).balanceOf(address(this)) - (depositTokenAmount - redeemedDepositTokens);
+This breaks in the case where isSale is true and the deposit tokens have already been claimed through the use ofcreatorClaimSoldTokens. In this case,redemeedDepositTokenswill be zero, anddepositTokenAmountwill still be at its original value when the streaming ended. As a result, any attempts to recover deposit tokens from the contract would either revert or send less tokens than should be sent, since the logic above would still think that there are the full amount of deposit tokens in the contract. This breaks the functionality of the function completely in this case.
+Proof of Concept
+See the excess calculation here:https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L654
+SeecreatorClaimSoldTokenshere:https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L583
+Notice thatcreatorClaimSoldTokensdoes not changedepositTokenAmountorredeemedDepositTokens, so the excess calculation will be incorrect in the case of sales.
+Tools Used
+Inspection
+Recommended Mitigation Steps
+I would recommend settingredeemedDepositTokensto bedepositTokenAmountin the functioncreatorClaimSoldTokens, since claiming the sold tokens is like “redeeming” them in a sense. This would fix the logic issue inrecoverTokens.
+brockelmore (Streaming Protocol) commented
+0xean (judge) commented:
+upgrading to High as assets would be lost in the case outlined by the warden3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

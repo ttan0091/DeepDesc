@@ -1,0 +1,16 @@
+[H-03]setYieldSourceleads to temporary wrong results
+Submitted by gpersoon
+The use ofsetYieldSourceleaves the contract in a temporary inconsistent state because it changes the underlying yield source,
+but doesn’t (yet) transfer the underlying balances, while the shares stay the same.
+The functionbalanceOfTokenwill show the wrong results, because it is based on_sharesToToken, which usesyieldSource.balanceOfToken(address(this)), that isn’t updated yet.
+More importantlysupplyTokenTowill give the wrong amount of shares back:
+First it supplies tokens to theyieldsource.
+Then is calls_mintShares, which calls_tokenToShares, which calculates the shares, usingyieldSource.balanceOfToken(address(this))ThisyieldSource.balanceOfToken(address(this))only contains the just supplied tokens, but doesn’t include the tokens from the previousYieldSource.
+So the wrong amount of shares is given back to the user; they will be given more shares than appropriate which means they can drain funds later on (oncetransferFundshas been done).
+It is possible to make use of this problem in the following way:
+monitor the blockchain until you seesetYieldSourcehas been doneimmediately call the functionsupplyTokenTo(which can be called because there is no access control on this function)
+// https://github.com/pooltogether/swappable-yield-source/blob/main/contracts/SwappableYieldSource.solfunctionsetYieldSource(IYieldSource_newYieldSource)external`onlyOwnerOrAssetManager`returns(bool) {_setYieldSource(_newYieldSource);function_setYieldSource(IYieldSource_newYieldSource)internal{..yieldSource=_newYieldSource;functionsupplyTokenTo(uint256amount,addressto)externaloverridenonReentrant{..yieldSource.supplyTokenTo(amount,address(this));_mintShares(amount,to);}function_mintShares(uint256mintAmount,addressto)internal{uint256shares=`_tokenToShares`(mintAmount);require(shares>0,"SwappableYieldSource/shares-gt-zero");_mint(to,shares);}function_tokenToShares(uint256tokens)internalreturns(uint256) {uint256shares;uint256_totalSupply=totalSupply();..uint256exchangeMantissa=FixedPoint.calculateMantissa(_totalSupply,yieldSource.balanceOfToken(address(this)));// based on incomplete yieldSource.balanceOfToken(address(this))shares=FixedPoint.multiplyUintByMantissa(tokens,exchangeMantissa);functionbalanceOfToken(addressaddr)externaloverridereturns(uint256) {return_sharesToToken(balanceOf(addr));}function_sharesToToken(uint256shares)internalreturns(uint256) {uint256tokens;uint256_totalSupply=totalSupply();..uint256exchangeMantissa=FixedPoint.calculateMantissa(yieldSource.balanceOfToken(address(this)),_totalSupply);// based on incomplete yieldSource.balanceOfToken(address(this))tokens=FixedPoint.multiplyUintByMantissa(shares,exchangeMantissa);
+Reocommend removing the functionsetYieldSource(e.g. only leaveswapYieldSource)
+Or temporally disable actions likesupplyTokenTo,redeemTokenand balanceOfToken, aftersetYieldSourceand untiltransferFundshas been done.
+PierrickGT (PoolTogether) confirmed and resolved:
+PR:https://github.com/pooltogether/swappable-yield-source/pull/4We’ve mitigated this issue by removing thetransferFundsandsetYieldSourceexternal functions and makingswapYieldSourcecallable only by the owner that will be a multi sig wallet for governance pools.

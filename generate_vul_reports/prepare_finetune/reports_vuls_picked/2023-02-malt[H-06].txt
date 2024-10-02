@@ -1,0 +1,39 @@
+Type of vulnerability: Data Consistency and Synchronization
+
+Cause of vulnerability: The `StabilizerNode.stabilize` function uses stale data from `GlobalImpliedCollateralService` because `impliedCollateralService.syncGlobalCollateral()` is called only at the end of the function, after critical calculations have already been made using potentially outdated data.
+
+Execution process: 
+1. The `StabilizerNode.stabilize` function is called.
+2. It uses `maltDataLab.getActualPriceTarget` and `maltDataLab.getSwingTraderEntryPrice` for stabilization calculations.
+3. These functions rely on `GlobalImpliedCollateralService.collateralRatio`, which may be stale if `impliedCollateralService.syncGlobalCollateral()` has not been called beforehand.
+4. The stale `collateralRatio` leads to incorrect stabilization calculations.
+5. Finally, `impliedCollateralService.syncGlobalCollateral()` is called, but this is too late to affect the already performed calculations.
+
+Vulnerable code:
+```solidity
+function stabilize() external nonReentrant onlyEOA onlyActive whenNotPaused {
+    // Ensure data consistency
+    maltDataLab.trackPool();
+    // Finalize auction if possible before potentially starting a new one
+    auction.checkAuctionFinalization();
+    require(block.timestamp >= stabilizeWindowEnd || _stabilityWindowOverride(), "Can't call stabilize");
+    stabilizeWindowEnd = block.timestamp + stabilizeBackoffPeriod;
+    // used in 3 location.
+    uint256 exchangeRate = maltDataLab.maltPriceAverage(priceAveragePeriod);
+    bool stabilizeToPeg = onlyStabilizeToPeg; // gas
+    if (!_shouldAdjustSupply(exchangeRate, stabilizeToPeg)) {
+        lastStabilize = block.timestamp;
+        impliedCollateralService.syncGlobalCollateral();
+        return;
+    }
+    emit Stabilize(block.timestamp, exchangeRate);
+    (uint256 livePrice, ) = dexHandler.maltMarketPrice();
+    uint256 priceTarget = maltDataLab.getActualPriceTarget();
+    ...
+    if (trackAfterStabilize) {
+        maltDataLab.trackPool();
+    }
+    impliedCollateralService.syncGlobalCollateral();
+    lastStabilize = block.timestamp;
+}
+```

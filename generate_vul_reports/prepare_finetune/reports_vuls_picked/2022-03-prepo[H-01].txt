@@ -1,0 +1,27 @@
+Type of vulnerability: Incomplete Strategy Migration
+
+Cause of vulnerability: The strategy migration process does not ensure that all tokens are fully withdrawn from the old strategy before migrating to the new one. This results in tokens being left behind in the old strategy.
+
+Execution process: 
+1. A user initiates a strategy migration by calling the `migrate` function with a new strategy.
+2. The function attempts to withdraw the full balance from the old strategy but may not succeed in withdrawing the entire amount due to limitations in the yield protocol's liquidity.
+3. The function then deposits the withdrawn amount into the new strategy.
+4. Tokens left in the old strategy are not accounted for in the new strategy's total value, leading to an undervaluation of `totalValue()`.
+5. Subsequent deposits and share calculations are based on this undervalued `totalValue()`, resulting in users receiving more shares than they should.
+
+Vulnerable code:
+```solidity
+function migrate(IStrategy _newStrategy) external override onlyOwner nonReentrant {
+    uint256 _oldStrategyBalance;
+    IStrategy _oldStrategy = _strategy;
+    _strategy = _newStrategy;
+    _baseToken.approve(address(_newStrategy), type(uint256).max);
+    if (address(_oldStrategy) != address(0)) {
+        _baseToken.approve(address(_oldStrategy), 0);
+        _oldStrategyBalance = _oldStrategy.totalValue();
+        _oldStrategy.withdraw(address(this), _oldStrategyBalance);
+        _newStrategy.deposit(_baseToken.balanceOf(address(this)));
+    }
+    emit StrategyMigrated(address(_oldStrategy), address(_newStrategy), _oldStrategyBalance);
+}
+```

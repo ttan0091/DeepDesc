@@ -1,0 +1,18 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Misinterpretation of the order parameters between MakerOrder and TakerOrder, leading to a discrepancy in the price calculation.
+Execution process: An attacker manipulates the order parameters by setting a higher price in the TakerOrder compared to the MakerOrder. This discrepancy allows the attacker to drain the pool's funds by exploiting the difference in price calculation during the execution of the order.
+Vulnerable code: 
+```solidity
+function buyWithCredit(bytes32 marketplaceId, bytes calldata payload, DataTypes.Credit calldata credit, uint16 referralCode) external payable virtual override nonReentrant {
+    DataTypes.PoolStorage storage ps = poolStorage();
+    MarketplaceLogic.executeBuyWithCredit(marketplaceId, payload, credit, ps, ADDRESSES_PROVIDER, referralCode);
+}
+
+function getAskOrderInfo(bytes calldata payload, address weth) external view returns (DataTypes.OrderInfo memory) {
+    (OrderTypes.TakerOrder memory takerBid, OrderTypes.MakerOrder memory makerAsk) = abi.decode(payload, (OrderTypes.TakerOrder, OrderTypes.MakerOrder));
+    DataTypes.OrderInfo memory orderInfo;
+    orderInfo.maker = makerAsk.signer;
+    orderInfo.consideration[0] = ConsiderationItem(itemType, token, 0, makerAsk.price, makerAsk.price, payable(takerBid.taker));
+    return orderInfo;
+}
+```

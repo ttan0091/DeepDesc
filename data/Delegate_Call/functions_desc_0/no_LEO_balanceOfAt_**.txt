@@ -1,0 +1,25 @@
+This code defines a public view function named balanceOfAt, which is designed to retrieve the balance of a specific token owner at a given block number. This function is particularly useful for querying historical token balances, which is essential for tokens that implement checkpointing to record balance changes over time.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    The function balanceOfAt takes two parameters: _owner (an address representing the token owner) and _blockNumber (a uint representing the block number at which the balance is to be queried).
+    The function is declared as public and view, meaning it can be called externally and does not modify the state of the blockchain.
+
+2. Initial Check for No Checkpoints:
+    The function first checks if there are no checkpoints recorded for the _owner (balances[_owner].length == 0) or if the first checkpoint block is after the specified _blockNumber (balances[_owner][0].fromBlock > _blockNumber).
+    If either condition is true, it indicates that the balance was not recorded at or before the specified block number.
+
+3. Querying Parent Token Balance:
+    If the above condition is met, the function checks if there is a parent token (address(parentToken) != address(0)).
+    If a parent token exists, it recursively calls the balanceOfAt function of the parent token for the _owner at the minimum of _blockNumber and parentSnapShotBlock. This is necessary because the parent token might have recorded the initial balance of the token before any checkpoints were created for the current token.
+    If there is no parent token, the function simply returns 0, indicating that the owner had no balance at the specified block number.
+
+4. Normal Situation Handling:
+    If the initial conditions are not met, the function proceeds to query the balance using the getValueAt function, passing the balance checkpoints of the _owner and the _blockNumber.
+    The getValueAt function is assumed to be a helper function that interpolates or retrieves the balance from the checkpoints array based on the specified block number.
+
+5. Conclusion:
+    This function effectively allows for the retrieval of historical token balances by either directly accessing the checkpoints or, if necessary, querying the parent token's historical balance. This mechanism ensures that even if checkpoints are sparse or nonexistent for certain periods, the correct historical balance can still be determined by leveraging the parent token's records.
+
+This design is particularly useful in scenarios where tokens are derived from other tokens or where maintaining a detailed history of balance changes is important for transparency and accountability.

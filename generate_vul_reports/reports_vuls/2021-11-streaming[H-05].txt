@@ -1,0 +1,15 @@
+[H-05] Possible incentive theft through the arbitraryCall() function
+Submitted by toastedsteaksandwich, also found by Omik, ScopeLift, bitbopper, pedroais, gzeon, Meta0xNull, and wuwe1
+Impact
+TheLocke.arbitraryCall()function allows the inherited governance contract to perform arbitrary contract calls within certain constraints. Contract calls to tokens provided as incentives through the createIncentive() function are not allowed if there is some still some balance according to the incentives mapping (See line 735 referenced below).
+However, the token can still be called prior any user creating an incentive, so it’s possible for thearbitraryCall()function to be used to set an allowance on an incentive token before the contract has actually received any of the token throughcreateIncentive().
+In summary:
+If some possible incentive tokens are known prior to being provided, thearbitraryCall()function can be used to pre-approve a token allowance for a malicious recipient.Once a user callscreateIncentive()and provides one of the pre-approved tokens, the malicious recipient can calltransferFromon the provided incentive token and withdraw the tokens.
+Proof of Concept
+https://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L735
+Recommended Mitigation Steps
+Recommendation 1
+Limit the types of incentive tokens so it can be checked that it’s not the target contract for the arbitraryCall().
+Recommendation 2
+Validate that the allowance of the target contract (if available) has not changed.
+brockelmore (Streaming Protocol) confirmed

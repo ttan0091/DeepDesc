@@ -1,0 +1,27 @@
+Type of vulnerability: Front-running and Price Manipulation
+Cause of vulnerability: Imbalance in locked token amounts during pool creation leading to an exploitable state where the target of one token can be lower than its reserve.
+Execution process: An attacker can exploit the imbalance by selling a large amount of one token to push the pool into an ABOVE_ONE state, then selling the other token at an inflated price due to the manipulated state.
+Vulnerable code: 
+```solidity
+function bootstrap(uint256 minAmountOut) external onlyOwner onlyState(State.Closed) returns (address, address, uint256) {
+    uint256 baseAmount = totals[MIM].locked;
+    uint256 quoteAmount = totals[USDB].locked;
+    MIM.safeApprove(address(router), type(uint256).max);
+    USDB.safeApprove(address(router), type(uint256).max);
+    (pool, totalPoolShares) = router.createPool(MIM, USDB, FEE_RATE, I, K, address(this), baseAmount, quoteAmount);
+}
+
+function createPool() external returns (address clone, uint256 shares) {
+    baseToken.safeTransferFrom(msg.sender, clone, baseInAmount);
+    quoteToken.safeTransferFrom(msg.sender, clone, quoteInAmount);
+    (shares, , ) = IMagicLP(clone).buyShares(to);
+}
+
+function buyShares(address to) external nonReentrant returns (uint256 shares, uint256 baseInput, uint256 quoteInput) {
+    if (totalSupply() == 0) {
+        shares = quoteBalance < DecimalMath.mulFloor(baseBalance, _I_) ? DecimalMath.divFloor(quoteBalance, _I_) : baseBalance;
+        _BASE_TARGET_ = shares.toUint112();
+        _QUOTE_TARGET_ = DecimalMath.mulFloor(shares, _I_).toUint112();
+    }
+}
+```

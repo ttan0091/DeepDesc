@@ -1,0 +1,66 @@
+The code provided consists of two main components: a SafeMath library and a PrivateBank contract. Let's break down each part in detail.
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+This code defines a SafeMath library, which is commonly used in Solidity to prevent integer overflow and underflow vulnerabilities. The library contains a single function sub, which performs a subtraction operation.
+
+ Function Name: sub
+ Parameters:
+   a: The first operand of type uint256.
+   b: The second operand of type uint256.
+ Internal and Pure: The function is marked as internal and pure, meaning it can only be called from within the contract or derived contracts, and it does not modify the state or read from the state.
+ Operation: The function checks if b is less than or equal to a using the assert function. If the condition is true, it returns the result of a  b. If the condition fails, the assert function will cause the transaction to revert, ensuring that no underflow occurs.
+
+### PrivateBank Contract
+
+solidity
+contract PrivateBank {
+    using SafeMath for uint;
+    mapping (address => uint) public balances;
+
+    function CashOut(uint _am) {
+        if(_am <= balances[msg.sender]) {
+            if(msg.sender.call.value(_am)()){
+                balances[msg.sender] = balances[msg.sender].sub(_am);
+            }
+        }
+    }
+}
+
+
+This code defines a PrivateBank contract that manages user balances and allows users to withdraw their funds.
+
+ Using SafeMath: The contract uses the SafeMath library for all uint operations to ensure safe arithmetic.
+ Balances Mapping: A public mapping balances is defined to store the balance of each address.
+ Function Name: CashOut
+ Parameters:
+   _am: The amount of tokens the user wants to withdraw, of type uint.
+ Function Logic:
+   The function first checks if the requested amount _am is less than or equal to the balance of the sender (balances[msg.sender]).
+   If the condition is met, it attempts to send _am wei to the sender using the call.value(_am)() function. This is a lowlevel call that sends Ether to the sender.
+   If the call is successful, it then subtracts the withdrawn amount from the sender's balance using the sub function from the SafeMath library.
+
+### Potential Vulnerabilities
+
+1. Reentrancy Attack: The CashOut function is vulnerable to a reentrancy attack. If the call.value(_am)() function is used to send Ether, it can allow the recipient to call back into the CashOut function before the balance is updated. This can result in multiple withdrawals before the balance is correctly adjusted.
+
+2. Lack of Event Logging: The contract does not emit any events when a withdrawal occurs. This makes it difficult to track transactions and can lead to issues with transparency and auditing.
+
+3. Unchecked Call Return Value: The return value of call.value(_am)() is not checked. If the call fails, the Ether will be sent but the balance will still be updated, leading to a loss of funds.
+
+### Recommendations
+
+1. Use transfer or send Instead of call: Replace call.value(_am)() with transfer or send to mitigate reentrancy attacks. These methods are safer as they limit the gas sent to the recipient.
+2. Emit Events: Emit an event whenever a withdrawal occurs to provide transparency and allow for easier tracking of transactions.
+3. Check Call Return Value: Always check the return value of call.value(_am)() to ensure that the Ether transfer was successful before updating the balance.
+
+By addressing these issues, the contract can be made more secure and reliable.

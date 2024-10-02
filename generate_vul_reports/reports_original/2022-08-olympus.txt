@@ -1,0 +1,54 @@
+[H-01] InGovernance.sol, it might be impossible to activate a new proposal forever after failed to execute the previous active proposal.
+Submitted by hansfriese, also found by berndartmueller, csanuragjain, m9800, V_B, and zzzitron
+https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L216-L221https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L302-L304
+Currently, if users vote for the active proposal, theVOTESare transferred to the contract so that users can’t vote or endorse other proposals while the voted proposal is active.
+And the active proposal can be replaced only when the proposal is executed successfully or another proposal is activated afterGRACE_PERIOD.
+ButactivateProposal()requires at least 20% endorsementshere, so it might be impossible to activate a new proposal forever if the current active proposal involves more than 80% of total votes.
+Proof of Concept
+The below scenario would be possible.
+Proposal 1was submitted and activated successfully.Let’s assume 81% of the total votes voted for this proposal.Yes = 47%,No = 34%This proposal can’t be executed forthis requirementbecause47% - 34% = 13% < 33%.Currently the contract contains more than 81% of total votes and users have at most 19% in total.Also users can’t reclaim their votes among 81% whileProposal 1is active.So even if a user who has 1% votes submits a new proposal, it’s impossible to activate because of thisrequire().So it’s impossible to deleteProposal 1from an active proposal and there won’t be other active proposal forever.
+Tools Used
+Solidity Visual Developer of VSCode
+Recommended Mitigation Steps
+I think we should add one more constant likeEXECUTION_EXPIRE = 2 weeksso that voters can reclaim their votes after this period even if the proposal is active.
+I am not sure we can use the currentGRACE_PERIODfor that purpose.
+SoreclaimVotes()should be modified like below.
+function reclaimVotes(uint256 proposalId_) external {uint256 userVotes = userVotesForProposal[proposalId_][msg.sender];if (userVotes == 0) {revert CannotReclaimZeroVotes();}if (proposalId_ == activeProposal.proposalId) {if (block.timestamp < activeProposal.activationTimestamp + EXECUTION_EXPIRE) //+++++++++++++++++++++++++++++++++{revert CannotReclaimTokensForActiveVote();}}if (tokenClaimsForProposal[proposalId_][msg.sender] == true) {revert VotingTokensAlreadyReclaimed();}tokenClaimsForProposal[proposalId_][msg.sender] = true;VOTES.transferFrom(address(this), msg.sender, userVotes);}
+fullyallocated (Olympus) confirmed
+
+[H-02] Anyone can pass any proposal alone before firstVOTESare minted
+Submitted by Bahurum, also found by bin2chen and cryptphi
+https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L164https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L217-L218https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L268
+Before anyVOTESare minted anyone can activate and execute an arbitrary proposal even with 0 votes cast. So an attacker can pass any proposal (i.e. change theexecutor+adminof theKernel, gaining access to all permissioned functions and to funds held).
+Proof of Concept
+Checks on vote numbers made inGovernance.solat linesL164,217-218,268pass ifVOTES.totalSupply() == 0. So, until noVOTESare minted, anyone can submit, activate and execute a proposal. There is no need to own or cast votes. This happens ifOlympusGovernanceis granted theexecutorrole before anyVOTESare minted (as inGovernance.t.sol). The attacker can anticipate/frontrun the minting and pass a proposal to change both theKerneladminandexecutor. Then he/she can upgrade malicious modules, steal funds from treasury…
+A PoC was obtained modifying thesetUp()ofGovernance.t.solby keeping only what is before the minting ofVOTES(up toL83included). The test is as follows:
+functiontest_AttackerPassesProposalBeforeMinting()public{address[]memoryusers=userCreator.create(1);addressattacker=users[0];vm.prank(attacker);MockMaliciousattackerControlledContract=newMockMalicious();Instruction[]memoryinstructions_=newInstruction[](2);instructions_[0] =Instruction(Actions.ChangeAdmin,address(attackerControlledContract));instructions_[1] =Instruction(Actions.ChangeExecutor,address(attackerControlledContract));vm.prank(attacker);governance.submitProposal(instructions_,"proposalName","This is the proposal URI");governance.endorseProposal(1);vm.prank(attacker);governance.activateProposal(1);vm.warp(block.timestamp+3days+1);governance.executeProposal();assert(kernel.executor()==address(attackerControlledContract));assert(kernel.admin()==address(attackerControlledContract));}
+with
+contractMockMalicious{}
+Recommended Mitigation Steps
+InGovernance.solcheck for a minimum VOTES totalSupply, similiar to the expected initial supply of VOTES when they have been fairly distributed, for example at lineL164.
+fullyallocated (Olympus) acknowledged
+0xean (judge) commented:
+Leaving as High severity as this shows a clear path to loss of funds.
+
+[H-03] TRSRY: front-runnablesetApprovalFor
+Submitted by zzzitron, also found by berndartmueller, csanuragjain, pashov, Ruhum, sorrynotsorry, and Trust
+https://github.com/code-423n4/2022-08-olympus/blob/b5e139d732eb4c07102f149fb9426d356af617aa/src/modules/TRSRY.sol#L64-L72https://github.com/code-423n4/2022-08-olympus/blob/b5e139d732eb4c07102f149fb9426d356af617aa/src/policies/TreasuryCustodian.sol#L42-L48
+An attacker may be able to withdraw more than intended
+Proof of Concept
+Let’s say Alice had approval of 100. Now the treasury custodian reduced the approval to 50. Alice could frontrun thesetApprovalForof 50, and withdraw 100 as it was before. Then withdraw 50 with the newly set approval. So the alice could withdraw 150.
+// modules/TRSRY.sol63/// @notice Sets approval for specific withdrawer addresses64functionsetApprovalFor(65addresswithdrawer_,66ERC20token_,67uint256amount_68     )externalpermissioned{69withdrawApproval[withdrawer_][token_] =amount_;7071emitApprovedForWithdrawal(withdrawer_,token_,amount_);72}
+TheTreasuryCustodiansimply calls thesetApprovalForto grant Approval.
+4142functiongrantApproval(43addressfor_,44ERC20token_,45uint256amount_46     )externalonlyRole("custodian") {47TRSRY.setApprovalFor(for_,token_,amount_);48}
+Recommended Mitigation Steps
+Instead of setting the given amount, one can reduce from the current approval. By doing so, it checks whether the previous approval is spend.
+ind-igo (Olympus) confirmed and commented:
+Understood. Will change the logic to increase/decrease allowances.
+0xean (judge) increased severity to High and commented:
+I think this vulnerability should be a high severity as it opens up the possibility of a direct loss of funds in the amount of up to the previous approval amount. Upgrading to High.
+0xean (judge) commented:
+@ind-igo - Not sure if you deleted your comment, but that context is useful.  Happy to take another look here.
+ind-igo (Olympus) commented:
+I did, I just thought it was unnecessary to evaluate the issue. I was just saying that the context of the code is that it is not intended to be used to approve an EOA/multisig, but instead used to approve governance-voted contracts to access treasury funds, in order to deposit into yield contracts or whatever. But I don’t think it’s very relevant to this, as the code is still faulty and exploitable in an extreme case. I already have made this remediation as well, so all good.
+

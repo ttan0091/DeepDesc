@@ -1,0 +1,21 @@
+Type of vulnerability: Improper Calculation of Gas Refund
+Cause of vulnerability: The calculation of the maximum refunded gas (`_maxRefundedGas`) does not subtract the gas spent on public data (`spentOnPubdata`), leading to an overestimation of the refund amount.
+Execution process: When a paymaster is involved in a transaction, the function `refundCurrentL2Transaction` calculates the refund by adding `gasLeft` and `reservedGas` without subtracting `spentOnPubdata`. This results in the paymaster refunding the user for the gas already spent on public data, leading to an over-compensation.
+Vulnerable code: 
+```solidity
+let nearCallAbi := getNearCallABI(gasLeft)
+let gasBeforePostOp := gas()
+pop(ZKSYNC_NEAR_CALL_callPostOp(
+    // Maximum number of gas that the postOp could spend
+    nearCallAbi,
+    paymaster,
+    txDataOffset,
+    success,
+    // Since the paymaster will be refunded with reservedGas,
+    // it should know about it
+    safeAdd(gasLeft, reservedGas, "jkl"),
+    basePubdataSpent,
+    reservedGas,
+    gasPerPubdata
+))
+```

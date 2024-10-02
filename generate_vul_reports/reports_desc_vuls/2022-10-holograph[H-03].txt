@@ -1,0 +1,22 @@
+Type of vulnerability: Gas Miscalculation
+Cause of vulnerability: Use of source chain's gas configuration parameters for calculating gas for the destination chain
+Execution process: The `send` function in `LayerZeroModule.sol` uses `_baseGas()` and `_gasPerByte()` to calculate gas for the destination chain, which are global parameters from the source chain, leading to potential underpricing or overpricing of gas.
+Vulnerable code: 
+```solidity
+function send(uint256, /* gasLimit*/uint256, /* gasPrice*/uint32 toChain,address msgSender,uint256 msgValue,bytes calldata crossChainPayload) external payable {
+    require(msg.sender == address(_operator()), "HOLOGRAPH: operator only call");
+    LayerZeroOverrides lZEndpoint;
+    assembly {
+        lZEndpoint := sload(_lZEndpointSlot)
+    }
+    // need to recalculate the gas amounts for LZ to deliver message
+    lZEndpoint.send{value: msgValue}(
+        uint16(_interfaces().getChainId(ChainIdType.HOLOGRAPH, uint256(toChain), ChainIdType.LAYERZERO)),
+        abi.encodePacked(address(this), address(this)),
+        crossChainPayload,
+        payable(msgSender),
+        address(this),
+        abi.encodePacked(uint16(1), uint256(_baseGas() + (crossChainPayload.length * _gasPerByte())))
+    );
+}
+```

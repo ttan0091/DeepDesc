@@ -1,0 +1,17 @@
+[H-34] Cross-chain messaging viaAnycallwill fail
+Submitted byltyu, also found byyellowBirdy,RED-LOTUS-REACH,Koolex,BPZ, andxuwinnie
+Lines of code
+https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/ulysses-omnichain/BranchBridgeAgent.sol#L1006-L1011https://github.com/code-423n4/2023-05-maia/blob/54a45beb1428d85999da3f721f923cbf36ee3d35/src/ulysses-omnichain/lib/AnycallFlags.sol#L11
+Impact
+Cross-chain calls will fail since source-fee is not supplied toAnycall.
+Proof of Concept
+In_performCall()ofBranchBridgeAgent.sol, a cross-chain call is made usinganyCall()with the_flagof4. According to theAnycall V7 documentationandcode, when using gas_flagof 4, the gas fee must be paid on the source chain. This meansanyCall()must be called and sent gas.
+However, this is not the case, and the result of_performCallwill always revert. This will impact many functions that rely on this function; such ascallOut(),callOutSigned(),retryDeposit(), etc.
+Recommended Mitigation Steps
+After discussing with the Sponsor, it is expected that the fee be paid on the destination chain, specificallyrootBridgeAgent. Consider refactoring the code to change the_flagto usepay on destination.
+Alternatively, if pay on source is the intention, consider refactoring the code to include fees; starting with_performCall. Additional refactoring will be required.
+function _performCall(bytes memory _calldata, uint256 _fee) internal virtual {//Sends message to AnycallProxyIAnycallProxy(local`AnyCall`Address).anyCall{value: _fee}(rootBridgeAgentAddress, _calldata, rootChainId, AnycallFlags.FLAG_ALLOW_FALLBACK, "");}
+Assessed type
+Library
+0xBugsy (Maia) confirmed and commented:
+We recognize the audit’s findings on Anycall. These will not be rectified due to the upcoming migration of this section to LayerZero.

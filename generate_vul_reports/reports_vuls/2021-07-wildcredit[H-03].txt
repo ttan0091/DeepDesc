@@ -1,0 +1,9 @@
+[H-03]LendingPair.liquidateAccountfails if tokens are lent out
+Submitted by cmichel
+TheLendingPair.liquidateAccountfunction tries to pay out underlying supply tokens to the liquidator using_safeTransfer(IERC20(supplyToken), msg.sender, supplyOutput)but there’s no reason why there should be enoughsupplyOutputamount in the contract, the contract only ensuresminReserve.
+As a result, no liquidations can be performed if all tokens are lent out.Example:User A supplies 1k$ WETH, User B supplies 1.5k$ DAI and borrows the ~1k$ WETH (only leavesminReserve). The ETH price drops but user B cannot be liquidated as there’s not enough WETH in the pool anymore to pay out the liquidator.
+Recommend minting LP supply tokens tomsg.senderinstead, these are the LP supply tokens that were burnt from the borrower. This way the liquidator basically seizes the borrower’s LP tokens.
+talegift (Wild Credit) confirmed but disagreed with severity:
+Assets not at direct risk, but the function of the protocol or its availability could be impacted, orleak valuewith a hypothetical attack path with stated assumptions, butexternal requirements.Update to severity - 2
+ghoul-sol (Judge) commented:
+If liquidation is impossible, there’s insolvency risk and that creates a risk to lose user funds. Keeping high severity.

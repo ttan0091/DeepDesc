@@ -1,0 +1,31 @@
+[Execution Flow]:
+This code defines an internal function named _fallback, which is designed to handle fallback calls in a proxy contract. The function ensures that the call is not coming from the admin of the contract and then forwards the call to the implementation contract using assembly code. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Initial Check:
+    The function _fallback is an internal function, meaning it can only be called within the contract or its derived contracts.
+    The function starts with a require statement to ensure that the caller (msg.sender) is not the admin of the contract. This is to prevent the admin from directly calling the fallback function, which could bypass certain security checks or logic.
+
+2. Assembly Block:
+    The function uses inline assembly to perform lowlevel operations, which are more efficient and allow for direct manipulation of the EVM (Ethereum Virtual Machine).
+
+3. (a) Get Free Memory Pointer:
+    let ptr := mload(0x40) retrieves the free memory pointer, which is a pointer to the next available memory location. This is used to allocate memory for storing the incoming call data and the return data.
+
+4. (b) Get Address of the Implementation:
+    let impl := and(sload(IMPLEMENTATION_SLOT), 0xffffffffffffffffffffffffffffffffffffffff) retrieves the address of the implementation contract. IMPLEMENTATION_SLOT is a constant that represents the storage slot where the implementation contract address is stored. The and operation ensures that only the address part of the storage slot is used, masking out any other data.
+
+5. (1) Copy Incoming Call Data:
+    calldatacopy(ptr, 0, calldatasize()) copies the incoming call data (calldata) to the memory location pointed to by ptr. This includes the function signature and the parameters of the call.
+
+6. (2) Forward Call to Logic Contract:
+    let result := delegatecall(gas(), impl, ptr, calldatasize(), 0, 0) uses the delegatecall opcode to forward the call to the implementation contract. delegatecall is similar to call, but it executes the code of the target contract in the context of the calling contract, preserving the caller's context (e.g., msg.sender, msg.value, and storage). The result of the call is stored in the result variable.
+
+7. (3) Retrieve Return Data:
+    let size := returndatasize() retrieves the size of the return data from the delegatecall.
+    returndatacopy(ptr, 0, size) copies the return data from the delegatecall to the memory location pointed to by ptr.
+
+8. (4) Forward Return Data Back to Caller:
+    The switch statement checks the value of result. If result is 0, it means the delegatecall failed, and the function calls revert(ptr, size) to revert the transaction and return the error data to the caller.
+    If result is not 0, the function calls return(ptr, size) to return the return data to the caller.
+
+This function is crucial for proxy contracts, as it allows them to forward calls to the implementation contract while preserving the proxy's context. This enables upgrades and separation of logic and storage, which is a common pattern in upgradable contracts.

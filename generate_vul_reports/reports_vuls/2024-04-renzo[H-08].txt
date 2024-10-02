@@ -1,0 +1,19 @@
+[H-08] Incorrect withdraw queue balance in TVL calculation
+Submitted bypauliax, also found byBiasedMerc,NentoR,gjaldon,crypticdefense,zhaojohnson,twcctop,bigtone,b0g0,DanielArmstrong,fyamf,GoatedAudits,0xCiphky,zigtur,xg,SBSecurity,lanrebayode77,blutorque,aslanbek,Aamir,araj,TheFabled,t0x1c,tapir,eeshenggoh,p0wd3r,peanuts,Greed,0xordersol,14si2o_Flint,guhu95, m_Rassska (1,2),ustazz,maxim371,Fassi_Security,shui,mt030d,aman,rbserver,mussucal,josephdara,zzykxx,honey-k12,0xnightfall,Maroutis,Aymen0909,OMEN,Stefanov,FastChecker,hunter_w3b,gesha17,baz1ka,kinda_very_good,carlitox477,0xAadi,0rpse,ak1,0x73696d616f,0xhacksmithh,ilchovski,LessDupes,adam-idarrha,siguint,0xnev,0xPwned,carrotsmuggler,KupiaSec,grearlake, and oakcobalt (1,2)
+When calculating TVL it iterates over all the operator delegators and inside it iterates over all the collateral tokens.
+for(uint256i=0;i<odLength; ) {...// Iterate through the tokens and get the value of eachuint256tokenLength=collateralTokens.length;for(uint256j=0;j<tokenLength; ) {...// record token value of withdraw queueif(!withdrawQueueTokenBalanceRecorded) {totalWithdrawalQueueValue+=renzoOracle.lookupTokenValue(collateralTokens[i],collateralTokens[j].balanceOf(withdrawQueue));}unchecked{++j;}}...unchecked{++i;}}
+However, the balance ofwithdrawQueueis incorrectly fetched, specifically this line:
+totalWithdrawalQueueValue+=renzoOracle.lookupTokenValue(collateralTokens[i],collateralTokens[j].balanceOf(withdrawQueue));
+It uses an incorrect index of the outer loopito access thecollateralTokens.ibelongs to the operator delegator index, thus the returned value will not represent the real value of the token. For instance, if there is 1 OD and 3 collateral tokens, it will add the balance of the first token 3 times and neglect the other 2 tokens. If there are more ODs than collateral tokens, the the execution will revert (index out of bounds).
+This calculation impacts the TVL which is the essential data when calculating mint/redeem and other critical values. A miscalculation in TVL could have devastating results.
+Proof of Concept
+A simplified version of the function to showcase that the same token (in this caseaddress(1)) is emitted multiple times and other tokens are untouched:
+contractRestakeManager{address[]publicoperatorDelegators;address[]publiccollateralTokens;eventCollateralTokenLookup(addresstoken);constructor() {operatorDelegators.push(msg.sender);collateralTokens.push(address(1));collateralTokens.push(address(2));collateralTokens.push(address(3));}functioncalculateTVLs()public{// Iterate through the ODsuint256odLength=operatorDelegators.length;for(uint256i=0;i<odLength; ) {// Iterate through the tokens and get the value of eachuint256tokenLength=collateralTokens.length;for(uint256j=0;j<tokenLength; ) {emitCollateralTokenLookup(collateralTokens[i]);unchecked{++j;}}unchecked{++i;}}}}
+Recommended Mitigation Steps
+Change tocollateralTokens[j].
+Assessed type
+Math
+jatinj615 (Renzo) confirmed and commented:
+Yeah, the index should bejnoti.
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.

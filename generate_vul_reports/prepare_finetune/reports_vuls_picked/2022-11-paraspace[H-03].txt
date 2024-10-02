@@ -1,0 +1,17 @@
+Type of vulnerability: Incorrect Interest Rate Calculation
+Cause of vulnerability: The debt tokens are transferred before the interest rates are calculated, leading to an incorrect calculation of `vars.availableLiquidity` and subsequently `currentLiquidityRate`.
+Execution process: 
+1. Liquidator L1 calls `executeLiquidateERC20` for a position with a health factor < 1.
+2. The function `_burnDebtTokens` is called internally, which transfers the debt asset to the xToken.
+3. The balance of the xToken for the liquidation asset increases.
+4. The function `updateInterestRates` is called, which calculates the interest rates based on the incorrect balance of the xToken.
+5. The function `calculateInterestRates` is called, which incorrectly calculates `vars.availableLiquidity` and `currentLiquidityRate`.
+Vulnerable code:
+```solidity
+function _burnDebtTokens(DataTypes.ReserveData storage liquidationAssetReserve, DataTypes.ExecuteLiquidateParams memory params, ExecuteLiquidateLocalVars memory vars) internal {
+    // Transfers the debt asset being repaid to the xToken, where the liquidity is kept
+    IERC20(params.liquidationAsset).safeTransferFrom(vars.payer, vars.liquidationAssetReserveCache.xTokenAddress, vars.actualLiquidationAmount);
+    // Update borrow & supply rate
+    liquidationAssetReserve.updateInterestRates(vars.liquidationAssetReserveCache, params.liquidationAsset, vars.actualLiquidationAmount, 0);
+}
+```

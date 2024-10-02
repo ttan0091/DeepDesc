@@ -1,0 +1,20 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect handling of the `active` flag when adding a trader to the `activeTraders` array.
+Execution process: When `addSwingTrader` is called with `active = false`, the `traderId` is incorrectly pushed to `activeTraders`. This results in duplicate `traderId` entries in `activeTraders` when `toggleTraderActive` is subsequently called, leading to incorrect calculations in functions like `getTokenBalances` and `calculateSwingTraderMaltRatio`.
+Vulnerable code: 
+```solidity
+function addSwingTrader(uint256 traderId, address _swingTrader, bool active, string calldata name) external onlyRoleMalt(ADMIN_ROLE, "Must have admin privs") {
+    SwingTraderData storage trader = swingTraders[traderId];
+    require(traderId > 2 && trader.id == 0, "TraderId already used");
+    require(_swingTrader != address(0), "addr(0)");
+    swingTraders[traderId] = SwingTraderData({
+        id: traderId,
+        index: activeTraders.length,
+        traderContract: _swingTrader,
+        name: name,
+        active: active
+    });
+    activeTraders.push(traderId);
+    emit AddSwingTrader(traderId, name, active, _swingTrader);
+}
+```

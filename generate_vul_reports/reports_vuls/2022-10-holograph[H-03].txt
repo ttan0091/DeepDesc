@@ -1,0 +1,23 @@
+[H-03]  LayerZeroModule miscalculates gas, risking loss of assets
+Submitted by Trust
+LayerZeroModule.sol#L431-L445
+Holograph gets its cross chain messaging primitives through Layer Zero. To get pricing estimate, it uses the DstConfig price struct exposed in LZ’sRelayerV2.
+The issue is that the important baseGas and gasPerByte configuration parameters, which are used to calculate a custom amount of gas for the destination LZ message, use the values that come from thesourcechain. This is in contrast to LZ which handles DstConfigs in a mapping keyed by chainID.  The encoded gas amount is describedhere.
+Impact
+The impact is that when those fields are different between chains, one of two things may happen:
+Less severe - we waste excess gas, which is refunded to the lzReceive() caller (Layer Zero)More severe - we underprice the delivery cost, causing lzReceive() to revert and the NFT stuck in limbo forever.
+The code does not handle a failed lzReceive (differently to a failed executeJob). Therefore, no failure event is emitted and the NFT is screwed.
+Recommended Mitigation Steps
+Firstly, make sure to use the target gas costs.Secondly, re-engineer lzReceive to be fault-proof, i.e. save some gas to emit result event.
+gzeon (judge) commented:
+Might also cause the LZ channel to stuck#244.
+ACC01ADE (Holograph) disputed and commented:
+I respectfully disagree that this is even a valid issue.@Trust - please re-review the affected code. You’ll notice that we are in fact extracting destination chain gas data. And if you review the 100s of cross-chain testnet transactions that we have already made with that version of code, you will notice that the math is exact.Maybe I am misunderstanding something, so some clarification would be great if you think I’m wrong on this.
+Trust (warden) commented:
+Please take a look atLayerZeroModule.sol’s send function:function send(uint256, /* gasLimit*/uint256, /* gasPrice*/uint32 toChain,address msgSender,uint256 msgValue,bytes calldata crossChainPayload) external payable {require(msg.sender == address(_operator()), "HOLOGRAPH: operator only call");LayerZeroOverrides lZEndpoint;assembly {lZEndpoint := sload(_lZEndpointSlot)}// need to recalculate the gas amounts for LZ to deliver messagelZEndpoint.send{value: msgValue}(uint16(_interfaces().getChainId(ChainIdType.HOLOGRAPH, uint256(toChain), ChainIdType.LAYERZERO)),abi.encodePacked(address(this), address(this)),crossChainPayload,payable(msgSender),address(this),abi.encodePacked(uint16(1), uint256(_baseGas() + (crossChainPayload.length * _gasPerByte()))));}The function uses_baseGas()and_gasPerByte()as the relayer adapter parameters as described in the submission description’s link. These two getters are global for all chains.I agree that thegetMessage()function takes into account the correct fees for the destination chain.
+ACC01ADE (Holograph) commented:
+@Trust - Ya but these refer to destination gas limits. BaseGas and GasPerByte is the amount of gas that is used by thecrossChainMessagefunction that LayerZero triggers on cross-chain callHolographOperator.sol#L484
+ACC01ADE (Holograph) confirmed and commented:
+Discussed this in more detail with @Trust, definitely a critical issue.Need to add destination chain-specific_baseGasand_gasPerByteto mitigate EVM differences in opcode costs.
+alexanderattar (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes

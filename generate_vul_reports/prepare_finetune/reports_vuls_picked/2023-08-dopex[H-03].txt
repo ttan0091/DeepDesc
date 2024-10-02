@@ -1,0 +1,14 @@
+Type of vulnerability: Arithmetic Over/Underflow and Token Balance Manipulation
+
+Cause of vulnerability: The contract does not account for external transfers of collateral tokens into the contract, leading to a mismatch between the recorded total collateral and the actual balance of collateral tokens.
+
+Execution process: An attacker transfers collateral tokens (WETH) to the PerpetualAtlanticVaultLP contract, causing the balance of collateral tokens in the contract to increase without updating the internal accounting of total collateral. When the `subtractLoss` function is called, it checks for an exact match between the actual collateral balance and the expected collateral balance, which fails due to the attacker's manipulation, causing the function to revert.
+
+Vulnerable code:
+```solidity
+function subtractLoss(uint256 loss) public onlyPerpVault {
+    require(collateral.balanceOf(address(this)) == _totalCollateral - loss, "Not enough collateral was sent out");
+    _totalCollateral -= loss;
+}
+```
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/perp-vault/PerpetualAtlanticVaultLP.sol#L199-L205

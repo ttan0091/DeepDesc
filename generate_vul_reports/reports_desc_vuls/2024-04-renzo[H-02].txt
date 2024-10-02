@@ -1,0 +1,15 @@
+Type of vulnerability: Incorrect Calculation of Queued Withdrawals
+Cause of vulnerability: The function `getTokenBalanceFromStrategy` incorrectly checks for the queued amount of `address(this)` instead of `address(token)`, leading to an underestimation of the Total Value Locked (TVL).
+Execution process: When the `getTokenBalanceFromStrategy` function is called, it fails to account for queued withdrawals of collateral tokens, causing the TVL to be lower than actual. This results in an inflated ezETH mint rate, as more ezETH is minted against the same amount of collateral.
+Vulnerable code: 
+```solidity
+function getTokenBalanceFromStrategy(IERC20 token) external view returns (uint256) {
+    return
+        queuedShares[address(this)] == 0
+            ? tokenStrategyMapping[token].userUnderlyingView(address(this))
+            : tokenStrategyMapping[token].userUnderlyingView(address(this)) +
+              tokenStrategyMapping[token].sharesToUnderlyingView(
+                  queuedShares[address(token)]
+              );
+}
+```

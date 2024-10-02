@@ -1,0 +1,20 @@
+[H-12] TOFTremoveCollateralcan be used to steal all the balance
+Submitted bywindhustler, also found by0x73696d616f
+removeCollateral->removemessage pathway can be used to steal all the balance of theTapiocaOFTandmTapiocaOFTtokens in case when their underlying tokens is native.
+TOFTs that hold native tokens are deployed witherc20 addressset to address zero, so whileminting you need to transfer value.
+Proof of Concept
+The attack needs to be executed by invoking theremoveCollateralfunction from any chain to chain on which the underlying balance resides, e.g. host chain of the TOFT.
+When the message isreceived on the remote chain, I have placed in the comments below what are the params that need to be passed to execute the attack.
+functionremove(bytesmemory_payload)public{(,,addressto,,ITapiocaOFT.IRemoveParamsmemoryremoveParams,ICommonData.IWithdrawParamsmemorywithdrawParams,ICommonData.IApproval[]memoryapprovals) =abi.decode(_payload,(uint16,address,address,bytes32,ITapiocaOFT.IRemoveParams,ICommonData.IWithdrawParams,ICommonData.IApproval[]));// approvals can be an empty array so this is skippedif(approvals.length>0) {_callApproval(approvals);}// removeParams.market and removeParams.share don't matterapprove(removeParams.market,removeParams.share);// removeParams.market just needs to be deployed by the attacker and do nothing, it is enough to implement IMarket interfaceIMarket(removeParams.market).removeCollateral(to,to,removeParams.share);// withdrawParams.withdraw =  true to enter the if blockif(withdrawParams.withdraw) {// Attackers removeParams.market contract needs to have yieldBox() function and it can return any addressaddressybAddress=IMarket(removeParams.market).yieldBox();// Attackers removeParams.market needs to have collateralId() function and it can return any uint256uint256assetId=IMarket(removeParams.market).collateralId();// removeParams.marketHelper is a malicious contract deployed by the attacker which is being transferred all the balance// withdrawParams.withdrawLzFeeAmount needs to be precomputed by the attacker to match the balance of TapiocaOFTIMagnetar(removeParams.marketHelper).withdrawToChain{value:withdrawParams.withdrawLzFeeAmount// This is not validated on the sending side so it can be any value}(ybAddress,to,assetId,withdrawParams.withdrawLzChainId,LzLib.addressToBytes32(to),IYieldBoxBase(ybAddress).toAmount(assetId,removeParams.share,false),removeParams.share,withdrawParams.withdrawAdapterParams,payable(to),withdrawParams.withdrawLzFeeAmount);}}
+NeitherremoveParams.marketHelperorwithdrawParams.withdrawLzFeeAmountare validated on the sending side so the former can be the address of a malicious contract and the latter can be the TOFT’s balance of gas token.
+This type of attack is possible because themsg.senderinIMagnetar(removeParams.marketHelper).withdrawToChainis the address of the TOFT contract which holds all the balances.
+This is because:
+Relayer submits the message tolzReceiveso he is themsg.sender.Inside the_blockingLzReceivethere is a call into its own public function so themsg.senderis theaddress of the contract.Inside the_nonBlockingLzReceivethere isdelegatecallinto a corresponding module which preserves themsg.senderwhich is the address of the TOFT.Inside the module there is a call towithdrawToChainand here themsg.senderis the address of the TOFT contract, so we can maliciously transfer all the balance of the TOFT.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+It’s hard to recommend a simple fix since as I pointed out in my other issues the airdropping logic has many flaws.
+One of the ways of tackling this issue is during theremoveCollateralto:
+Do not allowadapterParamsparams to be passed as bytes but rather asgasLimitandairdroppedAmount, from which you would encode eitheradapterParamsV1oradapterParamsV2.And then on the receiving side check and send with value only the amount the user has airdropped.
+0xRektora (Tapioca) confirmed and commented:
+Related tohttps://github.com/code-423n4/2023-07-tapioca-findings/issues/1290

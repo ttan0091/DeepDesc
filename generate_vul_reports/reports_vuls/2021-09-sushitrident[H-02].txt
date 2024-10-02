@@ -1,0 +1,16 @@
+[H-02] Index Pool always swap to Zero
+Submitted by broccoli, also found by 0xsanson, cmichel, and WatchPug
+Impact
+When an Index pool is initiated with two tokens A: B and the weight rate = 1:2, then no user can buy token A with token B.
+The root cause is the error in pow. It seems like the dev tries to implementExponentiation by squaring.IndexPool.sol#L286-L291
+function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2)a=a*a;if(n%2!=0)output=output*a;}
+There’s no bracket forfor.
+TheIndexPoolis not functional. I consider this is a high-risk issue.
+Proof of Concept
+When we initiated the pool with 2:1.
+deployed_code = encode_abi(["address[]","uint136[]","uint256"], [(link.address, dai.address),(2*10**18,10**18),10**13])
+No one can buy dai with link.
+# (address tokenIn, address tokenOut, address recipient, bool unwrapBento, uint256 amountIn)previous_balance = bento.functions.balanceOf(dai.address, admin).call()swap_amount =10**18bento.functions.transfer(link.address, admin, pool.address, swap_amount).transact()pool.functions.swap(encode_abi(['address','address','address','bool','uint256'],[link.address, dai.address, admin,False, swap_amount])).transact()current_balance = bento.functions.balanceOf(dai.address, admin).call()token_received = current_balance - previous_balance# always = 0print(token_received)
+Recommended Mitigation Steps
+The brackets offorwere missed.
+function_pow(uint256a,uint256n)internalpurereturns(uint256output) {output=n%2!=0?a:BASE;for(n/=2;n!=0;n/=2) {a=a*a;if(n%2!=0)output=output*a;}}

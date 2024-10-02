@@ -1,0 +1,14 @@
+[H-03] First depositor can break minting of shares
+Submitted byminhquanym, also found byApocalypto,0xDecorativePineapple,Franfran,dipp,rjs,ak1,Tricko,Jeiwan,unforgiven,hansfriese,BAHOZ,unforgiven,bytehat,UNCHAIN,immeas,SamGMK,fs0c,Tointer,haku,Koolex,__141345__,ElKu,rajatbeladiya,hihen,izhelyazkov,KingNFT,koxuan,0x52,carrotsmuggler,yixxas,HE1M,supernova,cozzetti,rvierdiiev,SamGMK,aviggiano,seyni,lumoswiz,ladboy233,chaduke,cccz, andeyexploit
+The attack vector and impact is the same asTOB-YEARN-003, where users may not receive shares in exchange for their deposits if the total asset amount has been manipulated through a large “donation”.
+Proof of Concept
+InPair.add(), the amount of LP token minted is calculated as
+functionaddQuote(uint256baseTokenAmount,uint256fractionalTokenAmount)publicviewreturns(uint256) {uint256lpTokenSupply=lpToken.totalSupply();if(lpTokenSupply>0) {// calculate amount of lp tokens as a fraction of existing reservesuint256baseTokenShare= (baseTokenAmount*lpTokenSupply) /baseTokenReserves();uint256fractionalTokenShare= (fractionalTokenAmount*lpTokenSupply) /fractionalTokenReserves();returnMath.min(baseTokenShare,fractionalTokenShare);}else{// if there is no liquidity then initreturnMath.sqrt(baseTokenAmount*fractionalTokenAmount);}}
+An attacker can exploit using these steps
+Create and add1 wei baseToken - 1 wei quoteTokento the pair. At this moment, attacker is minted1 wei LP tokenbecausesqrt(1 * 1) = 1Transfer large amount ofbaseTokenandquoteTokendirectly to the pair, such as1e9 baseToken - 1e9 quoteToken. Since no new LP token is minted,1 wei LP tokenworths1e9 baseToken - 1e9 quoteToken.Normal users add liquidity to pool will receive0LP token if they add less than1e9token because of rounding division.
+baseTokenShare= (X*1) /1e9;fractionalTokenShare= (Y*1) /1e9;
+Recommended Mitigation Steps
+Uniswap V2 solved this problem by sending the first 1000 LP tokens to the zero address. The same can be done in this case i.e. whenlpTokenSupply == 0, send the first min liquidity LP tokens to the zero address to enable share dilution.Inadd(), ensure the number of LP tokens to be minted is non-zero:
+require(lpTokenAmount!=0,"No LP minted");
+outdoteth (Caviar) confirmed and commented:
+Fixed in:https://github.com/outdoteth/caviar/pull/3

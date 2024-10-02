@@ -1,0 +1,22 @@
+[H-10] Upon changing of delegate,VoteDelegationupdates both the previous and the current checkpoint
+Submitted by kenzo, also found by 0xA5DF, 0xpiglet, 0xsanson, arcoun, Bahurum, and IllIllI
+https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L79
+https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L213
+The contract is accidently editing both the previous and current checkpoint when changing/removing a delegate.
+Impact
+Incorrect counting of votes.
+Proof of Concept
+If indelegatethe delegate already has checkpoints, the function will grab the latest checkpoint, and add thetokenIdto it. Note that it changes the storage variable.
+if(nCheckpoints>0) {Checkpointstoragecheckpoint=checkpoints[toTokenId][nCheckpoints-1];checkpoint.delegatedTokenIds.push(tokenId);_writeCheckpoint(toTokenId,nCheckpoints,checkpoint.delegatedTokenIds);
+It then calls_writeCheckpoint, whichwill adda new checkpoint if there’s no checkpoint created for this block yet:
+CheckpointmemoryoldCheckpoint=checkpoints[toTokenId][nCheckpoints-1];if(nCheckpoints>0&&oldCheckpoint.fromBlock==block.number) {oldCheckpoint.delegatedTokenIds=_delegatedTokenIds;}else{checkpoints[toTokenId][nCheckpoints] =Checkpoint(block.number,_delegatedTokenIds);numCheckpoints[toTokenId] =nCheckpoints+1;}
+Therefore, if this function has created a new checkpoint with the passed_delegatedTokenIds, we already saw that the previous function has already addedtokenIdto the previous checkpoint, so now both the new checkpoint and the previous checkpoint will havetokenIdin them.This is wrong as it updates an earlier checkpoint with the latest change.
+The same situation happens inremoveDelegation.
+Recommended Mitigation Steps
+When reading the latest checkpoint:
+Checkpointstoragecheckpoint=checkpoints[toTokenId][nCheckpoints-1];
+Change thestoragetomemory. This way it will not affect the previous checkpoint, but will pass the correct updated array to_writeCheckpoint, which will then write/update the correct checkpoint.
+zeroexdead (Golom) confirmed and commented:
+Fixeddelegate():https://github.com/golom-protocol/contracts/commit/8a8c89beea22cd57f4ffaf3d0defcce863e9657fFixedremoveDelegation():https://github.com/golom-protocol/contracts/commit/72350b0a3bdae4f21e2f015327037080f6bab867
+LSDan (judge) increased severity to High and commented:
+I went back and forth on if this was a duplicate ofH-04 (#169)or not. The two issues are so similar it’s hard to pull them apart. Ultimately I do see the difference, mainly that this version of the issue results in a retroactive manipulation of voting power whereas the other issue allows the creation of infinite voting power. I’m upgrading this to high risk because it effectively destroys the integrity of the voting system which impacts every aspect of the protocol which is subject to vote.

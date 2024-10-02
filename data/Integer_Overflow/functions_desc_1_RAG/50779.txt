@@ -1,0 +1,66 @@
+The code you provided consists of two main parts: a utility library SafeMath and a smart contract PIGGY_BANK. Let's break down each part and explain how they work in detail.
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+This code defines a library named SafeMath which contains a single function sub. Here’s a detailed explanation of how this function works:
+
+1. Function Signature: sub(uint256 a, uint256 b) internal pure returns (uint256)
+    Parameters: a and b are both unsigned integers of 256 bits.
+    Visibility: The function is marked as internal, meaning it can only be called from within the current contract or contracts deriving from it.
+    State Mutability: The function is marked as pure, indicating that it does not read from or modify the state.
+    Return Value: The function returns a uint256 value, which is the result of subtracting b from a.
+
+2. Function Logic:
+    The function first checks if b is less than or equal to a using the assert statement. The assert function is used to ensure that certain conditions are met. If the condition b <= a is not met, the function will throw an exception, reverting all changes made to the state during the call.
+    If the condition is met, the function returns the result of a  b.
+
+### PIGGY_BANK Contract
+
+solidity
+contract PIGGY_BANK {
+    using SafeMath for uint;
+    mapping (address => uint) public Accounts;
+
+    function Collect(uint _am) public payable {
+        if(_am <= Accounts[msg.sender]) {
+            if(msg.sender.call.value(_am)()) {
+                Accounts[msg.sender] = Accounts[msg.sender].sub(_am);
+            }
+        }
+    }
+}
+
+
+This code defines a contract named PIGGY_BANK which manages a mapping of account balances. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping (address => uint) public Accounts: This is a public mapping that associates each address with a balance. The public keyword automatically generates a getter function for this mapping.
+
+2. Function: Collect(uint _am) public payable
+    Parameters: _am is an unsigned integer representing the amount of Ether to collect.
+    Visibility: The function is marked as public, meaning it can be called from outside the contract as well as inside.
+    State Mutability: The function is marked as payable, which means it can receive Ether.
+
+3. Function Logic:
+    The function first checks if the amount _am is less than or equal to the balance of the sender (msg.sender) in the Accounts mapping.
+    If the condition is met, the function attempts to send _am Ether to the sender using the call.value(_am)() method. This method is a lowlevel call that sends Ether and returns a boolean indicating whether the call was successful.
+    If the Ether transfer is successful, the function then subtracts _am from the sender's balance using the sub function from the SafeMath library to ensure that underflow is handled safely.
+
+### Potential Vulnerabilities
+
+While the provided code does not directly exhibit the same vulnerability mentioned in the reference report (Privilege Escalation), it does have a potential security issue related to reentrancy. The use of call.value(_am)() can be susceptible to reentrancy attacks if not handled properly. To mitigate this, consider using transfer or send instead, or implement a reentrancy guard.
+
+### Summary
+
+ The SafeMath library provides a safe subtraction function to prevent underflow.
+ The PIGGY_BANK contract manages account balances and allows users to collect Ether from their balances, using the SafeMath library for safe arithmetic operations.
+ The contract has a potential reentrancy vulnerability that should be addressed to ensure security.

@@ -1,0 +1,15 @@
+Type of vulnerability: Reflection (gas-fuelled reentrancy)
+Cause of vulnerability: The contract is gas-fuelled, meaning it's based on an assumption that it will not be reentrant for more than 2300 gas due to a failing payload. When a reentrancy check is based on the gas limit of a payload to fail, that check can be gamed by acquiring a large enough refund from self-destruct. This can occur if an address is transferred a balance equal to its current ETH balance minus 2300, allowing an additional 2300 wei to be transferred during the call to the token contract's receive function.
+Explanation of vulnerability: The `withdraw` function allows an attacker to withdraw tokens that will then be frozen into the DAO, but the DAO doesn't account for freezing its own shares, meaning these shares are able to be reentrantly withdrawn more tokens, thereby creating extra tokens that are never frozen.
+Example of vulnerable code:
+
+```solidity
+function withdraw(address _recipient) returns (bool) {
+    if (_recipient.call.gas(2300).value(balances[msg.sender])()) {
+        require(msg.value == 0, "!money");
+        balances[msg.sender] = 0;
+        return true;
+    }
+}
+```
+Mitigation strategy: The number of shares created through burning must not be reentrant, i.e., the DAO must freeze the shares corresponding to the exact amount of tokens sent, not the actual balance of the sender. Additionally, the contract should only unfreeze what needs to be melted, rather than melting all and refreezing the ending shares after the token transfer.

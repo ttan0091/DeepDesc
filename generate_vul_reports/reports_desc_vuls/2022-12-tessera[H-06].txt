@@ -1,0 +1,29 @@
+Type of vulnerability: Reentrancy or State Inconsistency
+Cause of vulnerability: The `vaultOrderHash[_vault]` is overwritten by a new proposal, causing the active proposal's order hash to be lost.
+Execution process: A user proposes a listing, and the order hash is stored. Another proposal is made, overwriting the order hash. When the active listing is sold, the `cash()` function tries to verify the sale using the overwritten order hash, causing it to revert and funds to be stuck.
+Vulnerable code: 
+```solidity
+function _verifySale(address _vault) internal view returns (bool status) {
+    (bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize) = ISeaport(seaport).getOrderStatus(vaultOrderHash[_vault]);
+    if (isValidated && !isCancelled && totalFilled > 0 && totalFilled == totalSize) {
+        status = true;
+    }
+}
+
+function cash(address _vault, bytes32[] calldata _burnProof) external {
+    // Reverts if vault is not registered
+    (address token, uint256 id) = _verifyVault(_vault);
+    // Reverts if active listing has not been settled
+    Listing storage activeListing = activeListings[_vault];
+    // Reverts if listing has not been sold
+    // -------------- _verifySale MUST BE TRUE ---------
+    if (!_verifySale(_vault)) {
+        revert NotSold();
+    } else if (activeListing.collateral != 0) {
+        uint256 collateral = activeListing.collateral;
+        activeListing.collateral = 0;
+        // Sets collateral amount to pending balances for withdrawal
+        pendingBalances[_vault][activeListing.proposer] = collateral;
+    }
+}
+```

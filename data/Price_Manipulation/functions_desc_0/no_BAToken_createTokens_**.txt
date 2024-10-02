@@ -1,0 +1,21 @@
+This code defines an external function named createTokens that allows users to purchase tokens by sending Ether to the contract. Here's a detailed explanation of how this function works:
+
+1. The function starts with several conditional statements to check if the token creation process can proceed:
+    if (isFinalized) throw;: Checks if the token creation process has been finalized. If it has, the function stops execution.
+    if (block.number < fundingStartBlock) throw;: Ensures that the current block number is after the funding start block. If not, the function stops execution.
+    if (block.number > fundingEndBlock) throw;: Ensures that the current block number is before the funding end block. If not, the function stops execution.
+    if (msg.value == 0) throw;: Ensures that the user sending Ether is not sending 0 value. If they are, the function stops execution.
+
+2. The function calculates the number of tokens to be created based on the amount of Ether sent by the user:
+    uint256 tokens = safeMult(msg.value, tokenExchangeRate);: Calculates the number of tokens by multiplying the amount of Ether sent (msg.value) by the token exchange rate.
+    uint256 checkedSupply = safeAdd(totalSupply, tokens);: Calculates the total token supply after adding the newly created tokens. This is used to check if the token creation cap will be exceeded.
+
+3. If the total token supply after adding the new tokens exceeds the token creation cap, the function stops execution and returns the Ether sent by the user:
+    if (tokenCreationCap < checkedSupply) throw;: Checks if the token creation cap will be exceeded after adding the new tokens. If it will, the function stops execution.
+
+4. If everything is in order, the function proceeds to create the tokens for the user:
+    totalSupply = checkedSupply;: Updates the total token supply with the newly created tokens.
+    balances[msg.sender] += tokens;: Adds the newly created tokens to the balance of the user who sent the Ether. This operation does not require safe addition as it is assumed to be safe.
+    CreateBAT(msg.sender, tokens);: Logs the token creation event by emitting a CreateBAT event with the user's address and the number of tokens created.
+
+Overall, this function allows users to purchase tokens by sending Ether to the contract within the specified funding period and under the token creation cap limit.

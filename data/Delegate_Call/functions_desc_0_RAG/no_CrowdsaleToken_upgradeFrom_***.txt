@@ -1,0 +1,56 @@
+This code defines a smart contract named UpgradeableToken that extends a StandardToken contract. The purpose of this contract is to provide a mechanism for token holders to upgrade their tokens to a new smart contract revision. This mechanism is inspired by the Golem and Lunyr projects.
+
+Here’s a detailed explanation of how this contract works:
+
+1. Contract Variables and State:
+    upgradeMaster: The address of the contract or person who can set the upgrade path. This can be a multisig wallet or an individual.
+    upgradeAgent: The address of the next contract where the tokens will be migrated.
+    totalUpgraded: A counter to keep track of how many tokens have been upgraded so far.
+    UpgradeState: An enumeration that defines the possible states of the upgrade process:
+      Unknown: Default state.
+      NotAllowed: The child contract has not reached a condition where the upgrade can begin.
+      WaitingForAgent: The token allows upgrade, but no new agent has been set yet.
+      ReadyToUpgrade: The agent is set, but no tokens have been upgraded yet.
+      Upgrading: The agent is set, and token holders can upgrade their tokens.
+
+2. Events:
+    Upgrade: Emitted when a token holder upgrades some of their tokens.
+    UpgradeAgentSet: Emitted when a new upgrade agent is set.
+
+3. Constructor:
+    UpgradeableToken(address _upgradeMaster): Initializes the contract with the address of the upgrade master.
+
+4. Upgrade Function:
+    upgrade(uint256 value): Allows token holders to upgrade a specified amount of their tokens to the new contract.
+      Checks if the upgrade state is either ReadyToUpgrade or Upgrading.
+      Validates that the input value is not zero.
+      Subtracts the upgraded tokens from the sender's balance and the total supply.
+      Increments the totalUpgraded counter.
+      Calls the upgradeFrom function on the upgradeAgent to reissue the tokens.
+      Emits the Upgrade event.
+
+5. Set Upgrade Agent Function:
+    setUpgradeAgent(address agent): Allows the upgrade master to set a new upgrade agent.
+      Checks if the token is in a state where upgrading is possible.
+      Validates that the agent address is not zero.
+      Ensures that the caller is the upgrade master.
+      Checks that the upgrade has not already begun for an agent.
+      Sets the upgradeAgent to the provided address.
+      Validates that the agent implements the isUpgradeAgent and originalSupply functions correctly.
+      Emits the UpgradeAgentSet event.
+
+6. Get Upgrade State Function:
+    getUpgradeState(): Returns the current state of the token upgrade.
+      Checks if upgrading is allowed.
+      Determines the state based on the presence of an upgrade agent and the number of tokens upgraded.
+
+7. Set Upgrade Master Function:
+    setUpgradeMaster(address master): Allows the current upgrade master to change the upgrade master to a new address.
+      Validates that the new master address is not zero.
+      Ensures that the caller is the current upgrade master.
+      Updates the upgradeMaster variable.
+
+8. Can Upgrade Function:
+    canUpgrade(): A default implementation that always returns true, allowing the child contract to override this function to provide specific conditions when the upgrade can begin.
+
+This contract provides a flexible and secure mechanism for token holders to upgrade their tokens to a new contract version, ensuring that the process is controlled and monitored by the designated upgrade master.

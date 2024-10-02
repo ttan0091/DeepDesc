@@ -1,0 +1,39 @@
+This code defines a public function named setEYEBasedAssetStake, which is used to stake assets based on the EYE token balance. The function performs various checks and updates to ensure that the staking process adheres to specific invariants and strategies. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Initial Checks:
+    The function takes four parameters: finalAssetBalance, finalEYEBalance, rootEYE, and asset.
+    It first checks if the asset is approved using require(assetApproved[asset], "LimboDAO: illegal asset");. This ensures that only approved assets can be staked.
+    The sender's address is retrieved using _msgSender().
+
+2. Calculations and Invariant Checks:
+    The function calculates rootEYESquared and rootEYEPlusOneSquared by squaring rootEYE and rootEYE + 1, respectively.
+    It then checks if rootEYESquared is less than or equal to finalEYEBalance and rootEYEPlusOneSquared is greater than finalEYEBalance using require(rootEYESquared <= finalEYEBalance && rootEYEPlusOneSquared > finalEYEBalance, "LimboDAO: Stake EYE invariant.");. This ensures that the EYE balance is within the expected range.
+
+3. Updating Stake Information:
+    The function retrieves the AssetClout storage for the sender and asset using stakedUserAssetWeight[sender][asset].
+    It updates the fatePerDay for the sender by subtracting the current fateWeight of the asset.
+    The initial balance of the asset is stored in initialBalance.
+
+4. StrategyBased Updates:
+    The function checks the FateGrowthStrategy for the asset using fateGrowthStrategy[asset].
+    If the strategy is directRoot:
+      It checks if finalAssetBalance equals finalEYEBalance and if the asset is the EYE token.
+      It updates the fateWeight and balance of the asset for the sender and adds the rootEYE to fatePerDay.
+    If the strategy is indirectTwoRootEye:
+      It updates the fateWeight to 2  rootEYE and adds this to fatePerDay.
+      It calculates the actual EYE balance of the asset, the total supply of the asset, and the EYE per unit.
+      It checks if the finalEYEBalance matches the implied EYE balance based on the asset balance.
+      It updates the balance of the asset for the sender.
+    If the strategy is neither directRoot nor indirectTwoRootEye, the function reverts with an error message.
+
+5. Asset Transfer:
+    The function calculates the net balance change using int256 netBalance = int256(finalAssetBalance)  int256(initialBalance);.
+    It then transfers the net balance of the asset from the sender to the contract using asset.ERC20NetTransfer(sender, address(this), netBalance);.
+
+### Summary of the Function:
+ The setEYEBasedAssetStake function is designed to stake assets based on the EYE token balance.
+ It performs various checks to ensure that the staking process adheres to specific invariants and strategies.
+ It updates the staking information for the sender based on the chosen strategy.
+ Finally, it transfers the net balance of the asset from the sender to the contract.
+
+This function is crucial for maintaining the integrity of the staking process and ensuring that all operations are performed according to the defined rules and strategies.

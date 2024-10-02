@@ -1,0 +1,29 @@
+[H-11] Protocol loses fees because highWaterMark is updated every time someone deposit, withdraw, mint
+Submitted byrvierdiiev, also found bypeakbolt
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L138
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L215
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L480-L499
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L447-L460
+Impact
+Protocol loses fees because highWaterMark is updated every time someone deposit, withdraw, mint.
+Proof of Concept
+This bug is related to the fees accruing design. It was discussed with the sponsor in order to understand how it should work.
+Protocol has such thing as performance fee. Actually this is fee from accrued yields. If user deposited X assets and after some time he can withdraw X+Y assets for that minted amount of shares, that means that strategy has earned some Y amount of yields. Then protocol is able to get some part of that Y amount as a performance fee.
+takeFeesmodifieris responsible for taking fees.
+It callsaccruedPerformanceFeefunction to calculate fees amount.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L447-L460
+functionaccruedPerformanceFee()publicviewreturns(uint256) {uint256highWaterMark_=highWaterMark;uint256shareValue=convertToAssets(1e18);uint256performanceFee=fees.performance;returnperformanceFee>0&&shareValue>highWaterMark?performanceFee.mulDiv((shareValue-highWaterMark) *totalSupply(),1e36,Math.Rounding.Down):0;}
+As you can see, protocol has such variable ashighWaterMark. This variable actually should storeconvertToAssets(1e18)amount at the time when last fee were accrued or after first deposit.
+Then after some time when strategy earned some yields,convertToAssets(1e18)will return more assets thanhighWaterMark, so protocol will take fees.
+But currently updating ofhighWaterMarkis done incorrectly.
+Deposit, mint, withdraw functionusesyncFeeCheckpointmodifier.
+https://github.com/code-423n4/2023-01-popcorn/blob/main/src/vault/Vault.sol#L496-L499
+modifiersyncFeeCheckpoint() {_;highWaterMark=convertToAssets(1e18);}
+This modifier will updatehighWaterMarkto current assets amount that you can receive for 1e18 of shares.
+That means that every time when deposit, mint, withdraw is called,highWaterMarkis updated to the new state, so protocol doesn’t track yield progress anymore.
+In case if protocol accrued some performance fees, which can be possible if noone called deposit, withdraw, mint for a long time, then anyone can frontruntakeFeesand deposit small amount of assets in order to updatehighWaterMark, so protocol will not get any fees.
+Tools Used
+VS Code
+Recommended Mitigation Steps
+I believe that you need to storehighWaterMark = convertToAssets(1e18)at the time of first deposit, or when totalShares is 0, this will be the value that protocol started with and then at time, when takefee was called you can calculate current convertToAssets(1e18) in case if it’s bigger, than previous stored, then you can mint fees for protocol and update highWaterMark to current value.
+RedVeil (Popcorn) confirmed

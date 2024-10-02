@@ -1,0 +1,31 @@
+This code defines a public function named buyFlanAndBurn, which is designed to facilitate the purchase of a token named FLAN using another token (inputToken), and subsequently burn a portion of the purchased FLAN tokens. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address inputToken: The address of the token to be used for purchasing FLAN.
+    uint256 amount: The amount of inputToken to be used for the purchase.
+    address recipient: The address that will receive a small reward (1% of the purchased FLAN).
+
+2. Pair Address Retrieval:
+    address pair = VARS.factory.getPair(inputToken, VARS.flan);: This line retrieves the address of the liquidity pool (pair) that contains both inputToken and FLAN tokens. This is typically done using a factory contract that manages these pairs.
+
+3. Balance Retrieval:
+    uint256 flanBalance = IERC20(VARS.flan).balanceOf(pair);: Retrieves the balance of FLAN tokens in the pair.
+    uint256 inputBalance = IERC20(inputToken).balanceOf(pair);: Retrieves the balance of inputToken in the pair.
+
+4. Amount Calculation:
+    uint256 amountOut = getAmountOut(amount, inputBalance, flanBalance);: Calculates the amount of FLAN tokens that can be received in exchange for the specified amount of inputToken. This calculation is based on the current balances of the tokens in the pair and the amount of inputToken being used.
+
+5. Output Amounts Determination:
+    uint256 amount0Out = inputToken < VARS.flan ? 0 : amountOut;: Determines the amount of the first token to be received from the swap. If inputToken has a lower address than FLAN, amount0Out is set to 0, otherwise, it is set to amountOut.
+    uint256 amount1Out = inputToken < VARS.flan ? amountOut : 0;: Determines the amount of the second token to be received from the swap. If inputToken has a lower address than FLAN, amount1Out is set to amountOut, otherwise, it is set to 0.
+
+6. Token Transfer and Swap:
+    IERC20(inputToken).transfer(pair, amount);: Transfers the specified amount of inputToken to the pair contract.
+    UniPairLike(pair).swap(amount0Out, amount1Out, address(this), "");: Calls the swap function on the pair contract to execute the token swap. The address(this) specifies that the tokens received from the swap should be sent to this contract.
+
+7. Reward Distribution and Burning:
+    uint256 reward = (amountOut / 100);: Calculates a reward of 1% of the purchased FLAN tokens.
+    ERC20Burnable(VARS.flan).transfer(recipient, reward);: Transfers the calculated reward to the recipient.
+    ERC20Burnable(VARS.flan).burn(amountOut  reward);: Burns the remaining FLAN tokens (99% of the purchased amount).
+
+This function effectively allows users to purchase FLAN tokens using another token, distribute a small reward to a specified recipient, and burn the majority of the purchased FLAN tokens, potentially affecting the token's supply and value.

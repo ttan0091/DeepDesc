@@ -1,0 +1,23 @@
+[H-03]_amountOutis representing assets and shares at the same time in theliquidatefunction
+Submitted byAymen0909, also found byKupiaSec, wangxx2026 (1,2), and0xWaitress
+In theliquidatefunction from theVaultcontract, the input argument_amountOutis used as if it was representing a value of asset amounts and share amounts at the same time; which is impossible as there is a conversion rate between them. This error will make theliquidatefunction behave in an expected manner, not the one that was intended.
+Proof of Concept
+The issue is occurring in theliquidatefunction below:
+functionliquidate(address_account,address_tokenIn,uint256_amountIn,address_tokenOut,uint256_amountOut)publicvirtualoverridereturns(bool) {_requireVaultCollateralized();if(msg.sender!=address(_liquidationPair))revertLiquidationCallerNotLP(msg.sender,address(_liquidationPair));if(_tokenIn!=address(_prizePool.prizeToken()))revertLiquidationTokenInNotPrizeToken(_tokenIn,address(_prizePool.prizeToken()));if(_tokenOut!=address(this))revertLiquidationTokenOutNotVaultShare(_tokenOut,address(this));if(_amountOut==0)revertLiquidationAmountOutZero();uint256_liquidableYield=_liquidatableBalanceOf(_tokenOut);// @audit _amountOut compared with _liquidableYield which represents an asset amount// @audit _amountOut is considered as an asset amountif(_amountOut>_liquidableYield)revertLiquidationAmountOutGTYield(_amountOut,_liquidableYield);_prizePool.contributePrizeTokens(address(this),_amountIn);if(_yieldFeePercentage!=0) {// @audit _amountOut used to increase fee shares so considered as representing a share amount_increaseYieldFeeBalance((_amountOut*FEE_PRECISION) / (FEE_PRECISION-_yieldFeePercentage) -_amountOut);}uint256_vaultAssets=IERC20(asset()).balanceOf(address(this));// @audit _amountOut compared with _vaultAssets which represents an asset amount// @audit _amountOut is considered as an asset amountif(_vaultAssets!=0&&_amountOut>=_vaultAssets) {_yieldVault.deposit(_vaultAssets,address(this));}// @audit _amountOut representing a share amount minted to the _account_mint(_account,_amountOut);returntrue;}
+As you can see from the code above, the value of the argument_amountOutis used multiple times in the function logic and each time is representing either an asset amount or a share amount; which is impossible as there is a conversion formula used to transform the asset amount into the share amount (and inversely) with the function_convertToShares(or_convertToAssets).
+From the function comments, I couldn’t figure out what the value of_amountOutactually represents, but because there is also another argument given to theliquidatefunction, which is_tokenOut == address(this), I’m supposing that_amountOutis representing as a share amount; which will mean that all the instances highlighted in the code above, when_amountOutis considered as an asset amount, are wrong.
+Instance 1:
+// @audit _amountOut compared with _liquidableYield which represents an asset amountif(_amountOut>_liquidableYield)revertLiquidationAmountOutGTYield(_amountOut,_liquidableYield);
+Instance 2:
+// @audit _amountOut compared with _vaultAssets which represents an asset amountif(_vaultAssets!=0&&_amountOut>=_vaultAssets) {_yieldVault.deposit(_vaultAssets,address(this));}
+And before comparing_amountOutto the asset amount values of_vaultAssetsand_liquidableYield, it’s value should be converted to an asset amount with the function_convertToAssets.
+This issue will cause problems for the protocol working, as theliquidatefunction logic will not behave as expected, because it’s comparing values that represent different things.
+Note: If_amountOutis actually representing an asset amount (not a share amount as I supposed), the issue is still valid because_amountOutis also used as being a share amount inside theliquidatefunction. In that case, it should first be converted to a share amount with_convertToSharesin order to get the correct behavior of theliquidatefunction.
+Recommended Mitigation Steps
+To solve this issue, I recommend to first convert the value of_amountOutin theliquidatefunction to an asset amount and store it in a local variable,_amountOutToAsset. In the function logic, use the correct variable, either_amountOutor_amountOutToAsset, when interacting with a share amount or an asset amount.
+Assessed type
+Error
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Fixed conversion and naming of field.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/6
+Status: Mitigation confirmed. Full details in reports fromdirk_y,rvierdiievand0xStalin.

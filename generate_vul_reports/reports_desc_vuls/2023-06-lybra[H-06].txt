@@ -1,0 +1,24 @@
+Type of vulnerability: Integer Division Rounding Error
+Cause of vulnerability: Incorrect assumption that sharesAmount being zero implies totalSupply is zero, leading to improper minting when sharesAmount is zero due to integer division rounding.
+Execution process: A user manipulates the system by burning shares to increase the value of each share, then mints a small amount of EUSD to receive an inflated number of shares due to the rounding error in integer division.
+Vulnerable code: 
+```solidity
+function mint(address _recipient, uint256 _mintAmount) external onlyMintVault MintPaused returns (uint256 newTotalShares) {
+    require(_recipient != address(0), "MINT_TO_THE_ZERO_ADDRESS");
+    uint256 sharesAmount = getSharesByMintedEUSD(_mintAmount);
+    if (sharesAmount == 0) {
+        // EUSD totalSupply is 0: assume that shares correspond to EUSD 1-to-1
+        sharesAmount = _mintAmount;
+    }
+    ...
+}
+
+function getSharesByMintedEUSD(uint256 _EUSDAmount) public view returns (uint256) {
+    uint256 totalMintedEUSD = _totalSupply;
+    if (totalMintedEUSD == 0) {
+        return 0;
+    } else {
+        return _EUSDAmount.mul(_totalShares).div(totalMintedEUSD);
+    }
+}
+```

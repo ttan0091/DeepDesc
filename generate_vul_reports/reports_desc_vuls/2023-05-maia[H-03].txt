@@ -1,0 +1,35 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect conditional check and improper calculation of bandwidth distribution
+Execution process: When setting a new weight for a pool, the function incorrectly handles the redistribution of bandwidth based on the new total weights, leading to incorrect allocations and potential loss of funds.
+Vulnerable code: 
+```solidity
+if (oldTotalWeights > newTotalWeights) {
+    for (uint256 i = 1; i < bandwidthStateList.length;) {
+        if (i != poolIndex) {
+            uint256 oldBandwidth = bandwidthStateList[i].bandwidth;
+            if (oldBandwidth > 0) {
+                bandwidthStateList[i].bandwidth = oldBandwidth.mulDivUp(oldTotalWeights, newTotalWeights).toUint248();
+                leftOverBandwidth += oldBandwidth - bandwidthStateList[i].bandwidth;
+            }
+        }
+        unchecked { ++i; }
+    }
+    poolState.bandwidth += leftOverBandwidth.toUint248();
+} else {
+    uint256 oldBandwidth = poolState.bandwidth;
+    if (oldBandwidth > 0) {
+        poolState.bandwidth = oldBandwidth.mulDivUp(oldTotalWeights, newTotalWeights).toUint248();
+        leftOverBandwidth += oldBandwidth - poolState.bandwidth;
+    }
+    for (uint256 i = 1; i < bandwidthStateList.length;) {
+        if (i != poolIndex) {
+            if (i == bandwidthStateList.length - 1) {
+                bandwidthStateList[i].bandwidth += leftOverBandwidth.toUint248();
+            } else if (leftOverBandwidth > 0) {
+                bandwidthStateList[i].bandwidth += leftOverBandwidth.mulDiv(bandwidthStateList[i].weight, weightsWithoutPool).toUint248();
+            }
+        }
+        unchecked { ++i; }
+    }
+}
+```

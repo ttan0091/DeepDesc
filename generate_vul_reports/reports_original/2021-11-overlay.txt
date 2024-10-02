@@ -1,0 +1,26 @@
+[H-01]OverlayV1UniswapV3Marketcomputes wrong market liquidity
+Submitted by cmichel
+TheOverlayV1UniswapV3Market.fetchPricePointtries to compute the market depth in OVL terms asmarketLiquidity (in ETH) / ovlPrice (in ETH per OVL).
+To get the market liquidityin ETH(and not the other token pair), it uses theethIs0boolean.
+_marketLiquidity=ethIs0? (uint256(_liquidity) <<96) /_sqrtPrice:FullMath.mulDiv(uint256(_liquidity),_sqrtPrice,X96);
+However,ethIs0boolean refers to theovlFeed, whereas the_liquidityrefers to themarketFeed, and therefore theethIs0boolean has nothing to do with themarketfeed where the liquidity is taken from:
+// in constructor, if token0 is eth refers to ovlFeedethIs0=IUniswapV3Pool(_ovlFeed).token0() ==_eth;// in fetchPricePoint, _liquidity comes from different market feed(_ticks,_liqs) =IUniswapV3Pool(marketFeed).observe(_secondsAgo);_marketLiquidity=ethIs0? (uint256(_liquidity) <<96) /_sqrtPrice:FullMath.mulDiv(uint256(_liquidity),_sqrtPrice,X96);
+Impact
+If theovlFeedandmarketFeeddo not have the same token position for the ETH pair (ETH is either token 0 or token 1 forbothpairs), then the market liquidity & depth is computed wrong (inverted).
+For example, theOverlayV1Market.depth()function will return a wrong depth which is used in the market cap computation.
+Recommended Mitigation Steps
+It seems thatmarketFeed.token0() == WETHshould be used infetchPricePointto compute the liquidity instead ofovlFeed.token0() == WETH.
+realisation (Overlay) confirmed:
+Yeah, was aware of this, just hadn’t finalized it in the code as of yet.
+[H-02] OZ ERC1155Supply vulnerability
+Submitted by pauliax, also found by hubble and defsec
+Impact
+Overlay uses OZ contracts version 4.3.2:
+dependencies:-OpenZeppelin/openzeppelin-contracts@4.3.2
+and has a contract that inherits from ERC1155Supply:
+contractOverlayV1OVLCollateralisERC1155Supply
+This version has a recently discovered vulnerability:https://github.com/OpenZeppelin/openzeppelin-contracts/security/advisories/GHSA-wmpv-c2jp-j2xg
+In your case, function unwind relies on totalSupply when calculating\_userNotional,\_userDebt,\_userCost, and\_userOi, so a malicious actor can exploit this vulnerability by first calling ‘build’ and then on callback ‘unwind’ in the same transaction before the total supply is updated.
+Recommended Mitigation Steps
+Consider updating to a patched version of 4.3.3.
+mikeyrf (Overlay) confirmed

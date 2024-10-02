@@ -1,0 +1,30 @@
+[H-06] The amount ofxezETHin circulation will not represent the amount ofezETHtokens 1:1
+Submitted byzzykxx, also found by0x007,GoatedAudits,0xCiphky,jokr,mt030d,fyamf,LessDupes, andGalloDaSballo
+The protocol allows to depositETH/WETH(or the specific chain native currency) on a supported L2 in order to mintezETHtokens, this is the process:
+User mintsxezETHon L2s viaxRenzoDeposit::deposit()in exchange for eitherETHorWETH. ThexezETHare minted based on thecurrentezETHvaluation.After some time the bridge sweepers transfer theETH/WETHcollected to the L1, viaxRenzoDeposit::sweep(). The funds are transferred to thexRenzoBridgecontract on L1 via Connext.Connext callsxRenzoBridge::xReceive()on L1 which will receive theETH/WETHand deposit them in the protocol viaRestakeManager::depositETH(). This will mintezETHtokens based on thecurrentezETHvaluation, theezETHtokens will then be locked in the lockbox in exchange forxezETH, which are then immediately burned because an equivalent amount should have already been minted on the L2 during step1.
+Theoretically, the amount ofxezETHtokens minted during step1should be the same as the amount ofezETHtokens minted during step3, but because on both steps the tokens are minted at the current valuation, and the valuation changes over time, there will be a discrepancy between the amount ofxezETHandezETHtokens in circulation.
+This is an issue becauseXERC20Lockbox::withdraw()always exchangesxezETHforezETH1:1.
+Impact
+The price ofezETHis expected to increase over time. This will create a situation where there will be morexezETHin circulation thanezETH, rendering somexezETHworthless and impossible to redeem forezETH.
+A situation in which theezETHvaluation decreases instead of increasing is also problematic, because the protocol will mint lessxezETHthan it should.
+The discrepancy will become bigger and bigger with time.
+Proof of Concept
+As an example, let’s assumeezETHvaluation is currently1 ETH:
+Alice deposits1 ETHon L2 and receives1 xezETH.Some time passes and the valuation ofezETHincreases to2ETH(unrealistic, but allows simple math).The bridge sweeper callssweep(), transferring the1 ETHto thexRenzoBridgecontract on L1.ThexRenzoBridgedeposits the received1 ETHin theRestakeManager, which mints0.5 ezETHbecause theezETHvaluation doubled.The0.5 ezETHis locked in the lockbox,0.5 xezETHare minted in return and immediately burned.
+The situation now is the following:
+Alice has1 xezETHon L2.The lockbox contains0.5 ezETHon L1.
+Alice can at best redeem0.5 xezETHin exchange for0.5 ezETH, and the remaining0.5 xezETHis worthless. The amount of value she can redeem is the correct one, (1 ETH), but now there arexezETHin circulation that are not backed byezETH.
+Recommended Mitigation Steps
+The protocol should track the amount ofxezETHtokens minted viaxRenzoDeposit::deposit()on the L2 and mint the equivalent amount ofezETHtokens on L1 whenxRenzoBridge::xReceive()is executed by passing the necessary data on thexcall()to Connext.
+If this is implemented it’s possible for the valuation ofezETHtokens to change instantly afterxRenzoBridge::xReceive()is executed, this is because the amount ofezETHtokens is not minted based on the current valuation anymore. As explained in other reports, the protocol will be subject to instantezETHvaluation changes (increase/decrease) no matter what (rewards, slashing, penalties), and should gracefully handle these situations via appropriate deposit and withdrawals queues.
+jatinj615 (Renzo) acknowledged and commented:
+Yes, theoretically it is correct. But the protocol tackles this by sending the updated mint rate of ezETH frequently to L2s and also sweeps funds every hour if above batch size keeping the collateralization in place for ezETH. Also thebridgeRouterFee(5 bps) deducted on L2 if the transactions goes through slow path (during which mint rate of ezETH can rise) the extra 5 bps routerFee deducted on L2 is accumulated in minting ezETH on L1 inxRenzoBridge::xReceiveinstead of getting deducted by connext routers.
+alcueca (judge) commented:
+The long term effect of this is akin to bad debt in lending protocols. Eventually, the protocol or the (last) users need to assume the losses.
+0xTenma (warden) commented:
+I think severity of this issue should be Medium instead of High because there is no direct loss of funds possible here. If the ratio of xezETH to ezETH is not equal 1:1 in any case then it is only possible and the protocol sends the updated mint rate of ezETH frequently to L2s to avoid this situation.
+Furthermore, According to C4 docs:2 — Med: Assets not at direct risk, but the function of the protocol or its availability could be impacted, or leak value with a hypothetical attack path with stated assumptions, but external requirements.Stated assumptions and external requirement such as oracle delay are required to face to this issue.
+jatinj615 (Renzo) commented:
+@alcueca - to add more to it as I have explained in the comment above and discussion in#70. The ezETH in prod is over collateralised due to the fact that in some cases (when connext routers don’t have enough liquidity to process fast path) the 5bps deducted on L2 is used to collateralise ezETH on L1 which is why lockbox currently has more ezETH against the xezETH minted on L1. Team has been monitoring and keeping a track on it.Considering the above argument, please confirm on the severity.
+0xCiphky (warden) commented:
+Respectfully, I believe this should remain as High severity:The finding clearly demonstrates a realistic scenario where the system could become insolvent, resulting in a loss of funds for users. Despite the current over-collateralization and precautions, there remains a long-term risk.The audited implementation contains blockages that will affect efforts to maintain collateralization for ezETH. For example, if the MaxTVL is reached, the protocol cannot deposit in L1, causing an accumulation of minted L2 tokens until it becomes possible to deposit again, which could take a significant amount of time.This issue can be intentionally exploited by users whenever the price on the L1 side is higher than on the L2 side.

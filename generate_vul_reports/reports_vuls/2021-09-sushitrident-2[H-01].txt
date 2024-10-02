@@ -1,0 +1,17 @@
+[H-01] Unsafe cast inConcentratedLiquidityPool.burnleads to attack
+Submitted by cmichel, also found by broccoli
+TheConcentratedLiquidityPool.burnfunction performs an unsafe cast of auint128type to asignedinteger.
+(uint256amount0fees,uint256amount1fees) =_updatePosition(msg.sender,lower,upper, -int128(amount));
+Note thatamountis chosen by the caller and when choosingamount = 2**128 - 1, this is interpreted as0xFFFFFFFFF... = -1as a signed integer. Thus-(-1)=1adds 1 liquidity unit to the position
+This allows an attacker to not only mint LP tokens for free but as this is theburnfunction it also redeems token0/1 amounts according to the unmodifieduint128amountwhich is an extremely large value.
+POC
+I created this POC that implements a hardhat test and shows how to steal the pool tokens.
+Choosing the correctamountof liquidity to burn andlower, upperticks is not straight-forward because of two competing constraints:
+the-int128(amount)must be less thanMAX_TICK_LIQUIDITY(see_updatePosition). This drives the theamountup to its max value (as the maxuint128value is -1 => -(-1)=1 is very low)The redeemedamount0, amount1values must be less than the current pool balance as the transfers would otherwise fail. This drives theamountdown. However, by choosing a smartloweranduppertick range we can redeem fewer tokens for the same liquidity.
+This exampleshows how to steal 99% of thetoken0pool reserves:
+Impact
+An attacker can steal the pool tokens.
+Recommended Mitigation Steps
+Even though Solidity 0.8.x is used, type casts do not throw an error.
+ASafeCastlibrarymust be used everywhere a typecast is done.
+sarangparikh22 (Sushi) confirmed

@@ -1,0 +1,26 @@
+This code defines a smart contract named TelcoinSaleCapEscrow, which manages a mapping of addresses to their deposited amounts in Wei. The contract includes a function to reject a participant's deposit, which involves returning the deposited amount and resetting the deposit to zero.
+
+Here’s a detailed explanation of how this contract and its function work:
+
+1. Contract Structure:
+    The contract TelcoinSaleCapEscrow is defined with a public state variable deposited. This is a mapping that associates Ethereum addresses with a uint256 value, representing the amount of Wei deposited by each address.
+
+2. Mapping deposited:
+    The mapping(address => uint256) public deposited; line declares a public mapping where each key is an Ethereum address and each value is a uint256 representing the amount of Wei deposited by that address. Being public, Solidity automatically generates a getter function for this mapping, allowing external contracts and accounts to query the deposited amount for any address.
+
+3. Function reject:
+    The function reject(address _participant) public is a public function that takes an address _participant as its parameter. This function is intended to handle the scenario where a participant's deposit is rejected, necessitating the return of their deposited funds.
+
+4. Reading the Deposit:
+    Inside the function, uint256 weiAmount = deposited[_participant]; reads the amount of Wei deposited by the participant. This value is retrieved from the deposited mapping using the participant's address as the key.
+
+5. Sending Wei Back:
+    The line require(_participant.call.value(weiAmount)()); is crucial. It uses the lowlevel call function to send the Wei back to the participant's address. The call.value() function is used to send Ether along with the call, and weiAmount specifies the amount of Wei to send. The require statement ensures that the call must succeed; if it fails (e.g., due to an outofgas error or the recipient rejecting the transaction), the entire transaction is reverted.
+
+6. Resetting the Deposit:
+    After attempting to send the Wei back, deposited[_participant] = 0; sets the deposited amount for the participant to zero, effectively clearing their deposit record in the contract.
+
+7. Security Considerations:
+    The use of call.value() is generally discouraged due to potential reentrancy issues, which could be exploited if the recipient is a malicious contract. A safer approach would be to use transfer() or send() methods, which are more restrictive in terms of gas and prevent reentrancy by design. However, these methods have their own limitations, such as a fixed gas stipend and potential failure modes that do not propagate errors as require does.
+
+In summary, the TelcoinSaleCapEscrow contract manages deposits and provides a mechanism to reject and return deposits using a lowlevel call to send Ether back to the depositor. This function is designed to handle the return of funds in a scenario where a participant's deposit is not accepted.

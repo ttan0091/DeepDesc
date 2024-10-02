@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy or Logic Error
+Vulnerability description: The birthday field is not initialized, allowing experimentalAge to be incorrectly calculated and potentially bypassing AGE_DELAY.
+Cause of vulnerability: The PoolData struct does not initialize the birthday field, which is used in calculations for skip blocks and age.
+Working process of the code: 
+1. A new test is added in the node test to ensure that the pool did not open for withdrawal when usufructuary changes.
+2. The test will fail because the age change is out of order.
+3. The vault will close when required by age check.
+4. The age check includes a requiresADelay check, delaying the execution.
+5. The delay was provided from config.tokens.peg.price and experimentalAge.
+6. Since birthday is initialized to 0 and not set, if redeemAllAndChangeUsufructuary is called with a new usufructuary, current.blockNumber and boxId can be right.
+7. The age will be purely affected by experimentalAge.
+8. The experimentalAge is updated by boxId in a nonordered manner.
+9. By intentionally updating the extperimentalAge, a user can withdraw in fewer blocks.

@@ -1,0 +1,14 @@
+[H-05] backdoor inwithdrawRedundant
+Submitted by cmichel, also found by camden, WatchPug, and Ruhum
+TheVault.withdrawRedundanthas wrong logic that allows the admins to steal the underlying vault token.
+functionwithdrawRedundant(address_token,address_to)externaloverrideonlyOwner{if(_token==address(token) &&balance<IERC20(token).balanceOf(address(this))) {uint256_redundant=IERC20(token).balanceOf(address(this)) -balance;IERC20(token).safeTransfer(_to,_redundant);}elseif(IERC20(_token).balanceOf(address(this)) >0) {// @audit they can rug users. let's say balance == IERC20(token).balanceOf(address(this)) => first if false => transfers out everythingIERC20(_token).safeTransfer(_to,IERC20(_token).balanceOf(address(this)));}}
+POC
+Vault deposits increase asVault.addValueis called and thebalanceincreases by_amountas well as the actualIERC20(token).balanceOf(this). Note thatbalance == IERC20(token).balanceOf(this)Admins callvault.withdrawRedundant(vault.token(), attacker)which goes into theelse ifbranch due to the balance inequality condition beingfalse. It will transfer out allvault.token()amounts to the attacker.
+Impact
+There’s a backdoor in thewithdrawRedundantthat allows admins to steal all user deposits.
+Recommended Mitigation Steps
+I think the devs wanted this logic from the code instead:
+functionwithdrawRedundant(address_token,address_to)externaloverrideonlyOwner{if(_token==address(token)) {if(balance<IERC20(token).balanceOf(address(this))) {uint256_redundant=IERC20(token).balanceOf(address(this)) -balance;IERC20(token).safeTransfer(_to,_redundant);}}elseif(IERC20(_token).balanceOf(address(this)) >0) {IERC20(_token).safeTransfer(_to,IERC20(_token).balanceOf(address(this)));}}
+oishun1112 (Insure) confirmed:
+similar to PVE03 (Peckshield audit)
+We will create a PR and merge after we merge both audit/code4rena and audit/peckshield branches in the InsureDAO repository.

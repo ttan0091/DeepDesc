@@ -1,0 +1,25 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: Integer underflow in the `_get_weight` function due to improper handling of gauge weight updates and user voting power withdrawals.
+Execution process: 
+1. Governance decreases the weight of a gauge.
+2. Users withdraw their voting power over time, reducing the gauge's total bias.
+3. Governance increases the gauge's weight, setting its slope to zero.
+4. A user's voting power ends, causing an underflow in the slope calculation, leading to a permanent DoS of the gauge.
+Vulnerable code: 
+```solidity
+for(uint256 i; i < 500; ++i) {
+    if(t > block.timestamp) break;
+    t += WEEK;
+    uint256 d_bias = pt.slope * WEEK;
+    if(pt.bias > d_bias) {
+        pt.bias -= d_bias;
+        uint256 d_slope = changes_weight[_gauge_addr][t];
+        pt.slope -= d_slope; // Vulnerable line
+    } else {
+        pt.bias = 0;
+        pt.slope = 0;
+    }
+    points_weight[_gauge_addr][t] = pt;
+    if(t > block.timestamp) time_weight[_gauge_addr] = t;
+}
+```

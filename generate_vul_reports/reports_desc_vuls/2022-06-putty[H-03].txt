@@ -1,0 +1,26 @@
+Type of vulnerability: Inconsistent handling of floorTokens in short call orders
+Cause of vulnerability: The `fillOrder` function does not ensure that `order.floorTokens` is empty when the order is a short call, leading to mismatches in token lengths during exercise and withdraw operations.
+Execution process: 
+1. A short call order is created with a non-empty `floorTokens` array.
+2. A taker fills the order and receives a long call option NFT.
+3. When the taker attempts to exercise the option:
+   - Case 1: The taker calls `exercise` with an empty `floorAssetTokenIds` array, leading to an "Index out of bounds" error due to the non-empty `floorTokens`.
+   - Case 2: The taker calls `exercise` with a non-empty `floorAssetTokenIds` array of matching length to `order.floorTokens`, causing a revert due to the check for empty `floorAssetTokenIds` in put orders.
+4. After expiration, the maker attempts to withdraw but fails due to the same issue as in Case 1.
+Vulnerable code: 
+```solidity
+// case 1
+// PuttyV2.sol: _transferFloorsIn called by exercise
+// The floorTokens and floorTokenIds do not match the lengths
+// floorTokens.length is not zero, while floorTokenIds.length is zero
+ERC721(floorTokens[i]).safeTransferFrom(from, address(this), floorTokenIds[i]);
+
+// case 2
+// PuttyV2.sol: exercise
+// non empty floorAssetTokenIds array is passed for put option, it will revert!
+order.isCall ? require(floorAssetTokenIds.length == order.floorTokens.length, "Wrong amount of floor tokenIds") : require(floorAssetTokenIds.length == 0, "Invalid floor tokenIds length");
+
+// maker trying to withdraw
+// PuttyV2.sol: withdraw
+_transferFloorsOut(order.floorTokens, positionFloorAssetTokenIds[floorPositionId]);
+```

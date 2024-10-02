@@ -1,0 +1,17 @@
+[H-02]VoteEscrowDelegation._writeCheckpointfails whennCheckpointsis 0
+Submitted by GimelSec, also found by 0x52, 0xA5DF, 0xsanson, 0xSky, arcoun, Bahurum, berndartmueller, CertoraInc, cryptphi, ElKu, GalloDaSballo, hansfriese, JohnSmith, kenzo, kyteg, Lambda, MEP, panprog, rajatbeladiya, scaraven, simon135, Twpony, and zzzitron
+https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L101
+https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L82-L86
+When a user callVoteEscrowDelegation.delegateto make a delegation, it callsVoteEscrowDelegation._writeCheckpointto update the checkpoint oftoTokenId. However, ifnCheckpointsis 0,_writeCheckpointalways reverts. What’s worse,nCheckpointswould be zero before any delegation has been made. In conclusion, users cannot make any delegation.
+Proof of Concept
+When a user callVoteEscrowDelegation.delegateto make a delegation, it callsVoteEscrowDelegation._writeCheckpointto update the checkpoint oftoTokenId.https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L82-L86
+function delegate(uint256 tokenId, uint256 toTokenId) external {require(ownerOf(tokenId) == msg.sender, 'VEDelegation: Not allowed');require(this.balanceOfNFT(tokenId) >= MIN_VOTING_POWER_REQUIRED, 'VEDelegation: Need more voting power');delegates[tokenId] = toTokenId;uint256 nCheckpoints = numCheckpoints[toTokenId];if (nCheckpoints > 0) {Checkpoint storage checkpoint = checkpoints[toTokenId][nCheckpoints - 1];checkpoint.delegatedTokenIds.push(tokenId);_writeCheckpoint(toTokenId, nCheckpoints, checkpoint.delegatedTokenIds);} else {uint256[] memory array = new uint256[](1);array[0] = tokenId;_writeCheckpoint(toTokenId, nCheckpoints, array);}emit DelegateChanged(tokenId, toTokenId, msg.sender);}
+ifnCheckpointsis 0,_writeCheckpointalways reverts.Becausecheckpoints[toTokenId][nCheckpoints - 1]will trigger underflow in Solidity 0.8.11https://github.com/code-423n4/2022-07-golom/blob/main/contracts/vote-escrow/VoteEscrowDelegation.sol#L101
+function _writeCheckpoint(uint256 toTokenId,uint256 nCheckpoints,uint256[] memory _delegatedTokenIds) internal {require(_delegatedTokenIds.length < 500, 'VVDelegation: Cannot stake more');Checkpoint memory oldCheckpoint = checkpoints[toTokenId][nCheckpoints - 1];…}
+Recommended Mitigation Steps
+Fix_writeCheckpoint
+function _writeCheckpoint(uint256 toTokenId,uint256 nCheckpoints,uint256[] memory _delegatedTokenIds) internal {require(_delegatedTokenIds.length < 500, 'VVDelegation: Cannot stake more');if (nCheckpoints > 0 && oldCheckpoint.fromBlock == block.number) {Checkpoint memory oldCheckpoint = checkpoints[toTokenId][nCheckpoints - 1];oldCheckpoint.delegatedTokenIds = _delegatedTokenIds;} else {checkpoints[toTokenId][nCheckpoints] = Checkpoint(block.number, _delegatedTokenIds);numCheckpoints[toTokenId] = nCheckpoints + 1;}}
+zeroexdead (Golom) confirmed
+zeroexdead (Golom) resolved and commented:
+Fixed.
+Ref:https://github.com/golom-protocol/contracts/commit/95e83a1abead683083b7ddf07853a26803c70b88

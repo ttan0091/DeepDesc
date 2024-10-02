@@ -1,0 +1,15 @@
+Type of vulnerability: Lack of input validation
+Cause of vulnerability: The `_epochDuration` parameter is allowed to be 0, which leads to division by zero errors and prevents users from claiming rewards or the promotion creator from canceling the promotion.
+Execution process: A user (e.g., Alice) creates a promotion with `_epochDuration` set to 0. This causes the promotion to be unclaimable and un-cancelable, freezing the creator's funds in the contract.
+Vulnerable code: 
+```solidity
+function createPromotion(address _ticket, IERC20 _token, uint216 _tokensPerEpoch, uint32 _startTimestamp, uint32 _epochDuration, uint8 _numberOfEpochs) external override returns (uint256) {
+    _requireTicket(_ticket);
+    uint256 _nextPromotionId = _latestPromotionId + 1;
+    _latestPromotionId = _nextPromotionId;
+    _promotions[_nextPromotionId] = Promotion(msg.sender, _ticket, _token, _tokensPerEpoch, _startTimestamp, _epochDuration, _numberOfEpochs);
+    _token.safeTransferFrom(msg.sender, address(this), _tokensPerEpoch * _numberOfEpochs);
+    emit PromotionCreated(_nextPromotionId);
+    return _nextPromotionId;
+}
+```

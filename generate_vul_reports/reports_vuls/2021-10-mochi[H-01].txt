@@ -1,0 +1,20 @@
+[H-01] Vault fails to track debt correctly that leads to bad debt
+Submitted by jonah1005, also found by WatchPug
+Impact
+It’s similar to the issue “misuse amount as increasing debt in the vault contract”.
+Similar issue in a different place that leads to different exploit patterns and severity.
+When users borrow usdm from a vault, the debt increases by the amount * 1.005.
+uint256increasingDebt= (_amount*1005) /1000;
+However, when the contract records the total debt it uses_amountinstead ofincreasingDebt.
+details[_id].debtIndex=(details[_id].debtIndex* (totalDebt)) /(details[_id].debt+_amount);details[_id].debt=totalDebt;details[_id].status=Status.Active;debts+=_amount;
+MochiVault.sol L242-L249
+The contract’s debt is inconsistent with the total sum of all users’ debt. The bias increases overtime and would break the vault at the end.
+For simplicity, we assume there’s only one user in the vault.
+Example:
+User deposits 1.2 M worth of BTC and borrows 1M USDM.The user’s debt (details[_id].debt) would be 1.005 M as there’s a .5 percent fee.The contract’s debt is 1M.BTC price decrease by 20 percentThe liquidator tries to liquidate the position.The liquidator repays 1.005 M and the contract tries to sub the debt by 1.005 MThe transaction is reverted asdetails[_id].debt -= _usdm;would raise exception.
+inaccurate accounting would lead to serious issues. I consider this a high-risk issue.
+Proof of Concept
+This is a web3.py script that a liquidation may fail.
+deposit_amount =10**18big_deposit = deposit_amount *100000minter.functions.mint(user, big_deposit).transact()dai.functions.approve(vault.address, big_deposit + deposit_amount).transact()# create two positionsvault.functions.mint(user, zero_address).transact()vault.functions.mint(user, zero_address).transact()# # borrow max amountvault.functions.increase(0, big_deposit, big_deposit, zero_address,'').transact()vault.functions.increase(1, deposit_amount, deposit_amount, zero_address,'').transact()vault_debt = vault.functions.debts().call()# ## This would clear out all debt in vault.repay_amount = vault_debt +10**18usdm.functions.approve(vault.address, repay_amount).transact()vault.functions.repay(0, repay_amount).transact()print('debt left:', vault.functions.debts().call())# ## All the positions would not be liquidated from now ondai_price = cssr_factory.functions.getPrice(dai.address).call()cssr_factory.functions.setPrice(dai.address, dai_price[0] //10).transact()## this would revertliquidator.functions.triggerLiquidation(dai.address,1).transact()
+Recommended Mitigation Steps
+I believe this is a mistake. Recommend to check the contract to make sureincreasingDebtis used consistently.

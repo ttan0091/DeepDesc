@@ -1,0 +1,24 @@
+[H-04] Project funds can be drained by reusing signatures, in some cases
+Submitted by 0xA5DF, also found by Bahurum, bin2chen, byndooa, cryptphi, hansfriese, horsefacts, kaden, Lambda, neumo, panprog, rokinot, scaraven, and sseefried
+Project.sol#L386-L490Project.sol#L330-L359Tasks.sol#L153-L164
+This attack path is the results of signatures reusing in 2 functions -changeOrder()andsetComplete(), and a missing modifier atTasks.unApprove()library function.
+Impact
+Draining the project from funds
+Current or previous subcontractor of a task can drain the project out of its funds by runningsetComplete()multiple times.
+This can be exploited in 3 scenarios:
+The price of a task was changed to a price higher than available funds (i.e.totalLent - _totalAllocated, and therefore gets unapproved), and than changed back to the original price (or any price that’s not higher than available funds)The subcontractor for a task was changed viachangeOrderand then changed back to the original subcontractore.g. - Bob was the original SC, it was changed to Alice, and then back to BobSimilar to the case above, but even if the current SC is different from the original SC - it can still work if the current and previous SCs are teaming up to run the attacke.g. Bob was the original SC, it was changed to Alice, and changed again to Eve. And now Alice and Eve are teaming up to drain funds from the project
+AftersetComplete()ran once by the legitimate users (i.e. signed by contractor, SC and builder), the attackers can now run it multiple times:
+Reuse signatures to runchangeOrder()- changing SC or setting the price to higher than available fundsThe only signer that might change is the subcontractor, he’s either teaming up with the attacker (scenario #3) or he was the SC when it was first called (scenario #2)In case of price change:change it back to the original price viachangeOrder(), reusing signaturesRunallocateFunds()to mark it as funded againSC runsacceptInvite()to mark task as activeRunsetComplete()reusing signaturesIf SC has changed - replace his signature with the current one (current SC should be one of the attackers)Repeat till the project runs out of funds
+Changing tasks costs/subcontractor by external users
+This can also be used by external users (you don’t need to be builder/GC/SC in order to runchangeOrder()) to troll the system (This still requires the task to be changed at least twice, otherwise re-runningchangeOrder()with the same data would have no effect).
+Changing the task cost up or down, getting the SC paid a different amount than intended (if it goes unnoticed, or front-run thesetComplete()function)Unapproving a task by setting a different SC or a price higher than available fundsThe legitimate users can change it back, but the attacker can change it again, both sides playing around till someone gets tired :)
+Proof of Concept
+Since the tests depend on each other, the PoC tests were created by adding them to the filetest/utils/projectTests.ts, after the functionit('should be able to complete a task'(Line 1143).
+In the first test - a subcontractor is changed and then changed back.In the second scenario a price is changed to the new price (that is higher than the total available funds, and therefore is unapproved) and then back to its original price (it can actually be any price that is not higher than the available funds).In both cases I’m demonstrating how the project can be drained out of fund.
+Note: see warden’soriginal submissionfor full proof of concept.
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Use nonce to protectsetComplete()andchangeOrder()from signatures reuseAdd theonlyActive()modifier toTasks.unApprove()Consider limitingallocateFunds()for builder only (this is not necessary to resolve the bug, just for hardening security)
+zgorizzo69 (Rigor) confirmed and commented:
+Very nice wrap up.

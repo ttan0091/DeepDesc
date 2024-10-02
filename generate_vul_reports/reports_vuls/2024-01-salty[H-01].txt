@@ -1,0 +1,29 @@
+[H-01] Development Team might receive less SALT because there is no access control onVestingWallet#release()
+Submitted by0xpiken
+The Development Team could potentially incur a loss on their SALT distribution reward due to the absence of access control onVestingWallet#release().
+Proof of Concept
+When Salty exchange is actived, 10M SALT will be transferred toteamVestingWalletby callingInitialDistribution#distributionApproved():
+62:salt.safeTransfer(address(teamVestingWallet),10*MILLION_ETHER);
+teamVestingWalletis responsible for distributing 10M SALT linely over 10 years (Deployment.sol#L100):
+teamVestingWallet=newVestingWallet(address(upkeep),uint64(block.timestamp),60*60*24*365*10);
+From the above code we can see that the beneficiary ofteamVestingWalletisUpkeep.
+Each timeUpkeep#performUpkeep()is called,teamVestingWalletwill release a certain amount of SALT toUpkeep, the beneficiary, and then the relased SALT will be transferred tomainWalletofmanagedTeamWallet:
+functionstep11()publiconlySameContract{uint256releaseableAmount=VestingWallet(payable(exchangeConfig.teamVestingWallet())).releasable(address(salt));// teamVestingWallet actually sends the vested SALT to this contract - which will then need to be sent to the active teamWalletVestingWallet(payable(exchangeConfig.teamVestingWallet())).release(address(salt));salt.safeTransfer(exchangeConfig.managedTeamWallet().mainWallet(),releaseableAmount);}
+However, there is no access control onteamVestingWallet.release(). Any one can callrelease()to distribute SALT without informingupkeep.upkeepdoesn’t know how many SALT has been distributed in advance, it has no way to transfer it to the development team, and the distributed SALT by directly callingteamVestingWallet.release()will be locked inupkeepforever.
+Copy below codes toDAO.t.soland runCOVERAGE="yes" NETWORK="sep" forge test -vv --rpc-url RPC_URL --match-test testTeamRewardIsLockedInUpkeep
+functiontestTeamRewardIsLockedInUpkeep()public{uintreleasableAmount=teamVestingWallet.releasable(address(salt));uintupKeepBalance=salt.balanceOf(address(upkeep));uintmainWalletBalance=salt.balanceOf(address(managedTeamWallet.mainWallet()));//@audit-info a certain amount of SALT is releasableassertTrue(releasableAmount!=0);//@audit-info there is no SALT in upkeepassertEq(upKeepBalance,0);//@audit-info there is no SALT in mainWalletassertEq(mainWalletBalance,0);//@audit-info call release() before performUpkeep()teamVestingWallet.release(address(salt));upkeep.performUpkeep();upKeepBalance=salt.balanceOf(address(upkeep));mainWalletBalance=salt.balanceOf(address(managedTeamWallet.mainWallet()));//@audit-info all released SALT is locked in upKeepassertEq(upKeepBalance,releasableAmount);//@audit-info development team receive nothingassertEq(mainWalletBalance,0);}
+Recommended Mitigation Steps
+SinceexchangeConfig.managedTeamWalletis immutable, it is reasonable to configmanagedTeamWalletas the beneficiary whendeployingteamVestingWallet:
+-   teamVestingWallet = new VestingWallet( address(upkeep), uint64(block.timestamp), 60 * 60 * 24 * 365 * 10 );+   teamVestingWallet = new VestingWallet( address(managedTeamWallet), uint64(block.timestamp), 60 * 60 * 24 * 365 * 10 );
+Introduce a new function inmanagedTeamWalletto transfer all SALT balance tomainWallet:
+functionrelease(addresstoken)external{uintbalance=IERC20(token).balanceOf(address(this));if(balance!=0) {IERC20(token).safeTransfer(mainWallet,balance);}}
+CallmanagedTeamWallet#release()inUpkeep#performUpkeep():
+function step11() public onlySameContract{-   uint256 releaseableAmount = VestingWallet(payable(exchangeConfig.teamVestingWallet())).releasable(address(salt));-   // teamVestingWallet actually sends the vested SALT to this contract - which will then need to be sent to the active teamWalletVestingWallet(payable(exchangeConfig.teamVestingWallet())).release(address(salt));-   salt.safeTransfer( exchangeConfig.managedTeamWallet().mainWallet(), releaseableAmount );+   exchangeConfig.managedTeamWallet().release(address(salt));}
+othernet-global (Salty.IO) confirmed and commented:
+The ManagedWallet now the recipient of teamVestingWalletRewards to prevent the issue of DOS of the team rewards.https://github.com/othernet-global/salty-io/commit/534d04a40c9b5821ad4e196095df70c0021d15ab
+ManagedWallet has been removed.https://github.com/othernet-global/salty-io/commit/5766592880737a5e682bb694a3a79e12926d48a5
+Picodes (Judge) commented:
+My initial view on this is that the issue is withinUpkeepas it integrates poorly with the vesting wallet. It forgets that there is no access control, so I tend to see this as in scope.
+The issue is not strictly in the deployment scripts, not strictly in the vesting wallet either because it makes sense to have no access control onrelease, so it must be inUpkeep.
+Note: For full discussion, seehere.
+Status:Mitigation confirmed. Full details in reports from0xpiken,zzebra83, andt0x1c.

@@ -1,0 +1,24 @@
+Type of vulnerability: Unreturned Excess Tokens
+Cause of vulnerability: The function `swapTokensForExactETH` does not transfer back the unused input tokens to the caller after performing the swap.
+Execution process: A user calls `swapTokensForExactETH` with an excessively high `amountInMax`. The function performs the swap but does not return the difference between `amountInMax` and the actual swapped amount (`amounts[0]`), causing the unused tokens to be locked in the contract.
+Vulnerable code: 
+```solidity
+function swapTokensForExactETH(uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline) payable external returns (uint[] memory amounts) {
+    require(path.length == 2, "Direct swap only");
+    require(path[1] == ROUTER.WETH9(), "Invalid path");
+    ERC20 ogInAsset = ERC20(path[0]);
+    ogInAsset.safeTransferFrom(msg.sender, address(this), amountInMax);
+    ogInAsset.safeApprove(address(ROUTER), amountInMax);
+    amounts = new uint[](2);
+    amounts[0] = ROUTER.exactOutputSingle(ISwapRouter.ExactOutputSingleParams(path[0], path[1], feeTier, address(this), deadline, amountOut, amountInMax, 0));
+    amounts[1] = amountOut;
+    ogInAsset.safeApprove(address(ROUTER), 0);
+    IWETH9 weth = IWETH9(ROUTER.WETH9());
+    acceptPayable = true;
+    weth.withdraw(amountOut);
+    acceptPayable = false;
+    payable(msg.sender).call{value: amountOut}("");
+    // Missing: ogInAsset.safeTransfer(msg.sender, amountInMax - amounts[0]);
+    emit Swap(msg.sender, path[0], path[1], amounts[0], amounts[1]);
+}
+```

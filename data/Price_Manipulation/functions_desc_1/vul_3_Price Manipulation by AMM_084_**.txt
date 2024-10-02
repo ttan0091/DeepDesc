@@ -1,0 +1,47 @@
+This code defines a public view function named getVotingPower, which calculates the voting power of a user based on their sNOTE token holdings. The function takes a single parameter, sNOTEAmount, which represents the amount of sNOTE tokens held by the user. The function returns a uint256 value representing the user's voting power.
+
+Here’s a detailed explanation of how this function works:
+
+1. Fetching BPT Token Price:
+   solidity
+   uint256 bptPrice = IPriceOracle(address(BALANCER_POOL_TOKEN)).getLatest(IPriceOracle.Variable.BPT);
+   
+   This line calls the getLatest function of an IPriceOracle contract, which is assumed to be deployed at the address of BALANCER_POOL_TOKEN. The function retrieves the latest price of the Balancer Pool Token (BPT) in ETH.
+
+2. Fetching NOTE Token Price:
+   solidity
+   uint256 notePrice = IPriceOracle(address(BALANCER_POOL_TOKEN)).getLatest(IPriceOracle.Variable.NOTE);
+   
+   Similarly, this line fetches the latest price of the NOTE token in ETH from the same IPriceOracle contract.
+
+3. Calculating Price Ratio:
+   solidity
+   uint256 priceRatio = (bptPrice  1e18) / notePrice;
+   
+   This line calculates the price ratio between BPT and NOTE tokens. The multiplication by 1e18 ensures that the division is performed with high precision, as both bptPrice and notePrice are likely to be in wei (the smallest unit of ETH).
+
+4. Fetching BPT Balance:
+   solidity
+   uint256 bptBalance = BALANCER_POOL_TOKEN.balanceOf(address(this));
+   
+   This line retrieves the balance of BPT tokens held by the contract itself by calling the balanceOf function of the BALANCER_POOL_TOKEN contract.
+
+5. Calculating NOTE Amount:
+   solidity
+   uint256 noteAmount = (priceRatio  bptBalance  80) / 100;
+   
+   This line calculates the equivalent amount of NOTE tokens based on the BPT balance and the price ratio. The multiplication by 80 and division by 100 assumes an 80/20 pool, meaning that 80% of the pool is composed of NOTE tokens.
+
+6. Reducing Precision:
+   solidity
+   noteAmount /= 1e28;
+   
+   This line reduces the precision of noteAmount from 1e36 (the result of multiplying priceRatio and bptBalance, both 1e18) down to 1e8, which is the precision of the NOTE token.
+
+7. Calculating Voting Power:
+   solidity
+   return (noteAmount  sNOTEAmount) / totalSupply();
+   
+   Finally, this line calculates the voting power by multiplying the noteAmount by the user's sNOTEAmount and then dividing by the total supply of sNOTE tokens. This normalizes the voting power relative to the total supply of sNOTE tokens.
+
+In summary, the getVotingPower function calculates the voting power of a user by converting their sNOTE holdings into an equivalent amount of NOTE tokens based on the current prices and balances of BPT and NOTE tokens in a Balancer pool. The result is then normalized by the total supply of sNOTE tokens to provide a fair voting power metric.

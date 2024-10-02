@@ -1,0 +1,25 @@
+Type of vulnerability: MEV (Miner Extractable Value) / Economic Attack
+Cause of vulnerability: The recovery mode can be triggered by increasing the global Loan-to-Value (LTV) ratio above a certain threshold, which can be manipulated by a large loan.
+Execution process: An attacker deposits a large amount of collateral and takes a large loan, pushing the system into recovery mode. This allows the attacker to liquidate previously healthy troves.
+Vulnerable code: 
+```cairo
+File: shrine.cairo
+1040:         fn get_trove_health(self: @ContractState, trove_id: u64) -> Health {
+---
+1045:             let (mut threshold, mut value) = self.get_threshold_and_value(trove_yang_balances, interval);
+1046:             threshold = self.scale_threshold_for_recovery_mode(threshold);
+---
+1202:         fn scale_threshold_for_recovery_mode(self: @ContractState, mut threshold: Ray) -> Ray {
+1203:             let shrine_health: Health = self.get_shrine_health();
+1204:
+1205:             if self.is_recovery_mode_helper(shrine_health) {
+1206:                 let recovery_mode_threshold: Ray = shrine_health.threshold * RECOVERY_MODE_THRESHOLD_MULTIPLIER.into();
+1207:                 return max(
+1208:                     threshold * THRESHOLD_DECREASE_FACTOR.into() * (recovery_mode_threshold / shrine_health.ltv),
+1209:                     (threshold.val / 2_u128).into()
+1210:                 );
+1211:             }
+1212:
+1213:             threshold
+1214:         }
+```

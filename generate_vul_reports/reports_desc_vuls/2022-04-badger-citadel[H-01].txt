@@ -1,0 +1,17 @@
+Type of vulnerability: Incorrect Internal Accounting
+
+Cause of vulnerability: The `balance()` function in the StakedCitadel contract only returns the balance of the vault, not accounting for the balance of the strategy, which is where most of the funds are typically located. This discrepancy leads to incorrect calculations of shares minted and burned during deposits and withdrawals.
+
+Execution process: 
+1. Alice deposits 10 tokens into a fresh vault with 0 funds and 0 shares, receiving 10 shares back.
+2. The vault's tokens are deposited into the strategy, leaving the vault's balance at 0 and total supply at 10 shares.
+3. Bob attempts to deposit but the transaction fails due to a division by zero error because the contract incorrectly assumes the vault's balance is representative of the total funds.
+4. Alternatively, if Bob first transfers 1 token to the vault, he can exploit the incorrect balance calculation to receive an inflated number of shares, leading to an imbalance in the vault's accounting.
+
+Vulnerable code: 
+```solidity
+function balance() public view returns (uint256) {
+    return token.balanceOf(address(this));
+}
+```
+This code snippet from the StakedCitadel contract incorrectly only returns the balance of the vault, not including the balance of the strategy, leading to the described vulnerabilities.

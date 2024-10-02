@@ -1,0 +1,17 @@
+[H-01]createPromotion()Lack of input validation for_epochDurationcan potentially freeze promotion creator’s funds
+Submitted by WatchPug
+https://github.com/pooltogether/v4-periphery/blob/0e94c54774a6fce29daf9cb23353208f80de63eb/contracts/TwabRewards.sol#L88-L116
+functioncreatePromotion(address_ticket,IERC20_token,uint216_tokensPerEpoch,uint32_startTimestamp,uint32_epochDuration,uint8_numberOfEpochs)externaloverridereturns(uint256) {_requireTicket(_ticket);uint256_nextPromotionId=_latestPromotionId+1;_latestPromotionId=_nextPromotionId;_promotions[_nextPromotionId] =Promotion(msg.sender,_ticket,_token,_tokensPerEpoch,_startTimestamp,_epochDuration,_numberOfEpochs);_token.safeTransferFrom(msg.sender,address(this),_tokensPerEpoch*_numberOfEpochs);emitPromotionCreated(_nextPromotionId);return_nextPromotionId;}
+In the current implementation ofcreatePromotion(),_epochDurationis allowed to be0.
+However, when_epochDuration = 0, it will be impossible for users to claim the rewards, and the promotion creator won’t be able to cancel it.
+Proof of Concept
+Alice calledcreatePromotion()to create a promotion with the following parameters:_token:USDC_tokensPerEpoch:10,000_epochDuration:0_numberOfEpochs:10100,000 USDCwas transferred from Alice to theTwabRewardscontract;Users tries toclaimRewards()but the transaction always revert at_ticket.getAverageTotalSuppliesBetween()->TwabLib.getAverageBalanceBetween()due to div by 0.Alice tries tocancelPromotion()to retrieve the funds, but it always reverts at_requirePromotionActive()since the promotion already ended.
+As a result, Alice’s100,000 USDCis frozen in the contract.
+Recommendation
+Consider addingrequire(_epochDuration > 0)increatePromotion().
+PierrickGT (PoolTogether) marked as duplicate:
+Duplicate ofhttps://github.com/code-423n4/2021-12-pooltogether-findings/issues/29
+LSDan (judge) commented:
+I do not consider this to be a duplicate of #29 because the warden in #29 does not mention this specific failure case. This is indeed an easy to encounter bug that can be triggered as the result of a user error or a frontend bug. Loss of all funds for the promotion would be the result.
+PierrickGT (PoolTogether) confirmed and resolved:
+Implemented the suggested require:https://github.com/pooltogether/v4-periphery/blob/e0010b689fb170daac77af5f62abba7ca1397524/contracts/TwabRewards.sol#L126

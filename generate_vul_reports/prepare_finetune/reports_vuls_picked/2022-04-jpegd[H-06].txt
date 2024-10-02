@@ -1,0 +1,16 @@
+Type of vulnerability: Reentrancy or State Inconsistency
+Cause of vulnerability: Setting a new controller can reduce the balance reported by `balanceOfJPEG`, leading to a state where `currentBalance < previousBalance` in `_computeUpdate`.
+Execution process: An attacker or owner sets a new controller that reports a smaller balance in `balanceOfJPEG`, causing `currentBalance` to be less than `previousBalance`. This breaks the `yVaultLPFarming` contract, preventing withdrawals.
+Vulnerable code: 
+```solidity
+function setController(address _controller) public onlyOwner {
+    // @audit can reduce balanceofJpeg which breaks other masterchef contract
+    require(_controller != address(0), "INVALID_CONTROLLER");
+    controller = IController(_controller);
+}
+
+function balanceOfJPEG() external view returns (uint256) {
+    // @audit new controller could return a smaller balance
+    return controller.balanceOfJPEG(address(token));
+}
+```

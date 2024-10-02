@@ -1,0 +1,30 @@
+This code defines an external function named permit, which is designed to allow an owner to grant permission to a spender to spend a specified amount of tokens on their behalf using a cryptographic signature. This function is commonly used in ERC20 token contracts to enable metatransactions, allowing users to perform actions without directly interacting with the blockchain, thus saving gas fees.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    owner: The address of the token owner who is granting permission.
+    spender: The address of the spender who is being granted permission.
+    amount: The amount of tokens the spender is allowed to spend.
+    deadline: The timestamp after which this permit is no longer valid.
+    v, r, s: Components of the ECDSA signature provided by the owner to authorize this transaction.
+
+2. Deadline Check:
+    The function first checks if the current block timestamp is less than or equal to the deadline. If the deadline has passed, the transaction is reverted with the message "Permission expired".
+
+3. Signature Validation:
+    The function then validates the s and v values of the signature to prevent malleability attacks. The s value must be in the lower half of the secp256k1 curve's order, and the v value must be either 27 or 28. These checks ensure that the signature is valid according to the standards set in EIP2.
+
+4. Digest Calculation:
+    The function calculates the hash (digest) of the encoded message using keccak256. This includes the domain separator, which helps prevent replay attacks across different contracts and chains, and the encoded permit details (typehash, owner, spender, amount, nonce, and deadline).
+
+5. Address Recovery:
+    Using the ecrecover function, the contract recovers the address from the signature components (v, r, s) and the digest. This recovered address should match the owner address if the signature is valid.
+
+6. Signature Verification:
+    The function checks if the recovered address is not zero and matches the owner address. If not, it reverts with the message "Invalid signature".
+
+7. Approval:
+    If all checks pass, the function calls _approve(owner, spender, amount) to update the allowance of the spender by the owner for the specified amount of tokens.
+
+This function is crucial for secure and efficient token transfers, especially in decentralized applications where offchain signatures are used to manage permissions without direct onchain transactions.

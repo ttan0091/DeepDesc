@@ -1,0 +1,23 @@
+[H-09]removeTokenwould break the vault/protocol.
+Submitted by jonah1005
+Impact
+There’s no safety check in Manager.sol’sremoveToken.Manager.sol#L454-L487
+The token would be locked in the original vault. Given the current design, the vault would keep a ratio of total amount to save the gas. Once the token is removed at manager contract, these token would lost.Controller’sbalanceOfwould no longer reflects the real value.Controller.sol#L488-L495While_vaultDetails[msg.sender].balance;remains the same, user can nolonger withdraw those amount.Share price in the vault would decrease drastically. The share price is calculated astotalValue / totalSupplyVault.sol#L217. While thetotalSupplyof the share remains the same, the total balance has drastically decreased.
+CallingremoveTokenway would almost break the whole protocol if the vault has already started. I consider this is a high-risk issue.
+Proof of Concept
+We can see how the vault would be affected with below web3.py script.
+print(vault.functions.balanceOfThis().call())print(vault.functions.totalSupply().call())manager.functions.removeToken(vault.address, dai.address).transact()print(vault.functions.balanceOfThis().call())print(vault.functions.totalSupply().call())
+output
+1000000000000000000000001000000000000000000000000100000000000000000000000
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Remove tokens from a vault would be a really critical job. I recommend the team cover all possible cases and check all components’ states (all vault/ strategy/ controller’s state) in the test.
+Some steps that I try to come up with that is required to remove TokenA from a vault.
+Withdraw all tokenA from all strategies (and handle it correctly in the controller).Withdraw all tokenA from the vault.Convert all tokenA that’s collected in the previous step into tokenB.Transfer tokenB to the vault and compensate the transaction fee/slippage cost to the vault.
+transferAndCall (yAxis) acknowledged:
+Removing a token is understood as a critical (and possibly nuclear) operation within this architecture. We knew we would have to first withdraw all of the identified token from strategies, but what was missed was converting that token to another (without withdrawing, as that would be too much centralization).Proposed method of resolution:Withdraw all tokenA from all strategies (this sends it to the vault)Swap tokenA for tokenB in the vault (requires implementing a new function to be called by the strategist)Remove the token via the Manager function
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/5to check resolution.
+GalloDaSballo (judge) commented:
+Removing a token can cause accounting errors, stuck funds and break some of the functionalityAdding additional checks to prevent removing the token until all tokens have been migrated may be the simplest path forwardSponsor has mitigated by adding custom functionality, however it is up to them to enforce that the vault has no token left before removing it, adding a couple extra checks may provide a guarantee against admin privileged abuses

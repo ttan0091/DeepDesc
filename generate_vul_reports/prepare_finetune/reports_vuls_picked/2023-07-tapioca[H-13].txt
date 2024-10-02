@@ -1,0 +1,14 @@
+Type of vulnerability: Reentrancy and Improper Balance Transfer
+Cause of vulnerability: The contract allows the attacker to specify `LzCallParams` with a `refundAddress` set to the attacker's address, enabling the transfer of the entire balance to the attacker through the `sendFrom` function.
+Execution process: The attacker calls `triggerSendFrom` with `airdropAdapterParams` of type `airdropAdapterParamsV1` and `LzCallParams` of type `adapterParamsV2`, specifying the attacker's address as the `refundAddress`. This results in the entire balance being transferred to the attacker on the `lzDstChainId`.
+Vulnerable code: 
+```solidity
+function encodeAdapterParamsV2() public {
+    uint256 gasLimit = 250_000;
+    uint256 airdroppedAmount = maxAirdropCap;
+    address attacker = makeAddr("attacker");
+    bytes memory adapterParams = abi.encodePacked(uint16(2), gasLimit, airdroppedAmount, attacker);
+}
+
+ISendFrom(address(this)).sendFrom{value: address(this).balance}(from, lzDstChainId, LzLib.addressToBytes32(from), amount, callParams);
+```

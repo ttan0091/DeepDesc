@@ -1,0 +1,20 @@
+[H-06] Rewards can be claimed multiple times
+Submitted by johnnycash, also found by certora, cmichel, gpersoon, gzeon, harleythedog, kemmio, kenzo, sirhashalot, and 0x421f
+Impact
+An attacker can claim its reward 256 *epochDurationseconds after the timestamp at which the promotion started. The vulnerability allows him to claim a reward several times to retrieve all the tokens associated to the promotion.
+Analysis
+claimRewards()claim rewards for a given promotion and epoch. In order to prevent a user from claiming a reward multiple times, the mapping_claimedEpochskeeps track of claimed rewards per user:
+/// @notice Keeps track of claimed rewards per user./// @dev _claimedEpochs[promotionId][user] => claimedEpochs/// @dev We pack epochs claimed by a user into a uint256. So we can't store more than 255 epochs.mapping(uint256=>mapping(address=>uint256))internal_claimedEpochs;
+(The comment is wrong, epochs are packed into a uint256 which allows256epochs to be stored).
+_epochIdsis an array ofuint256. For each_epochIdin this array,claimRewards()checks that the reward associated to this_epochIdisn’t already claimed thanks to_isClaimedEpoch()._isClaimedEpoch()checks that the bit_epochIdof_claimedEpochsis unset:
+(_userClaimedEpochs>>_epochId) &uint256(1) ==1;
+However, if_epochIdis greater than 255,_isClaimedEpoch()always returns false. It allows an attacker to claim a reward several times.
+_calculateRewardAmount()just makes use of_epochIdto tell whether the promotion is over.
+Proof of Concept
+The following test should result in a reverted transaction, however the transaction succeeds.
+it('should fail to claim rewards if one or more epochs have already been claimed',async()=>{constpromotionId=1;constwallet2Amount=toWei('750');constwallet3Amount=toWei('250');awaitticket.mint(wallet2.address,wallet2Amount);awaitticket.mint(wallet3.address,wallet3Amount);awaitcreatePromotion(ticket.address);awaitincreaseTime(epochDuration*257);awaitexpect(twabRewards.claimRewards(wallet2.address,promotionId, ['256','256']),).to.be.revertedWith('TwabRewards/rewards-already-claimed');});
+Recommended Mitigation Steps
+A possible fix could be to change the type of_epochIdtouint8in:
+_calculateRewardAmount()_updateClaimedEpoch()_isClaimedEpoch()
+and change the type of_epochIdstouint8[]inclaimRewards().
+PierrickGT (PoolTogether) confirmed

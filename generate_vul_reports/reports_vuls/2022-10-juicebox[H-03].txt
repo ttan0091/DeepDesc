@@ -1,0 +1,14 @@
+[H-03] Outstanding reserved tokens are incorrectly counted in total redemption weight
+Submitted byJeiwan, also found byTrust,ladboy233, andcccz
+The amounts redeemed in overflow redemption can be calculated incorrectly due to incorrect accounting of the outstanding number of reserved tokens.
+Proof of Concept
+Project contributors are allowed to redeem their NFT tokens for a portion of the overflow (excessive funded amounts). The amount a contributor receives is calculated asoverflow * (user’s redemption rate / total redemption weight), where user’s redemption weight isthe total contribution floor of all their NFTsand total redemption weight isthe total contribution floor of all minted NFTs. Since the total redemption weight is the sum of individual contributor redemption weights, the amount they can redeem is proportional to their contribution.
+However, the total redemption weight calculation incorrectly accounts outstanding reserved tokens (JBTiered721DelegateStore.sol#L563-L566):
+// Add the tier's contribution floor multiplied by the quantity minted.weight+=(_storedTier.contributionFloor*(_storedTier.initialQuantity-_storedTier.remainingQuantity)) +_numberOfReservedTokensOutstandingFor(_nft,_i,_storedTier);
+Specifically, thenumberof reserved tokens is added to theweightof minted tokens. This disrupts the redemption amount calculation formula since the total redemption weight is in fact not the sum of individual contributor redemption weights.
+Recommended Mitigation Steps
+Two options can be seen:
+if the outstanding number of reserved tokens is considered minted (which seems to be so, judging bythis logic) then it needs to be added to the quantity, i.e.:--- a/contracts/JBTiered721DelegateStore.sol+++ b/contracts/JBTiered721DelegateStore.sol@@ -562,8 +562,7 @@ contract JBTiered721DelegateStore is IJBTiered721DelegateStore {// Add the tier's contribution floor multiplied by the quantity minted.weight +=(_storedTier.contributionFloor *-          (_storedTier.initialQuantity - _storedTier.remainingQuantity)) +-        _numberOfReservedTokensOutstandingFor(_nft, _i, _storedTier);+          (_storedTier.initialQuantity - _storedTier.remainingQuantity ++           _numberOfReservedTokensOutstandingFor(_nft, _i, _storedTier)));unchecked {++_i;if it’s not considered minted, then it shouldn’t be counted at all.
+drgorillamd (Juicebox DAO) confirmed
+Picodes (judge) upgraded severity:
+As the redeemed amounts are at stake, upgrading to High

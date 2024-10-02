@@ -1,0 +1,18 @@
+[H-02]LiquidityProviders.solThe share price of the LP can be manipulated and making future liquidityProviders unable toremoveLiquidity()
+Submitted by WatchPug
+LiquidityProviders.sol#L345-L362
+functionremoveLiquidity(uint256_nftId,uint256_amount)externalnonReentrantonlyValidLpToken(_nftId,_msgSender())whenNotPaused{(address_tokenAddress,uint256nftSuppliedLiquidity,uint256totalNFTShares) =lpToken.tokenMetadata(_nftId);require(_isSupportedToken(_tokenAddress),"ERR__TOKEN_NOT_SUPPORTED");require(_amount!=0,"ERR__INVALID_AMOUNT");require(nftSuppliedLiquidity>=_amount,"ERR__INSUFFICIENT_LIQUIDITY");whiteListPeriodManager.beforeLiquidityRemoval(_msgSender(),_tokenAddress,_amount);// Claculate how much shares represent input amountuint256lpSharesForInputAmount=_amount*getTokenPriceInLPShares(_tokenAddress);// Calculate rewards accumulateduint256eligibleLiquidity=sharesToTokenAmount(totalNFTShares,_tokenAddress);
+LiquidityProviders.sol#L192-L194
+functionsharesToTokenAmount(uint256_shares,address_tokenAddress)publicviewreturns(uint256) {return(_shares*totalReserve[_tokenAddress]) /totalSharesMinted[_tokenAddress];}
+The share price of the liquidity can be manipulated to an extremely low value (1 underlying token worth a huge amount of shares), making it possible forsharesToTokenAmount(totalNFTShares, _tokenAddress)to overflow inremoveLiquidity()and therefore freeze users’ funds.
+Proof of Concept
+AliceaddTokenLiquidity()with1e8 * 1e18XYZ on B-Chain, totalSharesMinted ==1e44;AlicesendFundsToUser()and bridge1e8 * 1e18XYZ from B-Chain to A-Chain;AlicedepositErc20()and bridge1e8 * 1e18XYZ from A-Chain to B-Chain;AliceremoveLiquidity()and withdraw1e8 * 1e18 - 1XYZ, then:totalReserve==1 weiXYZ, andtotalSharesMinted==1e26;BobaddTokenLiquidity()with3.4e7 * 1e18XYZ;Bob tries toremoveLiquidity().
+Expected Results: Bob to get back the deposits;
+Actual Results: The tx reverted due to overflow atsharesToTokenAmount().
+Recommended Mitigation Steps
+LiquidityProviders.sol#L280-L292
+function_increaseLiquidity(uint256_nftId,uint256_amount)internalonlyValidLpToken(_nftId,_msgSender()) {(addresstoken,uint256totalSuppliedLiquidity,uint256totalShares) =lpToken.tokenMetadata(_nftId);require(_amount>0,"ERR__AMOUNT_IS_0");whiteListPeriodManager.beforeLiquidityAddition(_msgSender(),token,_amount);uint256mintedSharesAmount;// Adding liquidity in the pool for the first timeif(totalReserve[token] ==0) {mintedSharesAmount=BASE_DIVISOR*_amount;}else{mintedSharesAmount= (_amount*totalSharesMinted[token]) /totalReserve[token];}...
+Consider locking part of the first mint’s liquidity to maintain a minimum amount oftotalReserve[token], so that the share price can not be easily manipulated.
+ankurdubey521 (Biconomy) confirmed
+pauliax (judge) commented:
+Great find, with a PoC, deserves a severity of high because it is a valid attack path that does not have hand-wavy hypotheticals.

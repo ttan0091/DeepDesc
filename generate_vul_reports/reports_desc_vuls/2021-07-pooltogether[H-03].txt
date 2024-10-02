@@ -1,0 +1,42 @@
+Type of vulnerability: Temporary Inconsistent State
+Cause of vulnerability: The `setYieldSource` function changes the underlying yield source without immediately updating the balances, leading to incorrect calculations of shares and token balances.
+Execution process: An attacker monitors the blockchain for the execution of `setYieldSource`, then immediately calls `supplyTokenTo` to exploit the temporary inconsistency and receive more shares than they should.
+Vulnerable code: 
+```solidity
+function setYieldSource(IYieldSource _newYieldSource) external onlyOwnerOrAssetManager returns(bool) {
+    _setYieldSource(_newYieldSource);
+}
+
+function _setYieldSource(IYieldSource _newYieldSource) internal {
+    yieldSource = _newYieldSource;
+}
+
+function supplyTokenTo(uint256 amount, address to) external override nonReentrant {
+    yieldSource.supplyTokenTo(amount, address(this));
+    _mintShares(amount, to);
+}
+
+function _mintShares(uint256 mintAmount, address to) internal {
+    uint256 shares = _tokenToShares(mintAmount);
+    require(shares > 0, "SwappableYieldSource/shares-gt-zero");
+    _mint(to, shares);
+}
+
+function _tokenToShares(uint256 tokens) internal returns(uint256) {
+    uint256 shares;
+    uint256 _totalSupply = totalSupply();
+    uint256 exchangeMantissa = FixedPoint.calculateMantissa(_totalSupply, yieldSource.balanceOfToken(address(this)));
+    shares = FixedPoint.multiplyUintByMantissa(tokens, exchangeMantissa);
+}
+
+function balanceOfToken(address addr) external override returns(uint256) {
+    return _sharesToToken(balanceOf(addr));
+}
+
+function _sharesToToken(uint256 shares) internal returns(uint256) {
+    uint256 tokens;
+    uint256 _totalSupply = totalSupply();
+    uint256 exchangeMantissa = FixedPoint.calculateMantissa(yieldSource.balanceOfToken(address(this)), _totalSupply);
+    tokens = FixedPoint.multiplyUintByMantissa(shares, exchangeMantissa);
+}
+```

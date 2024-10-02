@@ -1,0 +1,33 @@
+Type of vulnerability: DoS (Denial of Service)
+Cause of vulnerability: The `receive` function of `lien.borrower` can be coded to conditionally revert, preventing the execution of `ParticleExchange.auctionBuyNft` and `ParticleExchange.withdrawEthWithInterest` functions.
+Execution process: An owner of `lien.borrower` can set a state boolean variable to cause the `receive` function to revert, thereby blocking the successful execution of the auction or withdrawal functions.
+Vulnerable code: 
+```solidity
+function auctionBuyNft(Lien calldata lien, uint256 lienId, uint256 tokenId, uint256 amount) external override validateLien(lien, lienId) auctionLive(lien) {
+    ...
+    // pay PnL to borrower
+    uint256 payback = lien.credit + lien.price - payableInterest - amount;
+    if (payback > 0) {
+        payable(lien.borrower).transfer(payback);
+    }
+    ...
+}
+
+function withdrawEthWithInterest(Lien calldata lien, uint256 lienId) external override validateLien(lien, lienId) {
+    ...
+    uint256 payableInterest = _calculateCurrentPayableInterest(lien);
+    // verify that the liquidation condition has met (borrower insolvent or auction concluded)
+    if (payableInterest < lien.credit && !_auctionConcluded(lien.auctionStartTime)) {
+        revert Errors.LiquidationHasNotReached();
+    }
+    // delete lien (delete first to prevent reentrancy)
+    delete liens[lienId];
+    // transfer ETH with interest back to lender
+    payable(lien.lender).transfer(lien.price + payableInterest);
+    // transfer PnL to borrower
+    if (lien.credit > payableInterest) {
+        payable(lien.borrower).transfer(lien.credit - payableInterest);
+    }
+    ...
+}
+```

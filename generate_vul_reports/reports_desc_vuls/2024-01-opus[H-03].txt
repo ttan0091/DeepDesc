@@ -1,0 +1,25 @@
+Type of vulnerability: Logic Error
+
+Cause of vulnerability: Incorrect handling of trove redistribution logic, specifically in the `redistribute_helper` function, where the `updated_trove_yang_balances` array is updated prematurely and a `continue` statement is executed, leading to unhandled updates in the `new_yang_totals` array.
+
+Execution process: 
+1. User U1 forces redistribution of their trove.
+2. The `redistribute_helper` function loops through all yangs, including those not in trove #1.
+3. For yang A, `trove_yang_amt.is_zero()` returns true, causing early update of `updated_trove_yang_balances` and execution of `continue`.
+4. `new_yang_totals` is not updated in this iteration, leading to incorrect final values.
+5. After redistribution, trove #1 retains its B units but has its debt reset to zero.
+6. User U1 can withdraw the retained B units without debt.
+
+Vulnerable code:
+```solidity
+function redistribute_helper(/* parameters */) {
+    for (/* each yang */) {
+        if (trove_yang_amt.is_zero()) {
+            updated_trove_yang_balances.update(/* early update */);
+            continue;
+        }
+        // Other logic for handling yang redistribution
+    }
+    // Final loop logic
+}
+```

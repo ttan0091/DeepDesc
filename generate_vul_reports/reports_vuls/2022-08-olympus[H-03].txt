@@ -1,0 +1,19 @@
+[H-03] TRSRY: front-runnablesetApprovalFor
+Submitted by zzzitron, also found by berndartmueller, csanuragjain, pashov, Ruhum, sorrynotsorry, and Trust
+https://github.com/code-423n4/2022-08-olympus/blob/b5e139d732eb4c07102f149fb9426d356af617aa/src/modules/TRSRY.sol#L64-L72https://github.com/code-423n4/2022-08-olympus/blob/b5e139d732eb4c07102f149fb9426d356af617aa/src/policies/TreasuryCustodian.sol#L42-L48
+An attacker may be able to withdraw more than intended
+Proof of Concept
+Let’s say Alice had approval of 100. Now the treasury custodian reduced the approval to 50. Alice could frontrun thesetApprovalForof 50, and withdraw 100 as it was before. Then withdraw 50 with the newly set approval. So the alice could withdraw 150.
+// modules/TRSRY.sol63/// @notice Sets approval for specific withdrawer addresses64functionsetApprovalFor(65addresswithdrawer_,66ERC20token_,67uint256amount_68     )externalpermissioned{69withdrawApproval[withdrawer_][token_] =amount_;7071emitApprovedForWithdrawal(withdrawer_,token_,amount_);72}
+TheTreasuryCustodiansimply calls thesetApprovalForto grant Approval.
+4142functiongrantApproval(43addressfor_,44ERC20token_,45uint256amount_46     )externalonlyRole("custodian") {47TRSRY.setApprovalFor(for_,token_,amount_);48}
+Recommended Mitigation Steps
+Instead of setting the given amount, one can reduce from the current approval. By doing so, it checks whether the previous approval is spend.
+ind-igo (Olympus) confirmed and commented:
+Understood. Will change the logic to increase/decrease allowances.
+0xean (judge) increased severity to High and commented:
+I think this vulnerability should be a high severity as it opens up the possibility of a direct loss of funds in the amount of up to the previous approval amount. Upgrading to High.
+0xean (judge) commented:
+@ind-igo - Not sure if you deleted your comment, but that context is useful.  Happy to take another look here.
+ind-igo (Olympus) commented:
+I did, I just thought it was unnecessary to evaluate the issue. I was just saying that the context of the code is that it is not intended to be used to approve an EOA/multisig, but instead used to approve governance-voted contracts to access treasury funds, in order to deposit into yield contracts or whatever. But I don’t think it’s very relevant to this, as the code is still faulty and exploitable in an extreme case. I already have made this remediation as well, so all good.

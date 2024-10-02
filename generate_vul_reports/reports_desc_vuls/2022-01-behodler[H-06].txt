@@ -1,0 +1,17 @@
+Type of vulnerability: Loss of Tokens
+Cause of vulnerability: Overwriting of previous token amounts in `pendingFlashDecision` mapping without accounting for previous amounts.
+Execution process: An attacker can call `assertGovernanceApproved()` with a `target` and `sender` that have previously locked tokens, causing the previous tokens to be overwritten and lost.
+Vulnerable code: 
+```solidity
+function assertGovernanceApproved(address sender, address target, bool emergency) public {
+    if (IERC20(flashGovernanceConfig.asset).transferFrom(sender, address(this), flashGovernanceConfig.amount) && pendingFlashDecision[target][sender].unlockTime < block.timestamp) {
+        require(emergency || (block.timestamp - security.lastFlashGovernanceAct > security.epochSize), "Limbo: flash governance disabled for rest of epoch");
+        pendingFlashDecision[target][sender] = flashGovernanceConfig;
+        pendingFlashDecision[target][sender].unlockTime += block.timestamp;
+        security.lastFlashGovernanceAct = block.timestamp;
+        emit flashDecision(sender, flashGovernanceConfig.asset, flashGovernanceConfig.amount, target);
+    } else {
+        revert("LIMBO: governance decision rejected.");
+    }
+}
+```

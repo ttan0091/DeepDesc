@@ -1,0 +1,24 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The contract allows a user to call functions in the fallback during the execution of `withdrawETH`, specifically when `claimRewards` is called, which does not have the `nonReentrant` modifier. This allows the user to manipulate the state variables `totalRewardsReceived` and `accumulatedETHPerLPShare` to receive more rewards.
+Execution process: 
+1. User calls `withdrawETH`.
+2. `lpTokenETH.burn` is called.
+3. `GiantMevAndFeesPool.beforeTokenTransfer` is called.
+4. `_distributeETHRewardsToUserForToken` sends ETH to the user.
+5. User calls `claimRewards` in the fallback function.
+6. `idleETH` is reduced but ETH is not yet sent to the user.
+7. `totalRewardsReceived` and `accumulatedETHPerLPShare` are increased.
+8. User receives more rewards when calling `claimRewards`.
+Vulnerable code:
+```solidity
+function withdrawETH(uint256 _amount) external nonReentrant {
+    require(_amount >= MIN_STAKING_AMOUNT, "Invalid amount");
+    require(lpTokenETH.balanceOf(msg.sender) >= _amount, "Invalid balance");
+    require(idleETH >= _amount, "Come back later or withdraw less ETH");
+    idleETH -= _amount;
+    lpTokenETH.burn(msg.sender, _amount);
+    (bool success,) = msg.sender.call{value: _amount}("");
+    require(success, "Failed to transfer ETH");
+    emit LPBurnedForETH(msg.sender, _amount);
+}
+```

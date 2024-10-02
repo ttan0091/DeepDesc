@@ -1,0 +1,19 @@
+[H-01] Wrong shortfall calculation
+Submitted by kenzo
+Every time an account is settled, if shortfall is created, due to a wrong calculation shortfall will double in size and add the new shortfall.
+Impact
+Loss of funds: users won’t be able to withdraw the correct amount of funds. Somebody would have to donate funds to resolve the wrong shortfall.
+Proof of Concept
+We can see in thesettleAccountofOptimisticLedgerthatself.shortfallends up beingself.shortfall+self.shortfall+newShortfall:(Code ref)
+functionsettleAccount(OptimisticLedgerstorageself,addressaccount,Fixed18amount)internalreturns(UFixed18shortfall) {Fixed18newBalance=Fixed18Lib.from(self.balances[account]).add(amount);if(newBalance.sign() == -1) {shortfall=self.shortfall.add(newBalance.abs());newBalance=Fixed18Lib.ZERO;}self.balances[account] =newBalance.abs();self.shortfall=self.shortfall.add(shortfall);}
+Additionally, you can add the following line to the “shortfall reverts if depleted” test inCollateral.test.js, line 190:
+awaitcollateral.connect(productSigner).settleAccount(userB.address, -50)
+Previously the test product had 50 shortfall. Now we added 50 more, but the test will print that the actual shortfall is 150, and not 100 as it should be.
+Recommended Mitigation Steps
+Move the setting ofself.shortfallto inside the if function and change the line to:
+self.shortfall = shortfall
+kbrizzle (Perennial) confirmed:
+Excellent find 🙏
+Alex the Entreprenerd (judge) commented:
+Agree with the findingshortfall = self.shortfall.add(newBalance.abs());is already shortfal + newBalance.abs()
+So performing line73self.shortfall = self.shortfall.add(shortfall);is addingshortfallagain

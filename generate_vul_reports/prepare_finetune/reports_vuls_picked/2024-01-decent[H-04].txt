@@ -1,0 +1,31 @@
+Type of vulnerability: Cross-chain transaction failure due to insufficient WETH reserves
+
+Cause of vulnerability: The destination router's WETH balance is insufficient to handle incoming dcntEth transfers, leading to the dcntEth being sent to an unintended target (destination chain's bridge adapter) which cannot process the dcntEth.
+
+Execution process:
+1. A cross-chain transaction sends dcntEth to the destination router.
+2. The destination router checks its WETH balance.
+3. If the WETH balance is less than the received dcntEth amount, the dcntEth is transferred to the `_to` address, which is the destination chain's bridge adapter.
+4. The bridge adapter does not have a mechanism to withdraw or handle the dcntEth, resulting in the loss of the cross-chain transaction.
+
+Vulnerable code:
+```solidity
+function onOFTReceived(uint16 _srcChainId, bytes calldata, uint64, bytes32, uint _amount, bytes memory _payload) external override onlyLzApp {
+    ...
+    if (weth.balanceOf(address(this)) < _amount) {
+        dcntEth.transfer(_to, _amount);
+        return;
+    }
+    if (msgType == MT_ETH_TRANSFER) {
+        if (!gasCurrencyIsEth || !deliverEth) {
+            weth.transfer(_to, _amount);
+        } else {
+            weth.withdraw(_amount);
+            payable(_to).transfer(_amount);
+        }
+    } else {
+        weth.approve(address(executor), _amount);
+        executor.execute(_from, _to, deliverEth, _amount, callPayload);
+    }
+}
+```

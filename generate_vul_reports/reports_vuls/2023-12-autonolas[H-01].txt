@@ -1,0 +1,16 @@
+[H-01] Permanent DOS inliquidity_lockboxfor under $10
+Submitted byEV_om
+https://github.com/code-423n4/2023-12-autonolas/blob/main/lockbox-solana/solidity/liquidity_lockbox.sol#L54https://github.com/code-423n4/2023-12-autonolas/blob/main/lockbox-solana/solidity/liquidity_lockbox.sol#L181-L184
+Theliquidity_lockboxcontract in thelockbox-solanaproject is vulnerable to permanent DOS due to its storage limitations. The contract uses a Program Derived Address (PDA) as a data account, which is created with a maximum size limit of 10 KB.
+Every time thedeposit()function is called, a new element is added topositionAccounts,mapPositionAccountPdaAta, andmapPositionAccountLiquidity, which decreases the available storage by64 + 32 + 32 = 128bits. This means that the contract will run out of space after at most80000 / 128 = 625deposits.
+Once the storage limit is reached, no further deposits can be made, effectively causing a permanent DoS condition. This could be exploited by an attacker to block the contract’s functionality at a very small cost.
+Proof of Concept
+An attacker can cause a permanent DoS of the contract by callingdeposit()with the minimum position size only 625 times. This will fill up the storage limit of the PDA, preventing any further deposits from being made.
+Since neither the contract nor seemingly Orca’s pool contracts impose a limitation on the minimum position size, this can be achieved at a very low cost of625 * dust * transaction fees:
+
+Recommended Mitigation Steps
+The maximum size of a PDA is 10KiBon creation, only slightly larger than the current allocated space of 10 KB. The Solana SDK does provide a method to resize a data account (source), but this functionality isn’t currently implemented in Solang (source).
+A potential solution to this issue is to use an externally created account as a data account, which can have a size limit of up to 10 MiB, as explained in thisStackExchange post.
+Alternatively, free up space byclearingthe aforementioned variables in storage for withdrawn positions.
+However, a more prudent security recommendation would be to leverage the Solana SDK directly, despite the potential need for contract reimplementation and the learning curve associated with Rust. The Solana SDK offers greater flexibility and is less likely to introduce unforeseen vulnerabilities. Solang, while a valuable tool, is still under active development and will usually lag behind the SDK, which could inadvertently introduce complexity and potential vulnerabilities due to compiler discrepancies.
+kupermind (Olas) confirmed

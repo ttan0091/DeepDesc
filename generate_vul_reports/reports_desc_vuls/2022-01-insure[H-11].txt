@@ -1,0 +1,17 @@
+Type of vulnerability: Arithmetic Error
+Cause of vulnerability: Incorrect calculation of the redeem amount due to a misplaced division operation, leading to overcompensation from index pools.
+Execution process: The function calculates the deduction from the index pools by first determining the share of each index pool's credit in relation to the total credit. However, the division operation is misplaced, causing an overestimation of the redeem amount for each index pool. This results in some pools being unfairly compensated or transactions reverting due to underflow.
+Vulnerable code: 
+```solidity
+uint256 _deductionFromIndex = (_debt * _totalCredit * MAGIC_SCALE_1E6) / totalLiquidity();
+uint256 _actualDeduction;
+for (uint256 i = 0; i < indexList.length; i++) {
+    address _index = indexList[i];
+    uint256 _credit = indicies[_index].credit;
+    if (_credit > 0) {
+        uint256 _shareOfIndex = (_credit * MAGIC_SCALE_1E6) / _totalCredit;
+        uint256 _redeemAmount = _divCeil(_deductionFromIndex, _shareOfIndex);
+        _actualDeduction += IIndexTemplate(_index).compensate(_redeemAmount);
+    }
+}
+```

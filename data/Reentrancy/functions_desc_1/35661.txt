@@ -1,0 +1,20 @@
+This code defines a smart contract named PreICOProxyBuyer, which manages investor balances and allows for refunds. Here’s a detailed explanation of how this contract works:
+
+1. Contract Structure and Variables:
+    The contract includes a public mapping balances that maps addresses to unsigned integers (uint). This mapping is used to store the balance of each investor.
+    The variable investor is initialized to msg.sender, which represents the address of the caller of the contract function. This variable is used to track the investor making the current transaction.
+
+2. Function refund:
+    This function is used to refund the balance of the investor.
+    The function starts by checking if the balance of the investor is zero using the condition if(balances[investor] == 0) throw;. If the balance is zero, the function throws an exception, which stops the execution of the function and reverts any state changes made so far.
+    If the balance is not zero, the function proceeds to retrieve the balance of the investor into a variable amount using uint amount = balances[investor];.
+    The balance of the investor is then set to zero using balances[investor] = 0;, effectively clearing their balance.
+    The function then attempts to send the amount of Ether back to the investor using the lowlevel call investor.call.value(amount)(). This call is used to send Ether to the investor's address. The call function is used here to forward all available gas, which is necessary for the call to potentially execute complex logic in the recipient's fallback function.
+    If the call fails (i.e., the recipient's fallback function throws an exception or runs out of gas), the function throws an exception using if(!(investor.call.value(amount)())) throw;. This ensures that if the refund fails, the state changes (specifically, the balance being set to zero) are reverted.
+
+Security Considerations:
+ The use of call.value() is prone to reentrancy attacks if not handled properly. In this code, the balance is set to zero before the call, which mitigates the risk of reentrancy. However, it's important to be aware of this potential issue, especially in more complex contracts.
+ The throw keyword is deprecated in newer versions of Solidity. It's recommended to use require, assert, or revert for better error handling and clarity.
+
+Conclusion:
+The PreICOProxyBuyer contract provides a basic mechanism for managing investor balances and refunding them. It uses a straightforward approach to handle refunds, ensuring that the investor's balance is cleared only after successfully sending the Ether back to them. However, careful consideration of security practices, especially around lowlevel calls and error handling, is crucial for maintaining the integrity and safety of the contract.

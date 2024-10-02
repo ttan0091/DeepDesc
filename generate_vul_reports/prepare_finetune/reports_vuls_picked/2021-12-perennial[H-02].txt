@@ -1,0 +1,25 @@
+Type of vulnerability: Oracle Price Staleness
+Cause of vulnerability: The `maintenanceInvariant` modifier uses an outdated oracle price if the oracle has not synced recently, leading to incorrect margin requirement checks.
+Execution process: A user calls the `withdrawTo` function to withdraw collateral. The `maintenanceInvariant` modifier checks the user's margin requirements using potentially outdated oracle prices, allowing the user to withdraw collateral from an undercollaterized position.
+Vulnerable code:
+```solidity
+function withdrawTo(address account, IProduct product, UFixed18 amount) notPaused collateralInvariant(msg.sender, product) maintenanceInvariant(msg.sender, product) external {
+    _products[product].debitAccount(msg.sender, amount);
+    token.push(account, amount);
+    emit Withdrawal(msg.sender, product, amount);
+}
+
+modifier maintenanceInvariant(address account, IProduct product) {
+    _;
+    UFixed18 maintenance = product.maintenance(account);
+    UFixed18 maintenanceNext = product.maintenanceNext(account);
+    if (UFixed18Lib.max(maintenance, maintenanceNext).gt(collateral(account, product)))
+        revert CollateralInsufficientCollateralError();
+}
+
+function maintenanceInternal(Position memory position, IProductProvider provider) private view returns (UFixed18) {
+    Fixed18 oraclePrice = provider.priceAtVersion(provider.currentVersion());
+    UFixed18 notionalMax = Fixed18Lib.from(position.max()).mul(oraclePrice).abs();
+    return notionalMax.mul(provider.maintenance());
+}
+```

@@ -1,0 +1,41 @@
+This code defines an external view function named getPriorVotes, which is used to retrieve the number of votes an account had at a specific block number. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    getPriorVotes(address account, uint blockNumber): This function takes two parameters:
+      account: The address of the account for which the prior votes are being queried.
+      blockNumber: The block number at which the votes are being queried.
+
+2. Return Type:
+    The function returns a uint256 value, which represents the number of votes the account had at the specified block number.
+
+3. Precondition Check:
+    require(blockNumber < block.number, "SUSHI::getPriorVotes: not yet determined");: This line ensures that the requested block number is in the past. If the requested block number is not yet determined (i.e., it is greater than or equal to the current block number), the function will revert with the error message "SUSHI::getPriorVotes: not yet determined".
+
+4. Checkpoints Initialization:
+    uint32 nCheckpoints = numCheckpoints[account];: This line retrieves the number of checkpoints for the specified account. Checkpoints are records that store the account's vote count at specific block numbers.
+
+5. Handling No Checkpoints:
+    if (nCheckpoints == 0) { return 0; }: If there are no checkpoints for the account, the function returns 0, indicating that the account had no votes at any block.
+
+6. Checking Most Recent Balance:
+    if (checkpoints[account][nCheckpoints  1].fromBlock <= blockNumber) { return checkpoints[account][nCheckpoints  1].votes; }: If the block number of the most recent checkpoint is less than or equal to the requested block number, the function returns the votes from that most recent checkpoint.
+
+7. Checking Implicit Zero Balance:
+    if (checkpoints[account][0].fromBlock > blockNumber) { return 0; }: If the block number of the earliest checkpoint is greater than the requested block number, the function returns 0, indicating that the account had no votes at the requested block number.
+
+8. Binary Search for Checkpoint:
+    The function then performs a binary search to find the checkpoint that corresponds to the requested block number. This is done using a while loop:
+      uint32 lower = 0;: Initializes the lower bound of the search range.
+      uint32 upper = nCheckpoints  1;: Initializes the upper bound of the search range.
+      The loop continues as long as upper is greater than lower.
+      uint32 center = upper  (upper  lower) / 2;: Calculates the center point of the search range, ensuring that the calculation avoids overflow and performs a ceiling operation.
+      Checkpoint memory cp = checkpoints[account][center];: Retrieves the checkpoint at the center point.
+      The function then compares the fromBlock of the center checkpoint with the requested block number:
+        If they are equal, the function returns the votes from that checkpoint.
+        If the fromBlock is less than the requested block number, the lower bound is updated to the center point.
+        If the fromBlock is greater than the requested block number, the upper bound is updated to the center point minus one.
+
+9. Returning the Result:
+    return checkpoints[account][lower].votes;: Once the loop exits, the function returns the votes from the checkpoint at the lower bound, which is the closest checkpoint to the requested block number.
+
+This function efficiently retrieves the number of votes an account had at a specific block number by leveraging checkpoints and a binary search algorithm, ensuring both accuracy and performance.

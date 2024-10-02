@@ -1,0 +1,11 @@
+Type of vulnerability: Unchecked Return Value of `call`
+
+Cause of vulnerability: The Solidity contract `GroupBuy` does not check the return value of the `call` function, which is used to transfer Ether to a recipient. This oversight can lead to the contract assuming that the Ether transfer was successful even if it was not, due to the recipient contract reverting its `receive` function.
+
+Execution process: When the `GroupBuy` contract attempts to transfer Ether using the `call` function to a recipient that is a smart contract, if the recipient's `receive` function reverts (e.g., due to insufficient liquidity or high slippage in an automatic conversion to another token), the `call` function itself does not revert. As a result, the `GroupBuy` contract incorrectly assumes the transfer was successful and proceeds to update its state (e.g., setting the balance to 0 or deleting user contributions), leading to a loss of funds for the intended recipient.
+
+Vulnerable code: 
+```solidity
+payable(msg.sender).call{value: contribution}("");
+payable(msg.sender).call{value: balance}("");
+```

@@ -1,0 +1,195 @@
+[H-01] An attacker can lock operator out of the pod by setting gas limit that’s higher than the block gas limit of dest chain
+Submitted by 0xA5DF, also found by 0x52
+HolographOperator.sol#L415
+When a beaming job is executed, there’s a requirement that the gas left would be at least as thegasLimitset by the user.
+Given that there’s no limit on thegasLimitthe user can set, a user can set thegasLimitto amount that’s higher than the block gas limit on the dest chain, causing the operator to fail to execute the job.
+Impact
+Operators would be locked out of the pod, unable to execute any more jobs and not being able to get back the bond they paid.
+The attacker would have to pay a value equivalent to the gas fee if that amount was realistic (i.e.gasPrice*gasLimitin dest chain native token), but this can be a relative low amount for Polygon and Avalanche chain (for Polygon that’s 20M gas limit and200 Gwei gas = 4 Matic, for Avalanche the block gas limit seems to be 8M and the price~30 nAVAX = 0.24 AVAX). Plus, the operator isn’t going to receive that amount.
+Proof of Concept
+The following test demonstrates this scenario:
+diff --git a/test/06_cross-chain_minting_tests_l1_l2.ts b/test/06_cross-chain_minting_tests_l1_l2.tsindex 1f2b959..a1a23b7 100644--- a/test/06_cross-chain_minting_tests_l1_l2.ts+++ b/test/06_cross-chain_minting_tests_l1_l2.ts@@ -276,6 +276,7 @@ describe('Testing cross-chain minting (L1 & L2)', async function () {gasLimit: TESTGASLIMIT,}));+        estimatedGas = BigNumber.from(50_000_000);// process.stdout.write('\n' + 'gas estimation: ' + estimatedGas.toNumber() + '\n');let payload: BytesLike = await l1.bridge.callStatic.getBridgeOutRequestPayload(@@ -303,7 +304,8 @@ describe('Testing cross-chain minting (L1 & L2)', async function () {'0x' + remove0x((await l1.operator.getMessagingModule()).toLowerCase()).repeat(2),payload);-+        estimatedGas = BigNumber.from(5_000_000);+process.stdout.write(' '.repeat(10) + 'expected lz gas to be ' + executeJobGas(payload, true).toString());await expect(adminCall(l2.mockLZEndpoint.connect(l2.lzEndpoint), l2.lzModule, 'lzReceive', [@@ -313,7 +315,7 @@ describe('Testing cross-chain minting (L1 & L2)', async function () {payload,{gasPrice: GASPRICE,-              gasLimit: executeJobGas(payload),+              gasLimit: 5_000_000,},]))
+The test would fail with the following output:
+1) Testing cross-chain minting (L1 & L2)Deploy cross-chain contracts via bridge deployhTokendeploy l1 equivalent on l2:VM Exception while processing transaction: revert HOLOGRAPH: not enough gas left
+Recommended Mitigation Steps
+Limit thegasLimitto the maximum realistic amount that can be used on the dest chain (including the gas used up to the point where it’s checked).
+ACC01ADE (Holograph) confirmed and commented:
+Good idea to generally limit the maximum gas allowed in an operator job.Feature/HOLO-604: implementing critical issue fixes
+
+[H-02] If user sets a lowgasPricethe operator would have to choose between being locked out of the pod or executing the job anyway
+Submitted by 0xA5DF, also found by cryptphi, Jeiwan, and Picodes
+HolographOperator.sol#L202-L340HolographOperator.sol#L593-L596LayerZeroModule.sol#L277-L294
+During the beaming process the user compensates the operator for the gas he has to pay by sending some source-chain-native-tokens viahToken.The amount he has to pay is determined according to thegasPriceset by the user, which is supposed to be the maximum gas price to be used on dest chain (therefore predicting the max gas fee the operator would pay and paying him the same value in src chain native tokens).However, in case the user sets a low price (as low as 1 wei) the operator can’t skip the job because he’s locked out of the pod till he executes the job.The operator would have to choose between loosing money by paying a higher gas fee than he’s compensated for or being locked out of the pod - not able to execute additional jobs or get back his bonded amount.
+Impact
+Operator would be losing money by having to pay gas fee that’s higher than the compensation (gas fee can be a few dozens of USD for heavy txs).This could also be used by attackers to make operators pay for the attackers’ expensive gas tasks:
+They can deploy their own contract as the ‘source contract’Use thebridgeInevent and thedatathat’s being sent to it to instruct the source contract what operations need to be executedThey can use it for execute operations where thetx.origindoesn’t matter (e.g. USDc gasless send)
+Proof of Concept
+An operator can’t execute any further jobs or leave the pod till the job is executed. Fromthe docs:
+When an operator is selected for a job, they are temporarily removed from the pod, until they complete the job. If an operator successfully finalizes a job, they earn a reward and are placed back into their selected pod.
+Operator can’t skip a job. Can’t prove a negative but that’s pretty clear from reading the code.There’s indeed a third option - that some other operator/user would execute the job instead of the selected operator, but a) the operator would get slashed for that. b) If the compensation is lower than the gas fee then other users have no incentive to execute it as well.
+Recommended Mitigation Steps
+Allow operator to opt out of executing the job if thegasPriceis higher than the current gas price.
+alexanderattar (Holograph) commented:
+Is a known issue, and we will be fixing it.
+alexanderattar (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes
+
+[H-03]  LayerZeroModule miscalculates gas, risking loss of assets
+Submitted by Trust
+LayerZeroModule.sol#L431-L445
+Holograph gets its cross chain messaging primitives through Layer Zero. To get pricing estimate, it uses the DstConfig price struct exposed in LZ’sRelayerV2.
+The issue is that the important baseGas and gasPerByte configuration parameters, which are used to calculate a custom amount of gas for the destination LZ message, use the values that come from thesourcechain. This is in contrast to LZ which handles DstConfigs in a mapping keyed by chainID.  The encoded gas amount is describedhere.
+Impact
+The impact is that when those fields are different between chains, one of two things may happen:
+Less severe - we waste excess gas, which is refunded to the lzReceive() caller (Layer Zero)More severe - we underprice the delivery cost, causing lzReceive() to revert and the NFT stuck in limbo forever.
+The code does not handle a failed lzReceive (differently to a failed executeJob). Therefore, no failure event is emitted and the NFT is screwed.
+Recommended Mitigation Steps
+Firstly, make sure to use the target gas costs.Secondly, re-engineer lzReceive to be fault-proof, i.e. save some gas to emit result event.
+gzeon (judge) commented:
+Might also cause the LZ channel to stuck#244.
+ACC01ADE (Holograph) disputed and commented:
+I respectfully disagree that this is even a valid issue.@Trust - please re-review the affected code. You’ll notice that we are in fact extracting destination chain gas data. And if you review the 100s of cross-chain testnet transactions that we have already made with that version of code, you will notice that the math is exact.Maybe I am misunderstanding something, so some clarification would be great if you think I’m wrong on this.
+Trust (warden) commented:
+Please take a look atLayerZeroModule.sol’s send function:function send(uint256, /* gasLimit*/uint256, /* gasPrice*/uint32 toChain,address msgSender,uint256 msgValue,bytes calldata crossChainPayload) external payable {require(msg.sender == address(_operator()), "HOLOGRAPH: operator only call");LayerZeroOverrides lZEndpoint;assembly {lZEndpoint := sload(_lZEndpointSlot)}// need to recalculate the gas amounts for LZ to deliver messagelZEndpoint.send{value: msgValue}(uint16(_interfaces().getChainId(ChainIdType.HOLOGRAPH, uint256(toChain), ChainIdType.LAYERZERO)),abi.encodePacked(address(this), address(this)),crossChainPayload,payable(msgSender),address(this),abi.encodePacked(uint16(1), uint256(_baseGas() + (crossChainPayload.length * _gasPerByte()))));}The function uses_baseGas()and_gasPerByte()as the relayer adapter parameters as described in the submission description’s link. These two getters are global for all chains.I agree that thegetMessage()function takes into account the correct fees for the destination chain.
+ACC01ADE (Holograph) commented:
+@Trust - Ya but these refer to destination gas limits. BaseGas and GasPerByte is the amount of gas that is used by thecrossChainMessagefunction that LayerZero triggers on cross-chain callHolographOperator.sol#L484
+ACC01ADE (Holograph) confirmed and commented:
+Discussed this in more detail with @Trust, definitely a critical issue.Need to add destination chain-specific_baseGasand_gasPerByteto mitigate EVM differences in opcode costs.
+alexanderattar (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes
+
+[H-04] An attacker can manipulate each pod and gain an advantage over the remainder Operators
+Submitted by eighty, also found by d3e4, eighty, Lambda, and eighty
+Incontracts/HolographOperator.sol#crossChainMessage, each Operator is selected by:
+Generating a random number (L499)A pod is selected by dividing the random with the total number of pods, and using the remainder (L503)An Operator of the selected pod is chosen using thesamerandom and dividing by the total number of operators (L511).
+This creates an unintended bias since the first criterion (therandom) is used for both selecting the pod and selecting the Operator, as explained in a previous issue (M001-Biased distribution). In this case, an attacker knowing this flaw can continuously monitor the contracts state and see the current number of pods and Operators. Accordingly to thedocumentationand providedflow:
+An Operator can easily join and leave a pod, albeit when leaving a small fee is paidAn Operator can only join one pod, but an attacker can control multiple OperatorsThe attacker can then enter and leave a pod to increase (unfairly) his odds of being selected for a job
+Honest Operators may feel compelled to leave the protocol if there are no financial incentives (and lose funds in the process), which can also increase the odds of leaving the end-users at the hands of a malicious Operator.
+Proof of Concept
+Consider the following simulation for 10 pods with a varying number of operators follows (X → “does not apply”):
+Pod nPon lenOp0Op1Op2Op3Op4Op5Op6Op7Op8Op9Total PodP010615000000000615P13203205207XXXXXXX615P26208023302070XXXX648P39616269706569616054X571P4430002920XXXXXX592P510000005860000586P626020XXXXXXXX602P77939310099767478XXX613P825860XXXXXXXX586P96019001890192XXXX571
+At this stage, an attacker Mallory joins the protocol and scans the protocol (or interacts with - e.g.getTotalPods,getPodOperatorsLength). As an example, after considering the potential benefits, she chooses podP9and sets up some bots[B1, B2, B3]. The number of Operators will determine the odds, so:
+Pod P9Alt lenOp0Op1Op2Op3Op4Op5Op6Op7Op8Op9Total PodP9A402760295XXXXXX571P9B50000571XXXXX571P96019001890192XXXX571P9C766778183879087XXX571P9D80127014701490148XX571
+And then:
+She waits for the next job to fall inP9and keeps an eye on the number of pods, since it could change the odds.After an Operator is selected (hepopsfrom the array), the number of available Operators change to 5, and the odds change toP9B.She deploysB1and it goes to positionOp5, odds back toP9. If the meantime the previously chosen Operator comes back to thepod, see the alternative timeline.She now has 1/3 of the probability to be chosen for the next job:
+4.1 If she is not chosen,she will assume the positionof the chosen Operator, and deploysB2to maintain the odds ofP9and controls 2/3 of the pod.
+4.2 If she is chosen, she chooses between employing another bot or waiting to execute the job to back to the pod (keeping the original odds).
+5. She can then iterate multiple times to swap to the remainder of possible indexes via step 4.1.
+Alternative timeline (from previous 3.):
+The chosen Operator finishes the job and goes back to the pod. Now there’s 7 members with uniform odds (P9C).Mallory deploysB2and the length grows to 8, the odds turn toP9Dand she now controls two of the four possible indexes from which she can be chosen.
+There are a lot of ramifications and possible outcomes that Mallory can manipulate to increase the odds of being selected in her favor.
+Recommended Mitigation Steps
+As stated inM001-Biased distribution, use two random numbers for pod and Operator selection. Ideally, an independent source for randomness should be used, but following the assumption that the one used inL499is safe enough, using the most significant bits (e.g.random >> 128) should guarantee an unbiased distribution. Also, reading theEIP-4399could be valuable.
+Additionally, since randomness in blockchain is always tricky to achieve without an oracle provider, consider adding additional controls (e.g. waiting times before joining each pod) to increase the difficulty of manipulating the protocol.
+And finally, in this particular case, removing the swapping mechanism (moving the last index to the chosen operator’s current index) for another mechanism (shifting could also create conflictswith backup operators?) could also increase the difficulty of manipulating a particular pod.
+gzeon (judge) commented:
+Considering this as duplicate of#169since they share the same root cause.
+ACC01ADE (Holograph) confirmed and commented:
+Really love this analysis!
+gzeon (judge) commented:
+Judging this as high risk due to possible manipulation.
+Trust (warden) commented:
+Agree this is a high severity find. Believe issue#167and this one are essentially different exploits of the same flaw and therefore should be bulked.Relevant org discussionhere.
+gzeon (judge) commented:
+Agreed.
+
+[H-05] MEV: Operator can bribe miner and steal honest operator’s bond amount if gas price went high
+Submitted by Trust
+HolographOperator.sol#L354
+Operators in Holograph do their job by calling executeJob() with the bridged in bytes from source chain.If the primary job operator did not execute the job during his allocated block slot, he is punished by taking a single bond amount and transfer it to the operator doing it instead.The docs and code state that if there was a gas spike in the operator’s slot, he shall not be punished. The way a gas spike is checked is with this code in executeJob:
+require(gasPrice >= tx.gasprice, "HOLOGRAPH: gas spike detected");
+However, there is still a way for operator to claim primary operator’s bond amount although gas price is high. Attacker can submit a flashbots bundle including the executeJob() transaction, and one additional “bribe” transaction. The bribe transaction will transfer some incentive amount to coinbase address (miner), while the executeJob is submitted with a low gasprice. Miner will accept this bundle as it is overall rewarding enough for them, and attacker will receive the base bond amount from victim operator. This threat is not theoretical because every block we see MEV bots squeezing value from such opportunities.
+info about coinbasetransferinfo about bundleselection
+Impact
+Dishonest operator can take honest operator’s bond amount although gas price is above acceptable limits.
+Tools Used
+Manual audit, flashbot docs
+Recommended Mitigation Steps
+Do not use current tx.gasprice amount to infer gas price in a previous block.Probably best to use gas price oracle.
+gzeon (judge) commented:
+Note that this is not possible with 1559 due to block base fee, but might be possible in some other chain.
+alexanderattar (Holograph) disputed and commented:
+EIP-1559 does not allow for tx gas less than block base fee
+Trust (warden) commented:
+Dispute: it is incorrect to assume bridge request sender did not add a priority fee, making it possible to bribe withtx.gasprice < gasPrice.Also, cannot assume all chains in the multichain implement EIP1559.
+ACC01ADE (Holograph) commented:
+The EIP-1559 for all EVM chains assumption is the gotcha here. I don’t really see a solution for this at the moment. 🤔
+
+[H-06] Gas price spikes cause the selected operator to be vulnerable to frontrunning and be slashed
+Submitted by Chom, also found by Lambda and Trust
+HolographOperator.sol#L354
+require(gasPrice>=tx.gasprice,"HOLOGRAPH: gas spike detected");
+/***@devselect operator that failed to do the job, is slashed the pod base fee*/_bondedAmounts[job.operator] -=amount;/***@devthe slashed amount is sent to current operator*/_bondedAmounts[msg.sender] +=amount;
+Since you have designed a mechanism to prevent other operators to slash the operator due to “the selected missed the time slot due to a gas spike”. It can induce that operators won’t perform their job if a gas price spike happens due to negative profit.
+But your designed mechanism has a vulnerability. Other operators can submit their transaction to the mempool and queue it usinggasPrice in bridgeInRequestPayload. It may get executed before the selected operator as the selected operator is waiting for the gas price to drop but doesn’t submit any transaction yet. If it doesn’t, these operators lose a little gas fee. But a slashed reward may be greater than the risk of losing a little gas fee.
+require(timeDifference>0,"HOLOGRAPH: operator has time");
+Once 1 epoch has passed, selected operator is vulnerable to slashing and frontrunning.
+Recommended Mitigation Steps
+Modify your operator node software to queue transactions immediately withgasPrice in bridgeInRequestPayloadif a gas price spike happened. Or allow gas fee loss tradeoff to prevent being slashed.
+alexanderattar (Holograph) confirmed and commented:
+Valid, we have not fully finalized this mechanism and will consider mitigation strategies.
+gzeon (judge) increased severity to High and commented:
+High risk because potential slashing.
+
+[H-07] Failed job can’t be recovered. NFT may be lost.
+Submitted by Chom, also found by 0x52, 0xA5DF, adriro, and ladboy233
+HolographOperator.sol#L329HolographOperator.sol#L419-L429
+functionexecuteJob(bytescalldatabridgeInRequestPayload)externalpayable{...delete_operatorJobs[hash];...tryHolographOperatorInterface(address(this)).nonRevertingBridgeCall{value:msg.value}(msg.sender,bridgeInRequestPayload){/// @dev do nothing}catch{_failedJobs[hash] =true;emitFailedOperatorJob(hash);}}
+First, it willdelete _operatorJobs[hash];to have it not replayable.
+Next, assumenonRevertingBridgeCallfailed. NFT won’t be minted and the catch block is entered.
+_failedJobs[hash]is set to true and event is emitted
+Notice that_operatorJobs[hash]has been deleted, so this job is not replayable. This mean NFT is lost forever since we can’t retry executeJob.
+Recommended Mitigation Steps
+Movedelete _operatorJobs[hash];to the end of function executeJob covered inif (!_failedJobs[hash])
+...if(!_failedJobs[hash])delete_operatorJobs[hash];...
+But this implementation is not safe. The selected operator may get slashed. Additionally, you may need to check_failedJobsflag to allow retry for only the selected operator.
+gzeon (judge) commented:
+While the use of non-blocking call is good to unstuck operator, consider making the failed job still executable by anyone (so the user can e.g. use a higher gas limit) to avoid lost fund. Kinda like how Arbitrum retryable ticket works. Can be high risk due to asset lost.
+Trust (warden) commented:
+I think it’s a design choice to make it not replayable. Sponsor discussed having a refund mechanism at the source chain, if we were to leave it replayable the refunding could lead to double mint attack.
+alexanderattar (Holograph) commented:
+This is a valid point and the desired code is planned but wasn’t implemented in time for the audit. We will add logic to handle this case.
+gzeon (judge) increased severity to High and commented:
+Since asset can be lost, I think it is fair to judge this as High risk.
+alexanderattar (Holograph) resolved and commented:
+We have a fix for this:https://github.com/holographxyz/holograph-protocol/pull/98/files#diff-552f4c851fa3089f9c8efd33a2f10681bc27743917bb63000a5d19d5b41e0d3f
+
+[H-08] Gas limit check is inaccurate, leading to an operator being able to fail a job intentionally
+Submitted by 0xA5DF, also found by Trust and V_B
+HolographOperator.sol#L316
+There’s a check at line 316 that verifies that there’s enough gas left to execute theHolographBridge.bridgeInRequest()with thegasLimitset by the user, however the actual amount of gas left during the call is less than that (mainly due to the1/64rule, see below).An attacker can use that gap to fail the job while still having theexecuteJob()function complete.
+Impact
+The owner of the bridged token would loose access to the token since the job failed.
+Proof of Concept
+Besides using a few units of gas between the check and the actual call, there’s also a rule that only 63/64 of the remaining gas would be dedicated to an (external) function call. Since there are 2 external function calls done (nonRevertingBridgeCall()and the actual call to the bridge)~2/64of the gas isn’t sent to the bridge call and can be used after the bridge call runs out of gas.
+The following PoC shows that if the amount of gas left before the call is at least 1 million then the execution can continue after the bridge call fails:
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.0;import"forge-std/Test.sol";contractContractTestisTest{eventFailedOperatorJob(bytes32jobHash);uint256private_inboundMessageCounter;mapping(bytes32=>bool)private_failedJobs;constructor(){_inboundMessageCounter=5;}functiontestGas64()public{this.entryPoint{gas:1000000}();}Bridgebridge=newBridge();eventGasLeftAfterFail(uintleft);functionentryPoint()public{console2.log("Gas left before call: ",gasleft());bytes32hash=0x987744358512a04274ccfb3d9649da3c116cd6b19c535e633ef8529a80cb06a0;trythis.intermediate(){}catch{// check out how much gas is left after the call to the bridge failedconsole2.log("Gas left after failure: ",gasleft());// simulate operations done after failure_failedJobs[hash] =true;emitFailedOperatorJob(hash);}++_inboundMessageCounter;console2.log("Gas left at end: ",gasleft());}functionintermediate()public{bridge.bridgeCall();}}contractBridge{eventDone(uintgasLeft);uint256[]myArr;functionbridgeCall()public{for(uinti=1;i<=100;i++){myArr.push(i);}// this line would never be reached, we'll be out of gas beforehandemitDone(gasleft());}}
+Output of PoC:
+Gas left before call:  999772Gas left after failure:  30672Gas left at end:  1628
+Side note: due to some bug in forge_inboundMessageCounterwould be considered warm even though it’s not necessarily the case. However in a real world scenario we can warm it up if the selected operator is a contract and we’er using another operator contract to execute a job in the same tx beforehand.
+Reference for the1/64rule -EIP-150. Also check outevm.codes.
+Recommended Mitigation Steps
+Modify the required amount of gas left to gasLimit + any amount of gas spent before reaching thecall(), then multiply it by32/30to mitigate the1/64rule (+ some margin of safety maybe).
+gzeon (judge) commented:
+There are some risks but would require the nested call gas limit to be pretty high (e.g. 1m used in the poc) to have enough gas (1/64) left afterward so that it doesn’t revert due to out-of-gas.
+Trust (warden) commented:
+@gzeon - actually this is not a limitation. When the call argument passes a gaslimit which is lower than the available gas, it instantly reverts with no gas wasted. Therefore we will have64/64of the gas amount to work with post-revert.I have explained this in duplicate report#437.
+0xA5DF (warden) commented:
+When the call argument passes a gaslimit which is lower than the available gas, it instantly reverts with no gas wasted.You meanhigherthan the available gas?I thought the same, but doing some testing and reading the Yellow Paper it turns out it wouldn’t revert just because the gas parameter is higher than the available gas.You can modify the PoC above to test that too.
+Trust (warden) commented:
+You can check this example in Remix:contract Storage {/*** @dev Return value* @return value of 'number'*/function gas_poc() public  returns (uint256, uint256){uint256 left_gas = gasleft();address this_address = address(this);assembly {let result := call(/// @dev gas limit is retrieved from last 32 bytes of payload in-memory valueleft_gas,/// @dev destination is bridge contractthis_address,/// @dev any value is passed along0,/// @dev data is retrieved from 0 index memory position0,/// @dev everything except for last 32 bytes (gas limit) is sent0,0,0)}uint256 after_left_gas = gasleft();return (left_gas, after_left_gas);}fallback() external {}}We pass a lower gas limit than what we have in the “call” opcode, which reverts.The function returns{"0": "uint256: 3787","1": "uint256: 3579"}Meaning only the gas consumed by the call opcode was deducted, not 63/64.
+0xA5DF (warden) commented:
+In your example the fallback function is actually being called, it’s just doesn’t use much gas, I’ve added an event to confirm that:contractStorage{eventCool();/***@devReturn value*@returnvalue of 'number'*/functiongas_poc()publicreturns(uint256,uint256){uint256left_gas=gasleft();addressthis_address=address(this);assembly{letresult:=call(/// @dev gas limit is retrieved from last 32 bytes of payload in-memory valueleft_gas,/// @dev destination is bridge contractthis_address,/// @dev any value is passed along0,/// @dev data is retrieved from 0 index memory position0,/// @dev everything except for last 32 bytes (gas limit) is sent0,0,0)}uint256after_left_gas=gasleft();return(left_gas,after_left_gas);}fallback()external{emitCool();}}Output:
+gzeon (judge) commented:
+A child call can never use more than 63/64 of gasleft post eip-150.
+Trust (warden) commented:
+@0xA5DF - Yeah , it seems my setup when I tested this during the contest was wrong, because it instantly reverted in the CALL opcode.Page 37 of the Yellow book describes the GASCAP as minimum of gasLeft input and current gas counter minus costs:Thanks for the good direct counterexample.@gzeon - Right, we were discussing if call to child will instantly revert becauserequestedGas > availableGas, but it doesn’t.
+gzeon (judge) commented:
+That’s true, and the code also doesn’t forward a limited amount of gas explicitly too.
+Trust (warden) commented:
+The point was that executor can always craft supplied gas to the contract, so that during the CALL opcode, gas left would be smaller than requested gas limit. If EVM behavior reverts in this check, we have deterministic failing ofbridgeIn.
+alexanderattar (Holograph) confirmed and commented:
+Nice find! Gas limit sent by operator could be used maliciously to ensure that job fails. This will be updated to mitigate the issue observed.
+ACC01ADE (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes
+

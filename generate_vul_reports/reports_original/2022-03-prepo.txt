@@ -1,0 +1,52 @@
+[H-01] Strategy Migration May Leave Tokens in the Old Strategy Impacting Share Calculations
+Submitted by kirk-baird
+If a strategy does not have sufficient funds towithdraw()for the full amount then it is possible that tokens will be left in this yield contract duringmigrate().
+It is common for withdrawal from a strategy to withdraw less than a user’s balance. The reason is that these yield protocols may lend the deposited funds to borrowers, if there is less funds in the pool than the withdrawal amount the withdrawal may succeed but only transfer the funds available rather than the full withdrawal amount.
+The impact of tokens remaining in the old strategy is that when we callStrategyController.totalValue()this will only account for the tokens deposited in the new strategy and not those stuck in the previous strategy. ThereforetotalValue()is undervalued.
+Thus, when a user callsCollateral.deposit()the share calculations_shares = (_amountToDeposit * totalSupply()) / (_valueBefore);will be over stated (note:uint256 _valueBefore = _strategyController.totalValue();). Hence, the user will receive more shares than they should.
+The old tokens may be recovered by callingmigrate()back to the old strategy. If this is done thentotalValue()will now include the tokens previously stuck. The recent depositer may now withdraw and will be owed(_strategyController.totalValue() * _amount) / totalSupply(). SincetotalValue()is now includes the previously stuck tokens_owedwill be overstated and the user will receive more collateral than they should.
+The remaining users who had deposited beforemigrate()will lose tokens proportional to their share of thetotalSupply().
+Proof of Concept
+SingleStrategyController.sol#L51-L72
+function migrate(IStrategy _newStrategy)externaloverrideonlyOwnernonReentrant{uint256 _oldStrategyBalance;IStrategy _oldStrategy = _strategy;_strategy = _newStrategy;_baseToken.approve(address(_newStrategy), type(uint256).max);if (address(_oldStrategy) != address(0)) {_baseToken.approve(address(_oldStrategy), 0);_oldStrategyBalance = _oldStrategy.totalValue();_oldStrategy.withdraw(address(this), _oldStrategyBalance);_newStrategy.deposit(_baseToken.balanceOf(address(this)));}emit StrategyMigrated(address(_oldStrategy),address(_newStrategy),_oldStrategyBalance);}
+Recommended Mitigation Steps
+The recommendation is to ensure thatrequire(_oldStrategy.totalValue() == 0)after calling_oldStrategy.withdraw(). This ensures that no funds are left in the strategy. Consider the code example below.
+function migrate(IStrategy _newStrategy)externaloverrideonlyOwnernonReentrant{uint256 _oldStrategyBalance;IStrategy _oldStrategy = _strategy;_strategy = _newStrategy;_baseToken.approve(address(_newStrategy), type(uint256).max);if (address(_oldStrategy) != address(0)) {_baseToken.approve(address(_oldStrategy), 0);_oldStrategyBalance = _oldStrategy.totalValue();_oldStrategy.withdraw(address(this), _oldStrategyBalance);require(_oldStrategy.totalValue() == 0)_newStrategy.deposit(_baseToken.balanceOf(address(this)));}emit StrategyMigrated(address(_oldStrategy),address(_newStrategy),_oldStrategyBalance);}
+ramenforbreakfast (prePO) confirmed and commented:
+This is a valid claim, although it is an edge case. I will maintain the severity of this issue as is. Should consider removing a fixed migration procedure altogether as this issue demonstrates one of the many problems that can occur.
+gzeon (judge) commented:
+Agree with sponsor.
+
+[H-02] First depositor can break minting of shares
+Submitted by GreyArt, also found by 0xDjango, CertoraInc, cmichel, rayn, TomFrenchBlockchain, and WatchPug
+Collateral.sol#L82-L91
+The attack vector and impact is the same asTOB-YEARN-003, where users may not receive shares in exchange for their deposits if the total asset amount has been manipulated through a large “donation”.
+Proof of Concept
+Attacker deposits 2 wei (so that it is greater than min fee) to mint 1 shareAttacker transfers exorbitant amount to_strategyControllerto greatly inflate the share’s price. Note that the_strategyControllerdeposits its entire balance to the strategy when itsdeposit()function is called.Subsequent depositors instead have to deposit an equivalent sum to avoid minting 0 shares. Otherwise, their deposits accrue to the attacker who holds the only share.
+it("will cause 0 share issuance",async()=>{// 1. first user deposits 2 wei because 1 wei will be deducted for feeletfirstDepositAmount=ethers.BigNumber.from(2)awaittransferAndApproveForDeposit(user,collateral.address,firstDepositAmount)awaitcollateral.connect(user).deposit(firstDepositAmount)// 2. do huge transfer of 1M to strategy to controller// to greatly inflate share priceawaitbaseToken.transfer(strategyController.address,ethers.utils.parseEther("1000000"));// 3. deployer tries to deposit reasonable amount of 10_000letsubsequentDepositAmount=ethers.utils.parseEther("10000");awaittransferAndApproveForDeposit(deployer,collateral.address,subsequentDepositAmount)awaitcollateral.connect(deployer).deposit(subsequentDepositAmount)// receives 0 shares in returnexpect(awaitcollateral.balanceOf(deployer.address)).to.be.eq(0)});
+Recommended Mitigation Steps
+Uniswap V2 solved this problem by sending the first 1000 LP tokens to the zero address. The same can be done in this case i.e. whentotalSupply() == 0, send the first min liquidity LP tokens to the zero address to enable share dilution.Ensure the number of shares to be minted is non-zero:require(_shares != 0, "zero shares minted");Create a periphery contract that contains a wrapper function that atomically callsinitialize()anddeposit()Calldeposit()once ininitialize()to achieve the same effect as the suggestion above.
+ramenforbreakfast (prePO) confirmed and commented:
+Valid submission, good explanation of the problem and nice to see it being demonstrated via a test case block.
+gzeon (judge) commented:
+Agree with sponsor.
+
+[H-03] Withdrawal delay can be circumvented
+Submitted by cmichel, also found by IllIllI and leastwood
+Collateral.sol#L97
+After initiating a withdrawal withinitiateWithdrawal, it’s still possible to transfer the collateral tokens.
+This can be used to create a second account, transfer the accounts to them and initiate withdrawals at a different time frame such that one of the accounts is always in a valid withdrawal window, no matter what time it is.
+If the token owner now wants to withdraw they just transfer the funds to the account that is currently in a valid withdrawal window.
+Also, note that each account can withdraw the specifiedamount. Creating several accounts and circling & initiating withdrawals with all of them allows withdrawing larger amountseven at the same blockas they are purchased in the future.
+I consider this high severity because it breaks core functionality of the Collateral token.
+Proof of Concept
+For example, assume the_delayedWithdrawalExpiry = 20blocks. Account A owns 1000 collateral tokens, they create a second account B.
+Atblock=0, A callsinitiateWithdrawal(1000). They send their balance to account B.Atblock=10, B callsinitiateWithdrawal(1000). They send their balance to account A.They repeat these steps, alternating the withdrawal initiation every 10 blocks.One of the accounts is always in a valid withdrawal window (initiationBlock < block && block <= initiationBlock + 20). They can withdraw their funds at any time.
+Recommended Mitigation Steps
+If there’s a withdrawal request for the token owner (_accountToWithdrawalRequest[owner].blockNumber > 0), disable their transfers for the time.
+// pseudo-code not testedbeforeTransfer(from,to,amount) {super();uint256withdrawalStart=_accountToWithdrawalRequest[from].blockNumber;if(withdrawalStart>0&&withdrawalStart+_delayedWithdrawalExpiry<block.number) {revert();// still in withdrawal window}}
+ramenforbreakfast (prePO) commented:
+This is a valid claim.
+gzeon (judge) commented:
+Agree with sponsor.
+

@@ -1,0 +1,13 @@
+[H-02] Wrong implementation ofwithdrawAdminFees()can cause theadminFeesto be charged multiple times and therefore cause users’ fund loss
+Submitted by WatchPug
+SwapUtils.sol#L1053-L1062
+functionwithdrawAdminFees(Swapstorageself,addressto)internal{IERC20[]memorypooledTokens=self.pooledTokens;for(uint256i=0;i<pooledTokens.length;i++) {IERC20token=pooledTokens[i];uint256balance=self.adminFees[i];if(balance!=0) {token.safeTransfer(to,balance);}}}
+self.adminFees[i]should be reset to 0 every time it’s withdrawn. Otherwise, theadminFeescan be withdrawn multiple times.
+The admin may just be unaware of this issue and casualtywithdrawAdminFees()from time to time, and rug all the users slowly.
+Recommended Mitigation Steps
+Change to:
+functionwithdrawAdminFees(Swapstorageself,addressto)internal{IERC20[]memorypooledTokens=self.pooledTokens;for(uint256i=0;i<pooledTokens.length;i++) {IERC20token=pooledTokens[i];uint256balance=self.adminFees[i];if(balance!=0) {self.adminFees[i] =0;token.safeTransfer(to,balance);}}}
+LayneHaber (Connext) confirmed and resolved:
+connext/nxtp@8eef974
+0xleastwood (judge) commented:
+Completely agree with the validity of this finding. Even if the admin wasnotmalicious, the bug will still continue to withdraw additional fees which were not included as part of the swap calculations. LPs would lose considerable value as a result.

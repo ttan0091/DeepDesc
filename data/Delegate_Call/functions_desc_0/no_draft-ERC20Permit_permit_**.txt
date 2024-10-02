@@ -1,0 +1,30 @@
+This code defines a public function named permit, which is part of the ERC20Permit extension of the ERC20 token standard. This function allows an owner to grant an allowance to a spender without the need for the owner to directly call the approve function. Instead, the owner signs a message offchain that the spender can use to execute the approval onchain.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting the allowance.
+    spender: The address of the spender who is being granted the allowance.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which the permit is no longer valid.
+    v, r, s: The components of the ECDSA signature produced by the owner.
+
+2. Deadline Check:
+    The function starts by checking if the current block timestamp is less than or equal to the deadline. If the deadline has passed, the function reverts with the message "ERC20Permit: expired deadline".
+
+3. Struct Hash Calculation:
+    The function then calculates a hash of the permit data using the keccak256 hashing function. This includes the permit typehash (a constant defined elsewhere in the contract), the owner, spender, value, a nonce for the owner (retrieved using _useNonce(owner)), and the deadline.
+
+4. Typed Data Hash Calculation:
+    The function calls _hashTypedDataV4 with the struct hash to produce a typed data hash. This step is part of the EIP712 standard, which provides a way to hash and sign structured data.
+
+5. Signature Recovery:
+    The function uses the ECDSA.recover function to recover the address of the signer from the typed data hash and the signature components (v, r, s). This recovered address is the address that signed the original permit message.
+
+6. Signature Validation:
+    The function checks if the recovered signer address matches the owner address. If they do not match, the function reverts with the message "ERC20Permit: invalid signature".
+
+7. Approval Execution:
+    If all checks pass, the function calls the internal _approve function to set the allowance for the spender to value tokens on behalf of the owner.
+
+This function leverages offchain signatures to enable gasless token approvals, which can be particularly useful in scenarios where the owner cannot or does not want to execute a transaction onchain. This is common in decentralized applications where users might interact with the blockchain through a wallet that does not support direct onchain transactions.

@@ -1,0 +1,15 @@
+Type of vulnerability: Rounding Issues
+Cause of vulnerability: Incorrect rounding direction in the `previewWithdraw` function due to the reliance on the `convertToShares` function which rounds down.
+Execution process: When the `previewWithdraw` function is called, it uses the result from the `convertToShares` function which rounds down the number of shares, leading to a rounded down value instead of the expected rounded up value.
+Vulnerable code: 
+```solidity
+function previewWithdraw(uint256 assets) public view override returns (uint256 shares) {
+    if (hasMatured()) {
+        shares = convertToShares(assets);
+    } else {
+        // If withdrawing non-matured assets, we sell them on the market (i.e. borrow)
+        (uint16 currencyId, uint40 maturity) = getDecodedID();
+        (shares, /* */, /* */) = NotionalV2.getfCashBorrowFromPrincipal(currencyId, assets, maturity, 0, block.timestamp, true);
+    }
+}
+```

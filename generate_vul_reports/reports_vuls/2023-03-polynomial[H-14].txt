@@ -1,0 +1,23 @@
+[H-14] Inexpedient liquidatable logic that could have half liquidable position turns fully liquidable instantly
+Submitted byRaymondFam, also found byJosiah
+In ShortCollateral.sol, the slash logic ofmaxLiquidatableDebt()is specifically too harsh to the barely unhealthy positions becausemaxDebtwill be half of the position to be liquidated if0.95e18 <= safetyRatio <= 1e18.
+Additionally, once a position turns liquidatable, the position is deemed fully liquidatable atomically in two repeated transactions.
+Proof of Concept
+Supposing we resort to the following setup as denoted inShortCollateral.t.sol(#L21-L23):
+collRatio = 1.5e18liqRatio = 1.3e18liqBonus = 1e17
+Collateral ratio of a position,x = (position.collateralAmount * collateralPrice) / (position.shortAmount * markPrice)
+File:ShortCollateral.sol#L230-L239
+uint256safetyRatioNumerator=position.collateralAmount.mulWadDown(collateralPrice);uint256safetyRatioDenominator=position.shortAmount.mulWadDown(markPrice);safetyRatioDenominator=safetyRatioDenominator.mulWadDown(collateral.liqRatio);uint256safetyRatio=safetyRatioNumerator.divWadDown(safetyRatioDenominator);if(safetyRatio>1e18)returnmaxDebt;maxDebt=position.shortAmount/2;if(safetyRatio<WIPEOUT_CUTOFF)maxDebt=position.shortAmount;
+According to the code block above withliqRatiofactored in:
+In order to avoid being liquidated, a position will need to have a collateral ratio,x > 1.3e18so thatsafetyRatio > (1.3 / 1.3)e18which issafetyRatio > 1e18.
+The position will be half liquidated if its associated collateral ratio falls in the range of1.235e18 <= x <= 1.3e18. To avoid full liquidation, the condition at the lower end will need to besafetyRatio >= (1.235 / 1.3)e18which issafetyRatio >= 0.95e18.
+The position will be fully liquidated ifx < 1.235e18.
+Here is the unforgiving scenario:
+Bob has a short position whose collateral ratio happens to be 1.3e18.Bob’s position gets half liquidated the first round ending up with a collateral ratio, x (Note: The numerator is multiplied by 0.45 because of the additional 10%liqBonusadded to the one half collateral slashed:(1.3 * 0.45 / 0.5)e18 = 1.17e18Immediately, Bob’s position becomes fully liquidatable becausex < 1.235e18.
+Recommended Mitigation Steps
+Consider restructuring the slashing logic such that the position turns healthy after being partially liquidated, instead of making it spiral down to the drain.
+Dravee (judge) commented:
+Not a duplicate ofhttps://github.com/code-423n4/2023-03-polynomial-findings/issues/146
+mubaris (Polynomial) confirmed
+rivalq (Polynomial) confirmed and commented:
+Depending upon the collateral and its collateral ratio etc, that spiral of liquidation may happen.

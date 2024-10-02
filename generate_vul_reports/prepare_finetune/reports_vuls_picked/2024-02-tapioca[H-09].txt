@@ -1,0 +1,19 @@
+Type of vulnerability: Reentrancy and Logic Error
+Cause of vulnerability: Incorrect handling of `srcChainSender` in composed messages, leading to unauthorized token transfers.
+Execution process:
+1. Attacker initiates a compose call on chain A with the victim as the owner of funds and a zero amount to transfer.
+2. The compose call succeeds on chain B, allowing the transfer of zero tokens.
+3. A subsequent compose message is included, transferring all tokens from the victim to the attacker on chain B.
+4. The `srcChainSender` is incorrectly set to the victim, bypassing the allowance check on the next compose call on chain A.
+5. Funds are stolen and transferred to the attacker's address on chain B.
+
+Vulnerable code:
+```solidity
+function encode(bytes32 _sendTo, uint64 _amountShared, bytes memory _composeMsg) internal view returns(bytes memory _msg, bool hasCompose) {
+    hasCompose = _composeMsg.length > 0;
+    // @dev Remote chains will want to know the composed function caller ie. msg.sender on the src.
+    _msg = hasCompose ? abi.encodePacked(_sendTo, _amountShared, addressToBytes32(msg.sender), _composeMsg) : abi.encodePacked(_sendTo, _amountShared);
+}
+
+function _internalRemoteTransferSendPacket(_srcChainSender, remoteTransferMsg_.lzSendParam, remoteTransferMsg_.composeMsg);
+```

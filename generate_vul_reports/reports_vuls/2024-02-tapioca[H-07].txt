@@ -1,0 +1,28 @@
+[H-07] Incorrect math meansdata.removeAndRepayData.removeAssetFromSGLwill never work once SGL has accrued interest
+Submitted byGalloDaSballo, also found byKIntern_NAandbin2chen
+The code to remove shares from Singularity is as follows:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/modules/MagnetarOptionModule.sol#L158-L159
+singularity_.removeAsset(data.user,removeAssetTo,share);
+Whereshareis computed in this way:
+https://github.com/Tapioca-DAO/tapioca-periph/blob/2ddbcb1cde03b548e13421b2dba66435d2ac8eb5/contracts/Magnetar/modules/MagnetarOptionModule.sol#L153
+uint256share=yieldBox_.toShare(_assetId,_removeAmount,false);
+The line is calculating: The (incorrectly rounded down) amount of shares of Yieldbox to burn in order to withdraw from Yieldbox the_removeAmount.
+But the code is calling:
+singularity_.removeAsset(data.user, removeAssetTo, share);
+This is asking Singularity to remove a % (part) of the total assets in Singularity. Due to this, the line will stop working as soon as singularity has had any operation that generated interest.
+Proof of Concept
+Please see the formula used by Singularity for pricing asset:
+https://github.com/Tapioca-DAO/Tapioca-bar/blob/c2031ac2e2667ac8f9ac48eaedae3dd52abef559/contracts/markets/singularity/SGLCommon.sol#L199-L216
+function_removeAsset(addressfrom,addressto,uint256fraction)internalreturns(uint256share) {if(totalAsset.base==0) {return0;}Rebasememory_totalAsset=totalAsset;uint256allShare=_totalAsset.elastic+yieldBox.toShare(assetId,totalBorrow.elastic,false);share= (fraction*allShare) /_totalAsset.base;}
+As you can see, thefractionwill be computed against_totalAsset.elastic + yieldBox.toShare(assetId, totalBorrow.elastic, false);. Meaning that the math will be incorrect as soon as any operation is done in Singularity
+Coded POC
+This Poc is built on the public repo:https://github.com/GalloDaSballo/yieldbox-foundry
+We show how a change in interest will changefraction. In my local testing,fractionandsharesare already out of sync. However, due to decimals it may be possible for them to be the same value, until some interest will makeborrowElasticgrow.
+Logs
+[PASS] testSingularityRebasedMathIsNotYieldbox() (gas: 34810)Logs:fraction 999999990000000099999share 100000000000000000000000000000[PASS] testSingularityRebasedMathIsNotYieldboxAfterInterest() (gas: 34756)Logs:fraction 666666662222222251851share 100000000000000000000000000000
+Code
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.0;import{Test}from"forge-std/Test.sol";import{console2}from"forge-std/console2.sol";import{TargetFunctions}from"./TargetFunctions.sol";import{FoundryAsserts}from"@chimera/FoundryAsserts.sol";contractCryticToFoundryisTest,TargetFunctions,FoundryAsserts{functionsetUp()public{setup();}functiontestSingularityRebasedMathIsNotYieldbox()public{uint256amountToRepay=1000e18;uint256totalAssetShares=2000e18;uint256totalAssetBase=2000e18;uint256totalBorrowElastic=2000e18;uint256share=yieldBox.toShare(assetId,amountToRepay,false);uint256allShare=totalAssetShares+yieldBox.toShare(assetId,totalBorrowElastic,true);uint256fraction=allShare==0?share: (share*totalAssetBase) /allShare;console2.log("fraction",fraction);console2.log("share",share);}functiontestSingularityRebasedMathIsNotYieldboxAfterInterest()public{uint256amountToRepay=1000e18;uint256totalAssetShares=2000e18;uint256totalAssetBase=2000e18;uint256totalBorrowElastic=3000e18;// NOTE: Higher cause of interestuint256share=yieldBox.toShare(assetId,amountToRepay,false);uint256allShare=totalAssetShares+yieldBox.toShare(assetId,totalBorrowElastic,true);uint256fraction=allShare==0?share: (share*totalAssetBase) /allShare;console2.log("fraction",fraction);console2.log("share",share);}}
+Mitigation
+The unused functiongetFractionForAmountshould help, minus some possible rounding considerations.
+cryptotechmaker (Tapioca) confirmed, but disagreed with severity and commented via duplicate Issue #159:
+PRhere.

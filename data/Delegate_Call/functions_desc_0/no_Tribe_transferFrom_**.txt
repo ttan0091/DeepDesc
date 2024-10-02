@@ -1,0 +1,37 @@
+This code defines an external function named transferFrom, which is used to transfer tokens from one address to another on behalf of the token owner. This function is typically used in the context of an ERC20 token contract to allow a third party (the spender) to transfer tokens from the owner's account to a destination account, provided the owner has previously approved the spender to do so.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    transferFrom(address src, address dst, uint rawAmount) external returns (bool): This function takes three parameters:
+      src: The address from which tokens are to be transferred.
+      dst: The address to which tokens are to be transferred.
+      rawAmount: The amount of tokens to be transferred, specified as an unsigned integer.
+    The function is marked as external, meaning it can only be called from outside the contract.
+    It returns a boolean value, true, indicating the success of the transfer.
+
+2. Determine the Spender:
+    address spender = msg.sender;: The msg.sender is the address that initiated the transaction calling this function. This address is assigned to the variable spender.
+
+3. Retrieve the Spender's Allowance:
+    uint96 spenderAllowance = allowances[src][spender];: This line retrieves the allowance granted to the spender by the src address. The allowances is a state variable that maps from owner to spender to the amount of tokens the spender is allowed to transfer on behalf of the owner.
+
+4. Convert and Validate the Transfer Amount:
+    uint96 amount = safe96(rawAmount, "Tribe: amount exceeds 96 bits");: The rawAmount is converted to a uint96 type using the safe96 function. This function ensures that the amount does not exceed 96 bits, otherwise, it reverts the transaction with the error message "Tribe: amount exceeds 96 bits".
+
+5. Adjust the Allowance if Necessary:
+    The if statement checks two conditions:
+      spender != src: This ensures that the spender is not the same as the source address.
+      spenderAllowance != uint96(1): This checks if the spender's allowance is not the maximum possible value (indicating an unlimited allowance).
+    If both conditions are met, the allowance is updated:
+      uint96 newAllowance = sub96(spenderAllowance, amount, "Tribe: transfer amount exceeds spender allowance");: The sub96 function subtracts the amount from the spenderAllowance. If the subtraction would result in a negative number (which is not possible in unsigned integers), it reverts with the error message "Tribe: transfer amount exceeds spender allowance".
+      allowances[src][spender] = newAllowance;: The new allowance is stored in the allowances mapping.
+      emit Approval(src, spender, newAllowance);: An Approval event is emitted to notify external observers of the change in allowance.
+
+6. Perform the Token Transfer:
+    _transferTokens(src, dst, amount);: This internal function is called to actually transfer the tokens from the src address to the dst address. The implementation details of _transferTokens are not provided here but typically involve updating the balances of the src and dst addresses accordingly.
+
+7. Return Success:
+    return true;: The function returns true to indicate that the transfer was successful.
+
+This function is crucial for enabling delegated token transfers in ERC20 contracts, ensuring that transfers are only made within the bounds of the approved allowances and that the state of the contract (balances and allowances) is correctly updated.

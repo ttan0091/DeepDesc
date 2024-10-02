@@ -1,0 +1,86 @@
+The code provided consists of two main parts: a library named SafeMath and a contract named EtheremonEnergy. Let's break down each part in detail.
+
+### SafeMath Library
+
+The SafeMath library is designed to perform safe arithmetic operations on unsigned integers (uint256). It includes two functions: mul (multiplication) and add (addition). These functions are designed to prevent integer overflow and underflow, which are common vulnerabilities in smart contracts.
+
+#### Function mul
+solidity
+function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+    if (a == 0) {
+        return 0;
+    }
+    uint256 c = a  b;
+    assert(c / a == b);
+    return c;
+}
+
+ Purpose: This function multiplies two unsigned integers a and b safely.
+ Logic:
+   If a is 0, it immediately returns 0 to avoid unnecessary computation.
+   It calculates c as the product of a and b.
+   It uses an assert statement to check that c / a == b, ensuring that no overflow occurred during the multiplication. If the condition fails, the contract will throw an exception, reverting any state changes.
+
+#### Function add
+solidity
+function add(uint256 a, uint256 b) internal pure returns (uint256) {
+    uint256 c = a + b;
+    assert(c >= a);
+    return c;
+}
+
+ Purpose: This function adds two unsigned integers a and b safely.
+ Logic:
+   It calculates c as the sum of a and b.
+   It uses an assert statement to check that c >= a, ensuring that no overflow occurred during the addition. If the condition fails, the contract will throw an exception, reverting any state changes.
+
+### EtheremonEnergy Contract
+
+The EtheremonEnergy contract uses the SafeMath library to perform safe arithmetic operations. It manages energy claims for trainers.
+
+#### Struct Energy
+solidity
+struct Energy {
+    uint lastClaim;
+}
+
+ Purpose: This struct holds the timestamp of the last energy claim for a trainer.
+
+#### Mapping energyData
+solidity
+mapping(address => Energy) energyData;
+
+ Purpose: This mapping associates each trainer's address with their Energy data.
+
+#### State Variable claimAmount
+solidity
+uint public claimAmount = 1;
+
+ Purpose: This variable holds the amount of energy that can be claimed. It is initialized to 1.
+
+#### Function getClaimableAmount
+solidity
+function getClaimableAmount(address _trainer) constant external returns(uint) {
+    Energy storage energy = energyData[_trainer];
+    uint period = block.timestamp.add(energy.lastClaim);
+    uint energyAmount = period.mul(claimAmount);
+    if (energyAmount > claimAmount)
+        energyAmount = claimAmount;
+    return energyAmount;
+}
+
+ Purpose: This function calculates the amount of energy a trainer can claim.
+ Logic:
+   It retrieves the Energy data for the specified trainer.
+   It calculates the period as the sum of the current block timestamp and the last claim timestamp using the add function from the SafeMath library.
+   It calculates the energyAmount as the product of the period and the claimAmount using the mul function from the SafeMath library.
+   It checks if the energyAmount is greater than the claimAmount. If so, it sets energyAmount to claimAmount.
+   It returns the energyAmount.
+
+### Summary
+
+ The SafeMath library provides safe arithmetic operations to prevent overflow and underflow.
+ The EtheremonEnergy contract uses the SafeMath library to manage energy claims for trainers.
+ The getClaimableAmount function calculates the amount of energy a trainer can claim based on the time since their last claim and the fixed claimAmount.
+
+This code ensures that arithmetic operations are performed safely and that trainers can only claim a fixed amount of energy based on the time elapsed since their last claim.

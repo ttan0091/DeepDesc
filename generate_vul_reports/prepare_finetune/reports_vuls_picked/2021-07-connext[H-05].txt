@@ -1,0 +1,25 @@
+Type of vulnerability: Unreset Approval
+Cause of vulnerability: The approval for token transfer is not reset if the call to `IFulfillHelper` fails, leaving the approved tokens vulnerable to a malicious `callTo` address.
+Execution process: 
+1. The contract approves `toSend` tokens to `txData.callTo`.
+2. It attempts to call `addFunds` on `IFulfillHelper`.
+3. If the call fails, the contract transfers the tokens directly to `txData.receivingAddress` but does not reset the approval.
+4. A malicious `callTo` can later pull the approved tokens.
+Vulnerable code: 
+```solidity
+// First, approve the funds to the helper if needed
+if(!LibAsset.isEther(txData.receivingAssetId) && toSend > 0) {
+    require(LibERC20.approve(txData.receivingAssetId, txData.callTo, toSend), "fulfill: APPROVAL_FAILED");
+}
+// Next, call `addFunds` on the helper. Helpers should internally
+// track funds to make sure no one user is able to take all funds
+// for tx
+if(toSend > 0) {
+    try IFulfillHelper(txData.callTo).addFunds{ value: LibAsset.isEther(txData.receivingAssetId) ? toSend : 0 }(txData.user, txData.transactionId, txData.receivingAssetId, toSend) {}
+    catch {
+        // Regardless of error within the callData execution, send funds
+        // to the predetermined fallback address
+        require(LibAsset.transferAsset(txData.receivingAssetId, payable(txData.receivingAddress), toSend), "fulfill: TRANSFER_FAILED");
+    }
+}
+```

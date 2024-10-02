@@ -1,0 +1,35 @@
+Type of vulnerability: Reentrancy or Incorrect Calculation
+
+Cause of vulnerability: The calculation of `buyoutShare` in the `Buyout.cash` function uses the initial Ether balance stored in `buyoutInfo[_vault].ethBalance` without updating it after each cash-out, leading to an incorrect distribution of Ether.
+
+Execution process: 
+1. A user starts a buyout with a certain amount of Ether.
+2. After the buyout is successful, multiple users (fractional vault token holders) call the `Buyout.cash` function to cash out their shares.
+3. Each consecutive cash-out uses the initial Ether balance, leading to users receiving more Ether than they are entitled to.
+4. This process continues until the Ether funds of the `Buyout` contract are drained.
+
+Vulnerable code:
+```solidity
+function cash(address _vault, bytes32[] calldata _burnProof) external {
+    // Reverts if address is not a registered vault
+    (address token, uint256 id) = IVaultRegistry(registry).vaultToToken(_vault);
+    if (id == 0) revert NotVault(_vault);
+    // Reverts if auction state is not successful
+    (, , State current, , uint256 ethBalance, ) = this.buyoutInfo(_vault);
+    State required = State.SUCCESS;
+    if (current != required) revert InvalidState(required, current);
+    // Reverts if caller has a balance of zero fractional tokens
+    uint256 tokenBalance = IERC1155(token).balanceOf(msg.sender, id);
+    if (tokenBalance == 0) revert NoFractions();
+    // Initializes vault transaction
+    bytes memory data = abi.encodeCall(ISupply.burn, (msg.sender, tokenBalance));
+    // Executes burn of fractional tokens from caller
+    IVault(payable(_vault)).execute(supply, data, _burnProof);
+    // Transfers buyout share amount to caller based on total supply
+    uint256 totalSupply = IVaultRegistry(registry).totalSupply(_vault);
+    uint256 buyoutShare = (tokenBalance * ethBalance) / (totalSupply + tokenBalance);
+    _sendEthOrWeth(msg.sender, buyoutShare);
+    // Emits event for cashing out of buyout pool
+    emit Cash(_vault, msg.sender, buyoutShare);
+}
+```

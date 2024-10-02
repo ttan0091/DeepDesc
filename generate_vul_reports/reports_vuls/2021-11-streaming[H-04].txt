@@ -1,0 +1,12 @@
+[H-04] Improper implementation ofarbitraryCall()allows protocol gov to steal funds from users’ wallets
+Submitted by WatchPug, also found by Jujic and hack3r-0m
+https://github.com/code-423n4/2021-11-streaming/blob/56d81204a00fc949d29ddd277169690318b36821/Streaming/src/Locke.sol#L733-L735
+functionarbitraryCall(addresswho,bytesmemorydata)publiclockexternallyGoverned{// cannot have an active incentive for the calleerequire(incentives[who] ==0,"inc");...
+When an incentiveToken is claimed afterendStream,incentives[who]will be0for thatincentiveToken.
+If the protocol gov is malicious or compromised, they can callarbitraryCall()with the address of the incentiveToken aswhoandtransferFrom()as calldata and steal all the incentiveToken in the victim’s wallet balance up to the allowance amount.
+Proof of Concept
+Alice approvedUSDCto the streaming contract;Alice calledcreateIncentive()and added1,000 USDCof incentive;After the stream is done, the stream creator calledclaimIncentive()and claimed1,000 USDC;
+The compromised protocol gov can callarbitraryCall()and steal all the USDC in Alice’s wallet balance.
+Recommendation
+Consider adding a mapping:isIncentiveToken, settingisIncentiveToken[incentiveToken] = trueincreateIncentive(), andrequire(!isIncentiveToken[who], ...)inarbitraryCall().
+brockelmore (Streaming Protocol) confirmed

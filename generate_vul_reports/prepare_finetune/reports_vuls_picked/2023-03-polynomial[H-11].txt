@@ -1,0 +1,24 @@
+Type of vulnerability: Denial of Service (DoS)
+Cause of vulnerability: The contract fails to handle reverting transactions in the withdrawal queue, causing the entire queue processing to halt.
+Execution process: An attacker initiates a withdrawal with a receiver address that will cause the SUSD transfer to revert (e.g., the SUSD proxy or implementation contract). This causes the `processWithdrawalQueue` function to revert, preventing further processing of the queue and denying service to subsequent withdrawal requests.
+Vulnerable code: 
+```solidity
+function initiateWithdrawal(address user, uint256 amount) public {
+    // ...
+    if (positionData.positionId != 0) {
+        withdrawalQueue.push(WithdrawalRequest({user: user, amount: amount}));
+    }
+    // ...
+}
+
+function processWithdrawalQueue() public {
+    // ...
+    for (uint256 i = queuedWithdrawalHead; i < queuedWithdrawalTail; i++) {
+        WithdrawalRequest memory request = withdrawalQueue[i];
+        // ...
+        susd.transfer(request.user, request.amount); // Vulnerable line
+        // ...
+    }
+    // ...
+}
+```

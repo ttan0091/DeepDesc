@@ -1,0 +1,15 @@
+Type of vulnerability: Fresh Address Check Mismatch
+Cause of vulnerability: Discrepancy between application layer and consensus layer checks regarding the existence of the recipient address.
+Execution process: A user registers a contract with a fresh address as the recipient in the Turnstile contract. The transaction succeeds at the application layer but fails at the consensus layer due to the requirement that the recipient must be an existing account. This results in the contract not being registered on the consensus layer and thus not earning fees.
+Vulnerable code: 
+```solidity
+function register(address _recipient) public onlyUnregistered returns (uint256 tokenId) {
+    address smartContract = msg.sender;
+    if (_recipient == address(0)) revert InvalidRecipient();
+    tokenId = _tokenIdTracker.current();
+    _mint(_recipient, tokenId);
+    _tokenIdTracker.increment();
+    emit Register(smartContract, _recipient, tokenId);
+    feeRecipient[smartContract] = NftData({tokenId: tokenId, registered: true});
+}
+```

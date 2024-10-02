@@ -1,0 +1,60 @@
+[H-01] A previously timelocked NFT token becomes permanently stuck in vault if it’s ever moved back into the vault
+Submitted by 0xRajeev, also found by pauliax
+Let’s consider a scenario where a particular NFT token was timelocked for a certain duration by the owner usingtimeLockERC721()with a delegate as the recipient and then transferred out of the vault by the delegate viatransferERC721()but without unlocking it explicitly usingtimeUnlockERC721().
+This is possible becausetransferERC721()does all the timelock checks onexpires/block.timestampandrecipient/msg.senderas is done intimeUnlockERC721(). But it misses deletingtimelockERC721s[key]for that NFTtokenID(as done in L572 oftimeUnlockERC721()).
+Because of this missing deletion, if that same NFT is ever put back into the vault later but this time without a timelock, the vault logic still thinks it is a timelocked NFT with the older/stale recipient from earlier because of the missing deletion. So now the owner who makes thetransferERC721()call will not match the older/stale recipient address and will fail the check on L510 (unless they control that stale recipient address from the earlier timelock).
+The impact is that, without access/control to the earlier timelock recipient, this NFT token is now locked in the vault forever.
+Alice time locks a particular NFT token with delegate Eve as recipient usingtimeLockERC721()Eve transfers NFT to Bob usingtransferERC721()but without callingtimeUnlockERC721()firstAlice buys the same NFT back from Bob (e.g. because it is now considered rare and more valuable) and again puts it back in her vault but this time without locking/delegating it to any recipient i.e. intending to control it herself.Because this NFT’s timelock data and delegate approval for Eve is never removed after Step 2, the NFT is still treated as timelocked in the vault with previous delegate Eve as the recipient (because of stale data intimelockERC721sandnftApprovals)Alice now cannot withdraw her own NFT without Eve’s help because the check on L510 will only allow Eve to transfer this NFT out of the vault.If Eve is no longer trusted/accessible then the NFT is locked in the vault forever.
+Recommend addingdelete timelockERC721s [timelockERC721Keys[nftContract][i]];after L510.
+xyz-ctrl (Visor) confirmed:
+ztcrypto (Visor) patched:
+patchlink
+[H-02] NFT transfer approvals are not removed and cannot be revoked thus leading to loss of NFT tokens
+Submitted by 0xRajeev, also found by shw
+NFT transfer approvals that are set to true inapproveTransferERC721()are never set to false and there is no way to remove such an nft approval.
+Impact 1: The approval is not removed (set to false) after a transfer intransferERC721(). So if the NFT is ever moved back into the owner’s vault again, then the previous/compromised delegate can again transfer it to any address of choice without requiring a new approval.
+Impact 2: If a delegate becomes compromised/untrustworthy after granting approval but before transfer then the owner will lose its NFT because there is no mechanism to revoke the approval that was granted earlier.
+PoC-1:
+Alice grants Eve approval to transfer a particular NFT out of its vault usingapproveTransferERC721()Eve, who has transfer rights to that NFT from Alice’s vault,  transfers that NFT to Bob usingtransferERC721()Alice decides to buy back that NFT (e.g. because it is now considered rare and more valuable) from Bob and transfers it back to its vaultEve, who continues to have transfer rights to that NFT from Alice’s vault, can steal that NFT and transfer to anyone
+PoC-2:
+Alice grants Eve approval to transfer a particular NFT out of its vault usingapproveTransferERC721()Alice learns that Eve’s keys are compromises or that Eve is malicious and wants to revoke the approval but there is no mechanism to do soEve (or whoever stole her credentials) has transfer rights to that NFT from Alice’s vault and can steal that NFT and transfer to anyone
+Recommend adding a boolean parameter toapproveTransferERC721()and set thenftApprovalsto that parameter which can be true for giving approval and false for removing/revoking approval
+Ifmsg.sender != _getOwner(), callapproveTransferERC721()with the boolean false to remove approval before making a transfer intransferERC721()on L515.
+xyz-ctrl (Visor) commented:
+duplicatehttps://github.com/code-423n4/2021-05-visorfinance-findings/issues/35
+ghoul-sol (Judge) commented:
+35 is about token being stuck in the vault. This issue is about not being able to revoke approval. Marking this as separate.
+ztcrypto (Visor) patched:
+patchlink
+[H-03] Approval for NFT transfers is not removed after transfer
+Submitted by cmichel, also found by gpersoon, and pauliax
+TheVisor.transferERC721does not reset the approval for the NFT.
+An approved delegatee can move the NFT out of the contract once.
+It could be moved to a market and bought by someone else who then deposits it again to the same vault.
+The first delegatee can steal the NFT and move it out of the contract a second time.
+Recommend resetting the approval on transfer.
+xyz-ctrl (Visor) confirmed:
+We will be mitigating this issue for our next release and before these experimental features are introduced in platform.
+PR pending
+ztcrypto (Visor) commented:
+duplicate of above ones and fixed
+[H-04] Unbounded loop in_removeNftcould lead to a griefing/DOS attack
+Submitted by shw, also found by cmichel, gpersoon, pauliax, Sherlock, and toastedsteaksandwhich
+Griefing/DOS attack is possible when a malicious NFT contract sends many NFTs to the vault, which could cause excessive gas consumed and even transactions reverted when other users are trying to unlock or transfer NFTs.
+The function_removeNftuses an unbounded loop, which iterates the array nfts until a specific one is found. If the NFT to be removed is at the very end of the nfts array, this function could consume a large amount of gas.
+The functiononERC721Receivedis permission-less. The vault accepts any NFTs from any NFT contract and pushes the received NFT into the array nfts.
+A malicious user could write an NFT contract, which callsonERC721Receivedof the vault many times to make the array nfts grow to a large size. Besides, the malicious NFT contract reverts when anyone tries to transfer (e.g.,safeTransferFrom) its NFT.
+The vault then has no way to remove the transferred NFT from the malicious NFT contract. The two only functions to remove NFTs,transferERC721andtimeUnlockERC721, fail since the malicious NFT contract reverts allsafeTransferFromcalls.
+As a result, benign users who unlock or transfer NFTs would suffer from large and unnecessary gas consumption. The consumed gas could even exceed the block gas limit and cause the transaction to fail every time.
+Recommend using a mapping (e.g.,mapping(address=>Nft[]) nfts) to store the received NFTs into separate arrays according tonftContractinstead of putting them into the same one. Or, add a method specifically for the owner to remove NFTs from the nfts array directly.
+xyz-ctrl (Visor) confirmed:
+sponsor confirmed
+We are working to mitigate this issue in our next upgrade
+ghoul-sol (Judge) commented:
+I’m making this high severity because it doesn’t need a malicious actor to happen. This can happen by simply being very successful
+xyz-ctrl (Visor) commented:
+Agreed. We merged a pr with mitigations a few weeks ago hereVisorFinance/visor-core#2
+ghoul-sol (Judge) commented:
+Duplicate of#66
+ztcrypto (Visor) patched:
+duplicated and patchedlink

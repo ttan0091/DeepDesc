@@ -1,0 +1,22 @@
+This code defines an internal function named _mint, which is designed to mint new tokens for a specified account. The function is an override of two base contracts: ERC20Upgradeable and ERC20VotesUpgradeable. This means it extends or modifies the behavior of the _mint function defined in these base contracts.
+
+Here’s a detailed explanation of how this function works:
+
+1. Cooldown Check:
+    The function starts by calling _requireAccountNotInCoolDown(account). This is a custom function that checks if the specified account is not currently in a cooldown period. If the account is in cooldown, the function will revert, preventing the minting operation. This is to ensure that if an account mints during a cooldown period, they cannot redeem the tokens immediately, bypassing the cooldown.
+
+2. Mathematical Calculation for Minting:
+    The function then proceeds to calculate the amount of sNOTE tokens to mint based on the provided bptAmount (Balancer Pool Token amount). The goal is to maintain a specific proportional relationship between the newly minted sNOTE tokens and the existing tokens in the contract.
+    The formula used is derived from the requirement that the proportion of newly minted sNOTE tokens to the total sNOTE tokens should equal the proportion of bptAmount to the total BPT balance in the contract.
+    The formula is rearranged to solve for sNOTEToMint:
+     \[
+     sNOTEToMint = \frac{(totalSupply \times bptAmount)}{(bptBalance  bptAmount)}
+     \]
+    If the total supply of sNOTE tokens is zero (_totalSupply == 0), the function sets sNOTEToMint directly to bptAmount. This is a special case where there are no existing tokens, so the minted amount is simply equal to the bptAmount.
+
+3. Balance and Total Supply Update:
+    The function retrieves the current balance of BPT tokens held by the contract using BALANCER_POOL_TOKEN.balanceOf(address(this)). This balance includes the bptAmount that has already been transferred into the contract.
+    The function then calculates sNOTEToMint using the derived formula.
+    Finally, it calls super._mint(account, sNOTEToMint) to actually mint the calculated amount of sNOTE tokens to the specified account. This call handles the event emission, updating the account's balance, and updating the total supply of sNOTE tokens.
+
+This function is crucial for maintaining the integrity of the tokenomics and ensuring that the minting process adheres to the defined rules and balances, especially in the context of a cooldown mechanism and proportional token distribution.

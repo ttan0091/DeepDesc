@@ -1,0 +1,17 @@
+[H-60] twTAP.claimAndSendRewards() will claim the wrong amount for each reward token due to the use of wrong index
+Submitted bychaduke, also found bybin2chen,KIntern_NA,0xRobocop, andrvierdiiev
+Detailed description of the impact of this finding.
+twTAP.claimAndSendRewards() will claim the wrong amount for each reward token due to the use of wrong index. As a result, some users will lose some rewards and others will claim more rewards then they deserve.
+Proof of Concept
+Provide direct links to all referenced code in GitHub. Add screenshots, logs, or any other relevant proof that illustrates the concept.
+twTAP.claimAndSendRewards() allows the tapOFT to claim and send a list of rewards indicated in_rewardTokens.
+https://github.com/Tapioca-DAO/tap-token-audit/blob/59749be5bc2286f0bdbf59d7ddc258ddafd49a9f/contracts/governance/twTAP.sol#L361-L367
+It calls the function_claimRewardsOn()to achieve this:
+https://github.com/Tapioca-DAO/tap-token-audit/blob/59749be5bc2286f0bdbf59d7ddc258ddafd49a9f/contracts/governance/twTAP.sol#L499-L519
+Unfortunately, at L509, it uses the index ofiinstead of the correct index ofclaimableIndex. As a result, the amount that is claimed and transferred for each reward is wrong.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+We need to use indexclaimableIndexinstead ofifor function_claimRewardsOn():
+function _claimRewardsOn(uint256 _tokenId,address _to,IERC20[] memory _rewardTokens) internal {uint256[] memory amounts = claimable(_tokenId);unchecked {uint256 len = _rewardTokens.length;for (uint256 i = 0; i < len; ) {uint256 claimableIndex = rewardTokenIndex[_rewardTokens[i]];-                uint256 amount = amounts[i];+                uint256 amount = amounts[claimableIndex];if (amount > 0) {// Math is safe: `amount` calculated safely in `claimable()`claimed[_tokenId][claimableIndex] += amount;rewardTokens[claimableIndex].safeTransfer(_to, amount);}++i;}}}
+0xRektora (Tapioca) confirmed

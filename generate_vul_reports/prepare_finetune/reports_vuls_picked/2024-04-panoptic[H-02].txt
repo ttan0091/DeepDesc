@@ -1,0 +1,16 @@
+Type of vulnerability: Under/Overflow
+Cause of vulnerability: The `previewMint` function calculates the required assets within an unchecked block, allowing for arithmetic overflow when the `shares` parameter is multiplied by `DECIMALS`.
+Execution process: A malicious actor can input a high enough `shares` value to cause an overflow in the calculation `shares * DECIMALS`, resulting in a very low `assets` value. This allows the actor to mint a large number of shares for a minimal amount of assets.
+Vulnerable code: 
+```solidity
+function previewMint(uint shares) public view returns (uint assets) {
+    unchecked {
+        assets = Math.mulDivRoundingUp(shares * DECIMALS, totalAssets(), totalSupply * (DECIMALS - COMMISSION_FEE));
+    }
+}
+function mint(uint shares, address receiver) external returns (uint assets) {
+    assets = previewMint(shares);
+    if (assets > type(uint104).max) revert Errors.DepositTooLarge();
+    ...
+}
+```

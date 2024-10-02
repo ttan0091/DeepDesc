@@ -1,0 +1,33 @@
+Type of vulnerability: Immediate Slashing of Users
+Cause of vulnerability: Incorrect initialization of `userStake.lastGaugeLoss` in `SurplusGuildMinter::getRewards`
+Execution process: 
+1. User stakes into a gauge via `SurplusGuildMinter::stake`.
+2. `SurplusGuildMinter::getRewards` is invoked, initializing `userStake` with default values (all zeros).
+3. The check `if (lastGaugeLoss > uint256(userStake.lastGaugeLoss))` always sets `slashed = true` if the gauge has any historical loss.
+4. User is considered slashed and loses their staked principle (Credit).
+
+Vulnerable code: 
+```solidity
+SurplusGuildMinter.sol#L216-L236
+216: function getRewards(
+217:     address user,
+218:     address term
+219: )
+220: public
+221: returns (
+222:     uint256 lastGaugeLoss, // GuildToken.lastGaugeLoss(term)
+223:     UserStake memory userStake, // stake state after execution of getRewards()
+224:     bool slashed // true if the user has been slashed
+225: )
+226: {
+227:     bool updateState;
+228:     lastGaugeLoss = GuildToken(guild).lastGaugeLoss(term);
+229:     if (lastGaugeLoss > uint256(userStake.lastGaugeLoss)) {
+230:         slashed = true;
+231:     }
+232: 
+233:     // if the user is not staking, do nothing
+234:     userStake = _stakes[user][term];
+235:     if (userStake.stakeTime == 0)
+236:         return (lastGaugeLoss, userStake, slashed);
+```

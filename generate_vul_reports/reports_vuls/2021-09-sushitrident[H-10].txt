@@ -1,0 +1,25 @@
+[H-10]IndexPoolinitial LP supply computation is wrong
+Submitted by cmichel
+TheIndexPool.constructorfunction already mintsINIT_POOL_SUPPLY = 100 * 1e18 = 1e20LP tokens to the zero address.
+When trying to use the pool, someone has to provide the actual initial reserve tokens inmint.
+On the firstmint, the pool reserves are zero and the token amount required to mint is just thisratioitself:uint120 amountIn = reserve != 0 ? uint120(_mul(ratio, reserve)) : ratio;
+Note that theamountInisindependent of the tokenwhich does not make much sense.
+This implies that all tokens must be provided in equal “raw amounts”, regardless of their decimals and value.
+POC
+Issue 1
+Imagine I want to create a DAI/WBTC pool.
+If I want to initialize the pool with 100$ of DAI,amountIn = rationeeds to be100*1e18=1e20as DAI has 18 decimals.
+However, I now also need to supply1e20of WBTC (which has 8 decimals) and I’d need to pay1e20/1e8 * priceOfBTC, over a quadrillion dollars to match it with the 100$ of DAI.
+Issue 2
+Even in a pool where all tokens have the same decimals and the same value, likeUSDC <> USDT, it leads to issues:
+Initial minter callsmintwithtoMint = 1e20which setsratio = 1e20 * 1e18 / 1e20 = 1e18and thusamountIn = 1e18as well. The total supply increases to2e20.Second minter needs to paylesstokens to receive the same amount of1e18LP tokens as the first minter. This should never be the case.toMint = 1e20=>ratio = 1e20 * 1e18 / 2e20 = 0.5e18. ThenamountIn = ratio * reserve / 1e18 = 0.5*reserve = 0.5e18. They only pay half of what the first LP provider had to pay.
+Impact
+It’s unclear why it’s assumed that the pool’s tokens are all in equal value - this isnota StableSwap-like pool.
+Any pool that uses tokens that don’t have the same value and share the same decimals cannot be used because initial liquidity cannot be provided in an economically justifiable way.
+It also leads to issues where the second LP supplier has to payless tokensto receive the exact same amount of LP tokens that the initial minter receives. They can steal from the initial LP provider by burning these tokens again.
+Recommended Mitigation Steps
+Do not mint the initial token supply to the zero address in the constructor.
+Do it like Uniswap/Balancer and let the first liquidity provider provide arbitrary token amounts, then mint the initial pool supply.
+Ifreserve == 0,amountInshould just take the pool balances that were transferred to this account.
+In case the initial mint to the zero address in the constructor was done to prevent the “Uniswap-attack” where the price of a single wei of LP token can be very high and price out LPs, send a small fraction of this initial LP supply (~1000) to the zero addressafterit was minted to the first supplier inmint.
+maxsam4 (Sushi) confirmed

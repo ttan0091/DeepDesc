@@ -1,0 +1,9 @@
+[H-01] Anyone can arbitrarily add router liquidity
+Submitted by 0xRajeev, also found by cmichel and pauliax
+TheaddLiquidity()function takes a router address parameter, whose liquidity is increased (instead of assuming thatrouter==msg.senderlike is done onremoveLiquidity()) on this contract/chain, by transferring the fund amount from router address to this contract ifassetID!= 0 (i.e. ERC20 tokens). However, anyone can call this function on the router’s behalf. ForassetID== 0, the Ether transfer viamsg.valuecomes frommsg.senderand hence is assumed to be the router itself.
+The impact is that this will allow anyone to call this function and arbitrarily move ERC20 tokens from router address to this contract, assuming router has given max approval to this contract and hasassetIDamount available for transfer. While the router can always remove the liquidity if it doesn’t want to maintain that level of liquidity, this lack of access control or flexibility for a relayer to add liquidity on router’s behalf, may unnecessarily (and without authorization) increase the router’s exposure to protocol risk to more than it desires. SeeTransactionManager.sol#L88-L98. See also, use ofmsg.senderinremoveLiquidity(#L88-L98).
+Recommend considering the use ofmsg.senderinaddLiquidity()or evaluate this risk otherwise.
+LayneHaber (Connext) acknowledged:
+The bigger issue here is the typohere, if we use the funds frommsg.senderthat means that people are donating funds to the router.We will fix themsg.sender, but allowaddLiquidityto be callable by anyone
+ghoul-sol (Judge) commented:
+This is high risk because funds can be send to the wrong address.

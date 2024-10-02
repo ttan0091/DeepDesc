@@ -1,0 +1,31 @@
+Type of vulnerability: Reentrancy and Self-Call Exploit
+
+Cause of vulnerability: The `MsgValueSimulator` contract allows a call to itself with non-zero `msg.value`, which bypasses the `onlySelf` modifier check and can lead to unexpected behavior, including self-calling and manipulation of internal state.
+
+Execution process: 
+1. An attacker triggers a call to the `MsgValueSimulator` contract with a non-zero `msg.value`.
+2. The `MsgValueSimulator` forwards the call using `EfficientCall.mimicCall`.
+3. The forwarded call reenters the `MsgValueSimulator` contract, altering the registers (r3-r5) which are used to determine `msg.value` and the target address (`to`).
+4. This results in the contract calling itself with manipulated `msg.value` and `to` address, bypassing security checks and potentially causing unintended transfers or state changes.
+
+Vulnerable code:
+```solidity
+modifier onlySelf() {
+    require(msg.sender == address(this), "Callable only by self");
+    _;
+}
+
+function fallback() external payable {
+    fallbackEntrantCounter++;
+}
+
+function test() external payable {
+    fallbackEntrantCounter = 0;
+    require(msg.value >= 2, "msg.value should be at least 2 to ");
+    bool success = EfficientCall.rawCall(gasleft(), MSG_VALUE_SIMULATOR_ADDRESS, msg.value / 2, msg.data[0:0]);
+    if (!success) {
+        EfficientCall.propagateRevert();
+    }
+    require(fallbackEntrantCounter == 1, "Fallback function wasn't called");
+}
+```

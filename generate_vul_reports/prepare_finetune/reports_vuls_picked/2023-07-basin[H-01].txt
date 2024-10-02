@@ -1,0 +1,23 @@
+Type of vulnerability: Oracle Manipulation
+
+Cause of vulnerability: The `shift()` and `sync()` functions in the Solidity contract do not update the `Pumps` with the previous block’s reserves before allowing changes to the current block’s reserves. This allows an attacker to manipulate the reserves in the current block and subsequently update the `Pumps` with these manipulated values.
+
+Execution process:
+1. A malicious user performs a `shift()` operation to update the reserves to desired amounts in the current block, thereby overriding the reserves from the previous block.
+2. The user performs `swapFrom()`/`swapTo()` operations to extract back the funds used in the `shift()` function.
+3. The `swapFrom()`/`swapTo()` operations trigger the `Pumps` update with invalid reserves, resulting in oracle manipulation.
+
+Vulnerable code:
+```solidity
+function shift(IERC20 tokenOut, uint256 minAmountOut, address recipient) external nonReentrant returns (uint256 amountOut) {
+    IERC20[] memory _tokens = tokens();
+    uint256[] memory reserves = new uint256[](_tokens.length);
+    // ...
+}
+
+function sync() external nonReentrant {
+    IERC20[] memory _tokens = tokens();
+    uint256[] memory reserves = new uint256[](_tokens.length);
+    // ...
+}
+```

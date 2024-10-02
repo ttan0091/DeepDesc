@@ -1,0 +1,27 @@
+[H-13] Illuminate PT redeeming allows for burning from other accounts
+Submitted by hyh, also found by 0x1f8b, 0x29A, cccz, Chom, csanuragjain, hansfriese, itsmeSTYJ, kenzo, pashov, shenwilly, Soosh, and unforgiven
+Illuminate PT burns shares from a user supplied address account instead of user’s account. With such a discrepancy a malicious user can burn all other’s user shares by having the necessary shares on her balance, while burning them from everyone else.
+Setting the severity to be high as this allows for system-wide stealing of user’s funds.
+Proof of Concept
+Redeemer’s Illuminate redeem() checks the balance of msg.sender, but burns from the balance of user suppliedoaddress:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/redeemer/Redeemer.sol#L114-L128
+L120:
+uint256amount=token.balanceOf(msg.sender);
+L126:
+token.burn(o,amount);
+addressprincipal=IMarketPlace(marketPlace).markets(u,m,p);if(p==uint8(MarketPlace.Principals.Illuminate)) {// Get Illuminate's principal tokenIERC5095token=IERC5095(principal);// Get the amount of tokens to be redeemed from the senderuint256amount=token.balanceOf(msg.sender);// Make sure the market has maturedif(block.timestamp<token.maturity()) {revertInvalid('not matured');}// Burn the prinicipal token from Illuminatetoken.burn(o,amount);// Transfer the original underlying token back to the userSafe.transferFrom(IERC20(u),lender,address(this),amount);
+oaddress isn’t validated and used as provided.
+Burning proceeds as usual, Illuminate PT burns second argumentafrom the first argumentf, i.e.f’s balance to be reduced bya:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC5095.sol#L121-L127
+/// @param f Address to burn from/// @param a Amount to burn/// @return bool true if successfulfunctionburn(addressf,uint256a)externalonlyAdmin(redeemer)returns(bool) {_burn(f,a);returntrue;}
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC5095.sol#L7
+contractERC5095isERC20Permit,IERC5095{
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/marketplace/ERC20.sol#L187-L196
+function_burn(addresssrc,uintwad)internalvirtualreturns(bool) {unchecked{require(_balanceOf[src] >=wad,"ERC20: Insufficient balance");_balanceOf[src] =_balanceOf[src] -wad;_totalSupply=_totalSupply-wad;emitTransfer(src,address(0),wad);}returntrue;}
+This way a malicious user owning some Illuminate PT can burn the same amount of PT as she owns from any another account, that is essentially from all other accounts, obtaining all the underlying tokens from the system. The behavior is somewhat similar to the public burn case.
+Recommended Mitigation Steps
+oaddress looks to be not needed in Illuminate PT case.
+Consider burning the shares frommsg.sender, for example:
+https://github.com/code-423n4/2022-06-illuminate/blob/912be2a90ded4a557f121fe565d12ec48d0c4684/redeemer/Redeemer.sol#L125-L126
+// Burn the prinicipal token from Illuminate-token.burn(o,amount);+token.burn(msg.sender,amount);
+sourabhmarathe (Illuminate) confirmed

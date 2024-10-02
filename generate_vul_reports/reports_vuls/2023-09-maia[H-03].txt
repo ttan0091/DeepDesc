@@ -1,0 +1,21 @@
+[H-03] Redeeming a Settlement won’t work for unsigned messages when the communicating dApps have different addresses on the different chains
+Submitted byalexxander, also found by3docSec
+Lines of code
+https://github.com/code-423n4/2023-09-maia/blob/f5ba4de628836b2a29f9b5fff59499690008c463/src/MulticallRootRouter.sol#L163-L171https://github.com/code-423n4/2023-09-maia/blob/f5ba4de628836b2a29f9b5fff59499690008c463/src/MulticallRootRouter.sol#L186-L194https://github.com/code-423n4/2023-09-maia/blob/f5ba4de628836b2a29f9b5fff59499690008c463/src/RootBridgeAgent.sol#L311-L315
+Impact
+Funds cannot be redeemed and remain stuck in a settlement.
+Proof Of Concept
+InMulticallRootRouter,execute()calls_approveAndCallOut(...); however, it passes the Output Params recipient also as the refundee. This is dangerous because the recipient Dapp on the BranchChain can have a different address or not exist on the Root Chain. Therefore, if a settlement fails, it won’t be able to be redeemed since the settlement owner is set as the refundee.
+Here is a scenario:
+dApp A  on a Branch Chain with (address = 0xbeef) initiates aCallOut(...) 0x01withOutputParams (0x01)for theRootRouter.RootBridgeAgentexecutor callsMulticallRootRouterexecute()which then performs some number of arbitrary calls and gets theOutputParamsassets into theMulticallRootRouter.MulticallRootRouterattempts to bridge out the assets to the BranchChain and creates a settlement, passing therecipient (address = 0xbeef)but also sets therefundee as (address = 0xbeef).If the settlement fails, there is no guarantee that0xbeefis a known dApp on the Root Chain and the assets won’t be able to be redeemed.
+functionexecute(bytescalldataencodedData,uint16)externalpayableoverridelockrequiresExecutor{// Parse funcIdbytes1funcId=encodedData[0];// code .../// FUNC ID: 2 (multicallSingleOutput)}elseif(funcId==0x02) {// Decode Params(IMulticall.Call[]memorycallData,OutputParamsmemoryoutputParams,uint16dstChainId,GasParamsmemorygasParams) =abi.decode(_decode(encodedData[1:]), (IMulticall.Call[],OutputParams,uint16,GasParams));// Perform Calls_multicall(callData);// Bridge Out assets_approveAndCallOut(outputParams.recipient,outputParams.recipient,outputParams.outputToken,outputParams.amountOut,outputParams.depositOut,dstChainId,gasParams);}// code ...}
+function_createSettlement(uint32_settlementNonce,addresspayable_refundee,address_recipient,uint16_dstChainId,bytesmemory_params,address_globalAddress,uint256_amount,uint256_deposit,bool_hasFallbackToggled)internalreturns(bytesmemory_payload) {// code ...// Update Settlementsettlement.owner=_refundee;settlement.recipient=_recipient;// code ...}
+functionredeemSettlement(uint32_settlementNonce)externaloverridelock{// Get settlement storage referenceSettlementstoragesettlement=getSettlement[_settlementNonce];// Get deposit owner.addresssettlementOwner=settlement.owner;// Check if Settlement is redeemable.if(settlement.status==STATUS_SUCCESS)revertSettlementRedeemUnavailable();if(settlementOwner==address(0))revertSettlementRedeemUnavailable();// Check if Settlement Owner is msg.sender or msg.sender is the virtual account of the settlement owner.if(msg.sender!=settlementOwner) {if(msg.sender!=address(IPort(localPortAddress).getUserAccount(settlementOwner))) {revertNotSettlementOwner();}}/// more code ...}
+Recommended Mitigation Steps
+Include an argument that enables users to specify the refundee when creating settlements without using a Virtual Account.
+Assessed type
+Context
+0xLightt (Maia) confirmed
+0xBugsy (Maia) commented:
+Addressedhere.
+Note: for full discussion, seehere.

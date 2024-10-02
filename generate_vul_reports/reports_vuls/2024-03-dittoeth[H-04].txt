@@ -1,0 +1,63 @@
+[H-04] Partially filled Short Records created without a short order cannot be liquidated and exited
+Submitted bynonseodion, also found by0xbepresent
+When a Short Order is being created it tries to fill its Short Record. If it fills the Short Record, the Short Record is given a filled status (SR.FullyFilled) and the Short Order isn’t added to the market. But if it doesn’t fill the Short Record, it is given a partially filled status (SR.PartiallyFilled) and the remaining part of the Short Order is added to the market.
+The issue is the current implementation doesn’t add the Short Order to the market every time the Short Record is partially filled. It does this in thesellMatchAlgo()function loop when it tries to match bids.
+LibOrders.sol#L591-L597
+❌matchIncomingSell(asset,incomingAsk,matchTotal);❌if(incomingAsk.ercAmount.mul(incomingAsk.price) >=minAskEth) {addSellOrder(incomingAsk,asset,orderHintArray);}s.bids[asset][C.HEAD].nextId=C.TAIL;return;
+When the Short Order is being matched in thesellMatchAlgo()loop, it encounters the check in theifstatement above. If the value of the erc remaining in the short is less thanminAskEthit is not added to the market. The Short Record is already given theSR.PartiallyFilledstatus before the check.
+When this happens, the Short Record is created with no associated Short Order. This prevents the user from exiting the Short Record and a liquidator from liquidating the position if it ever becomes liquidatable. These actions revert withInvalidShortOrder()error in the following portion of the code.
+Exiting
+When a user tries to exit using any of the exit functions, he has to pass a Short Order id.
+ExitShortFacet.sol#L41
+functionexitShortWallet(addressasset,uint8id,uint88buybackAmount,❌uint16shortOrderId)
+ExitShortFacet.sol#L87
+functionexitShortErcEscrowed(addressasset,uint8id,uint88buybackAmount,❌uint16shortOrderId)
+ExitShortFacet.sol#L142
+functionexitShort(addressasset,uint8id,uint88buybackAmount,uint80price,uint16[]memoryshortHintArray,❌uint16shortOrderId)
+Since there is no valid Short Order Id, if he passes any value it reverts when the user tries to exit. Because the id needs to be associated with theshortRecordand still be owned by him to pass the checks.exitShort()function callscheckCancelShortOrder()which will revert in the check below.
+LibSRUtil.sol#L57
+if(shortOrder.shortRecordId!=shortRecordId||shortOrder.addr!=shorter)revertErrors.InvalidShortOrder();
+ForexitShortWallet()andexitShortErcEscrowed(), they revert in the check below when they callcheckShortMinErc().
+LibSRUtil.sol#L84
+if(shortOrder.shortRecordId!=shortRecordId||shortOrder.addr!=shorter)revertErrors.InvalidShortOrder();
+Liquidation
+The primary and secondary liquidation calls require a Short Order Id.
+Primary Liquidation call:
+PrimaryLiquidationFacet.sol#L47
+functionliquidate(addressasset,addressshorter,uint8id,uint16[]memoryshortHintArray,❌uint16shortOrderId)
+Secondary Liquidation call:
+SecondaryLiquidationFacet.sol#L39
+functionliquidateSecondary(addressasset,❌   MTypes.BatchLiquidation[]memorybatches,uint88liquidateAmount,boolisWallet)
+BatchLiquidationstruct:
+struct BatchLiquidation {address shorter;uint8 shortId;❌      uint16 shortOrderId;}
+Theliquidate()function reverts in its call tocheckCancelShortOrder(). The check below causes the revert, because the id passed by the liquidator needs to be associated with the Short Record and still be owned by the user being liquidated to pass the check.
+LibSRUtil.sol#L57
+if (shortOrder.shortRecordId != shortRecordId || shortOrder.addr != shorter) revert Errors.InvalidShortOrder();
+TheliquidateSecondary()function uses a loop to complete batch liquidation. In the loop, it first does the check below on each batch element.
+SecondaryLiquidationFacet.sol#L69-L80
+boolshortUnderMin;if(m.isPartialFill) {// Check attached shortOrder ercAmount left since SR will be fully liquidatedSTypes.OrderstorageshortOrder=s.shorts[m.asset][m.shortOrderId];❌shortUnderMin=shortOrder.ercAmount<minShortErc;❌if(shortUnderMin) {// Skip instead of reverting for invalid shortOrder❌if(shortOrder.shortRecordId!=m.short.id||shortOrder.addr!=m.shorter) {continue;}}}
+The loop skips liquidating if the Short Record’s debt is below the minimum i.e.shortUnderMinis true for the passedshortOrderandshortOrder.shortRecordId != m.short.id || shortOrder.addr != m.shorterevaluates to true since the short order isn’t attached to the Short Record.
+It reverts in the check below.liquidateAmountis the amount the liquidator wants to liquidate andliquidateAmountLeftis the amount not liquidated. If only the bad Short Record is in the batch, it reverts. If other Short Records in the batch get liquidated it doesn’t revert.
+SecondaryLiquidationFacet.sol#L124
+if(liquidateAmount==liquidateAmountLeft)revertErrors.SecondaryLiquidationNoValidShorts();
+Note: Secondary Liquidation can still be done in some scenarios check the POC section for more details.
+Apart from the DOS effects above, the issue also lets a user create a Short Record with an erc amount below theminShortErc. Check the POC.
+Impact
+The issue above has the following effects:
+Users cannot exit a Short Record Position.Primary Liquidation cannot be done on the Short Record.Secondary Liquidation may not be possible on the Short Record.Allows a user to create a Short Record belowminShortErc.
+Proof of Concept
+The tests can be run in theShorts.t.solfile.
+The POC below consists of 5 tests:
+test_FailExit(): Shows how exiting a Short Record can fail.test_CreateShortLessThanMin(): Shows how a Short Record with less erc debt than the minimum can be created.test_FailPrimaryLiquidation(): Shows how primary liquidation fails.test_FailSecondaryLiquidation(): Shows how Secondary liquidation fails.test_PassSecondaryLiquidation(): Shows how Secondary Liquidation can pass and exposes another bug.
+It also contains a utility function for setting up the Short Record,createPartiallyFilledSR.
+Add this import statement to the top of theShorts.t.solfile:
+import {STypes, MTypes, O, SR} from "contracts/libraries/DataTypes.sol";
+// util function and errors used by testerrorInvalidShortOrder();errorSecondaryLiquidationNoValidShorts();functioncreatePartiallyFilledSR(uintamount)publicreturns(STypes.ShortRecordmemoryshort){// get minimum askuintminAskEth=diamond.getAssetNormalizedStruct(asset).minAskEth;// The bid is opened with an amount that allows short to be 1 less than// the minAskEth.fundLimitBidOpt(1ether,uint88(amount-minAskEth+1),receiver);// open shortfundLimitShortOpt(1ether,uint88(amount),sender);// get the ShortRecord createdshort=getShortRecord(sender,C.SHORT_STARTING_ID);assertTrue(short.status==SR.PartialFill);// no short ordersSTypes.Order[]memoryshortOrders=getShorts();assertEq(shortOrders.length,0);returnshort;}functiontest_FailExit()public{// create partially filled SR with no short ordercreatePartiallyFilledSR(3000ether);// give sender assets to exit shortdeal(asset,sender,1000ether);// cannot exit the SRvm.expectRevert(InvalidShortOrder.selector);exitShortWallet(C.SHORT_STARTING_ID,1000ether,sender);}functiontest_CreateShortLessThanMin()public{// create partially filled SR with no short orderSTypes.ShortRecordmemoryshort=createPartiallyFilledSR(2000ether);uintminShortErc=diamond.getAssetNormalizedStruct(asset).minShortErc;// created SR has less than minShortErcassertGt(minShortErc,short.ercDebt);}functiontest_FailPrimaryLiquidation()public{// create partially filled SR with no short ordercreatePartiallyFilledSR(3000ether);// change price to let short record be liquidatableuint256newPrice=1.5ether;skip(15minutes);ethAggregator.setRoundData(92233720368547778907wei,int(newPrice.inv()) /ORACLE_DECIMALS,block.timestamp,block.timestamp,92233720368547778907wei);fundLimitAskOpt(1.5ether,2000ether,receiver);// add ask to allow liquidation have a sell// liquidation revertsvm.expectRevert(InvalidShortOrder.selector);diamond.liquidate(asset,sender,C.SHORT_STARTING_ID,shortHintArrayStorage,0);}functiontest_FailSecondaryLiquidation()public{// create partially filled SR with no short orderSTypes.ShortRecordmemoryshort=createPartiallyFilledSR(3000ether);// change price to let short record be liquidatableuint256newPrice=1.5ether;skip(15minutes);ethAggregator.setRoundData(92233720368547778907wei,int(newPrice.inv()) /ORACLE_DECIMALS,block.timestamp,block.timestamp,92233720368547778907wei);// give receiver assets to complete liquidationdeal(asset,receiver,short.ercDebt);// create batchMTypes.BatchLiquidation[]memorybatch=newMTypes.BatchLiquidation[](1);batch[0] =MTypes.BatchLiquidation(sender,C.SHORT_STARTING_ID,0);vm.prank(receiver);// cannot liquidatevm.expectRevert(SecondaryLiquidationNoValidShorts.selector);diamond.liquidateSecondary(asset,batch,short.ercDebt,true);}// This shows that secondary liquidation can still occurfunctiontest_PassSecondaryLiquidation()public{// create partially filled SR with no short orderSTypes.ShortRecordmemoryshort=createPartiallyFilledSR(3000ether);// change price to let short record be liquidatableuint256newPrice=1.5ether;skip(15minutes);ethAggregator.setRoundData(92233720368547778907wei,int(newPrice.inv()) /ORACLE_DECIMALS,block.timestamp,block.timestamp,92233720368547778907wei);// create another short for sender// the id of this short can be used for liquidationfundLimitShortOpt(1ether,3000ether,sender);STypes.Order[]memoryshortOrders=getShorts();shortOrders=getShorts();// give receiver assets to complete liquidationdeal(asset,receiver,short.ercDebt);// create batchMTypes.BatchLiquidation[]memorybatch=newMTypes.BatchLiquidation[](1);batch[0] =MTypes.BatchLiquidation(sender,C.SHORT_STARTING_ID,shortOrders[0].id);vm.prank(receiver);// successful liquidationdiamond.liquidateSecondary(asset,batch,short.ercDebt,true);}
+Recommended Mitigation Steps
+Consider settingercAmountof theincomingAskto zero in thesellMatchAlgo()function. This will allow thematchIncomingSell()call to set the Short Record to a Fully Filled state.
+LibOrders.sol#L590-L598
+if(startingId==C.TAIL) {-matchIncomingSell(asset,incomingAsk,matchTotal);if(incomingAsk.ercAmount.mul(incomingAsk.price) >=minAskEth) {addSellOrder(incomingAsk,asset,orderHintArray);}+incomingAsk.ercAmount=0;+matchIncomingSell(asset,incomingAsk,matchTotal);s.bids[asset][C.HEAD].nextId=C.TAIL;return;}
+Assessed type
+DoS
+ditto-eth (DittoETH) confirmed and commented:
+Great find, POC very helpful.

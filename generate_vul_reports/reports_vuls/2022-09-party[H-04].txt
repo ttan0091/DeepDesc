@@ -1,0 +1,17 @@
+[H-04] TokenDistributor: ERC777 tokensToSend hook can be exploited to drain contract
+Submitted by Lambda
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/distribution/TokenDistributor.sol#L131
+https://github.com/PartyDAO/party-contracts-c4/blob/3896577b8f0fa16cba129dc2867aba786b730c1b/contracts/distribution/TokenDistributor.sol#L386
+Impact
+TokenDistributor.createERC20Distributioncan be used to create token distributions for ERC777 tokens (which are backwards-compatible with ERC20). However, this introduces a reentrancy vulnerability which allows a party to get the tokens of another party. The problem is thetokensToSendhook which is executed BEFORE balance updates happens (seehttps://eips.ethereum.org/EIPS/eip-777). When this hook is executed,token.balanceOf(address(this))therefore still returns the old value, but_storedBalances[balanceID]was already decreased.
+Proof Of Concept
+Party A and Party B have a balance of 1,000,000 tokens (of some arbitrary ERC777 token) in the distributor. Let’s say for the sake of simplicity that both parties only have one user (user A in party A, user B in party B). User A (or rather his smart contract) performs the following attack:
+He callsclaim, which transfers 1,000,000 tokens to his contract address. In_transfer,_storedBalances[balanceId]is decreased by 1,000,000 and therefore now has a value of 1,000,000.In thetokensToSendhook, he initiates another distribution for his party A by callingPartyGovernance.distributewhich callsTokenDistributor.createERC20Distribution(we assume for the sake of simplicity that the party does not have more of these tokens, so the call transfers 0 tokens to the distributor).TokenDistributor.createERC20Distributionpassestoken.balanceOf(address(this))to_createDistribution. Note that this is still 2,000,000 because we are in thetokensToSendhook.The supply of this distribution is calculated as(args.currentTokenBalance - _storedBalances[balanceId]) = 2,000,000 - 1,000,000 = 1,000,000.When thetokensToSendhook is exited (and the first transfer has finished), he can retrieve the tokens of the second distribution (that was created in the hook) to steal the 1,000,000 tokens of party B.
+Recommended Mitigation Steps
+Do not allow reentrancy in these functions.
+merklejerk (PartyDAO) confirmed and commented:
+Very few legitimate ERC777s so we think the probability of this happening to a party is somewhat low. Also, it only impacts distributions for that token. However, we will be implementing a reentrancy guard to fix it.
+HardlyDifficult (judge) commented:
+Agree that it does not seem very probable - but if 777 assets are distributed, it does appear to be a way of stealing from other users in the party and therefore High risk.
+0xble (PartyDAO) resolved:
+Resolved:https://github.com/PartyDAO/partybidV2/pull/132

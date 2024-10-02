@@ -1,0 +1,16 @@
+[H-05] RethpoolPricecalculation may overflow
+Submitted byadriro, also found byhassan-truscova,cloudjunky,0x52,anodaram, andT1MOH
+The Reth derivative contract implements thepoolPricefunction to get the spot price of the derivative asset using a Uniswap V3 pool. The function queries the pool to fetch thesqrtPriceX96and does the following calculation:
+https://github.com/code-423n4/2023-03-asymmetry/blob/main/contracts/SafEth/derivatives/Reth.sol#L228-L242
+functionpoolPrice()privateviewreturns(uint256) {addressrocketTokenRETHAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketTokenRETH")));IUniswapV3Factoryfactory=IUniswapV3Factory(UNI_V3_FACTORY);IUniswapV3Poolpool=IUniswapV3Pool(factory.getPool(rocketTokenRETHAddress,W_ETH_ADDRESS,500));(uint160sqrtPriceX96, , , , , , ) =pool.slot0();return(sqrtPriceX96* (uint(sqrtPriceX96)) * (1e18)) >> (96*2);}
+The main issue here is that the multiplications in the expressionsqrtPriceX96 * (uint(sqrtPriceX96)) * (1e18)may eventually overflow. This case is taken into consideration by the implementation of theOracleLibrary.getQuoteAtTickfunction which is part of the Uniswap V3 periphery set of contracts.
+https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/OracleLibrary.sol#L49-L69
+49:functiongetQuoteAtTick(50:int24tick,51:uint128baseAmount,52:addressbaseToken,53:addressquoteToken54:     )internalpurereturns(uint256quoteAmount) {55:uint160sqrtRatioX96=TickMath.getSqrtRatioAtTick(tick);56:57:// Calculate quoteAmount with better precision if it doesn't overflow when multiplied by itself58:if(sqrtRatioX96<=type(uint128).max) {59:uint256ratioX192=uint256(sqrtRatioX96) *sqrtRatioX96;60:quoteAmount=baseToken<quoteToken61:                 ?FullMath.mulDiv(ratioX192,baseAmount,1<<192)62:                 :FullMath.mulDiv(1<<192,baseAmount,ratioX192);63:         }else{64:uint256ratioX128=FullMath.mulDiv(sqrtRatioX96,sqrtRatioX96,1<<64);65:quoteAmount=baseToken<quoteToken66:                 ?FullMath.mulDiv(ratioX128,baseAmount,1<<128)67:                 :FullMath.mulDiv(1<<128,baseAmount,ratioX128);68:         }69:     }
+Note that this implementation guards against different numerical issues. In particular, the if in line 58 checks for a potential overflow ofsqrtRatioX96and switches the implementation to avoid the issue.
+Recommendation
+ThepoolPricefunction can delegate the calculation directly to theOracleLibrary.getQuoteAtTickfunction of thev3-peripherypackage:
+functionpoolPrice()privateviewreturns(uint256) {addressrocketTokenRETHAddress=RocketStorageInterface(ROCKET_STORAGE_ADDRESS).getAddress(keccak256(abi.encodePacked("contract.address","rocketTokenRETH")));IUniswapV3Factoryfactory=IUniswapV3Factory(UNI_V3_FACTORY);IUniswapV3Poolpool=IUniswapV3Pool(factory.getPool(rocketTokenRETHAddress,W_ETH_ADDRESS,500));(,int24tick, , , , , ) =pool.slot0();returnOracleLibrary.getQuoteAtTick(tick,1e18,rocketTokenRETHAddress,W_ETH_ADDRESS);}
+toshiSat (Asymmetry) disputed via duplicate issue#693
+Asymmetry mitigated:
+Using Chainlink to get price instead of poolPrice.
+Status:Mitigation confirmed with comments. Full details in reports fromd3e4,adriro, and0x52.

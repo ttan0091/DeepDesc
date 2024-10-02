@@ -1,0 +1,19 @@
+Type of vulnerability: Flash Loan Protection Bypass
+Cause of vulnerability: The `idToBlockOfLastDeposit` variable, used to prevent flash loan attacks by checking deposits and withdrawals in the same block, is not updated during liquidations, allowing for self-liquidations to bypass this protection.
+Execution process: An attacker takes out a flash loan, deposits funds into a vault, manipulates the price of kerosene to trigger a self-liquidation, transfers collateral to another vault, and withdraws from the new vault in the same block, effectively bypassing the flash loan protection mechanism.
+Vulnerable code: 
+```solidity
+// function deposit
+idToBlockOfLastDeposit[id] = block.number;
+
+// function withdraw
+if (idToBlockOfLastDeposit[id] == block.number) 
+    revert DepositedInSameBlock();
+
+// function liquidate
+function liquidate(uint id, uint to) {
+    // ...
+    vault.move(id, to, collateral);
+    // ...
+}
+```

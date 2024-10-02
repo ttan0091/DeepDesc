@@ -1,0 +1,18 @@
+[H-03] No safety check inaddToken
+Submitted by jonah1005, also found by hrkrshnn and 0xRajeev
+Impact
+There’s no safety check inManager.soladdToken. There are two possible cases that might happen.
+One token being added twice in a Vault. Token would be counted doubly in the vault. Ref:Vault.sol#L293-L303. There would be two item in the array when queryingmanager.getTokens(address(this));.A token first being added to two vaults. The value calculation of the first vault would be broken. Asvaults[_token] = _vault;would point to the other vault.
+Permission keys should always be treated cautiously. However, calling the same initialize function twice should not be able to destroy the vault. Also, as the protocol develops, there’s likely that one token is supported in two vaults. The DAO may mistakenly add the same token twice. I consider this a high-risk issue.
+Proof of Concept
+Adding same token twice would not raise any error here.
+manager.functions.addToken(vault.address,dai.address).transact()manager.functions.addToken(vault.address,dai.address).transact()
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+I recommend to add two checks
+require(vaults[_token] ==address(0));boolnotFound=True;for(uint256i;i<tokens[_vault].length;i++) {if(tokens[_vault] ==_token) {notFound=False;}}require(notFound,"duplicate token");
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/2to verify resolution.
+GalloDaSballo (judge) commented:
+Lack of check for duplicates can cause undefined behaviour, sponsor mitigated by adding a require check

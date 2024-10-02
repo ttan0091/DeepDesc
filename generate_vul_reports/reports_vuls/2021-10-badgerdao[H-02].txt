@@ -1,0 +1,11 @@
+[H-02] Approved spender can spend too many tokens
+Submitted by cmichel, also found by WatchPug, jonah1005, gzeon, and TomFrenchTheapprovefunction has not been overridden and therefore uses the internalshares, whereastransfer(From)uses the rebalanced amount.
+Impact
+The approved spender may spend more tokens than desired. In fact, the approved amount that can be transferred keeps growing withpricePerShare.
+Many contracts also use the same amount for theapprovecall as for the amount they want to have transferred in a subsequenttransferFromcall, and in this case, they approve an amount that is too large (as the approvedsharesamount yields a higher rebalanced amount).
+Recommended Mitigation Steps
+The_allowancesfield should track the rebalanced amounts such that the approval value does not grow. (This does not actually require overriding theapprovefunction.)
+IntransferFrom, the approvals should then be subtracted by thetransferredamount, not theamountInShares:
+// _allowances are in rebalanced amounts such that they don't grow// need to subtract the transferred amount_approve(sender,_msgSender(),_allowances[sender][_msgSender()].sub(amount,"ERC20: transfer amount exceeds allowance"));
+tabshaikh (Badger) confirmed and resolved:
+Fix here:https://github.com/Badger-Finance/rebasing-ibbtc/pull/7

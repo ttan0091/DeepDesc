@@ -1,0 +1,13 @@
+Type of vulnerability: Refund Mechanism Failure
+Cause of vulnerability: The revert operation in the refund mechanism reverses the refund transaction, leading to a loss of funds for the user in case of a permanent error.
+Execution process: When a cross-chain transaction fails, the contract attempts to refund the user by transferring the funds back. However, the subsequent revert operation not only cancels the transaction execution but also reverses the refund, causing the funds to be locked in the contract.
+Vulnerable code: 
+```solidity
+if(!success) {
+    if(balanceAfter-balanceBefore>=amount) {
+        IERC20(address(this)).safeTransfer(leverageFor,amount);
+    }
+    //@audit - this revert will actually reverse the refund before this
+    revert(_getRevertMsg(reason)); //forward revert because it's handled by the main executor
+}
+```

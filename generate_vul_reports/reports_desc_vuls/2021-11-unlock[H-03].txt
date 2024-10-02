@@ -1,0 +1,25 @@
+Type of vulnerability: Insecure Key Manager Reset
+Cause of vulnerability: Failure to reset the key manager during the transfer process
+Execution process: An attacker (Alice) sets herself as the key manager, transfers the key to another user (Bob), and then transfers the key back to herself, maintaining the key manager role and potentially causing financial loss to Bob.
+Vulnerable code: 
+```solidity
+if(toKey.tokenId==0) {
+    toKey.tokenId=_tokenId;
+    _recordOwner(_recipient,_tokenId);
+    // Clear any previous approvals
+    _clearApproval(_tokenId);
+}
+if(previousExpiration<=block.timestamp) {
+    // The recipient did not have a key, or had a key but it expired. The new expiration is the sender's key expiration
+    // An expired key is no longer a valid key, so the new tokenID is the sender's tokenID
+    toKey.expirationTimestamp=fromKey.expirationTimestamp;
+    toKey.tokenId=_tokenId;
+    // Reset the key Manager to the key owner
+    _setKeyManagerOf(_tokenId,address(0));
+    _recordOwner(_recipient,_tokenId);
+} else {
+    // The recipient has a non expired key. We just add them the corresponding remaining time
+    // SafeSub is not required since the if confirms `previousExpiration - block.timestamp` cannot underflow
+    toKey.expirationTimestamp=fromKey.expirationTimestamp+previousExpiration-block.timestamp;
+}
+```

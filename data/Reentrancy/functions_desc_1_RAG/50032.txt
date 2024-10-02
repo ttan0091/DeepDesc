@@ -1,0 +1,90 @@
+The code provided defines a smart contract named PreICOProxyBuyer. This contract manages investor balances and includes functionality for the contract owner to initiate refunds. Below is a detailed explanation of how this contract works:
+
+### Contract Structure and Variables
+
+1. Mapping for Balances:
+   solidity
+   mapping(address => uint) public balances;
+   
+   This line declares a public mapping named balances that maps addresses to unsigned integers (uint). This mapping is used to store the balance of each investor.
+
+2. Refund Status:
+   solidity
+   bool refunded = true;
+   
+   This line declares a boolean variable named refunded and initializes it to true. This variable's purpose is not clear from the provided code, as it is not used in any function.
+
+3. Investor Address:
+   solidity
+   address investor = msg.sender;
+   
+   This line declares an address variable named investor and initializes it to msg.sender. This variable is set to the address of the caller of the contract, but it is not updated later in the code, which means it will always reflect the address of the contract deployer.
+
+4. Owner Address:
+   solidity
+   address public owner;
+   
+   This line declares a public address variable named owner. This variable is intended to store the address of the contract owner.
+
+### Modifiers
+
+1. onlyOwner Modifier:
+   solidity
+   modifier onlyOwner() {
+       require(msg.sender == owner);
+       _;
+   }
+   
+   This modifier ensures that only the owner of the contract can execute functions that include this modifier. It checks if msg.sender (the caller of the function) is equal to the owner address. If the condition is not met, the function execution is halted.
+
+### Functions
+
+1. Refund Function:
+   solidity
+   function refund() onlyOwner {
+       if(balances[investor] == 0) throw;
+       uint amount = balances[investor];
+       if(!(investor.call.value(amount)())) throw;
+       balances[investor] = 0;
+   }
+   
+   This function allows the owner to refund an investor. It includes the onlyOwner modifier, ensuring that only the owner can call this function.
+
+    Balance Check:
+     solidity
+     if(balances[investor] == 0) throw;
+     
+     This line checks if the balance of the investor is zero. If it is, the function throws an error, which halts execution and reverts any state changes.
+
+    Amount Assignment:
+     solidity
+     uint amount = balances[investor];
+     
+     This line assigns the balance of the investor to the variable amount.
+
+    Transfer of Funds:
+     solidity
+     if(!(investor.call.value(amount)())) throw;
+     
+     This line attempts to send amount Wei to the investor using the call.value() function. If the transfer fails, the function throws an error.
+
+    Balance Reset:
+     solidity
+     balances[investor] = 0;
+     
+     This line sets the balance of the investor to zero after the refund is successfully executed.
+
+### Potential Vulnerabilities
+
+1. Reentrancy Attack:
+   The use of call.value() can be vulnerable to reentrancy attacks. If the investor address is a contract that calls back into the refund function before the balance is set to zero, it could repeatedly withdraw funds.
+
+2. Static Investor Address:
+   The investor address is set to msg.sender at contract deployment and never updated. This means the refund functionality is limited to the deployer of the contract, which might not be the intended behavior.
+
+3. Unused Variables:
+   The refunded variable is declared but never used, which might indicate an incomplete or incorrect implementation.
+
+### Conclusion
+
+The PreICOProxyBuyer contract manages investor balances and provides a refund mechanism for the owner. However, it has potential vulnerabilities, such as reentrancy risks and a static investor address, which need to be addressed for secure and intended functionality.

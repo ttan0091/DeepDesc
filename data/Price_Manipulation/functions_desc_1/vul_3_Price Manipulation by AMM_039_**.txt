@@ -1,0 +1,67 @@
+This code defines a public view function named getExpectedReturnGivenIn, which calculates the expected return amount for a given input amount of tokens in a stable swap pool. The function takes two parameters: amount, which is the input amount of tokens, and yieldShareIn, a boolean indicating whether the input token is a yield share or a principal share. The function returns a uint256 value representing the expected output amount.
+
+Here’s a detailed explanation of how this function works:
+
+1. Retrieve Pool Tokens and Balances:
+   solidity
+   (, uint256[] memory balances, ) = getVault().getPoolTokens(getPoolId());
+   
+   This line calls getVault().getPoolTokens(getPoolId()) to retrieve the balances of the tokens in the pool. The getVault() function returns the vault associated with the pool, and getPoolId() returns the unique identifier for the pool. The balances are stored in an array.
+
+2. Get Amplification Parameter:
+   solidity
+   (uint256 currentAmp, ) = _getAmplificationParameter();
+   
+   This line retrieves the current amplification parameter for the stable swap pool. The amplification parameter is crucial for the stable swap algorithm as it affects the swap curve.
+
+3. Determine Token Types:
+   solidity
+   (IPoolShare tokenIn, IPoolShare tokenOut) = yieldShareIn
+       ? (tempusPool.yieldShare(), tempusPool.principalShare())
+       : (tempusPool.principalShare(), tempusPool.yieldShare());
+   
+   This line determines which token is the input and which is the output based on the yieldShareIn boolean. If yieldShareIn is true, the input token is the yield share and the output token is the principal share, and vice versa.
+
+4. Determine Token Indices:
+   solidity
+   (uint256 indexIn, uint256 indexOut) = address(tokenIn) == address(_token0) ? (0, 1) : (1, 0);
+   
+   This line determines the indices of the input and output tokens in the balances array. It checks if the address of tokenIn matches the address of _token0 and assigns indices accordingly.
+
+5. Subtract Swap Fee:
+   solidity
+   amount = _subtractSwapFeeAmount(amount);
+   
+   This line subtracts the swap fee from the input amount. The _subtractSwapFeeAmount function calculates the fee and adjusts the amount accordingly.
+
+6. Adjust Balances by Token Rates:
+   solidity
+   balances.mul(_getTokenRatesStored(), _TEMPUS_SHARE_PRECISION);
+   
+   This line adjusts the balances by multiplying them with the stored token rates. The _getTokenRatesStored function retrieves the stored rates, and _TEMPUS_SHARE_PRECISION is a precision factor used for calculations.
+
+7. Calculate RateAdjusted Swap Amount:
+   solidity
+   uint256 rateAdjustedSwapAmount = (amount  tokenIn.getPricePerFullShareStored()) / _TEMPUS_SHARE_PRECISION;
+   
+   This line calculates the rateadjusted swap amount by multiplying the input amount with the stored price per full share of the input token and then dividing by the precision factor.
+
+8. Calculate Output Amount:
+   solidity
+   uint256 amountOut = StableMath._calcOutGivenIn(currentAmp, balances, indexIn, indexOut, rateAdjustedSwapAmount);
+   
+   This line uses the StableMath._calcOutGivenIn function to calculate the output amount based on the current amplification parameter, adjusted balances, indices of the input and output tokens, and the rateadjusted swap amount.
+
+9. Adjust Output Amount by Token Price:
+   solidity
+   amountOut = (amountOut  _TEMPUS_SHARE_PRECISION) / tokenOut.getPricePerFullShareStored();
+   
+   This line adjusts the output amount by multiplying it with the precision factor and then dividing by the stored price per full share of the output token.
+
+10. Return the Output Amount:
+    solidity
+    return amountOut;
+    
+    Finally, the function returns the calculated output amount.
+
+In summary, the getExpectedReturnGivenIn function calculates the expected output amount for a given input amount of tokens in a stable swap pool, taking into account token balances, amplification parameters, swap fees, and token prices.

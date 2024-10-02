@@ -1,0 +1,25 @@
+This code defines an external function named permit, which is designed to allow token holders to approve a certain amount of tokens to be spent by another address without needing to sign a transaction with their private key directly on the blockchain. This function is typically used in the context of ERC20 tokens to facilitate offchain approvals, leveraging EIP712 typed structured data hashing and signing.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    target: The address of the token owner who is granting the approval.
+    spender: The address that is being granted permission to spend tokens on behalf of the target.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which this permit is no longer valid.
+    v, r, s: These are components of the ECDSA signature produced by the target to authorize this permit.
+
+2. Time Validity Check:
+    The function starts by checking if the current block timestamp (block.timestamp) is less than or equal to the deadline. This ensures that the permit is only valid within the specified time frame. If the permit has expired, the function reverts with the message "AnyswapV3ERC20: Expired permit".
+
+3. Hash Calculation:
+    The function calculates a hash (hashStruct) of the structured data that includes the type hash (PERMIT_TYPEHASH), target, spender, value, the current nonce of the target (which is incremented after use to prevent replay attacks), and the deadline. This structured data hash is used to verify the signature.
+
+4. Signature Verification:
+    The function then verifies the signature provided in the parameters v, r, s against the calculated hash. This is done using two verification methods: verifyEIP712 and verifyPersonalSign. The function checks if either verification method passes. If neither verification method confirms the signature, the function reverts, ensuring that only validly signed permits are processed.
+
+5. Approval Update and Event Emission:
+    If the signature is verified successfully, the function updates the allowance mapping to reflect that the spender is allowed to spend value amount of tokens on behalf of the target.
+    An Approval event is emitted to notify the network of this approval, which can be listened to by offchain services or other contracts to react to the approval.
+
+This function is crucial for enhancing the user experience in decentralized applications by allowing users to approve token transfers without directly interacting with the blockchain, thereby reducing gas fees and improving efficiency.

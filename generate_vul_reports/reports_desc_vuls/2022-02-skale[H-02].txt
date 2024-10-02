@@ -1,0 +1,23 @@
+Type of vulnerability: Gas Price Manipulation
+Cause of vulnerability: Lack of upper bounds on `tx.gasprice` and its use in calculating refund amounts
+Execution process: A node sets an excessively high `tx.gasprice`, which is then used to calculate a large refund amount from the user or SChain owner, depleting their ETH balance
+Vulnerable code: 
+```solidity
+function refundGasByUser(bytes32 schainHash, address payable node, address user, uint gas) external override onlyMessageProxy returns (uint) {
+    require(node != address(0), "Node address must be set");
+    if (!activeUsers[user][schainHash]) {
+        return gas;
+    }
+    uint amount = tx.gasprice * gas;
+    if (amount > _userWallets[user][schainHash]) {
+        amount = _userWallets[user][schainHash];
+    }
+    _userWallets[user][schainHash] = _userWallets[user][schainHash] - amount;
+    if (!_balanceIsSufficient(schainHash, user, 0)) {
+        activeUsers[user][schainHash] = false;
+        messageProxy.postOutgoingMessage(schainHash, schainLinks[schainHash], Messages.encodeLockUserMessage(user));
+    }
+    node.sendValue(amount);
+    return (tx.gasprice * gas - amount) / tx.gasprice;
+}
+```

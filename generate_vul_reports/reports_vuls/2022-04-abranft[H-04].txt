@@ -1,0 +1,20 @@
+[H-04] Lender is able to seize the collateral by changing the loan parameters
+Submitted by Ruhum, also found by IllIllI, WatchPug, BowTiedWardens, gzeon, plotchy, and scaraven
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L198-L223
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L200-L212
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L288
+The lender should only be able to seize the collateral if:
+the borrower didn’t repay in timethe collateral loses too much of its value
+But, the lender is able to seize the collateral at any time by modifying the loan parameters.
+Proof of Concept
+TheupdateLoanParams()allows the lender to modify the parameters of an active loan in favor of the borrower. But, by setting theltvBPSvalue to0they are able to seize the collateral.
+IfltvBPSis0the following require statement inremoveCollateral()will always be true:
+https://github.com/code-423n4/2022-04-abranft/blob/main/contracts/NFTPairWithOracle.sol#L288
+rate * 0 / BPS < amountis alwaystrue.
+That allows the lender to seize the collateral although its value didn’t decrease nor did the time to repay the loan come.
+So the required steps are:
+lend the funds to the borrowercallupdateLoanParams()to set theltvBPSvalue to0callremoveCollateral()to steal the collateral from the contract
+Recommended Mitigation Steps
+Don’t allowupdateLoanParams()to change theltvBPSvalue.
+cryptolyndon (AbraNFT) confirmed and commented:
+Confirmed, and the first to report this particular exploit.

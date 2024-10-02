@@ -1,0 +1,17 @@
+Type of vulnerability: Front-running and Reentrancy
+
+Cause of vulnerability: Lack of sender restrictions in the `twTAP.claimRewards()` function allows any address to claim rewards before the intended recipient, leading to reward tokens being frozen in the contract.
+
+Execution process:
+1. An attacker observes a pending transaction that approves the `TapTokenReceiver` contract to claim rewards for a specific `_tokenId`.
+2. The attacker quickly submits a transaction to call `twTAP.claimRewards(_tokenId, TapTokenReceiver)` before the intended claim transaction is executed.
+3. This causes the rewards to be claimed by the `TapTokenReceiver` contract prematurely, resulting in `claimedAmount_` being zero when the intended claim transaction is finally executed.
+4. Consequently, the rewards are trapped in the `TapTokenReceiver` contract.
+
+Vulnerable code:
+```solidity
+function claimRewards(uint256 _tokenId, address _to) external nonReentrant whenNotPaused returns (uint256[] memory amounts_) {
+    _requireClaimPermission(_to, _tokenId);
+    amounts_ = _claimRewards(_tokenId, _to);
+}
+```

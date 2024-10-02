@@ -1,0 +1,22 @@
+Type of vulnerability: Improper Funds Management
+Cause of vulnerability: The contract does not return excess ether sent by the user, leading to loss of funds.
+Execution process: A user sends more ether than required to purchase an NFT to ensure the transaction goes through, expecting the excess ether to be returned. However, the contract only sends the required amount to the beneficiary and does not return the excess to the user.
+Vulnerable code: 
+```solidity
+function passThruGate(uint index, address) override external payable {
+    uint price = getCost(index);
+    require(msg.value >= price, 'Please send more ETH');
+    // bump up the price
+    Gate storage gate = gates[index];
+    // multiply by the price increase factor
+    gate.lastPrice = (price * gate.priceIncreaseFactor) / gate.priceIncreaseDenominator;
+    // move up the reference
+    gate.lastPurchaseBlock = block.number;
+    // pass thru the ether
+    if (msg.value > 0) {
+        // use .call so we can send to contracts, for example gnosis safe, re-entrance is not a threat here
+        (bool sent, bytes memory data) = gate.beneficiary.call{value: msg.value}("");
+        require(sent, 'ETH transfer failed');
+    }
+}
+```

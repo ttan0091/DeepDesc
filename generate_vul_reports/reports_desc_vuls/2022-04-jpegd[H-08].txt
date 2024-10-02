@@ -1,0 +1,22 @@
+Type of vulnerability: Incorrect Function Signature Usage
+
+Cause of vulnerability: The `balanceOfJPEG` function in `StrategyPUSDConvex.sol` incorrectly calls the `extraReward.earned` function without passing the required `address` argument, which is expected by the `earned` function in `ConvexBaseRewardPool.sol` and `VirtualRewardPool.sol`.
+
+Execution process: When the `balanceOfJPEG` function is called, it attempts to calculate the available balance by iterating through extra rewards and calling `extraReward.earned()`. However, since `extraReward.earned()` is called without an `address` argument, the function call reverts, causing the entire `balanceOfJPEG` function to fail. This failure propagates through the contract system, rendering the farming contract unusable.
+
+Vulnerable code:
+```solidity
+function balanceOfJPEG() external view returns (uint256) {
+    uint256 availableBalance = jpeg.balanceOf(address(this));
+    IBaseRewardPool baseRewardPool = convexConfig.baseRewardPool;
+    uint256 length = baseRewardPool.extraRewardsLength();
+    for (uint256 i = 0; i < length; i++) {
+        IBaseRewardPool extraReward = IBaseRewardPool(baseRewardPool.extraRewards(i));
+        if (address(jpeg) == extraReward.rewardToken()) {
+            availableBalance += extraReward.earned(); // Incorrect call to earned() without an address argument
+            break;
+        }
+    }
+    return availableBalance;
+}
+```

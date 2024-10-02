@@ -1,0 +1,33 @@
+Type of vulnerability: Penalty Fee Evasion
+
+Cause of vulnerability: The `closeMarket()` function does not account for remaining penalty fees when calculating the total debt, allowing borrowers to avoid paying the full amount of penalties.
+
+Execution process:
+1. A borrower closes the market while it is still delinquent, triggering the `closeMarket()` function.
+2. The function calculates the total debt based on the current state but does not check for remaining `state.timeDelinquent` to account for future penalty fees.
+3. The borrower transfers the calculated debt to the market, effectively paying only part of the penalty fees.
+4. The remaining penalty fees continue to accumulate, and the last lender to withdraw funds ends up covering these unpaid penalties.
+
+Vulnerable code:
+```solidity
+function closeMarket() external onlyController nonReentrant {
+    MarketState memory state = _getUpdatedState();
+    state.annualInterestBips = 0;
+    state.isClosed = true;
+    state.reserveRatioBips = 0;
+    if (_withdrawalData.unpaidBatches.length() > 0) {
+        revert CloseMarketWithUnpaidWithdrawals();
+    }
+    uint256 currentlyHeld = totalAssets();
+    uint256 totalDebts = state.totalDebts(); // @audit-issue Current debt is calculated with the current scaleFactor. It doesn't check if there are remaining "state.timeDelinquent" to pay penalty fees.
+    if (currentlyHeld < totalDebts) {
+        // Transfer remaining debts from borrower
+        asset.safeTransferFrom(borrower, address(this), totalDebts - currentlyHeld); // @audit remaining debt is transferred and market is closed, but if the market was delinquent for a while, debt will keep increasing. Total assets will not cover the total debt
+    } else if (currentlyHeld > totalDebts) {
+        // Transfer excess assets to borrower
+        asset.safeTransfer(borrower, currentlyHeld - totalDebts);
+    }
+    _writeState(state);
+    emit MarketClosed(block.timestamp);
+}
+```

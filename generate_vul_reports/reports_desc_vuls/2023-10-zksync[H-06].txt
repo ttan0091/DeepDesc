@@ -1,0 +1,23 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Enforcing a multiplication/division relation when the divisor is zero, which leads to an unprovable transaction.
+Execution process: When the `div` opcode is applied, if the dividend is nonzero and the divisor is zero, the quotient and remainder are both set to zero. This violates the required relation `src0 = q * src1 + rem`, making the operation unprovable and potentially causing a denial of service to the priority queue.
+Vulnerable code: 
+```rust
+quotient_is_zero.conditionally_enforce_true(cs, divisor_is_zero);
+remainder_is_zero.conditionally_enforce_true(cs, divisor_is_zero);
+let uint256_zero = UInt256::zero(cs);
+let rem_to_enforce = UInt32::parallel_select(cs, should_apply_mul, &uint256_zero.inner, &remainder_unchecked);
+let a_to_enforce = UInt32::parallel_select(cs, should_apply_mul, src0_view, &quotient_unchecked);
+let b_to_enforce = src1_view.clone();
+let mul_low_to_enforce = UInt32::parallel_select(cs, should_apply_mul, &mul_low_unchecked, &src0_view);
+let mul_high_to_enforce = UInt32::parallel_select(cs, should_apply_mul, &mul_high_unchecked, &uint256_zero.inner);
+let mul_relation = MulDivRelation {
+    a: a_to_enforce,
+    b: b_to_enforce,
+    rem: rem_to_enforce,
+    mul_low: mul_low_to_enforce,
+    mul_high: mul_high_to_enforce,
+};
+let apply_any = Boolean::multi_or(cs, &[should_apply_mul, should_apply_div]);
+diffs_accumulator.mul_div_relations.push((apply_any, mul_div_relations));
+```

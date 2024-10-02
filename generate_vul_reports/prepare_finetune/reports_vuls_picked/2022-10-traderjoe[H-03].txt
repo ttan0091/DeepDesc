@@ -1,0 +1,17 @@
+Type of vulnerability: Incorrect Bitwise Operation
+Cause of vulnerability: The function `_setFeesParameters` incorrectly combines the new fee parameters with the existing variable parameters without shifting the variable parameters to their correct position.
+Execution process: When the function `_setFeesParameters` is called, it incorrectly stores the new fee parameters directly combined with the variable parameters without shifting them, leading to corruption of the fee parameters and subsequent failure of the LBPair functionality.
+Vulnerable code: 
+```solidity
+function _setFeesParameters(bytes32 _packedFeeParameters) internal {
+    bytes32 _feeStorageSlot;
+    assembly {
+        _feeStorageSlot := sload(_feeParameters.slot)
+    }
+    uint256 _varParameters = _feeStorageSlot.decode(type(uint112).max, _OFFSET_VARIABLE_FEE_PARAMETERS/*=144*/);
+    uint256 _newFeeParameters = _packedFeeParameters.decode(type(uint144).max, 0);
+    assembly {
+        sstore(_feeParameters.slot, or(_newFeeParameters, _varParameters))
+    }
+}
+```

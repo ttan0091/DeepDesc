@@ -1,0 +1,25 @@
+Type of vulnerability: Ineffective ReserveRatio Enforcement
+Cause of vulnerability: Lack of post-transaction validation to ensure the reserve ratio is maintained after strategists place their market making trades.
+Execution process: Strategists can place ask and bid orders with large pay amounts, causing significant funds to be withdrawn from the pools. This bypasses the intended reserve ratio restriction, leading to overutilization of pool funds and potential illiquidity.
+Vulnerable code: 
+```solidity
+function placeMarketMakingTrades(address[2] memory tokenPair, // ASSET, Then Quote
+    uint256 askNumerator, // Quote / Asset
+    uint256 askDenominator, // Asset / Quote
+    uint256 bidNumerator, // size in ASSET
+    uint256 bidDenominator // size in QUOTES
+) public onlyApprovedStrategist(msg.sender) returns (uint256 id) {
+    // Require at least one order is non-zero
+    require((askNumerator > 0 && askDenominator > 0) || (bidNumerator > 0 && bidDenominator > 0), "one order must be non-zero");
+    address _underlyingAsset = tokenPair[0];
+    address _underlyingQuote = tokenPair[1];
+    (address bathAssetAddress, address bathQuoteAddress) = enforceReserveRatio(_underlyingAsset, _underlyingQuote);
+    require(bathAssetAddress != address(0) && bathQuoteAddress != address(0), "tokenToBathToken error");
+    ..SNIP..
+    // Place new bid and/or ask
+    // Note: placeOffer returns a zero if an incomplete order
+    uint256 newAskID = IBathToken(bathAssetAddress).placeOffer(ask.pay_amt, ask.pay_gem, ask.buy_amt, ask.buy_gem);
+    uint256 newBidID = IBathToken(bathQuoteAddress).placeOffer(bid.pay_amt, bid.pay_gem, bid.buy_amt, bid.buy_gem);
+    ..SNIP..
+}
+```

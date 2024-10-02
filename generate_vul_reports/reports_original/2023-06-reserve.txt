@@ -1,0 +1,55 @@
+[H-01] Custom redemption might revert if old assets were unregistered
+Submitted by0xA5DF
+quoteCustomRedemption()works under the assumption that the maximum size of theerc20sAllshould beassetRegistry.size(), however there can be cases where an asset was unregistered but still exists in an old basket, making the size of the old basket greater thanassetRegistry.size(). In that case the function will revert with an index out of bounds error.
+Impact
+Users might not be able to useredeemCustomwhen needed.
+I think this should be considered high severity, since being able to redeem the token at all time is an essential feature for the protocol that’s allowed also while frozen.
+Not being able to redeem can result in a depeg or in governance becoming malicious and stealing RToken collateral.
+Proof of Concept
+Consider the following scenario:
+RToken deployed with 0.9 USDC, 0.05 USDT, 0.05 DAIGovernance passed a vote to change it to 0.9 DAI and 0.1 USDC and un-register USDTTrading is paused before execution, so the basket switch occurs but the re-balance can’t be executed. Meaning the actual assets that the backing manager holds are in accordance with the old basketA user wants to redeem using the old basket, but custom redemption reverts
+As for the revert:
+erc20sAllis createdherewith the length ofassetRegistry.size(), which is 2 in our case.Then inthis loopthe function tries to push 3 assets intoerc20sAllwhich will result in an index-out-of-bonds error
+(the function doesn’t include in the final results assets that aren’t registered, but it does push them too intoerc20sAll)
+Recommended Mitigation Steps
+Allow the user to specify the length of the arrayerc20sAllto avoid this revert
+0xean (judge) commented:
+I believe this to be a stretch for high severity. It has several pre-conditions to end up in the proposed state and I do believe it would be entirely possible for governance to change back to the original state (USDC, USDT, DAI), so assets wouldn’t be lost and the impact would more be along the lines of a temporary denial of service.Look forward to warden and sponsor comments.
+tbrent (Reserve) confirmed and commented:
+@0xA5DF - nice find! Thoughts on an alternative mitigation?Could move L438 to just after L417, so thaterc20sAllnever includes unregistered ERC20sWould probably have to cache the assets asassetsAllfor re-use around L438Has side-effect of making the ERC20 return list never include unregistered ERC20s. Current implementation can return a 0 value for an unregistered ERC20. This is properly handled by the RToken contract, but still, nice-to-have.
+0xA5DF (warden) commented:
+Hey @tbrent -That can work as well, the only downside I can think of is that in case there’s an asset that’s not registered and is repeated across different baskets - thetoAsset()would be called multiple times for that asset (while under the current implementation and under the mitigation I’ve suggested it’ll be called only once), this would cost about 300 gas units per additional call (100 for the call, 2sloads to a warm slot inside the call itself)
+tbrent (Reserve) commented:
+@0xA5DF - Noted, good point.
+tbrent (Reserve) confirmed
+0xean (judge) commented:
+@tbrent - do you care to comment on your thoughts on severity? I am leaning towards M on this, but it sounds like you believe it is correct as labeled (high).
+tbrent (Reserve) commented:
+@0xean - Correct, I think high is appropriate.
+Reserve mitigated:
+FixredeemCustom.PR:https://github.com/reserve-protocol/protocol/pull/857
+Status:Mitigation confirmed. Full details in reports fromronnyx2017,0xA5DF, andrvierdiiev- and also shared below in theMitigation Reviewsection.
+
+[H-02] A new era might be triggered despite a significant value being held in the previous era
+Submitted by0xA5DF
+https://github.com/reserve-protocol/protocol/blob/c4ec2473bbcb4831d62af55d275368e73e16b984/contracts/p1/StRSR.sol#L441-L444https://github.com/reserve-protocol/protocol/blob/c4ec2473bbcb4831d62af55d275368e73e16b984/contracts/p1/StRSR.sol#L457-L460
+When RSR seizure occurs the staking and drafting rate is adjusted accordingly, if any of those rates is above some threshold then a new era begins (draft or staking era accordingly), wiping out all of the holdings of the current era.
+The assumption is that if the rate is above the threshold then there’s not much staking or drafts left after the seizure (and therefore it makes sense to begin a new era).
+However, there might be a case where a previous seizure has increased the staking/draft rate close to the threshold, and then even a small seizure would make it cross this threshold. In that case the total value of staking or drafts can be very high, and they will all be wiped out by starting a new era.
+Impact
+Stakers will lose their holdings or pending drafts.
+Proof of Concept
+Consider the following scenario:
+Max stake rate is 1e9A seizure occurs and the new rate is now 91e7Not much staking is left after the seizure, but as time passes users keep staking bring back the total stakes to a significant valueA 10% seizure occurs, this causes the staking rate to cross the threshold (getting to 1.01e9) and start a new era
+This means the stakings were wiped out despite holding a significant amount of value, causing a loss for the holders.
+Recommended Mitigation Steps
+This one is a bit difficult to mitigate.
+One way I can think of is to add a ‘migration’ feature, where in such cases a new era would be created but users would be able to transfer the funds that they held in the previous era into the new era. But this would require some significant code changes and checking that this doesn’t break anything or introduces new bugs.
+tbrent (Reserve) commented:
+@0xA5DF thoughts on a governance function that requires the ratio be out of bounds, that doesbeginEra()and/orbeginDraftEra()?The idea is that stakers can mostly withdraw, and since governance thresholds are all percentage, vote to immolate themselves and re-start the staking pool. I think it should treatbeginEra()andbeginDraftEra()separately, but I’m not confident in that yet.
+tbrent (Reserve) acknowledged and commented:
+We’re still not sure how to mitigate this one. Agree it should be considered HIGH and a new issue.
+Reserve mitigated:
+Adds governance function to manually push the era forward.PR:https://github.com/reserve-protocol/protocol/pull/888
+Status:Mitigation confirmed. Full details in reports from0xA5DF,ronnyx2017, andrvierdiiev- and also shared below in theMitigation Reviewsection.
+

@@ -1,0 +1,25 @@
+Type of vulnerability: Unchecked Address Validity
+Cause of vulnerability: Lack of validation for the `bribesProcessor` address to ensure it is not zero (`0x0`).
+Execution process: An attacker can call `sweepRewardToken()` when `bribesProcessor` is set to `0x0`, causing the contract to transfer all its reward tokens to the zero address, resulting in a loss of funds.
+Vulnerable code: 
+```solidity
+function sweepRewardToken(address token) public nonReentrant {
+    _onlyGovernanceOrStrategist();
+    _onlyNotProtectedTokens(token);
+    uint256 toSend = IERC20Upgradeable(token).balanceOf(address(this));
+    _handleRewardTransfer(token, toSend);
+}
+
+function _handleRewardTransfer(address token, uint256 amount) internal {
+    if (token == BADGER) {
+        _sendBadgerToTree(amount);
+    } else {
+        _sendTokenToBribesProcessor(token, amount);
+    }
+}
+
+function _sendTokenToBribesProcessor(address token, uint256 amount) internal {
+    IERC20Upgradeable(token).safeTransfer(address(bribesProcessor), amount);
+    emit RewardsCollected(token, amount);
+}
+```

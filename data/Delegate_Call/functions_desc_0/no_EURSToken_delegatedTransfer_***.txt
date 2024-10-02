@@ -1,0 +1,47 @@
+This code defines a public function named delegatedTransfer, which is designed to allow a user to transfer tokens on behalf of another user, using a delegated signature mechanism. The function is marked as payable, indicating that it can receive Ether, although in this context, it primarily handles token transfers.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    _to: The address to which the tokens will be transferred.
+    _value: The amount of tokens to be transferred.
+    _fee: The fee amount that the sender agrees to pay for this transaction.
+    _nonce: A unique number to prevent replay attacks.
+    _v, _r, _s: Components of the ECDSA signature that verifies the sender's authorization.
+
+2. Initial Check:
+    The function first checks if the contract is frozen (if (frozen) return false;). If the contract is frozen, no transfers can occur, and the function immediately returns false.
+
+3. Signature Verification:
+    If the contract is not frozen, the function proceeds to verify the signature. It uses the ecrecover function to recover the address of the sender (_from) from the provided signature components (_v, _r, _s). The message being signed includes the contract address, the sender's address, the recipient's address (_to), the transfer amount (_value), the fee (_fee), and the nonce (_nonce).
+
+4. Nonce Validation:
+    The function checks if the provided nonce matches the stored nonce for the sender (_from). If they do not match, the function returns false.
+
+5. Blacklist Check:
+    The function then checks if either the sender (_from) or the recipient (_to) is on the blacklist. If either address has the BLACK_LIST_FLAG set, the function returns false.
+
+6. Fee Calculation:
+    The function calculates the fee for the transaction. If either the sender or the recipient has the ZERO_FEE_FLAG set, the fee is set to 0. Otherwise, the fee is calculated using the calculateFee function based on the transfer amount (_value).
+
+7. Balance Checks and Updates:
+    The function retrieves the balance of the sender (_from) and checks if the sender has enough tokens to cover the transfer amount (_value). If not, it returns false.
+    It then safely subtracts the transfer amount from the sender's balance.
+    The function checks if the remaining balance after the transfer can cover the calculated fee. If not, it returns false.
+    It safely subtracts the fee from the sender's balance.
+    Finally, it checks if the remaining balance can cover the additional fee (_fee). If not, it returns false.
+    It safely subtracts the additional fee from the sender's balance.
+
+8. Nonce Update:
+    The function increments the nonce for the sender (_from) to prevent replay attacks.
+
+9. Balance Updates:
+    The function updates the balances of the sender (_from), the recipient (_to), the fee collector, and the message sender (who receives the additional fee).
+
+10. Event Emission:
+     The function emits Transfer events to log the token transfers from the sender to the recipient, the fee collector, and the message sender.
+
+11. Return Value:
+     The function returns true if all checks pass and the transfer is successfully processed.
+
+This function ensures secure and controlled token transfers, incorporating signature verification, nonce management, blacklist checks, and detailed balance adjustments.

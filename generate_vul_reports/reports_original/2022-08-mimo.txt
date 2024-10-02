@@ -1,0 +1,108 @@
+[H-01]MIMOEmptyVault.sol executeOperation()does not transfer the Vault leftover assets to the owner, it is locked in theMIMOEmptyVault
+Submitted by bin2chen, also found by Bnke0x0
+MIMOEmptyVault.sol executeAction()is supposed to pay off the debt and return the leftover assets to the owner of the Vault.
+But in fact the emptyVault contract, after executing the executionOperation(), only pays back the flash loan, and does not transfer the leftover assets to the owner, and locked in the emptyVault contract.
+Proof of Concept
+function executeOperation(address[] calldata assets,uint256[] calldata amounts,uint256[] calldata premiums,address initiator,bytes calldata params) external override returns (bool) {........require(flashloanRepayAmount <= vaultCollateral.balanceOf(address(this)), Errors.CANNOT_REPAY_FLASHLOAN);vaultCollateral.safeIncreaseAllowance(address(lendingPool), flashloanRepayAmount);//****Paid off the flash loan but did not transfer the remaining balance back to mimoProxy or owner ***//return true;}
+Add logs to test case
+test/02_integration/MIMOEmtpyVault.test.ts
+it("should be able to empty vault with 1inch", async () => {.........++++ console.log("before emptyVault balance:--->", (await wmatic.balanceOf(emptyVault.address)) + "");const tx = await mimoProxy.execute(emptyVault.address, MIMOProxyData);const receipt = await tx.wait(1);++++ console.log("after emptyVault balance: --->", (await wmatic.balanceOf(emptyVault.address)) + "");
+print:
+before emptyVault balance:---> 0after emptyVault balance: ---> 44383268870065355782
+Recommended Mitigation Steps
+function executeOperation(address[] calldata assets,uint256[] calldata amounts,uint256[] calldata premiums,address initiator,bytes calldata params) external override returns (bool) {........require(flashloanRepayAmount <= vaultCollateral.balanceOf(address(this)), Errors.CANNOT_REPAY_FLASHLOAN);vaultCollateral.safeIncreaseAllowance(address(lendingPool), flashloanRepayAmount);//****transfer the remaining balance back to mimoProxy or owner ***//++++ vaultCollateral.safeTransfer(address(mimoProxy), vaultCollateral.balanceOf(address(this)) - flashloanRepayAmount);return true;}
+RayXpub (Mimo) confirmed and commented:
+We confirm this is a vulnerability and intend to fix this - only the amount needed to repay the flashloan should be transferred from theMimoProxyto theMIMOEmptyVaultaction contract.
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved
+Finding:Wardens identified thatMIMOEmptyVaulttransferred in a vault’s full collateral balance when repaying vault rebalance flash loans, but did not return excess collateral to the vault owner when the flash loan repayment amount was less than the vault’s collateral balance. Instead, the excess amount would be locked in the action contract.
+What changed:The Mimo team updatedMIMOEmptyVault#emptyVaultOperationto transfer collateral exactly equal to theflashloan repayment amount, rather than the full vault balance. This behavior is demonstrated by anintegration test.
+Why it works:Since excess collateral is never transferred toMIMOEmptyVault, it can no longer be locked in the contract.
+
+[H-02] Automation / management can be set for not yet existing vault
+Submitted by Lambda, also found by ayeslick
+https://github.com/code-423n4/2022-08-mimo/blob/9adf46f2efc61898247c719f2f948b41d5d62bbe/contracts/actions/automated/MIMOAutoAction.sol#L33
+https://github.com/code-423n4/2022-08-mimo/blob/9adf46f2efc61898247c719f2f948b41d5d62bbe/contracts/actions/managed/MIMOManagedAction.sol#L35
+Impact & Proof Of Concept
+vaultOwnerreturns zero for a non-existingvaultId. Similarly,proxyRegistry.getCurrentProxy(msg.sender)returns zero whenmsg.senderhas not deployed a proxy yet. Those two facts can be combined to set automation for a vault ID that does not exist yet. When this is done by a user without a proxy, it will succeed, as bothvaultOwnerandmimoProxyareaddress(0), i.e. we havevaultOwner == mimoProxy.
+The consequences of this are quite severe. As soon as the vault is created, it will be an automated vault (with potentially very high fees). An attacker can exploit this by setting very high fees before the creation of the vault and then performing actions for the automated vault, which leads to a loss of funds for the user.
+The same attack is possible forsetManagement.
+Recommended Mitigation Steps
+Do not allow setting automation parameters for non-existing vaults, i.e. check thatvaultOwner != address(0).
+RayXpub (Mimo) confirmed and commented:
+We confirm that this is a high risk issue and intend to fix this.
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved after review (see finding M.H-01 in Mitigation Review section below)
+Finding:Wardens identified that malicious callers could configure automation and management parameters for uninitialized vaults when vault owner and proxy address were unset for a given vault ID and caller and returnedadress(0), which caused an access control check to unintentionally pass.
+What changed:MIMOAutoAction#setAutomationnowcheckswhether the vault owner is the zero address. Anintegration testdemonstrates that attempting to callsetAutomationon an uninitialized vault will revert.MIMOManagedAction#setAutomationperforms the samecheck, and anintegration testexercises it.
+Why it works:SincesetAutomationnow explicitly checks that the vault is initialized, configuration cannot be set for an uninitialized vault.
+
+[H-03] Registry.sol fails to deliver expected functionality
+Submitted by byndooa, also found by arcoun, cccz, Lambda, and thebensams
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyFactory.sol#L40-L58
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyRegistry.sol#L39-L59
+Impact
+The description of Registry.sol is following:
+/// Deploys new proxies via the factory and keeps a registry of owners to proxies. Owners can only
+/// have one proxy at a time.
+But it is not.
+There are multiple problems:
+Proxy owner can change and will not be registeredThere many ways for an owner to have many proxies:A few other proxy owners transferOwnership() to one address.Registry tracks last deployments and does not guarantee ownership.Factory.sol allows calling deployFor() to anyone, without any checks and registrations.
+Proof of Concept
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyFactory.sol#L40-L58
+https://github.com/code-423n4/2022-08-mimo/blob/eb1a5016b69f72bc1e4fd3600a65e908bd228f13/contracts/proxy/MIMOProxyRegistry.sol#L39-L59
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+DeleteProxy.transfetOwnership().
+Disallow anyone to calldeploy()anddeployFor()inFactory().
+RnkSngh (Mimo) confirmed and commented:
+We agree that this is an issue and intend to fix this.
+gzeoneth (judge) increased severity to High and commented:
+I believe this is High Risk due to the unexpected ownership behavior.
+m19 (Mimo) commented:
+While the Registry indeed does not work as advertised, I am not sure if high risk is the correct here? As perthe definition“Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).” I don’t think that applies here.We also see no wayProxy owner can change and will not be registeredactually can happen which would be the only scenario there is a loss of funds.
+gzeoneth (judge) commented:
+I am quite sure asset can be lost if the owner cannot do owner stuff and a non-owner can do owner stuff. Also see related PoC in e.g.#154,#67,#69
+m19 (Mimo) commented:
+@gzeoneth Thanks, I get it now,#154describes it much better. Yes, this is definitely a high-risk issue then.
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved
+Finding:Wardens identified that bothMIMOProxyandMIMOProxyRegistrystored proxy ownership data, but ownership transfers were not propagated fromMIMOProxyto theMIMOProxyRegistry. This would cause new owners to lose access to vault funds and old owners to retain privileged access to automation configuration.
+What changed:The Mimo team removed theownerstate variable andtransferOwnerfunction fromMIMOProxy. Additionally, they removedMIMOProxyRegistryaltogether and moved its functionality toMIMOProxyFactory. Ownership data is now stored only inMIMOProxyFactory, and all ownership transfers must now be performed by callingMIMOProxyFactory#transferOwnershiprather than interacting withMIMOProxy.
+MIMOProxyFactorynow storesa mappingof proxy address toProxyState, a struct that includes the current owner address. TheclaimOwnershipfunction updates boththe owner addressand thecurrent proxywhen a new user accepts ownership. Aunit testdemonstrates this behavior.
+Anintegration testdemonstrates that proxy permissions are cleared after ownership transfers.
+In its authorization check in theexecutefunction,MIMOProxyreads from the proxy factoryto determine thecurrent owner address. Client contractsMIMOEmptyVault,MIMOLeverage,MIMORebalance,MIMOAutoAction, andMIMOManagedActionnow read the current proxy fromMIMOProxyFactory.
+Why it works:SinceMIMOProxyFactoryis now the single source of truth forMIMOProxyownership, this data cannot fall out of sync across contracts. Since client contracts callMIMOProxyFactory#getCurrentProxy, they will correctly read the current proxy address.
+
+[H-04] Incorrect implementation of access control in MIMOProxy:execute
+Submitted by vlad_bochok
+https://github.com/code-423n4/2022-08-mimo/blob/main/contracts/proxy/MIMOProxy.sol#L54
+https://github.com/code-423n4/2022-08-mimo/blob/main/contracts/proxy/MIMOProxy.sol#L104
+Description
+There is a functionexecuteinMIMOProxysmart contract. The function performs a delegate call to the user-specified address with the specified data. As an access control, the function checks that either it was called by the owner or the owner has previously approved that the sender can call a specified target with specified calldata. Seehttps://github.com/code-423n4/2022-08-mimo/blob/main/contracts/proxy/MIMOProxy.sol#L104.
+The check itself:
+if (owner != msg.sender) {bytes4 selector;assembly {selector := calldataload(data.offset)}if (!_permissions[msg.sender][target][selector]) {revert CustomErrors.EXECUTION_NOT_AUTHORIZED(owner, msg.sender, target, selector);}}
+The problem is how theselectoris calculated. Specifically,calldataload(data.offset)- reads first 4 bytes ofdata.  Imaginedata.length == 0, does it mean thatcalldataload(data.offset)will returnbytes4(0)? No.
+Let’s see how calldata are accepted by functions in Solidity. The solidity function checks that the calldata length is less than needed, but does NOT check that there is no redundant data in calldata. That means, the functionexecute(address target, bytes calldata data)will definitely accept data that havetargetanddata, but also in calldata can be other user-provided bytes. As a result,calldataload(data.offset)can read trash, but not thedatabytes.
+And in the case ofexecutefunction, an attacker can affect the execution by providingtrashdata at the end of the function. Namely, if the attacker has permission to call the function with somesignature, the attacker can call proxy contract bypass check for signature and make delegate call directly with zero calldata.
+Please see proof-of-concept (PoC),getAttackerCalldatareturns a calldata with which it is possible to bypass check permission for signature. Functionexecutefrom PoC simulate check for permission to callsignatureWithPermision, and enforce thatdata.length == 0. With calldata fromgetAttackerCalldatait works.
+Impact
+Any account that has permission to call at least one function (signature) to the contract can call fallback function without permission to do so.
+Proof of Concept
+// SPDX-License-Identifier: MIT OR Apache-2.0pragma solidity ^0.8.0;interface IMIMOProxy {event Execute(address indexed target, bytes data, bytes response);event TransferOwnership(address indexed oldOwner, address indexed newOwner);function initialize() external;function getPermission(address envoy,address target,bytes4 selector) external view returns (bool);function owner() external view returns (address);function minGasReserve() external view returns (uint256);function execute(address target, bytes calldata data) external payable returns (bytes memory response);function setPermission(address envoy,address target,bytes4 selector,bool permission) external;function transferOwnership(address newOwner) external;function multicall(address[] calldata targets, bytes[] calldata data) external returns (bytes[] memory);}contract PoC {bytes4 public signatureWithPermision = bytes4(0xffffffff);// Call this function with calldata that can be prepared in `getAttackerCalldata`function execute(address target, bytes calldata data) external {bytes4 selector;assembly {selector := calldataload(data.offset)}require(selector == signatureWithPermision);require(data.length == 0);}// Function that prepare attacker calldatafunction getAttackerCalldata() public view returns(bytes memory)  {bytes memory usualCalldata = abi.encodeWithSelector(IMIMOProxy.execute.selector, msg.sender, new bytes(0));return abi.encodePacked(usualCalldata, bytes32(signatureWithPermision));}}
+Recommended Mitigation Steps
+Addrequire(data.length >= 4);.
+RayXpub (Mimo) commented:
+We were not able to recreate the provided POC. The explanation is also incomplete - we don’t see how an attacker could bypass the permissions check through providing extra calldata in a signature. Please provide more details, or a working POC, on how the extra data can bypass the permissions check.
+gzeoneth (judge) commented:
+This POC looks valid to me.Basically what the warden mean is if you construct the calldata like execute(some_addr, "") + 0xffffff0x1cff79cd0000000000000000000000005b38da6a701c568545dcfcb03fcb875f56beddc400000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000^ffffffffdata.offsetwould be at ^andcalldataload(data.offset)would read 0xffffff
+gzeoneth (judge) commented:
+This might be clearerpragmasolidity^0.8.0;contractPoC{bytes4publicsignatureWithPermision=bytes4(0xdead1337);// Call this function with calldata that can be prepared in `getAttackerCalldata`functionexecute(addresstarget,bytescalldatadata)viewexternalreturns(bytesmemory) {bytes4selector;assembly{selector :=calldataload(data.offset)}require(selector==signatureWithPermision,"bad selector");returndata;}// Function that prepare attacker calldatafunctiongetAttackerCalldata()publicviewreturns(bytesmemory)  {bytesmemoryusualCalldata=abi.encodeWithSelector(this.execute.selector,msg.sender,newbytes(0));returnabi.encodePacked(usualCalldata,signatureWithPermision);}functionexploit()externalreturns(bytesmemorydata) {(,data) =address(this).call(getAttackerCalldata());}}If you callexploit, it would succeed but it shouldn’t (since exploit call execute with0x00000000....instead of the permitted 4bytes0xdead1337).The exploit here is if you permitted contract A to run function foo only, A.fallback() is also permitted.YourgetSelectorPoC won’t work if you are passing a non-empty bytes, it would work if you construct a call like0x0cbd17c800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000dead1337which is equivalent to callinggetSelector("")with some extra datadead1337at the end.Consider the calldata layout[00] 0cbd17c8[04] 0000000000000000000000000000000000000000000000000000000000000020 (data offset)[24] 0000000000000000000000000000000000000000000000000000000000000000 (data len)[44] dead1337data.offset = 0x04 + 0x20 (data offset) + 0x20 (1 word for length) = 0x44
+RayXpub (Mimo) confirmed
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved
+Finding:A warden identified that callers could bypass a permissions check inMIMOProxy#executeby passing specially constructed calldata, enabling the caller to invoke a contract’s fallback function.
+What changed:MIMOProxy#executenow reads the first four bytes of thedataparameter directly rather than usingdata.offsetto extract the function selector from calldata.
+Why it works:Since attackers can no longer manipulate the extracted selector, they cannot bypass the permissions check. Aunit testdemonstrates this behavior.
+

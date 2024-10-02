@@ -1,0 +1,21 @@
+[H-01] Users can get unlimited votes
+Submitted by IllIllI, also found by kenzo
+Users can get unlimited votes which leads to them:
+gaining control over governancegetting undeserved rewardshaving their pools favored due to gauge values
+Proof of Concept
+_mint()calls_moveTokenDelegates()to set up delegation…
+File:contracts/contracts/VotingEscrow.sol#1462function_mint(address_to,uint_tokenId)internalreturns(bool) {463// Throws if `_to` is zero address464assert(_to!=address(0));465// TODO add delegates466// checkpoint for gov467_moveTokenDelegates(address(0),delegates(_to),_tokenId);
+VotingEscrow.sol#L462-L467
+and_transferFrom()calls_moveTokenDelegates()to transfer delegates…
+File:contracts/contracts/VotingEscrow.sol#2301function_transferFrom(302address_from,303address_to,304uint_tokenId,305address_sender306       )internal{307require(attachments[_tokenId] ==0&& !voted[_tokenId],"attached");308// Check requirements309require(_isApprovedOrOwner(_sender,_tokenId));310// Clear approval. Throws if `_from` is not the current owner311_clearApproval(_from,_tokenId);312// Remove NFT. Throws if `_tokenId` is not a valid NFT313_removeTokenFrom(_from,_tokenId);314// TODO delegates315// auto re-delegate316_moveTokenDelegates(delegates(_from),delegates(_to),_tokenId);
+VotingEscrow.sol#L301-L316
+but_burn()does not transfer them back toaddress(0)
+File:contracts/contracts/VotingEscrow.sol#3517function_burn(uint_tokenId)internal{518require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");519520addressowner=ownerOf(_tokenId);521522// Clear approval523approve(address(0),_tokenId);524// TODO add delegates525// Remove token526_removeTokenFrom(msg.sender,_tokenId);527emitTransfer(owner,address(0),_tokenId);528}
+VotingEscrow.sol#L517-L528
+A user can deposit a token, lock it, wait for the lock to expire, transfer the token to another address, and repeat. During each iteration, a new NFT is minted and checkpointed. Calls togetPastVotes()will show the wrong values, since it will think the account still holds the delegation of the burnt NFT. Bribes and gauges also look at the checkpoints and will also have the wrong information
+Recommended Mitigation Steps
+Call_moveTokenDelegates(owner,address(0))in_burn()
+pooltypes (Velodrome) confirmed and commented:
+Nice catch! We intended to fix this issue (seeTODO), included in our mainnet deploy. Thanks for surfacing.
+Alex the Entreprenerd (judge) commented:
+The warden has shown an exploit that, leveraging the_moveTokenDelegatesfunction, which is not present inburncan allow any attacker to inflate their votes.The sponsor has confirmed and they indeed have mitigated the issue in theirdeployed code.

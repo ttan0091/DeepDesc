@@ -1,0 +1,22 @@
+Type of vulnerability: Logic Error in Initial Deposit Handling
+
+Cause of vulnerability: The `deposit` and `mint` functions handle the first deposit differently, allowing an attacker to manipulate the initial share distribution.
+
+Execution process: An attacker can use the `deposit` function to mint an arbitrary number of shares when the total supply is zero, bypassing the intended logic that should prevent manipulation of the initial share distribution.
+
+Vulnerable code:
+```solidity
+function previewDeposit(uint256 assets) public view virtual returns (uint256) {
+    return convertToShares(assets);
+}
+
+function convertToShares(uint256 assets) public view virtual returns (uint256) {
+    uint256 supply = totalSupply(); // Saves an extra SLOAD if totalSupply is non-zero.
+    return supply == 0 ? assets : assets.mulDivDown(supply, totalAssets());
+}
+
+function previewMint(uint256 shares) public view virtual returns (uint256) {
+    uint256 supply = totalSupply(); // Saves an extra SLOAD if totalSupply is non-zero.
+    return supply == 0 ? 10e18 : shares.mulDivUp(totalAssets(), supply);
+}
+```

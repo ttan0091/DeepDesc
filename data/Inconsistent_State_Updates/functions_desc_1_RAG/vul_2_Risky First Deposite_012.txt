@@ -1,0 +1,42 @@
+This code defines an internal function named _depositERC20, which is designed to deposit ERC20 tokens into an Aave lending pool and calculate the shares received in return. The function takes two parameters: asset, which is the address of the ERC20 token to be deposited, and amount, which is the amount of the token to be deposited. The function returns two values: aToken, which is the address of the aToken representing the deposit, and sharesReceived, which is the amount of aTokens received.
+
+Here’s a detailed explanation of how this function works:
+
+1. Determine the aToken Address:
+   solidity
+   aToken = liquidityToken(asset);
+   
+   This line calls a function liquidityToken (not shown in the provided code) to get the address of the aToken corresponding to the asset. aTokens are interestbearing tokens issued by Aave for deposited assets.
+
+2. Check Balance Before Deposit:
+   solidity
+   uint256 aTokensBefore = IERC20(aToken).balanceOf(address(this));
+   
+   This line retrieves the balance of aTokens held by the contract before the deposit is made. This is necessary to calculate the amount of aTokens received after the deposit.
+
+3. Get Lending Pool Address:
+   solidity
+   address lendingPool = ILendingPoolAddressesProvider(lendingPoolAddressesProvider).getLendingPool();
+   
+   This line retrieves the address of the Aave lending pool from a lending pool addresses provider. The lendingPoolAddressesProvider is an address that provides the current address of the Aave lending pool.
+
+4. Approve the Lending Pool to Spend the Asset:
+   solidity
+   IERC20(asset).approve(lendingPool, 0);
+   IERC20(asset).approve(lendingPool, amount);
+   
+   These lines approve the lending pool to spend the specified amount of the asset on behalf of the contract. The first approval sets the allowance to 0 to ensure any previous approvals are reset, and the second approval sets the allowance to amount.
+
+5. Deposit the Asset into the Lending Pool:
+   solidity
+   AaveLendingPool(lendingPool).deposit(asset, amount, address(this), referralCode);
+   
+   This line calls the deposit function on the Aave lending pool to deposit the amount of asset into the pool. The deposit is made on behalf of the contract itself, and referralCode is a parameter that might be used for referral programs.
+
+6. Calculate Shares Received:
+   solidity
+   sharesReceived = IERC20(aToken).balanceOf(address(this)).sub(aTokensBefore);
+   
+   This line calculates the amount of aTokens received by subtracting the balance of aTokens before the deposit (aTokensBefore) from the balance of aTokens after the deposit. The sub function is used to perform this subtraction.
+
+In summary, the _depositERC20 function facilitates the deposit of ERC20 tokens into an Aave lending pool, approves the lending pool to spend the tokens, and calculates the amount of aTokens received as a result of the deposit. This function is crucial for managing collateral and interestbearing tokens in DeFi applications that interact with Aave.

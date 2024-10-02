@@ -1,0 +1,30 @@
+This code defines a public function named delegateWithSig, which allows a user to delegate their rights to another address using a signed message. The function follows the EIP712 standard for typed structured data hashing and signing. Here’s a detailed explanation of how this function works:
+
+1. Feature Check:
+    The function starts by verifying if delegations on behalf are enabled using the isFeatureEnabled function with the feature flag FEATURE_DELEGATIONS_ON_BEHALF. If this feature is disabled, the function will revert with the message "delegations on behalf are disabled".
+
+2. Domain Separator Construction:
+    The function constructs the EIP712 contract domain separator using the keccak256 hash function. This separator includes the domain type hash, the contract name hashed with keccak256, the current chain ID, and the contract's own address. This ensures that the signature is only valid for a specific contract on a specific chain.
+
+3. HashStruct Construction:
+    The function then constructs the EIP712 hashStruct of the delegation message. This includes the delegation type hash, the address to which rights are being delegated (_to), a nonce (_nonce), and an expiration timestamp (_exp).
+
+4. Digest Calculation:
+    The function calculates the EIP712 digest by concatenating the EIP712 prefix (\x19\x01), the domain separator, and the hashStruct. This digest is what was signed by the user.
+
+5. Signature Recovery:
+    The function uses the ecrecover function to recover the address that signed the message from the digest and the provided signature components (v, r, s). This recovered address is stored in the signer variable.
+
+6. Validation Checks:
+    The function performs several checks to ensure the integrity and security of the message:
+      It checks that the recovered signer address is not zero, indicating an invalid signature.
+      It verifies that the provided nonce matches the nonce stored for the signer, ensuring the message is fresh and not a replay.
+      It checks that the current block timestamp is less than the expiration timestamp, ensuring the signature has not expired.
+
+7. Nonce Update:
+    If all validations pass, the function increments the nonce for the signer to prevent replay attacks.
+
+8. Delegation Execution:
+    Finally, the function calls the internal __delegate function, passing the signer and the delegate address (_to). This function will execute the logic required to delegate rights from the signer to the delegate.
+
+This function is designed to securely handle delegated actions by verifying the signature and ensuring the message is valid and not replayed. It leverages the EIP712 standard to provide a structured and secure way to sign and verify messages in the context of Ethereum smart contracts.

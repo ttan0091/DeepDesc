@@ -1,0 +1,20 @@
+Type of vulnerability: Insufficient Balance for Withdrawals
+Cause of vulnerability: Rounding down errors in calculating quote amounts during auction finalization and bidder withdrawals
+Execution process: 
+1. Seller finalizes the auction and receives a calculated amount of quote tokens based on the filled base amount and clearing price.
+2. Bidders attempt to withdraw their unused quote tokens using a formula that calculates the refund based on their bid and the clearing price.
+3. Due to multiple rounding down operations, the total quote tokens offered by bidders is less than the amount charged to the seller.
+4. The last bidder fails to withdraw their funds because the contract's balance of quote tokens is insufficient.
+Vulnerable code: 
+```solidity
+// Calculate quote amount based on clearing price
+uint256 filledQuote = FixedPointMathLib.mulDivDown(clearingQuote, data.filledBase, clearingBase);
+
+// Refund unfilled quoteAmount on first withdraw
+if (b.quoteAmount != 0) {
+    uint256 quoteBought = FixedPointMathLib.mulDivDown(baseAmount, a.data.lowestQuote, a.data.lowestBase);
+    uint256 refundedQuote = b.quoteAmount - quoteBought;
+    b.quoteAmount = 0;
+    SafeTransferLib.safeTransfer(ERC20(a.params.quoteToken), msg.sender, refundedQuote);
+}
+```

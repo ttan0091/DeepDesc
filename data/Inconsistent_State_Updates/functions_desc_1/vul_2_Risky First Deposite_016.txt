@@ -1,0 +1,26 @@
+This code defines an external function named deposit, which allows users to deposit a specified amount of tokens into the insurance fund. Here’s a detailed explanation of how this function works:
+
+1. Settle Pending Obligation:
+    The function first calls settlePendingObligation(), which is likely another function in the contract responsible for settling any outstanding obligations or debts that the insurance fund might have. This ensures that the fund is in a clean state before accepting new deposits.
+
+2. Check for Pending Obligations:
+    The function then checks if there are any pending obligations by evaluating pendingObligation == 0. If there are pending obligations, the function reverts with the error message "IF.deposit.pending_obligations". This is to protect new liquidity providers (LPs) from depositing into a fund that still has unresolved issues.
+
+3. Balance and Total Supply Check:
+    The function retrieves the current balance of the fund using balance() and the total supply of the fund's tokens using totalSupply().
+    If the total supply is zero (_totalSupply == 0) and there is a positive balance in the fund (_pool > 0), it indicates that trading fees have accumulated while there were no liquidity providers. In this case, the function transfers the entire balance to the governance address using vusd.safeTransfer(governance, _pool) and resets the pool balance to zero (_pool = 0).
+
+4. Transfer Tokens from Sender:
+    The function then transfers the specified amount (_amount) of tokens from the sender (msg.sender) to the contract itself using vusd.safeTransferFrom(msg.sender, address(this), _amount). This is the actual deposit of tokens into the fund.
+
+5. Calculate Shares:
+    The function calculates the number of shares to be minted for the depositor. If the pool balance is zero (_pool == 0), it means this is the first deposit, so the shares are equal to the deposited amount (shares = _amount).
+    If the pool balance is not zero, the shares are calculated proportionally based on the deposited amount relative to the current pool balance (shares = _amount  _totalSupply / _pool).
+
+6. Mint Shares:
+    The function mints the calculated shares to the depositor using _mint(msg.sender, shares).
+
+7. Emit Event:
+    Finally, the function emits an event FundsAdded to notify that funds have been added by the sender, including the amount deposited and the timestamp of the transaction.
+
+This function ensures that new deposits are handled correctly, taking into account any accumulated fees and pending obligations, and that the depositor receives the appropriate number of shares in the insurance fund.

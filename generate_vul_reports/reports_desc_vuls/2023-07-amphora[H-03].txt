@@ -1,0 +1,19 @@
+Type of vulnerability: Rounding Error
+Cause of vulnerability: Floor rounding in Solidity causes rounding errors in the `_usdaToWUSDA` function, especially when `_usdaAmount` is small relative to `MAX_wUSDA_SUPPLY` and the total USDA supply.
+Execution process: When `_usdaToWUSDA` is called with a sufficiently small `_usdaAmount`, the returned `_wusdaAmount` can round down to 0. This affects the `deposit` and `withdraw` functions, where users could receive little or no WUSDA for their USDA, or withdrawals could occur without burning any WUSDA. An attacker can exploit this by using a flash loan to inflate the USDA total supply, front-running a victim's deposit to ensure they receive no WUSDA, and then withdrawing the inflated USDA supply to repay the flash loan.
+Vulnerable code:
+```solidity
+function _usdaToWUSDA(uint256 _usdaAmount, uint256 _totalUsdaSupply) private pure returns (uint256 _wusdaAmount) {
+    _wusdaAmount = (_usdaAmount * MAX_wUSDA_SUPPLY) / _totalUsdaSupply;
+}
+
+function deposit(uint256 _usdaAmount) external override returns (uint256 _wusdaAmount) {
+    _wusdaAmount = _usdaToWUSDA(_usdaAmount, _usdaSupply());
+    _deposit(_msgSender(), _msgSender(), _usdaAmount, _wusdaAmount);
+}
+
+function withdraw(uint256 _usdaAmount) external override returns (uint256 _wusdaAmount) {
+    _wusdaAmount = _usdaToWUSDA(_usdaAmount, _usdaSupply());
+    _withdraw(_msgSender(), _msgSender(), _usdaAmount, _wusdaAmount);
+}
+```

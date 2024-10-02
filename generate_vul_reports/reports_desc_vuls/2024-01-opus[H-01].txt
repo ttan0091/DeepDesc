@@ -1,0 +1,16 @@
+Type of vulnerability: Accounting Error
+Cause of vulnerability: The `withdraw_helper` function updates the trove balance and total yang balance before accounting for any exceptional redistributions added during the `charge` call, leading to an incorrect balance update.
+Execution process: When a user attempts to withdraw yang from their trove, the `withdraw_helper` function calculates the new trove balance and total yang balance based on the withdrawal amount. However, it does not account for any exceptional redistributions that might occur during the subsequent `charge` function call. This results in the trove balance being updated without considering the redistributed amounts, leading to a loss of these amounts.
+Vulnerable code: 
+```solidity
+fn withdraw_helper(ref self: ContractState, yang: ContractAddress, trove_id: u64, amount: Wad) {
+    let new_trove_balance: Wad = trove_balance - amount;
+    let new_total: Wad = self.yang_total.read(yang_id) - amount;
+    self.charge(trove_id);
+    self.yang_total.write(yang_id, new_total);
+    self.deposits.write((yang_id, trove_id), new_trove_balance);
+    // Emit events
+    self.emit(YangTotalUpdated { yang, total: new_total });
+    self.emit(DepositUpdated { yang, trove_id, amount: new_trove_balance });
+}
+```

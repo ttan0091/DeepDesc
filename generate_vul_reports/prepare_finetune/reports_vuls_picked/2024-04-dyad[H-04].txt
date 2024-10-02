@@ -1,0 +1,32 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: The contract allows any user to deposit a dNft token into any vault, which updates the `idToBlockOfLastDeposit` mapping with the current block number. This mechanism is intended to prevent flash loan attacks but can be exploited by an attacker to front-run legitimate withdrawals and cause them to revert.
+Execution process: An attacker creates a fake vault and a fake token, then deposits the fake token into the victim's dNft token's vault. This action updates the `idToBlockOfLastDeposit` mapping with the current block number, causing any subsequent withdrawal attempts by the victim in the same block to revert due to the `DepositedInSameBlock` check.
+Vulnerable code: 
+```solidity
+function deposit(
+    uint id,
+    address vault,
+    uint amount
+)
+    external
+    isValidDNft(id)
+{
+    idToBlockOfLastDeposit[id] = block.number;
+    Vault _vault = Vault(vault);
+    _vault.asset().safeTransferFrom(msg.sender, address(vault), amount);
+    _vault.deposit(id, amount);
+}
+
+function withdraw(
+    uint id,
+    address vault,
+    uint amount,
+    address to
+)
+    public
+    isDNftOwner(id)
+{
+    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock();
+    uint dyadMinted = dyad.mintedDyad(address(this), id);
+}
+```

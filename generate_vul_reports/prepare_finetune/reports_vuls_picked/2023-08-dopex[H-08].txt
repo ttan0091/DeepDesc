@@ -1,0 +1,32 @@
+Type of vulnerability: Reentrancy and State Variable Manipulation
+Cause of vulnerability: The `totalWethDelegated` state variable is not updated correctly in the `withdraw` function, leading to an inflated value that can be exploited to manipulate the WETH reserves.
+Execution process: An attacker deposits WETH into the contract using `addToDelegate`, which updates the `totalWethDelegated` state variable. The attacker then withdraws the WETH using the `withdraw` function, which does not update `totalWethDelegated`. Finally, the attacker calls the `sync` function, which inaccurately updates the WETH reserves based on the inflated `totalWethDelegated` value, causing an underflow error when the admin attempts to call `lowerDepeg`.
+Vulnerable code:
+```solidity
+function addToDelegate(uint256 amount, uint256 minSharesOut) external returns (uint256 delegateId) {
+    // ...
+    totalWethDelegated += amount;
+    // ...
+}
+
+function withdraw(uint256 delegateId) external returns (uint256 amountWithdrawn) {
+    // ...
+    amountWithdrawn = delegate.amount - delegate.activeCollateral;
+    delegate.amount = delegate.activeCollateral;
+    // totalWethDelegated -= amountWithdrawn; // Missing update to totalWethDelegated
+    IERC20WithBurn(weth).safeTransfer(msg.sender, amountWithdrawn);
+    // ...
+}
+
+function sync() external {
+    // ...
+    uint256 wethReserves = IERC20(weth).balanceOf(address(this)) - totalWethDelegated;
+    // ...
+}
+
+function lowerDepeg(uint256 amount, uint256 minOut, uint256 minWethOut, uint256 minDpxEthOut) external {
+    // ...
+    uint256 wethReserves = IERC20(weth).balanceOf(address(this)) - totalWethDelegated;
+    // ...
+}
+```

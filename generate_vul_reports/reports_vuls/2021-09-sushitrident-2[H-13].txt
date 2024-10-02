@@ -1,0 +1,14 @@
+[H-13] Burning does not update reserves
+Submitted by cmichel, also found by 0xsanson, broccoli, and pauliax
+TheConcentratedLiquidityPool.burnfunction sends outamount0/amount1tokens but only updates the reserves by decreasing it by thefees of these amounts.
+unchecked{// @audit decreases by fees only, not by amount0/amount1reserve0-=uint128(amount0fees);reserve1-=uint128(amount1fees);}
+This leads to the pool having wrong reserves after anyburnaction.
+The pool’s balance will be much lower than the reserve variables.
+Impact
+As the pool’s actual balance will be much lower than the reserve variables,minting andswaping will not work correctly either.
+This is because of theamount0Actual + reserve0 <= _balance(token0)check inmintusing a much higherreserve0amount than the actual balance (already including the transferred assets from the user). An LP provider will have to make up for the missing reserve decrease fromburnand pay more tokens.
+The same holds true forswapwhich performs the same check in_updateReserves.
+The pool essentially becomes unusable after aburnas LPs / traders need to pay more tokens.
+Recommended Mitigation Steps
+The reserve should be decreased by what is transferred out. Inburn’s case this isamount0/amount1.
+sarangparikh22 (Sushi) confirmed

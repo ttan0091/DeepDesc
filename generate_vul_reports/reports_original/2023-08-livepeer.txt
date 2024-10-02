@@ -1,0 +1,57 @@
+[H-01] Underflow inupdateTranscoderWithFeescan cause corrupted data and loss of winning tickets
+Submitted bybronze_pickaxe, also found byVAD37,ether_sky, andKrace
+updateTranscoderWtihFeescan underflow because MathUtils is used instead of PreciseMathUtils.
+Proof of Concept
+According toLIP-92the initialtreasuryRewardCutRatewill be set to10%.
+treasuryRewardCutRateis set with thesetTreasuryRewardCutRate()function, which calls the internal function_setTreasuryRewardCutRate().
+file:2023-08-livepeer/contracts/bonding/BondingManager.solfunction_setTreasuryRewardCutRate(uint256_cutRate)internal{require(PreciseMathUtils.validPerc(_cutRate),"_cutRate is invalid precise percentage");
+In this function the value will be checked if it’s a validPreciseMathUtilspercentage (<100%specified with 27-digits precision):
+file:2023-08-livepeer/contracts/libraries/PreciseMathUtils.sollibraryPreciseMathUtils{// ...// Divisor used for representing percentagesuint256publicconstantPERC_DIVISOR=10**27;functionvalidPerc(uint256_amount)internalpurereturns(bool) {return_amount<=PERC_DIVISOR;}// ...
+However, inupdateTranscoderWithFees, to calculatetreasuryRewards,MathUtilsis used instead ofPreciseMathUtils.
+file:2023-08-livepeer/contracts/bonding/BondingManager.solfunctionupdateTranscoderWithFees(address_transcoder,uint256_fees,uint256_round)externalwhenSystemNotPausedonlyTicketBroker{// ...uint256treasuryRewards=MathUtils.percOf(rewards,treasuryRewardCutRate);rewards=rewards.sub(treasuryRewards);// ...}
+MathUtilsuses aPREC_DIVISORof1000000instead of10 ** 27from thePreciseMathUtils:
+file:2023-08-livepeer/contracts/libraries/MathUtils.sollibraryMathUtils{// ...uint256publicconstantPERC_DIVISOR=1000000;// ...
+This leads totreasuryRewardsvalue being bigger than expected. Here is agist of the POC. Running the POC it shows that the current usage ofMathUtilswhen calculatingtreasuryRewardswill always cause an underflow in the next line of code.
+updateTranscoderWithFeesis called every time a winning ticket is redeemed. Whenever the transcoder has skipped the previous round reward call, this function has to re-calculate the rewards, as documented inLIP-92. This re-calculation will always fail due to the underflow shown above.
+Impact
+This will lead to accounting errors, unexpected behaviours and can cause a loss of winning tickets.
+Firstly, the accounting errors and unexpected behaviours: these are all the storage values getting updated inupdateTranscoderWithFees:
+file:2023-08-livepeer/contracts/bonding/BondingManager.solfunctionupdateTranscoderWithFees(address_transcoder,uint256_fees,uint256_round)externalwhenSystemNotPausedonlyTicketBroker{// ...// transcoder & earningsPool.dataL314:Transcoderstoraget=transcoders[_transcoder];L321:EarningsPool.DatastorageearningsPool=t.earningsPoolPerRound[currentRound];//accounting updates happen hereL377:t.cumulativeFees=t.cumulativeFees.add(transcoderRewardStakeFees).add(transcoderCommissionFees);L382:earningsPool.updateCumulativeFeeFactor(prevEarningsPool,delegatorsFees);L384:t.lastFeeRound=currentRound;
+LetcurrentRound() - 1be the previous round where the transcoder skipped the reward callLetcurrentRound()be current roundLetcurrentRound() + 1be the next round
+DuringcurrentRound()it won’t be possible to update theTranscoderstorage orearningsPool.datastorage because of the underflow that will happen becausecurrentRound() - 1reward call has been skipped by the transcoder.
+DuringcurrentRound() + 1it will be possible to callupdateTranscoderWithFees, however, L382 will only update theprevEarningsPool, which in this case will becurrentRound(), notcurrentRound - 1. Therefor, theEarningsPool.data.cumulativeRewardFactorwon’t be updated forcurrentRound() - 1.
+Lastly, the validity of a ticket is two rounds as per thespecs. This means that a transcoder that receives a winning ticket incurrentRound() - 1should be able to redeem it incurrentRound() - 1andcurrentRound(). However, a transcoder that receives a winning ticket incurrentRound() - 1wont be able to redeem it incurrentRound()because of the underflow that happens while redeeming a winning ticket incurrentRound(). The transcoder wont be able to redeem it aftercurrentRound + 1..Nbecause the ticket will be expired.
+Recommended Mitigation Steps
+UsePreciseMathLibinstead ofMathLib:
+file:2023-08-livepeer/contracts/bonding/BondingManager.solL355:-uint256treasuryRewards=MathUtils.percOf(rewards,treasuryRewardCutRate);+uint256treasuryRewards=PreciseMathUtils.percOf(rewards,treasuryRewardCutRate);
+Assessed type
+Library
+victorges (Livepeer) commented:
+Can confirm this issue!
+victorges (Livepeer) mitigated:
+https://github.com/livepeer/protocol/pull/624
+
+[H-02] By delegating to a non-transcoder, a delegator can reduce the tally of someone else’s vote choice without first granting them any voting power
+Submitted byBanditx0x
+A delegate can subtract their own voting weight from the voting choice of another delegate, even if that user isn’t a transcoder. Since they are not a transcoder, they don’t have their votes initially increased by the amount delegated to them, voting weight is still subtracted from the tally of their vote choice.
+Maliciously, this could be used to effectively double one’s voting power, by delegating their votes to a delegator who is about to vote for the choice which they don’t want. It can also occur accidentally, for example when somebody delegates to a transcoder who later switches role to delegate.
+Proof of Concept
+When a user is not a transcoder, their votes are determined by the amount they have delegated to the delegatedAddress, and does not increase when a user delegates to them:
+if(bond.bondedAmount==0) {amount=0;}elseif(isTranscoder) {amount=bond.delegatedAmount;}else{amount=delegatorCumulativeStakeAt(bond,_round);}}
+Let’s say that this delegator (Alice) has 100 votes and votesFor, then another delegator(Bob) has delegated 1000 votes to Alice. As stated above, Alice doesn’t get the voting power of Bob’s 1000 votes, so theForcount increases by 100.
+Bob now votes, and_handleVotesOverridesis called. In this function, the first conditional,if isTranscoderwill return false as Bob is not self-delegating.
+Then, there is a check that the address Bob has delegated to has voted. Note that there is a missing check of whether the delegate address is a transcoder. Therefore the logic insideif (delegateVoter.hasVoted)is executed:
+if(delegateVoter.hasVoted) {// this is a delegator overriding its delegated transcoder vote,// we need to update the current totals to move the weight of// the delegator vote to the right outcome.VoteTypedelegateSupport=delegateVoter.support;if(delegateSupport==VoteType.Against) {_tally.againstVotes-=_weight;}elseif(delegateSupport==VoteType.For) {_tally.forVotes-=_weight;}else{assert(delegateSupport==VoteType.Abstain);_tally.abstainVotes-=_weight;}}
+The logic reduces the tally of whatever choice Alice voted for by Bob’s weight. Alice initially votedForwith 100 votes, and then the For votes is reduced by Bob’s1000 votes. Lets say that Bob votesAgainst. This will result in an aggregate 900 vote reduction in theFortally and +1000 votes forAgaisntafter Alice and Bob has finished voting.
+If Alice was a transcoder, Bob will be simply reversing the votes they had delegated to Alice. However since Alice was a delegate, they never gained the voting power that was delegated to her.
+Bob has effectively gained the ability to vote against somebody else’s votes (without first actually increasing their voting power since they are not a transcoder) and can vote themselves, which allows them to manipulate governance.
+Recommended Mitigation Steps
+There should be a check that a delegate is a transcoder before subtracting the tally. Here is some pseudocode:
+if (delegateVoter.hasVoted && ---delegate is transcoder ---)
+This is an edit of the conditional of the function_handleOverrides. This ensures that the subtraction of vote tally is only performed when the delegate is a voter AND the delegate is a transcoder. This should fix the accounting/subtraction issue of vote tally for non-transcoder delegates.
+Assessed type
+Invalid Validation
+victorges (Livepeer) confirmed
+victorges (Livepeer) mitigated:
+https://github.com/livepeer/protocol/pull/625https://github.com/livepeer/protocol/pull/626
+

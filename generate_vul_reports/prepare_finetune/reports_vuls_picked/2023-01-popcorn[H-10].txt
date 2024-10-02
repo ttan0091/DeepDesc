@@ -1,0 +1,21 @@
+Type of vulnerability: Front-running and rounding down issue
+Cause of vulnerability: The first depositor can be front-run by an attacker, and the rounding down operation in the `convertToShares` function can be exploited when the supply is non-zero.
+Execution process: An attacker (Bob) front-runs the first depositor (Alice) by depositing a small amount of assets to get a share, then transfers a large amount of assets to the vault's adapter to inflate the `totalAssets`. When Alice deposits, she receives only one share due to rounding down, allowing Bob to redeem his share for a disproportionately large amount of assets.
+Vulnerable code: 
+```solidity
+function deposit(uint256 assets, address receiver) public nonReentrant whenNotPaused syncFeeCheckpoint returns (uint256 shares) {
+    if (receiver == address(0)) revert InvalidReceiver();
+    uint256 feeShares = convertToShares(assets.mulDiv(uint256(fees.deposit), 1e18, Math.Rounding.Down));
+    shares = convertToShares(assets) - feeShares;
+    if (feeShares > 0) _mint(feeRecipient, feeShares);
+    _mint(receiver, shares);
+    asset.safeTransferFrom(msg.sender, address(this), assets);
+    adapter.deposit(assets, address(this));
+    emit Deposit(msg.sender, receiver, assets, shares);
+}
+
+function convertToShares(uint256 assets) public view returns (uint256) {
+    uint256 supply = totalSupply();
+    return supply == 0 ? assets : assets.mulDiv(supply, totalAssets(), Math.Rounding.Down);
+}
+```

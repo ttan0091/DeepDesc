@@ -1,0 +1,21 @@
+Type of vulnerability: Replay Attack
+Cause of vulnerability: Nonce not incremented on failed transactions
+Execution process: An attacker can replay a failed meta-transaction using the same signature, leading to unintended execution of the transaction under changed conditions.
+Vulnerable code: 
+```solidity
+function executeMetaTransaction(MetaAction memory metaAction, bytes32 r, bytes32 s, uint8 v) external payable returns(bytes memory) {
+    require(_verify(metaAction.from, metaAction, r, s, v), "signer and signature don't match");
+    uint256 currentNonce = _nonces[metaAction.from];
+    // intentionally allow this to overflow to save gas,
+    // and it's impossible for someone to do 2 ^ 256 - 1 meta txs
+    unchecked {
+        _nonces[metaAction.from] = currentNonce + 1;
+    }
+    // Append the metaAction.from at the end so that it can be extracted later
+    // from the calling context (see _msgSender() below)
+    (bool success, bytes memory returnData) = address(this).call(abi.encodePacked(abi.encodeWithSelector(IController(address(this)).operate.selector, metaAction.actions), metaAction.from));
+    require(success, "unsuccessful function call");
+    emit MetaTransactionExecuted(metaAction.from, payable(msg.sender), currentNonce);
+    return returnData;
+}
+```

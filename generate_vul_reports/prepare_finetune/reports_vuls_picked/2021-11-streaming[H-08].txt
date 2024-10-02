@@ -1,0 +1,19 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect update of `ts.lastUpdate` and `ts.tokens` due to a conditional check that prevents updates when `ts.tokens` is zero.
+Execution process:
+1. User stakes tokens and then withdraws all tokens, setting `ts.tokens` to 0.
+2. User stakes tokens again, but `updateStream()` does not update `ts.lastUpdate` because `ts.tokens` is 0.
+3. User withdraws tokens again, and `updateStream()` uses the outdated `ts.lastUpdate` value, leading to incorrect calculation of `ts.tokens`.
+Vulnerable code:
+```solidity
+function updateStreamInternal(address who) internal {
+    ...
+    uint32 acctTimeDelta = uint32(block.timestamp) - ts.lastUpdate;
+    if (acctTimeDelta > 0 && ts.tokens > 0) {
+        // some time has passed since this user last interacted
+        // update ts not yet streamed
+        ts.tokens -= uint112(acctTimeDelta * ts.tokens / (endStream - ts.lastUpdate));
+        ts.lastUpdate = uint32(block.timestamp);
+    }
+}
+```

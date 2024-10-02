@@ -1,0 +1,23 @@
+[H-13] Exchange:totalFundingcalculation should be done with a simple multiplication operation instead of awadMuloperation
+Submitted bycarlitox477, also found byKIntern_NA
+wadoperations are meant to be done with int/uint which represent numbers with 18 decimals.
+While the funding rate follows this representation, a simple time difference does not.
+InExchange.getMarkPriceas well as inExchange._updateFundingRateawadMuloperation is done to multiply the funding rate per second by a simple time difference, leading to wrong calculation ofnormalizationFactorand mark price, affecting critical parts of the protocol.
+Proof of Concept
+InExchange.getMarkPricefirst we get the funding rate per second:
+(int256fundingRate,) =getFundingRate();fundingRate=fundingRate/1days;// Funding rate per second
+Immediately after, the total funding since last update is calculated:
+int256currentTimeStamp=int256(block.timestamp);int256fundingLastUpdatedTimestamp=int256(fundingLastUpdated);// @audit funding rate X (time interval) / 1e18 = Number without decimalint256totalFunding=wadMul(fundingRate, (currentTimeStamp-fundingLastUpdatedTimestamp));
+int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));is the same that$TOTAL\_ FUNDING\_{t\_{1}; t\_{2}} = \frac{FUNDING\_ RATE\_{sec} \times (t\_{2} - t\_{1})}{10^{18}}$
+However, the division by $10^{18}$ should not happen, given that time difference does not represent a number with 18 decimals.
+This ends up in a miscalculation oftotalFundingvariable, and as a consequence, a miscalculation of mark price.
+The same issue happens in_updateFundingRatefunction.
+Impact
+Here a complete list of functions affected by this bug:
+Exchange.\_updateFundingRate(Exchange.sol#L416)Exchange.openTrade(Exchange.sol#L95)Exchange.closeTrade(Exchange.sol#L108)Exchange.addCollateral(Exchange.sol#L121)Exchange.removeCollateral(Exchange.sol#L134)Exchange.liquidate(Exchange.sol#L147)Exchange.getMarkPrice(Exchange.sol#L196):Exchange.\_addCollateral(Exchange.sol#L358)Exchange.\_removeCollateral(Exchange.sol#L384)KangarooVault.getTokenPrice(KangarooVault.sol#L353)ShortCollateral.liquidate(ShortCollateral.sol#L133)ShortCollateral.getMinCollateral(ShortCollateral.sol#L163)ShortCollateral.canLiquidate(ShortCollateral.sol#L193)ShortCollateral.maxLiquidatableDebt(ShortCollateral.sol#L216)LiquidityPool.orderFee(LiquidityPool.sol#L388)LiquidityPool.getMarkPrice(LiquidityPool.sol#L405)LiquidityPool.getTokenPrice(LiquidityPool.sol#L352)LiquidityPool.openLong(LiquidityPool.sol#L437)LiquidityPool.closeLong(LiquidityPool.sol#L469)LiquidityPool.openShort(LiquidityPool.sol#L501)LiquidityPool.closeShort(LiquidityPool.sol#L533)LiquidityPool.liquidate(LiquidityPool.sol#L558)KangarooVault.removeCollateral(KangarooVault.sol#L437)KangarooVault.\_openPosition(KangarooVault.sol#L568)
+As it can be seen, this bug affects multiple critical part of the protocol, calculating the correct mark price as well as updating the funding rate is essential for the protocol correct behavior.
+Recommended Mitigation steps
+Simply replace currentwadoperation for a simple multiplication.
+function getMarkPrice() public view override returns (uint256 markPrice, bool isInvalid) {// Get base asset price from oracles(uint256 baseAssetPrice, bool invalid) = pool.baseAssetPrice();isInvalid = invalid;// Get funding rate per second// max 1% or 1e16(int256 fundingRate,) = getFundingRate();fundingRate = fundingRate / 1 days;int256 currentTimeStamp = int256(block.timestamp);int256 fundingLastUpdatedTimestamp = int256(fundingLastUpdated);-       int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));+       int256 totalFunding = fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp);int256 normalizationUpdate = 1e18 - totalFunding;uint256 newNormalizationFactor = normalizationFactor.mulWadDown(uint256(normalizationUpdate));uint256 squarePrice = baseAssetPrice.mulDivDown(baseAssetPrice, PRICING_CONSTANT);markPrice = squarePrice.mulWadDown(newNormalizationFactor);}
+function _updateFundingRate() internal {(int256 fundingRate,) = getFundingRate();fundingRate = fundingRate / 1 days;int256 currentTimeStamp = int256(block.timestamp);int256 fundingLastUpdatedTimestamp = int256(fundingLastUpdated);-       int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));+       int256 totalFunding = fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp);int256 normalizationUpdate = 1e18 - totalFunding;normalizationFactor = normalizationFactor.mulWadDown(uint256(normalizationUpdate));emit UpdateFundingRate(fundingLastUpdated, normalizationFactor);fundingLastUpdated = block.timestamp;}
+mubaris (Polynomial) confirmed

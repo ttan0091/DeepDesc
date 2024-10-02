@@ -1,0 +1,29 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: Lack of access control checks and improper validation of input parameters.
+Execution process: A malicious actor can call the `checkpoint_market` and `checkpoint_lender` functions with a `_forwardTimestampLimit` set to 0, which sets the `lendingMarketTotalBalanceEpoch[_market]` to 0. This prevents the for loop in `_checkpoint_market` from running, leading to high gas fees and preventing users from claiming rewards.
+Vulnerable code:
+```solidity
+function checkpoint_market(address _market, uint256 _forwardTimestampLimit) external is_valid_epoch(_forwardTimestampLimit) {
+    require(lendingMarketTotalBalanceEpoch[_market] > 0, "No deposits for this market");
+    _checkpoint_market(_market, _forwardTimestampLimit);
+}
+
+function checkpoint_lender(address _market, address _lender, uint256 _forwardTimestampLimit) external is_valid_epoch(_forwardTimestampLimit) {
+    require(lendingMarketBalancesEpoch[_market][_lender] > 0, "No deposits for this lender in this market");
+    _checkpoint_lender(_market, _lender, _forwardTimestampLimit);
+}
+
+function _checkpoint_market(address _market, uint256 _forwardTimestampLimit) private {
+    uint256 currEpoch = (block.timestamp / WEEK) * WEEK;
+    uint256 lastMarketUpdateEpoch = lendingMarketTotalBalanceEpoch[_market];
+    uint256 updateUntilEpoch = Math.min(currEpoch, _forwardTimestampLimit);
+    if (lastMarketUpdateEpoch > 0 && lastMarketUpdateEpoch < currEpoch) {
+        // Fill in potential gaps in the market total balances history
+        uint256 lastMarketBalance = lendingMarketTotalBalance[_market][lastMarketUpdateEpoch];
+        for (uint256 i = lastMarketUpdateEpoch; i <= updateUntilEpoch; i += WEEK) {
+            lendingMarketTotalBalance[_market][i] = lastMarketBalance;
+        }
+    }
+    lendingMarketTotalBalanceEpoch[_market] = updateUntilEpoch;
+}
+```

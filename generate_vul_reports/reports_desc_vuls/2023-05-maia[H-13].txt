@@ -1,0 +1,27 @@
+Type of vulnerability: Timing
+Cause of vulnerability: The vulnerability arises because the weight of a gauge is re-added to the total weight before the rewards for the new cycle are queued, leading to an incorrect calculation of rewards distribution.
+Execution process: A gauge that was previously deprecated and still contains votes is re-added during a new cycle before `updatePeriod()` or `queueRewardsForCycle()` are called. This results in the old total weight being used in the reward calculation, causing some gauges to not receive their allocated rewards.
+Vulnerable code:
+```solidity
+function _addGauge(address gauge) internal returns (uint112 weight) {
+    // some code ...
+    // Check if some previous weight exists and re-add to the total. Gauge and user weights are preserved.
+    weight = _getGaugeWeight[gauge].currentWeight;
+    if (weight > 0) {
+        _writeGaugeWeight(_totalWeight, _add112, weight, currentCycle);
+    }
+    emit AddGauge(gauge);
+}
+
+function _getStoredWeight(Weight storage gaugeWeight, uint32 currentCycle) internal view returns (uint112) {
+    return gaugeWeight.currentCycle < currentCycle ? gaugeWeight.currentWeight : gaugeWeight.storedWeight;
+}
+
+function calculateGaugeAllocation(address gauge, uint256 quantity) external view returns (uint256) {
+    if (_deprecatedGauges.contains(gauge)) return 0;
+    uint32 currentCycle = _getGaugeCycleEnd();
+    uint112 total = _getStoredWeight(_totalWeight, currentCycle);
+    uint112 weight = _getStoredWeight(_getGaugeWeight[gauge], currentCycle);
+    return (quantity * weight) / total;
+}
+```

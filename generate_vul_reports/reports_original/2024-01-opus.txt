@@ -1,0 +1,119 @@
+[H-01] Neglect of exceptional redistribution amounts inwithdraw_helperfunction
+Submitted byAymen0909, also found byetherhood,bin2chen,jasonxiale,minhquanym, andkodyvim
+Lines of code
+https://github.com/code-423n4/2024-01-opus/blob/main/src/core/shrine.cairo#L1382-L1392https://github.com/code-423n4/2024-01-opus/blob/main/src/core/shrine.cairo#L1421-L1431
+Description
+Thewithdraw_helperfunction in theshrinecontract handles withdrawal logic for both thewithdrawandseizefunctions. It is responsible for updating trove balances, total yang balances, and charging interest for the trove via thechargefunction. However, there is an oversight in the current implementation:
+fn withdraw_helper(ref self: ContractState, yang: ContractAddress, trove_id: u64, amount: Wad) {...let new_trove_balance: Wad = trove_balance - amount;let new_total: Wad = self.yang_total.read(yang_id) - amount;self.charge(trove_id);//@audit will not account for exceptional redistribution added to deposits balance in `charge` callself.yang_total.write(yang_id, new_total);self.deposits.write((yang_id, trove_id), new_trove_balance);// Emit eventsself.emit(YangTotalUpdated { yang, total: new_total });self.emit(DepositUpdated { yang, trove_id, amount: new_trove_balance });}
+The issue in the code above is that thewithdraw_helperfunction proceeds to update the storage variablesyang_totalanddepositsusing the previously calculatednew_totalandnew_trove_balancevalues, without accounting for any new yang balance added to the trove after an exceptional redistribution. This results in neglecting any exceptional redistributions added to thedepositsbalance during thechargecall :
+fn charge(ref self: ContractState, trove_id: u64) {...// If there was any exceptional redistribution, write updated yang amounts to troveif updated_trove_yang_balances.is_some() {let mut updated_trove_yang_balances = updated_trove_yang_balances.unwrap();loop {match updated_trove_yang_balances.pop_front() {Option::Some(yang_balance) => {//@audit will updated the trove yang balanceself.deposits.write((*yang_balance.yang_id, trove_id), *yang_balance.amount);},Option::None => { break; },};};}...}
+Because the trovedepositsmap is changed in thechargefunction butwithdraw_helperuses directly the valuenew_trove_balance, which was calculated before thechargecall, the exceptional redistribution added todepositswill be overridden and will be neglected in the trove yang balance.
+This oversight could result in financial losses for all protocol users. When users withdraw yang amounts, any exceptional redistributions that should have been added to their trove balances will be neglected and lost.
+Impact
+Users are at risk of losing all yang exceptional redistribution amounts due to an error in thewithdraw_helperfunction, which causes it to neglect any yang-added redistribution to the trovedepositsmap.
+Proof of concept
+Let’s take a simple scenario to highlight this issue:
+Bob wants to withdraw a 100 amount of yang (yang_id) from his trove (trove_id) certain, we had the following state before the tx:deposits(yang_id, trove_id) = 1000When Bob callsabbot.withdraw,withdraw_helperwill be invoked under the hood in the shrine contract which will first calculate the new yang trove balance:new_trove_balance = trove_balance - amount = 1000 - 100 = 900An exceptional redistribution did happen so when thechargefunction is called it will update the trove yangdepositsbalance, so now we have (suppose redistribution is 50 yang per trove, for example):deposits(yang_id, trove_id) = 1000 + 50 = 1050After callingcharge, thewithdraw_helperfunction will set the trove yang balance,v, to the previously calculatednew_trove_balance, so we will have:deposits(yang_id, trove_id) = 1000 - 100 = 900We see that the yang amount added from exceptional redistribution is completely neglected as we should have:deposits(yang_id, trove_id) = 1000 - 100 + 50 = 950
+Thus, as demonstrated in this simplified example, the issue will cause the loss of any exceptional redistribution amounts for the users resulting in a financial losses.
+Tools Used
+VS Code
+Recommended Mitigation
+To address this issue, thechargefunction should be called before calculating the new trove yang balance (new_trove_balance). This ensures that any exceptional redistributions are accounted for before updating the trove balance and total yang balance:
+fn withdraw_helper(ref self: ContractState, yang: ContractAddress, trove_id: u64, amount: Wad) {let yang_id: u32 = self.get_valid_yang_id(yang);//@audit add exceptional redistribution before calculating `new_trove_balance`++      self.charge(trove_id);// Fails if amount > amount of yang deposited in the given trovelet trove_balance: Wad = self.deposits.read((yang_id, trove_id));assert(trove_balance >= amount, 'SH: Insufficient yang balance');let new_trove_balance: Wad = trove_balance - amount;let new_total: Wad = self.yang_total.read(yang_id) - amount;--      self.charge(trove_id);self.yang_total.write(yang_id, new_total);self.deposits.write((yang_id, trove_id), new_trove_balance);// Emit eventsself.emit(YangTotalUpdated { yang, total: new_total });self.emit(DepositUpdated { yang, trove_id, amount: new_trove_balance });}
+Assessed type
+Context
+tserg (Opus) confirmed and commented via duplicate issue #211:
+This is valid - potentially fixed.
+0xsomeone (judge) commented:
+The warden has demonstrated how an exception trove redistribution will not be properly tracked by the withdrawal helper, resulting in an unsynchronized accounting state for the Opus system whereby the user will lose the collateral they acquired in the redistribution.I believe a high-risk severity is appropriate as it details a scenario in which the collateral balances of users will potentially lose the full redistributed collateral.
+
+[H-02]convert_to_yang_helper()loss precision
+Submitted bybin2chen
+Ingate.cairo, when the user callsdeposit(), it calculates the corresponding shares throughconvert_to_yang_helper().
+The code is as follows:
+fn convert_to_yang_helper(self: @ContractState, asset_amt: u128) -> Wad {let asset: IERC20Dispatcher = self.asset.read();let total_yang: Wad = self.get_total_yang_helper(asset.contract_address);if total_yang.is_zero() {let decimals: u8 = asset.decimals();// Otherwise, scale `asset_amt` up by the difference to match `Wad`// precision of yang. If asset is of `Wad` precision, then the same// value is returnedfixed_point_to_wad(asset_amt, decimals)} else {@>              (asset_amt.into() * total_yang) / get_total_assets_helper(asset).into()}}
+The calculation formula is:(asset_amt.into() * total_yang) / get_total_assets_helper(asset).into().
+The actual calculation of converting Wad to pure numbers is:(asset_amt * total_yang / 1e18) * 1e18 / total_assets.
+The above formula(asset_amt * total_yang / 1e18)will lose precision, especially when the asset’s decimals are less than 18.
+Assume btc as an example, decimals= 8afteradd_yang(btc)INITIAL_DEPOSIT_AMT = 1000so:
+total_assets = 1000total_yang = 1000e10 = 1e13
+If the user deposits 0.0009e8 BTC, according to the formula= (asset_amt * total_yang / 1e18):
+= 0.0009e8 * 1e13 /1e18 = 0.9e5 * 1e13 /1e18 = 0
+With BTC’s price at 40,000 USD, 0.0009e8 = 36 USD. The user will lose 36 USD.
+We should cancel dividing by 1e18 and then multiplying by 1e18, and calculate directly: shares =asset_amt.into() * total_yang.into() / total_assets.into().
+shares= 0.0009e8 * 1e13 / 1000 = 0.0009e18 = 900000000000000
+Note: In order to successfully deposit should be > 0.0009e8 such as 0.0019e8, which is simplified and convenient to explain.
+Impact
+Due to the premature division by1e18, precision is lost, and the user loses a portion of their funds.
+Proof of Concept
+Add totest_abbot.cairo:
+#[test]fn test_wad() {let INITIAL_DEPOSIT_AMT: u128 = 1000;let decimals:u8 = 8;let asset_amt:u128 = 90_000;let total_yang:Wad = fixed_point_to_wad(INITIAL_DEPOSIT_AMT, decimals);let total_assets:Wad = INITIAL_DEPOSIT_AMT.into();let result:Wad = asset_amt.into() * total_yang / total_assets;assert(result.into() == 0,' no zero');let result2_u:u256 = asset_amt.into() * total_yang.into() / total_assets.into();let result2:Wad = Wad { val:result2_u.try_into().expect('u128')};assert(result2.into() == 900000000000000,' result2 no zero');}
+$ scarb test -vvv test_wadRunning 1 test(s) from src/[PASS] opus::tests::abbot::test_abbot::test_abbot::test_wad (gas: ~17)Tests: 1 passed, 0 failed, 0 skipped, 0 ignored, 390 filtered out
+Recommended Mitigation
+fn convert_to_yang_helper(self: @ContractState, asset_amt: u128) -> Wad {let asset: IERC20Dispatcher = self.asset.read();let total_yang: Wad = self.get_total_yang_helper(asset.contract_address);if total_yang.is_zero() {let decimals: u8 = asset.decimals();// Otherwise, scale `asset_amt` up by the difference to match `Wad`// precision of yang. If asset is of `Wad` precision, then the same// value is returnedfixed_point_to_wad(asset_amt, decimals)} else {-               (asset_amt.into() * total_yang) / get_total_assets_helper(asset).into()+               let result:u256 = asset_amt.into() * total_yang.into() / total_assets.into();+               Wad { val:result.try_into().expect('u128')};}}
+Assessed type
+Decimal
+tserg (Opus) confirmed
+0xsomeone (judge) commented:
+The warden has demonstrated how the “hidden” operations of multiplication and division that are performed as part of the overloadedWaddata type primitive operators can result in loss of precision for assets with less than18decimals; which are explicitly meant to be supported by the Opus system per the onboarding guidelines.I consider a high-risk rating appropriate given that the truncation will be greater the lower the decimals of the token and the higher the value per unit of the token is.
+
+[H-03] A user can steal from the shrine by forcing redistribution of their trove; due to incorrect logic trove debt will be reset but yangs kept
+Submitted bykfx, also found bybin2chen,minhquanym, andTrungOre
+Let’s assume two yangs in the system, yang A and yang B, and two users:
+User U1 with trove #1 with zero A units, 1000 B units, and 500 yin debt;User U2 with trove #2 10000 A unit, 1000 B units, and 500 yin debt.
+If the user U1 can force redistribution of their position, then they can steal from the shrine due to a bug in the code. The functionredistribute_helperloops through all yangs in order, including those not in the trove #1. Sincetrove_yang_amt.is_zero()returnstruefor yang A, theupdated_trove_yang_balancesarray is updated early and thencontinuestatement is executed.
+However, since thenew_yang_totalsarray is not updated in the iteration of the loop, some values ofupdated_trove_yang_balancesend up never being used.
+Let’s assume 100% redistribution. After the all loop is fully executed, the two arrays contain:
+updated_trove_yang_balances = [(A, 0), (B, 0)];new_yang_totals = [(B, 1000)];
+The final loop of the function is executed just once. Its first and only iteration writes the new total B value. However, it does not update the amount of B in the trove #1, since(B, 0)is the second element of the first array.
+The final state is that trove #1 still has 1000 units of B, but no more debt. The user U1 can now withdraw all 1000 units from the trove #1.
+This bug violates the shrine invariant “The total amount of a yang is equal to the sum of all troves’ deposits of that yang (this includes any exceptionally redistributed yangs and their accompanying errors) and the initial amount seeded at the time ofadd_yang.”
+Proof of Concept
+#[test]fn test_shrine_redistribution_bug() {let shrine: IShrineDispatcher = shrine_utils::shrine_setup_with_feed(Option::None);// Manually set up troves so that all troves uses just yang1let yangs: Span<ContractAddress> = shrine_utils::three_yang_addrs_reversed();let yang_addr = *yangs.at(1); // select the middle onelet forge_amt: u128 = 1_000_000_000_000_000_000_000;// Set up trove1 with some yang and some debtlet trove1_owner = common::trove1_owner_addr();let redistributed_trove: u64 = common::TROVE_1;start_prank(CheatTarget::All, shrine_utils::admin());shrine.deposit(yang_addr, redistributed_trove, shrine_utils::TROVE1_YANG1_DEPOSIT.into());shrine.forge(trove1_owner, redistributed_trove, forge_amt.into(), 0_u128.into());// Set up trove1 with some yang and some debtlet trove2_owner = common::trove2_owner_addr();let recipient_trove: u64 = common::TROVE_2;shrine.deposit(yang_addr, recipient_trove, shrine_utils::TROVE1_YANG1_DEPOSIT.into());shrine.forge(trove2_owner, recipient_trove, forge_amt.into(), 0_u128.into());println!("before:");println!(" trove1 yang={}", shrine.get_deposit(yang_addr, redistributed_trove).val);println!(" trove2 yang={}", shrine.get_deposit(yang_addr, recipient_trove).val);println!(" total yang: {}", shrine.get_yang_total(yang_addr));// Simulate complete redistribution of trove1shrine.redistribute(redistributed_trove, trove1_health.debt, RAY_ONE.into());println!("after:");println!(" trove1 yang={}", shrine.get_deposit(yang_addr, redistributed_trove).val);println!(" trove2 yang={}", shrine.get_deposit(yang_addr, recipient_trove).val);println!(" total yang: {}", shrine.get_yang_total(yang_addr));shrine_utils::assert_shrine_invariants(shrine, yangs, 2);}
+Output:
+before:trove1 yang=5000000000000000000trove2 yang=5000000000000000000trove1 value=2895610636113415002820 ltv=345350299355935952856010534 debt=1000000000000000000000trove2 value=2895610636113415002820 ltv=345350299355935952856010534 debt=1000000000000000000000after:trove1 yang=5000000000000000000trove2 yang=5000000000000000000trove1 value=2895610636113415002820 ltv=0 debt=0trove2 value=2895610636113415002820 ltv=690700598711871905712021068 debt=2000000000000000000000
+Expected output:
+after:trove1 yang=0trove2 yang=5000000000000000000trove1 value=0 ltv=0 debt=0trove2 value=2895610636113415002820 ltv=690700598711871905712021068 debt=2000000000000000000000
+One question is: how difficult is it to force the redistribution? It looks like it’s a realistic option in some cases. For instance, the attacker could first drain the stability pool (absorber) by forcing absorbtions until it is empty. A liquidation can be forced by borrowing max amount and then waiting forltv > thresholdto happen due to small price fluctuations, potentially even manipulating the price slightly (as only a small change is required to cross the threshold). For a collateral asset with asset’sthreshold > ABSORPTION_THRESHOLDit’s not required that the trove’spenalty == max_possible_penalty.
+Recommended Mitigation Steps
+Do not update the arrayupdated_trove_yang_balancesbefore thecontinuestatement.
+Assessed type
+Loop
+tserg (Opus) confirmed and commented via duplicate issue #199:
+This is valid - potentially fixed.
+0xsomeone (judge) commented:
+The warden has demonstrated how a debt redistribution will maintain incorrect entries in the updated Yang balances and total Yang balances when skipping over one, weaponizing this behavior to acquire collateral from a shrine.I believe a high-risk evaluation is apt as collateral of other users is directly impacted.
+
+[H-04] Shrine’s recovery mode can be weaponized as leverage to liquidate healthy troves
+Submitted by3docSec, also found byetherhood,nmirchev8, andkfx
+Lines of code
+https://github.com/code-423n4/2024-01-opus/blob/4720e9481a4fb20f4ab4140f9cc391a23ede3817/src/core/shrine.cairo#L1046
+Description
+In the Shrine implementation, the loan (trove) health is calculated by having its LTV compared to the shrine threshold:
+File: shrine.cairo1133:         fn is_healthy_helper(self: @ContractState, health: Health) -> bool {1134:             health.ltv <= health.threshold1135:         }---1140:         fn assert_valid_trove_action(self: @ContractState, trove_id: u64) {1141:             let health: Health = self.get_trove_health(trove_id);1142:             assert(self.is_healthy_helper(health), 'SH: Trove LTV is too high');
+The shrine threshold is in turn calculated from the weighted thresholds of the yang deposits, scaled down by a variable factor, in case the shrine is in recovery mode:
+File: shrine.cairo1040:         fn get_trove_health(self: @ContractState, trove_id: u64) -> Health {---1045:             let (mut threshold, mut value) = self.get_threshold_and_value(trove_yang_balances, interval);1046:             threshold = self.scale_threshold_for_recovery_mode(threshold);---1202:         fn scale_threshold_for_recovery_mode(self: @ContractState, mut threshold: Ray) -> Ray {1203:             let shrine_health: Health = self.get_shrine_health();1204:1205:             if self.is_recovery_mode_helper(shrine_health) {1206:                 let recovery_mode_threshold: Ray = shrine_health.threshold * RECOVERY_MODE_THRESHOLD_MULTIPLIER.into();1207:                 return max(1208:                     threshold * THRESHOLD_DECREASE_FACTOR.into() * (recovery_mode_threshold / shrine_health.ltv),1209:                     (threshold.val / 2_u128).into()1210:                 );1211:             }1212:1213:             threshold1214:         }
+We can see from the above code that triggering recovery mode lowers the threshold, exposing the more under-collateralized loans (troves) to liquidation. This is expected behavior when the LTV fluctuations are coming from collateral price swings.
+If we look at how recovery mode is triggered:
+File: shrine.cairo0079:     const RECOVERY_MODE_THRESHOLD_MULTIPLIER: u128 = 700000000000000000000000000; // 0.7 (ray)---1165:         fn is_recovery_mode_helper(self: @ContractState, health: Health) -> bool {1166:             let recovery_mode_threshold: Ray = health.threshold * RECOVERY_MODE_THRESHOLD_MULTIPLIER.into();1167:             health.ltv >= recovery_mode_threshold1168:         }
+We can see that all it takes to trigger recovery mode is to bring the shrine LTV to 70% of its nominal threshold, or higher. This can be achieved by a malicious (or naive) user, provided they have enough collateral to take large borrows close to the collateralization threshold, and the shrinedebt_ceilingprovides enough headroom.
+Impact
+Loans can be forced into liquidation territory, and be liquidated, whenever a new loan is opened large enough to trigger recovery mode.
+This can also happen as a deliberate attack, and within a single transaction, without exposing the attacker’s funds to liquidation. It is consequently a solid candidate for a flash loan attack, but can also be executed with a large amount of pre-deposited collateral.
+Proof of Concept
+The following test case can be added totest_shrine.cairoto show how a large collateral injection+large loan can force a pre-existing loan into an unhealthy state, ready to be liquidated:
+#[test]fn test_shrine_recovery() {let wad: u128 = 1000000000000000000;let shrine: IShrineDispatcher = shrine_utils::shrine_setup_with_feed(Option::None);let yangs: Span<ContractAddress> = shrine_utils::three_yang_addrs();let yang1_addr: ContractAddress = *yangs.at(0);// trove 1: deposits 1 wad, mints nothing - they just contribute to the health of the protocolstart_prank(CheatTarget::One(shrine.contract_address), shrine_utils::admin());let trove1_deposit: u128 = 1 * wad;shrine.deposit(yang1_addr, 1, trove1_deposit.into());// trove 2: deposits 1 wad, mints 90% of what they can (slightly overcollateralized)let trove2_deposit: u128 = 1 * wad;shrine.deposit(yang1_addr, 2, trove2_deposit.into());let forge_amt2 = shrine.get_max_forge(2).val * 9 / 10;shrine.forge(shrine_utils::admin(), 2, forge_amt2.into(), WadZeroable::zero());// life is goodlet mut health = shrine.get_shrine_health();assert(false == shrine.is_recovery_mode(), '');// trove 3: deposits a flash-loaned collateral, mints A LOT to raise the LTVlet trove3_deposit: u128 = 10 * wad;shrine.deposit(yang1_addr, 3, trove3_deposit.into());let forge_amt3: u128 = shrine.get_max_forge(3).val * 85 / 100;shrine.forge(shrine_utils::admin(), 3, forge_amt3.into(), WadZeroable::zero());health = shrine.get_shrine_health();let trove2_health = shrine.get_trove_health(2);// things are not good anymore. Shrine is in recovery mode and trove 2 can now be liquidatedassert(shrine.is_recovery_mode(), '');assert(trove2_health.ltv > trove2_health.threshold, '')}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+It is not entirely clear how the recovery mechanism, intended as is, can be modified to fix this issue. Introducing a form of limitation to liquidations happening in the same block of a recovery trigger can mitigate exposure to flash-loans, but large loans against pre-owned collateral left dormant on the shrine would still be a viable attack path.
+What we can tell, however, is that the recovery mechanism appears to have the intent of increasing the difficulty of opening new loans as the shrine health approaches the liquidation threshold.
+Popular DeFi protocols like Compound solved this very issue by having two different LTV references: one for accepting liquidations and one lower for accepting new loans.
+More in detail, the protocol is vulnerable only because one can borrow at LTV values above the recovery threshold (70% of the nominal threshold) but still below the liquidation threshold. Therefore, is able to raise the global LTV above that recovery threshold. If users were not allowed to borrow above that 70%, they wouldn’t be able to raise the global LTV above it, even with infinite collateral.
+Assessed type
+MEV
+tserg (Opus) confirmed and commented via duplicate issue #205:
+This is valid - potentially fixed.
+0xsomeone (judge) commented:
+The warden has demonstrated how the automatic recovery mode mechanism of the Opus system can be exploited to force the system into recovery mode, enabling the liquidation of previously healthy troves.A high-risk vulnerability rating for this issue is valid as the automatic recovery mode can be exploited within a single transaction to force the system into recovery mode by opening a bad position, liquidating whichever troves are lucrative, and closing the previously bad position with zero risk.
+

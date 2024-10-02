@@ -1,0 +1,18 @@
+Type of vulnerability: Reentrancy or Incorrect Asset Transfer Logic
+Cause of vulnerability: Lack of validation to ensure that the NFT being withdrawn is not associated with any active loans.
+Execution process: An attacker (Alice) can withdraw an NFT (NFT_A) associated with a lien (Lien[1]) even if the NFT is currently involved in another active loan (Lien[2]), leading to the loss of the NFT for the other lender (Jack) and potential loss of funds for the original lender (Bob).
+Vulnerable code: 
+```solidity
+function withdrawNftWithInterest(Lien calldata lien, uint256 lienId) external override validateLien(lien, lienId) {
+    if (msg.sender != lien.lender) {
+        revert Errors.Unauthorized();
+    }
+    // delete lien
+    delete liens[lienId];
+    // transfer NFT back to lender
+    /// @dev can withdraw means NFT is currently in contract without active loan,
+    /// @dev the interest (if any) is already accured to lender at NFT acquiring time
+    IERC721(lien.collection).safeTransferFrom(address(this), msg.sender, lien.tokenId);
+    ...
+}
+```

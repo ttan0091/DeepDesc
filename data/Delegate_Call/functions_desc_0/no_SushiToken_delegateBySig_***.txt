@@ -1,0 +1,43 @@
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signed message. This function is commonly used in token contracts to enable offchain voting delegation without requiring the delegator to be online at the time of delegation.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    delegatee: The address to which the voting rights will be delegated.
+    nonce: A unique value associated with the signatory's address, used to prevent replay attacks.
+    expiry: The timestamp after which the signature is no longer valid.
+    v, r, s: Components of the ECDSA signature.
+
+2. Domain Separator Calculation:
+    The function first calculates the domainSeparator using the keccak256 hash function. This involves encoding several pieces of data:
+      DOMAIN_TYPEHASH: A constant that defines the domain type.
+      keccak256(bytes(name())): The hash of the contract's name.
+      getChainId(): The ID of the blockchain on which the contract is deployed.
+      address(this): The address of the contract itself.
+
+3. Struct Hash Calculation:
+    Next, the function calculates the structHash using the keccak256 hash function. This involves encoding the following data:
+      DELEGATION_TYPEHASH: A constant that defines the delegation type.
+      delegatee: The address to which voting rights are being delegated.
+      nonce: The unique value associated with the signatory's address.
+      expiry: The timestamp after which the signature is no longer valid.
+
+4. Digest Calculation:
+    The function then calculates the digest using the keccak256 hash function. This involves encoding the following data in a specific order:
+      \x19\x01: A prefix defined by the EIP712 standard.
+      domainSeparator: The previously calculated domain separator.
+      structHash: The previously calculated struct hash.
+
+5. Signature Recovery:
+    The function uses the ecrecover function to recover the address of the signatory from the digest, v, r, and s parameters. This address is stored in the signatory variable.
+
+6. Validation Checks:
+    The function performs several validation checks:
+      It ensures that the signatory address is not zero, indicating an invalid signature.
+      It checks that the provided nonce matches the current nonce for the signatory address and then increments the nonce to prevent replay attacks.
+      It verifies that the current timestamp is less than or equal to the expiry timestamp, ensuring that the signature has not expired.
+
+7. Delegation Execution:
+    If all validation checks pass, the function calls the internal _delegate function, passing the signatory and delegatee addresses as arguments. This function handles the actual delegation of voting rights.
+
+In summary, the delegateBySig function enables secure offchain delegation of voting rights by verifying a signed message that includes the delegatee's address, nonce, expiry timestamp, and the signatory's ECDSA signature components.

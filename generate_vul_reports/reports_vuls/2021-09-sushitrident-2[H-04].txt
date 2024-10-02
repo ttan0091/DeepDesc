@@ -1,0 +1,19 @@
+[H-04] Overflow in themintfunction ofConcentratedLiquidityPoolcauses LPs’ funds to be stolen
+Submitted by broccoli
+Impact
+Similar to a previous finding in theIndexPoolcontract, themintfunction ofConcentratedLiquidityPoolallows integer overflows when checking the balance is larger or equal to the received amount of token plus the reserve. As a result, the attacker could get a large amount of liquidity but only provide a small number of tokens to the pool, effectively stealing other LPs’ funds when burning his liquidity.
+Notice that this bug is independent of another bug of incorrect castinguint256type touint128in the_getAmountsForLiquidityfunction. Even if the previously mentioned bug does not exist, the attacker could still steal the funds in the pool by exploiting this bug.
+Proof of Concept
+Suppose that the current price is at the tick500000, an attacker calls themintfunction with the following parameters:
+mintParams.lower=100000mintParams.upper=500000mintParams.amount1Desired= (1<<128) -47541305835#acarefullychosennumbermintParams.amount0Desired=0
+Since the current price is equal to the upper price, we have
+_liquidity=mintParams.amount1Desired* (1<<96)// (priceUpper - priceLower)=4731732988155153573010127839
+The amounts oftoken0andtoken1that the attacker has to pay is
+amount0Actual=0amount1Actual=uint128(DyDxMath.getDy(_liquidity,priceLower,priceUpper,true))=uint128(_liquidity* (priceUpper-priceLower)// (1 << 96)) # round up=uint128(340282366920938463463374607384226905622)=340282366920938463463374607384226905622= (1<<128) -47541305834
+As long asreserve1is greater than47541305834, the additionamount1Actual + reserve1overflows to a small number, causing the attacker to pass the balance check.
+Referenced code:
+ConcentratedLiquidityPool.sol#L204ConcentratedLiquidityPool.sol#L209
+Recommended Mitigation Steps
+Consider removing theuncheckedstatement to check for integer overflow or casting bothamount1Actualandreserve1to typeuint256before adding them and comparing to the_balance(token).
+sarangparikh22 (Sushi) disputed:
+The example is wrong, you can’t add use upper tick as odd, correct the example and resubmit please.

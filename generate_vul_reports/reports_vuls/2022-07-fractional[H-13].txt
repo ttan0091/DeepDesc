@@ -1,0 +1,19 @@
+[H-13] Migration Module: Re-entercommitusing custom token
+Submitted by zzzitron, also found by 0x29A
+HIGH - Assets can be compromised directly.
+One can drain eth out from migration module to buyout module using custom made FERC1155 token.
+Proof of Concept
+Proof of Concept:testCommitReenter_pocCustom made FERC1155 for the attack
+The proof of concept shows a scenario where Alice is draining migration module using custom made FERC1155 token.
+Setup: other people are using migration module and they deposited some eth. (using Alice and Bob just to simplify the set up process)Alice prepared the custom FERC1155 (let’s sayevil_token)Alice create a vault with theevil_tokenAlice proposes and joins with 0.5 etherWhen Alice callscommit, theevil_tokenwill reentercommitand send money to buyout module
+Note: For simplicity, theevil_tokenreenters for a fixed number of times. But one can adjust to drain all the eth in the migration module.
+Note2: For now the eth is in the buyout module, but given the current implementation ofbuyoutmodule, the same actor can drain eth from buyout.
+Thecommitfunction is not written in Checks, Effects, Interactions (CEI) patterns.
+// modules/Migration.sol::commit// proposal.isCommited and started are set after the out going calls (i.e. start, setApprovalFor)// Mitigation idea: set the values before the out going calls206if(currentPrice>proposal.targetPrice) {207// Sets token approval to the buyout contract208IFERC1155(token).setApprovalFor(address(buyout),id,true);209// Starts the buyout process210IBuyout(buyout).start{value:proposal.totalEth}(_vault);211proposal.isCommited=true;212started=true;213}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Follow Checks, Effects, Interactions patterns. One can also consider adding reentrancy guard.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+The 1155 callback could be used to reentrancy and steal funds. Agree this is high risk.

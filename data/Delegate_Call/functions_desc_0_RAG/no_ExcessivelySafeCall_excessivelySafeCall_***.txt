@@ -1,0 +1,34 @@
+This code defines an internal function named excessivelySafeCall, which is designed to safely call another contract while limiting the amount of data copied from the returned data to prevent potential memory overflow attacks. Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    _target: The address of the contract to be called.
+    _gas: The amount of gas to be sent with the call.
+    _maxCopy: The maximum number of bytes to copy from the returned data.
+    _calldata: The data to be sent to the target contract.
+
+2. Variable Initialization:
+    _toCopy: A variable to store the number of bytes to be copied from the returned data.
+    _success: A boolean to indicate whether the call was successful.
+    _returnData: A bytes array to store the returned data, initialized with a length of _maxCopy.
+
+3. Assembly Call:
+    The function uses inline assembly to perform the call to the target contract. This is done to avoid memory copying of large return data, which could be exploited by a malicious contract.
+    The call opcode is used to make the external call. The parameters for the call opcode are:
+      _gas: The gas limit for the call.
+      _target: The address of the contract to call.
+      0: No ether is sent with the call.
+      add(_calldata, 0x20): The location in memory where the calldata starts (skipping the length prefix).
+      mload(_calldata): The length of the calldata.
+      0: The location in memory where the returned data should be written (not used here).
+      0: The length of the returned data to be written (not used here).
+
+4. Handling Return Data:
+    After the call, the function checks the size of the returned data using returndatasize().
+    If the size of the returned data is greater than _maxCopy, _toCopy is set to _maxCopy to limit the amount of data copied.
+    The length of the copied bytes is stored in the first 32 bytes of _returnData using mstore(_returnData, _toCopy).
+    The actual data is copied from the returned data to _returnData using returndatacopy(add(_returnData, 0x20), 0, _toCopy).
+
+5. Return Values:
+    The function returns a tuple containing _success (indicating whether the call was successful) and _returnData (the returned data, limited to _maxCopy bytes).
+
+This function is useful for making safe external calls where the size of the returned data might be manipulated to cause a memory overflow, thereby preventing potential security vulnerabilities.

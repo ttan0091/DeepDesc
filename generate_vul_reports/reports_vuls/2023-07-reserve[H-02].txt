@@ -1,0 +1,18 @@
+[H-02] CurveVolatileCollateral Collateral status can be manipulated by flashloan attack
+Submitted byronnyx2017
+Attacker can make the CurveVolatileCollateral enter the status of IFFY/DISABLED. It will cause the basket to rebalance and sell off all the CurveVolatileCollateral.
+Proof of Concept
+TheCurveVolatileCollateraloverrides the_anyDepeggedInPoolfunction to check if the distribution of capital is balanced. If the any part of underlying token exceeds the expected more than_defaultThreshold, return true, which means the volatile pool has been depeg:
+uint192expected=FIX_ONE.divu(nTokens);// {1}for(uint8i=0;i<nTokens;i++) {uint192observed=divuu(vals[i],valSum);// {1}if(observed>expected) {if(observed-expected>_defaultThreshold)returntrue;}}
+And the coll status will be updated in the super classCurveStableCollateral.refresh():
+if (low == 0 || _anyDepeggedInPool() || _anyDepeggedOutsidePool()) {markStatus(CollateralStatus.IFFY);}
+The attack process is as follows:
+Assumption: There is a CurveVolatileCollateral bases on a TriCrypto ETH/WBTC/USDT, and the value of them should be 1:1:1, and the_defaultThresholdof the CurveVolatileCollateral is 5%. And at first, there are 1000 USDT in the pool and the pool is balanced.The attacker uses flash loan to deposit 500 USDT to the pool. Now, the USDT distribution is1500/(1500+1000+1000) = 42.86%.Attacker refresh the CurveVolatileCollateral. Because the USDT distribution - expected = 42.86% - 33.33% = 9.53% > 5% _defaultThreshold. So CurveVolatileCollateral will be marked as IFFY.The attacker withdraw from the pool and repay the USDT.Just waitdelayUntilDefault, the collateral will be marked as defaulted by thealreadyDefaultedfunction.function alreadyDefaulted() internal view returns (bool) {return _whenDefault <= block.timestamp;}
+Recommended Mitigation Steps
+I think the de-pegged status in the volatile pool may be unimportant. It will be temporary and have little impact on the price of outside lp tokens. After all, override the_anyDepeggedOutsidePoolto check the lp price might be a good idea.
+Assessed type
+Context
+tbrent (Reserve) confirmed
+Reserve Mitigated:
+RemovesCurveVolatileCollateral.PR:https://github.com/reserve-protocol/protocol/pull/896
+Status:Mitigation confirmed. Full details in reports fromronnyx2017,RaymondFamandbin2chen.

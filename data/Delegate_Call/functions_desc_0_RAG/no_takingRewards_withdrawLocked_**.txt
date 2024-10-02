@@ -1,0 +1,27 @@
+This code defines a public function named withdrawLocked, which is designed to allow users to withdraw their locked stakes from a staking pool. The function takes a single parameter, kek_id, which is a unique identifier for the locked stake. The function is marked as nonReentrant to prevent reentrancy attacks and includes an updateReward modifier to ensure that the user's rewards are updated before the withdrawal.
+
+Here’s a detailed explanation of how this function works:
+
+1. Initialization and Loop to Find the Stake:
+    The function initializes a LockedStake memory variable named thisStake and sets its amount to 0.
+    It also declares a variable theIndex to store the index of the found stake.
+    The function then iterates over the array lockedStakes[msg.sender] to find the stake with the matching kek_id. If a match is found, it assigns the stake to thisStake and records the index in theIndex, then breaks out of the loop.
+
+2. Validation Checks:
+    The function checks if thisStake.kek_id matches the provided kek_id. If not, it reverts with the message "Stake not found".
+    It then checks if the current block timestamp is greater than or equal to the ending_timestamp of the stake or if unlockedStakes is true. If neither condition is met, it reverts with the message "Stake is still locked!".
+
+3. Calculations and State Updates:
+    The function retrieves the amount of the stake (theAmount) and calculates the boosted amount using the multiplier and PRICE_PRECISION.
+    If theAmount is greater than 0, it proceeds to update the balances and supplies:
+      It subtracts theAmount from the user's locked balance (_locked_balances[msg.sender]) and boostedAmount from the user's boosted balance (_boosted_balances[msg.sender]).
+      It also subtracts theAmount from the total staking token supply (_staking_token_supply) and boostedAmount from the total boosted supply (_staking_token_boosted_supply).
+
+4. Removing the Stake and Transferring Tokens:
+    The function removes the stake from the lockedStakes array by deleting the element at theIndex.
+    It then transfers the staked amount (theAmount) back to the user using stakingToken.safeTransfer.
+
+5. Event Emission:
+    Finally, the function emits a WithdrawnLocked event with the user's address, the withdrawn amount, and the kek_id.
+
+This function ensures that users can only withdraw their stakes after they are unlocked or if the global unlockedStakes flag is set to true. It also correctly updates the user's and the pool's balances and supplies, and handles the transfer of tokens back to the user.

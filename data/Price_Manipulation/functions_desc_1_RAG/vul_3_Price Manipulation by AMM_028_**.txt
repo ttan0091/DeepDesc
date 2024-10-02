@@ -1,0 +1,27 @@
+This code defines a private view function named _peek, which retrieves the price of a token pair from a specified source and returns the price along with the update time. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    The function _peek takes two parameters: base and quote, both of type bytes6. These parameters represent the base and quote currencies of the token pair.
+    The function is marked as private and view, meaning it can only be called internally within the contract and does not modify the state of the blockchain.
+    The function returns two values: price of type uint and updateTime of type uint.
+
+2. Variable Declarations:
+    uint256 rawPrice; is declared to store the raw price retrieved from the source.
+    Source memory source = sources[base][quote]; retrieves the source information for the given base and quote currencies from the sources mapping. The Source struct contains details about the source, such as the source address and whether the price should be inverted.
+
+3. Source Validation:
+    require(source.source != address(0), "Source not found"); checks if the source address is not zero, ensuring that a valid source exists for the given token pair. If the source is not found, the function reverts with the message "Source not found".
+
+4. Retrieve Raw Price:
+    rawPrice = CTokenInterface(source.source).exchangeRateStored(); calls the exchangeRateStored function on the source contract to get the stored exchange rate. This assumes that the source contract implements the CTokenInterface interface.
+    require(rawPrice > 0, "Compound price is zero"); ensures that the retrieved raw price is greater than zero. If the price is zero, the function reverts with the message "Compound price is zero".
+
+5. Calculate Price:
+    If source.inverse is true, the price is calculated by inverting the raw price: price = 10  (source.decimals + 18) / uint(rawPrice);. This inversion is necessary when the source provides the price in the opposite direction of the requested pair.
+    If source.inverse is false, the price is calculated directly: price = uint(rawPrice)  10  (18  source.decimals);. This adjusts the raw price to the correct decimal places.
+
+6. Update Time:
+    updateTime = block.timestamp; sets the update time to the current block timestamp. This is a placeholder and should ideally be replaced with the actual timestamp from the source if available.
+
+### Summary
+The _peek function is designed to fetch the price of a token pair from a specified source, validate the source and price, and return the calculated price along with the current block timestamp. The function ensures that the source is valid and that the price is nonzero before performing the necessary calculations to return the correct price.

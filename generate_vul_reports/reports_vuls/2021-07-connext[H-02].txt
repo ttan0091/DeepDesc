@@ -1,0 +1,8 @@
+[H-02]activeTransactionBlocksare vulnerable to DDoS attacks
+Submitted by gpersoon, also found by pauliax and shw
+There is a potential issue in functionremoveUserActiveBlocksand the for loop inside it. I assume you are aware of block gas limits (they may be less relevant on other chains but still needs to be accounted for), so as there is no limit foractiveTransactionBlocks, it may grow so large that the for loop may never finish. You should consider introducing an upper limit foractiveTransactionBlocks. Also, a malicious actor may block any account (DDOS) by just callingprepareagain and again with 0 amount acting as a router. This will pushactiveTransactionBlocksto the specified user until it is no longer possible to remove them from the array.
+This is also a gas issue, as functionremoveUserActiveBlocksiterating and assigning large dynamic arrays is very gas-consuming. Consider optimizing the algorithm, e.g. finding the first occurrence, then swap it with the last item, pop the array, and break. Or maybe even using anEnumerableMap, so you can find and remove elements inO(1).
+The best solution depends on what the usual number ofactiveTransactionBlocksis. If it is expected to be low (e.g. less than 5), then the current approach will work. But with larger arrays, I expectEnumerableMapwould be more efficient.
+Because an upper limit will not fully mitigate this issue, as a malicious actor can still DDOS the user by pushing useless txs until this limit is reached and a valid router may not be able to submit new txs. And, because you need to improve both the securityandperformance ofremoveUserActiveBlocks;EnumerableMapmay be a go-to solution.
+LayneHaber (Connext) confirmed:
+https://github.com/connext/nxtp/pull/24

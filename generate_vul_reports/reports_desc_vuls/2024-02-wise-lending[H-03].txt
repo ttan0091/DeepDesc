@@ -1,0 +1,21 @@
+Type of vulnerability: Incorrect bad debt accounting leading to a Denial of Service (DOS)
+
+Cause of vulnerability: The inconsistency in updating the global bad debt (`totalBadDebtETH`) and the position-specific bad debt (`badDebtPosition[_nftId]`) during partial liquidations, which can lead to an artificially inflated `totalBadDebtETH` that cannot be corrected.
+
+Execution process: 
+1. A position with bad debt undergoes multiple partial liquidations.
+2. Each partial liquidation increments `totalBadDebtETH` but only updates `badDebtPosition[_nftId]` with the most recent bad debt, not cumulatively.
+3. If a subsequent partial liquidation results in `totalBorrow == bareCollateral`, `badDebtPosition[_nftId]` is reset to 0, but the previously recorded bad debt is not deducted from `totalBadDebtETH`.
+4. This results in `totalBadDebtETH` being permanently greater than 0, bricking the `claimFeesBeneficial` function and preventing new incentives from being distributed.
+
+Vulnerable code:
+```solidity
+// WiseSecurity::checkBadDebtLiquidation
+424: uint256 diff = totalBorrow - bareCollateral;
+427: FEE_MANAGER.increaseTotalBadDebtLiquidation(diff);
+431: FEE_MANAGER.setBadDebtUserLiquidation(_nftId, diff);
+
+// FeeManagerHelper.sol
+94: totalBadDebtETH += _amount;
+83: badDebtPosition[_nftId] = _amount;
+```

@@ -1,0 +1,21 @@
+Type of vulnerability: Accounting Error
+Cause of vulnerability: The `userTotalStaked` invariant is not updated in sync with `selfStakes` and `communityStakes` during the `release()` function, leading to incorrect accounting of user's total staked amount.
+Execution process: When a user's stake is slashed and then released, the `selfStakes` and `communityStakes` are updated to reflect the full amount, but `userTotalStaked` is not updated accordingly. This discrepancy causes the user to be unable to withdraw the full amount due to underflow errors.
+Vulnerable code: 
+```solidity
+function release(address staker, address stakee, uint88 amountToRelease, uint16 slashRound) external onlyRole(RELEASER_ROLE) whenNotPaused {
+    ...
+    if (staker == stakee) {
+        ...
+        selfStakes[staker].slashedAmount -= amountToRelease;
+        // @audit selfStakes[staker].amount is updated but `userTotalStaked` is not
+        selfStakes[staker].amount += amountToRelease;
+    } else {
+        ...
+        communityStakes[staker][stakee].slashedAmount -= amountToRelease;
+        // @audit communityStakes[staker].amount is updated but `userTotalStaked` is not
+        communityStakes[staker][stakee].amount += amountToRelease;
+    }
+    ...
+}
+```

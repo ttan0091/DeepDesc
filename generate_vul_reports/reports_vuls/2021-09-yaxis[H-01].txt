@@ -1,0 +1,16 @@
+[H-01]Controller.setCapsets wrong vault balance
+Submitted by cmichel
+TheController.setCapfunction sets a cap for a strategy and withdraws any excess amounts (_diff).
+The vault balance is decreased by the entire strategy balance instead of by this_diff:
+// @audit why not sub _diff?_vaultDetails[_vault].balance=_vaultDetails[_vault].balance.sub(_balance);
+Impact
+The_vaultDetails[_vault].balancevariable does not correctly track the actual vault balances anymore, it will usuallyunderestimatethe vault balance.
+This variable is used inController.balanceOf(), which in turn is used inVault.balance(), which in turn is used to determine how many shares to mint / amount to receive when redeeming shares.
+If the value is less, users will lose money as they can redeem fewer tokens.
+Also, an attacker candepositand will receive more shares than they should receive. They can then wait until the balance is correctly updated again and withdraw their shares for a higher amount than they deposited. This leads to the vault losing tokens.
+Recommended Mitigation Steps
+Sub the_diffinstead of thebalance:_vaultDetails[_vault].balance = _vaultDetails[_vault].balance.sub(_diff);
+Haz077 (yAxis) confirmed and patched:
+Already fixed in code-423n4/2021-09-yaxis#1
+GalloDaSballo (judge) commented:
+Finding is valid, has been mitigated by sponsor as of 14 days ago

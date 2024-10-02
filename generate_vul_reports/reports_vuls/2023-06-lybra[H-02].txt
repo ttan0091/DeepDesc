@@ -1,0 +1,20 @@
+[H-02] doesn’t calculate the current borrowing amount for the provider, including the provider’s borrowed shares and accumulated fees due to inconsistency incollateralRatiocalculation
+Submitted byturvy_fuzz, also found bySpicyMeatball
+Lines of code
+https://github.com/code-423n4/2023-06-lybra/blob/main/contracts/lybra/pools/base/LybraPeUSDVaultBase.sol#L127
+Proof of Concept
+BorrowerscollateralRatioin theliquidation()function is calculated by:
+uint256onBehalfOfCollateralRatio= (depositedAsset[onBehalfOf] *assetPrice*100) /getBorrowedOf(onBehalfOf);
+Notice it calls thegetBorrowedOf()function, which
+calculates the current borrowing amount for the borrower, including the borrowed shares and accumulated fees, not just the borrowed amount.
+https://github.com/code-423n4/2023-06-lybra/blob/main/contracts/lybra/pools/base/LybraPeUSDVaultBase.sol#L253
+functiongetBorrowedOf(addressuser)publicviewreturns(uint256) {returnborrowed[user] +feeStored[user] +_newFee(user);}
+However, the providerscollateralRatioin therigidRedemption()function is calculated by:
+https://github.com/code-423n4/2023-06-lybra/blob/main/contracts/lybra/pools/base/LybraPeUSDVaultBase.sol#L161
+uint256providerCollateralRatio= (depositedAsset[provider] *assetPrice*100) /borrowed[provider];
+Here, the deposit asset is divided by only the borrowed amount, missing out on the borrowed shares and accumulated fees.
+Tools Used
+Visual Studio Code
+Recommended Mitigation Steps
+Be consistent withcollateralRatiocalculation.
+LybraFinance confirmed

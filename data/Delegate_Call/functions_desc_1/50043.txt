@@ -1,0 +1,30 @@
+This code defines a smart contract named DelegateProxy3, which includes a public variable owner and a function delegatedFwd. The contract is designed to allow the owner to forward calls to other contracts using the delegatecall mechanism.
+
+Here’s a detailed explanation of how this contract and its function work:
+
+1. Contract Definition and State Variable:
+    The contract DelegateProxy3 is defined with a public state variable owner, which stores the address of the contract owner. This variable can be accessed by external entities to check the current owner of the contract.
+
+2. Function delegatedFwd:
+    The function delegatedFwd takes two parameters: address _dst and bytes _calldata. The _dst parameter is the address of the contract to which the call is to be forwarded, and _calldata is the encoded data of the function call to be executed on the target contract.
+    The function is marked as public, meaning it can be called from outside the contract as well as from within other functions in the contract.
+
+3. Access Control:
+    The function starts with a require statement that checks if the msg.sender (the caller of the function) is the same as the owner. This ensures that only the owner of the contract can execute this function. If the condition is not met, the function execution is halted, and the transaction is reverted.
+
+4. Inline Assembly for delegatecall:
+    The function then uses inline assembly to perform a delegatecall. The delegatecall opcode is similar to a call but executes the code of the target contract (_dst) in the context of the calling contract (DelegateProxy3). This means that the state changes (e.g., storage updates) occur in the storage of the DelegateProxy3 contract, not the target contract.
+    The delegatecall is configured as follows:
+      sub(gas, 10000): This reduces the available gas by 10,000 to ensure that the call has a limited amount of gas to prevent potential outofgas errors.
+      _dst: The address of the target contract.
+      add(_calldata, 0x20): This adjusts the pointer to skip the length field of the _calldata bytes array, pointing directly to the actual data.
+      mload(_calldata): This loads the length of the _calldata to determine how many bytes to send.
+      The last two zeros (0, 0) indicate that no output data is expected to be stored; the result is handled directly in the assembly block.
+
+5. Handling the Result of delegatecall:
+    The result of the delegatecall is stored in the result variable.
+    A switch statement checks the value of result:
+      If result is 0, indicating that the delegatecall failed, the function calls revert(0, returndatasize), which reverts the transaction and returns any data that the failed call might have produced.
+      If result is not 0, the function calls return(0, returndatasize), which returns any data produced by the successful delegatecall to the caller of delegatedFwd.
+
+This contract and function are designed to provide a secure and controlled way for the owner to execute functions on other contracts while maintaining the state and context of the DelegateProxy3 contract.

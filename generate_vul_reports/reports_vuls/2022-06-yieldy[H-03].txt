@@ -1,0 +1,20 @@
+[H-03] Denial of Service by wrongBatchRequests.removeAddresslogic
+Submitted by 0x1f8b, also found by rfa, berndartmueller, BowTiedWardens, csanuragjain, Lambda, neumo, and StErMi
+Note: issues #283,115,82,89,61, and241were originally broken out as a separate medium issue. Approximately 1 week after judging and awarding were finalized, the judging team re-assessed that these should have all been grouped under H-03. Accordingly, the 6 warden names have been added as submitters above.
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L93
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L57
+https://github.com/code-423n4/2022-06-yieldy/blob/34774d3f5e9275978621fd20af4fe466d195a88b/src/contracts/BatchRequests.sol#L37
+Impact
+TheBatchRequests.removeAddresslogic is wrong and it will produce a denial of service.
+Proof of Concept
+Removing the element from the array is done using thedeletestatement, but this is not the proper way to remove an entry from an array, it will just set that position toaddress(0).
+Append dummy data:
+addAddress('0x0000000000000000000000000000000000000001')addAddress('0x0000000000000000000000000000000000000002')addAddress('0x0000000000000000000000000000000000000003')getAddresses()=>address[]: 0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002,0x0000000000000000000000000000000000000003
+Remove address:
+removeAddress(0x0000000000000000000000000000000000000002)(or0x0000000000000000000000000000000000000003)getAddresses()=>address[]: 0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000,0x0000000000000000000000000000000000000003
+Service is denied because it will try to callcanBatchContractstoaddress(0).
+Recommended Mitigation Steps
+To remove an entry in an array you have to usepopand move the last element to the removed entry position.
+0xean (Yieldy) confirmed and resolved
+JasoonS (judge) commented:
+Agree this is high, if the team (owner) didn’t know this they could cause some issues for sure.

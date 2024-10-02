@@ -1,0 +1,19 @@
+[H-02] Incorrect calculation of queued withdrawals can deflate TVL and increase ezETH mint rate
+Submitted byLessDupes, also found byadam-idarrha,araj,zigtur,jokr,SBSecurity,fyamf,0xCiphky,Tendency,p0wd3r,bigtone,maxim371,NentoR,kennedy1030,mussucal,0xnightfall,FastChecker,baz1ka,aman,0xAadi,0xhacksmithh,0rpse, andKupiaSec
+The functionOperatorDelegator.getTokenBalanceFromStrategy()is used by theRestakeManagerto calculate the protocol TVL, which in turn is used to calculate the amount of ezETH to mint against a given value in collateral tokens.
+This function, however, incorrectly checks for the queued amount ofaddress(this)instead ofaddress(token); therefore, consistently failing to consider collaterals in the withdrawal process for calculation:
+File:OperatorDelegator.sol326:/// @dev Gets the underlying token amount from the amount of shares + queued withdrawal shares327:functiongetTokenBalanceFromStrategy(IERC20token)externalviewreturns(uint256) {328:return329:queuedShares[address(this)] ==0330:                 ?tokenStrategyMapping[token].userUnderlyingView(address(this))331:                 :tokenStrategyMapping[token].userUnderlyingView(address(this)) +332:tokenStrategyMapping[token].sharesToUnderlyingView(333:queuedShares[address(token)]334:                     );335:     }
+Within this code,queuedShares[address(this)]will always return0; therefore, missing the opportunity to count the contribution ofqueuedShares[address(token)].
+Impact
+Any amount of collateral in theOperatorDelegatorwithdrawal process will not be counted for TVL calculation. This causes the TVL to be low, so more ezETH will be minted for the same amount of collateral, unfairly favoring people who mint ezETH during anOperatorDelegatorwithdrawal, penalizing holders, and those who initiate aRestakeManagerwithdraw.
+Proof of Concept
+The following PoC in Foundry shows how the issue can lead to a decrease in TVL. The PoC can be run in Foundry by using the setup and mock infra providedhere.
+pragmasolidity^0.8.19;import"contracts/Errors/Errors.sol";import"./Setup.sol";contractH2isSetup{functiontestH2()public{// we'll only be using stETH with unitary price for simplicitystEthPriceOracle.setAnswer(1e18);// and we start with 0 TVL(, ,uinttvl) =restakeManager.calculateTVLs();assertEq(0,tvl);// now we have Alice depositing some stETHaddressalice=address(1234567890);stETH.mint(alice,100e18);vm.startPrank(alice);stETH.approve(address(restakeManager),100e18);restakeManager.deposit(IERC20(address(stETH)),100e18);// ✅ TVL and balance are as expected(, ,tvl) =restakeManager.calculateTVLs();assertEq(100e18,tvl);assertEq(100e18,ezETH.balanceOf(alice));// Now some liquidity enters the withdraw sequencevm.startPrank(OWNER);IERC20[]memorytokens=newIERC20[](1);uint256[]memorytokenAmounts=newuint256[](1);tokens[0] =IERC20(address(stETH));tokenAmounts[0] =50e18;operatorDelegator1.queueWithdrawals(tokens,tokenAmounts);// 🚨 The collateral queued for withdrawal does not show up in TVL,// so the mint rate is altered(, ,tvl) =restakeManager.calculateTVLs();assertEq(50e18,tvl);}}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Consider changing the address used for the mapping lookup:
+/// @dev Gets the underlying token amount from the amount of shares + queued withdrawal sharesfunction getTokenBalanceFromStrategy(IERC20 token) external view returns (uint256) {return-           queuedShares[address(this)] == 0+           queuedShares[address(token)] == 0? tokenStrategyMapping[token].userUnderlyingView(address(this)): tokenStrategyMapping[token].userUnderlyingView(address(this)) +tokenStrategyMapping[token].sharesToUnderlyingView(queuedShares[address(token)]);}
+jatinj615 (Renzo) confirmed
+Renzo mitigated
+Status:Mitigation confirmed. Full details in reports from0xCiphky,grearlake,Fassi_Security,Bauchibred, andLessDupes.

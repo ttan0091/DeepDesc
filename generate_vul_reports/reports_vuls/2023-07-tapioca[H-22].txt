@@ -1,0 +1,21 @@
+[H-22] Lack of safety buffer between liquidation threshold and LTV ratio for borrowers to prevent unfair liquidations
+Submitted bypeakbolt
+In BigBang and Singularity, there is no safety buffer between liquidation threshold and LTV ratio, to protects borrowers from being immediately liquidated due to minor market movement when the loan is taked out at max LTV.
+The safety buffer also ensure that the loans can be returned to a healthy state after the first liquidation. Otherwise, the loan can be liquidated repeatly as it will remain undercollateralized after the first liquidation.
+Detailed Explanation
+ThecollateralizationRatedetermines the LTV ratio for the max amount of assets that can be borrowed with the specific collateral. This check is implemented in_isSolvent()as shown below.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L402-L425
+function_isSolvent(addressuser,uint256_exchangeRate)internalviewreturns(bool) {// accrue must have already been called!uint256borrowPart=userBorrowPart[user];if(borrowPart==0)returntrue;uint256collateralShare=userCollateralShare[user];if(collateralShare==0)returnfalse;Rebasememory_totalBorrow=totalBorrow;returnyieldBox.toAmount(collateralId,collateralShare*(EXCHANGE_RATE_PRECISION/FEE_PRECISION) *collateralizationRate,false) >=// Moved exchangeRate here instead of dividing the other side to preserve more precision(borrowPart*_totalBorrow.elastic*_exchangeRate) /_totalBorrow.base;}
+However, the liquidation start threshold, which is supposed to be higher (e.g. 80%) than LTV ratio (e.g. 75%), is actually using the samecollateralizationRatevalue. We can see thatcomputeClosingFactor()allow liquidation to start when the loan is at max LTV.
+https://github.com/Tapioca-DAO/tapioca-bar-audit/blob/2286f80f928f41c8bc189d0657d74ba83286c668/contracts/markets/Market.sol#L283-L284
+uint256liquidationStartsAt= (collateralPartInAssetScaled*collateralizationRate) / (10**ratesPrecision);
+Impact
+Borrowers can be unfairly liquidated and penalized due to minor market movement when taking loan at max LTV. Also loan can be repeatedly liquidated regardless of closing factor as it does not return to healthy state after the first liquidation.
+Proof of Concept
+Consider the following scenario,
+Borrower take out loan at max LTV (75%).Immediately after the loan is taken out, the collateral value dropped slightly due to minor market movement and the loan is now at 75.000001% LTV.However, as the liquidation start threshold begins to at 75% LTV, bots start to liquidate the loan, before the borrower could react and repay the loan.The liquidation will cause the loan to remain undercollateralized despite the closing factor.As the loan is still unhealthy, the bots will then be able to repeatly liquidate the loan.Borrower is unfairly penalized and suffers losses due to the liquidations.
+Recommended Mitigation Steps
+Implement the liquidation threshold as a separate state variable and ensure it is higher than LTV to provide a safety buffer for borrowers.
+cryptotechmaker (Tapioca) confirmed and commented:
+The user is not liquidated for his entire position but only for the amount necessary for the loan to become solvent again.
+Loaning up to the collateralization rate threshold is up to the user and opening such an edging position comes with some risks that the user should be aware of.However, adding the buffer seems fair. It can remain as a ‘High’.

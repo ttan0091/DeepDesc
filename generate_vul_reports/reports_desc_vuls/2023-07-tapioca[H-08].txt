@@ -1,0 +1,13 @@
+Type of vulnerability: Price Manipulation
+Cause of vulnerability: The strategy incorrectly assumes that the price of stETH is equivalent to ETH by using the pool's return value, which can be manipulated through large swaps.
+Execution process: An attacker can imbalance the pool by performing large swaps to overvalue stETH, allowing them to overborrow and potentially make the system insolvent. They can then undervalue stETH to liquidate depositors at an optimal premium.
+Vulnerable code: 
+```solidity
+function _currentBalance() internal view override returns (uint256 amount) {
+    uint256 stEthBalance = stEth.balanceOf(address(this));
+    uint256 calcEth = stEthBalance > 0 ? curveStEthPool.get_dy(1, 0, stEthBalance) // TODO: Prob manipulatable view-reentrancy
+        : 0;
+    uint256 queued = wrappedNative.balanceOf(address(this));
+    return calcEth + queued;
+}
+```

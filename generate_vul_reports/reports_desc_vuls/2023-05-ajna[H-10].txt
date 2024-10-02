@@ -1,0 +1,19 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Lack of validation for already claimed epochs in the `_claimRewards` function, allowing users to claim rewards multiple times for the same epoch.
+Execution process: A malicious user can call `claimRewards` to claim rewards for an epoch, then call `moveStakedLiquidity` to move their staked liquidity, which internally calls `_claimRewards` again without checking if the epoch has already been claimed, allowing the user to claim rewards multiple times for the same epoch.
+Vulnerable code: 
+```solidity
+function _claimRewards(StakeInfo storage stakeInfo_, uint256 tokenId_, uint256 epochToClaim_, bool validateEpoch_, address ajnaPool_) internal {
+    // revert if higher epoch to claim than current burn epoch
+    if (validateEpoch_ && epochToClaim_ > IPool(ajnaPool_).currentBurnEpoch()) revert EpochNotAvailable();
+    // update bucket exchange rates and claim associated rewards
+    uint256 rewardsEarned = _updateBucketExchangeRates(ajnaPool_, positionManager.getPositionIndexes(tokenId_));
+    rewardsEarned += _calculateAndClaimRewards(tokenId_, epochToClaim_);
+    uint256[] memory burnEpochsClaimed = _getBurnEpochsClaimed(stakeInfo_.lastClaimedEpoch, epochToClaim_);
+    emit ClaimRewards(msg.sender, ajnaPool_, tokenId_, burnEpochsClaimed, rewardsEarned);
+    // update last interaction burn events
+    stakeInfo_.lastClaimedEpoch = uint96(epochToClaim_);
+    // transfer rewards to sender
+    _transferAjnaRewards(rewardsEarned);
+}
+```

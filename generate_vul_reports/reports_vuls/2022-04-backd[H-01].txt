@@ -1,0 +1,17 @@
+[H-01] User can steal all rewards due to checkpoint after transfer
+Submitted by 0xDjango, also found by unforgiven
+StakerVault.sol#L112-L119
+I believe this to be a high severity vulnerability that is potentially included in the currently deployedStakerVault.solcontract also. The team will be contacted immediately following the submission of this report.
+InStakerVault.sol, the user checkpoints occur AFTER the balances are updated in thetransfer()function. The user checkpoints update the amount of rewards claimable by the user. Since their rewards will be updated after transfer, a user can send funds between their own accounts and repeatedly claim maximum rewards since the pool’s inception.
+In every actionable function excepttransfer()ofStakerVault.sol, a call toILpGauge(lpGauge).userCheckpoint()is correctly made BEFORE the action effects.
+Proof of Concept
+Assume a certain period of time has passed since the pool’s inception. For easy accounting, assumepoolStakedIntegralofLpGauge.solequals1. ThepoolStakedIntegralis used to keep track of the current reward rate.
+Steps:
+Account A stakes 1000 LP tokens.balances[A] += 1000In the samestakeFor()function,userCheckpoint()was already called so A will already haveperUserShare[A]set correctly based on their previously 0 balance and the currentpoolStakedIntegral.Account A can immediately send all balance to Account B viatransfer().Since the checkpoint occurs after the transfer, B’s balance will increase and thenperUserShare[B]will be updated. The calculation forperUserSharelooks as follows.
+perUserShare[user] += ((stakerVault.stakedAndActionLockedBalanceOf(user)).scaledMul((poolStakedIntegral_-perUserStakedIntegral[user])));
+Assuming Account B is new to the protocol, theirperUserStakedIntegral[user]will default to0.
+perUserShare[B] += 1000 * (1 - 0) = 1000
+B is able to callclaimRewards()and mint all 1000 reward tokens.B then callstransfer()and sends all 1000 staked tokens to Account C.Same calculation occurs, and C can claim all 1000 reward tokens.This process can be repeated until the contract is drained of reward tokens.
+Recommended Mitigation Steps
+InStakerVault.transfer(), move the call toILpGauge(lpGauge).userCheckpoint()to before the balances are updated.
+chase-manning (Backd) confirmed and resolved

@@ -1,0 +1,50 @@
+[H-01] Treasury cannot claim COMP tokens & COMP tokens are stuck
+Submitted by cmichel, also found by leastwood
+TheTreasuryAction.claimCOMPAndTransferfunction uses pre- and post-balances of theCOMPtoken to check which ones to transfer:
+functionclaimCOMPAndTransfer(address[]calldatacTokens)externaloverrideonlyManagerContractnonReentrantreturns(uint256){// Take a snasphot of the COMP balance before we claim COMP so that we don't inadvertently transfer// something we shouldn't.uint256balanceBefore=COMP.balanceOf(address(this));COMPTROLLER.claimComp(address(this),cTokens);// NOTE: If Notional ever lists COMP as a collateral asset it will be cCOMP instead and it// will never hold COMP balances directly. In this case we can always transfer all the COMP// off of the contract.uint256balanceAfter=COMP.balanceOf(address(this));uint256amountClaimed=balanceAfter.sub(balanceBefore);// NOTE: the onlyManagerContract modifier prevents a transfer to address(0) hereCOMP.safeTransfer(treasuryManagerContract,amountClaimed);// NOTE: TreasuryManager contract will emit a COMPHarvested eventreturnamountClaimed;}
+Note that anyone can claim COMP tokens on behalf of any address (seeComptroller.claimComp).
+An attacker can claim COMP tokens on behalf of the contract and it’ll never be able to claim any compound itself.
+The COMP claimed by the attacker are stuck in the contract and cannot be retrieved.
+(One can eventually get back the stuck COMP by creating a cCOMP market and then transferring it throughtransferReserveToTreasury.)
+Recommended Mitigation Steps
+Don’t use pre-and post-balances, can you use the entire balance?
+jeffywu (Notional) disagreed with severity and commented:
+Dispute as a high risk bug. Would categorize this as medium risk.There is no profit to be gained by doing this from the attacker besides denial of service. The protocol could simply upgrade to regain access to the tokens. We will fix this regardless.
+pauliax (judge) commented:
+Very good find.It is a tough decision if this should be classified as High or Medium severity. An exploiter cannot acquire those assets, and the contracts are upgradeable if necessary, however, I think this time I will leave it in favor of wardens who both are experienced enough and submitted this as of high severity:3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+
+[H-02] Cooldown and redeem windows can be rendered useless
+Submitted by ShippooorDAO
+Cooldown and redeem windows can be rendered useless.
+Proof of Concept
+Given an account that has not staked sNOTE.Account calls sNOTE.startCooldownAccount waits for the duration of the cooldown period. Redeem period starts.Account can then deposit and redeem as they wish, making the cooldown useless.Multiple accounts could be used to “hop” between redeem windows by transfering between them, making the redeem window effictively useless.
+Could be used for voting power attacks using flash loan if voting process is not monitoredhttps://www.coindesk.com/tech/2020/10/29/flash-loans-have-made-their-way-to-manipulating-protocol-elections/
+Tools Used
+VS Code
+Recommended Mitigation Steps
+A few ways to mitigate this problem:
+Option A: Remove the cooldown/redeem period as it’s not really preventing much in current state.
+Option B: Let the contract start the cooldown on mint, and bind the cooldown/redeem window to the amount that was minted at that time by the account. Don’t make sNOTE.startCooldown() available externally. Redeem should verify amount of token available using this new logic.
+jeffywu (Notional) confirmed and commented:
+Propose to increase the severity of this [from Low] to High.This image is a better way to understand the potential attack.
+pauliax (judge) increased severity to high and commented:
+Great find. Agree with the sponsor, the severity can be upgraded because it destroys the cooldown/redeem protection.Could this be mitigated by including an amount (up to the whole user’s balance) when starting a cooldown, and then redeem can’t withdraw more than specified during the cooldown init?
+jeffywu (Notional) commented:
+We’ve prevented this by refactoring how the redemption window is defined.
+
+[H-03] A Malicious Treasury Manager Can Burn Treasury Tokens By SettingmakerFeeTo The Amount The Maker Receives
+Submitted by leastwood
+The treasury manager contract holds harvested assets/COMPfrom Notional which are used to performNOTEbuybacks or in other areas of the protocol. The manager account is allowed to sign off-chain orders used on 0x to exchange tokens toWETHwhich can then be deposited in the Balancer LP and distributed tosNOTEholders.
+However,_validateOrderdoes not validate thattakerFeeandmakerFeeare set to zero, hence, it is possible for a malicious manager to receive tokens as part of a swap, but the treasury manager contract receives zero tokens asmakerFeeis set to the amount the maker receives. This can be abused to effectively burn treasury tokens at no cost to the order taker.
+Proof of Concept
+https://github.com/0xProject/0x-monorepo/blob/0571244e9e84b9ad778bccb99b837dd6f9baaf6e/contracts/exchange/contracts/src/MixinExchangeCore.sol#L196-L250
+https://github.com/0xProject/0x-monorepo/blob/0571244e9e84b9ad778bccb99b837dd6f9baaf6e/contracts/exchange-libs/contracts/src/LibFillResults.sol#L59-L91
+https://github.com/code-423n4/2022-01-notional/blob/main/contracts/utils/EIP1271Wallet.sol#L147-L188
+function_validateOrder(bytesmemoryorder)privateview{(addressmakerToken,addresstakerToken,addressfeeRecipient,uint256makerAmount,uint256takerAmount) =_extractOrderInfo(order);// No fee recipient allowedrequire(feeRecipient==address(0),"no fee recipient allowed");// MakerToken should never be WETHrequire(makerToken!=address(WETH),"maker token must not be WETH");// TakerToken (proceeds) should always be WETHrequire(takerToken==address(WETH),"taker token must be WETH");addresspriceOracle=priceOracles[makerToken];// Price oracle not definedrequire(priceOracle!=address(0),"price oracle not defined");uint256slippageLimit=slippageLimits[makerToken];// Slippage limit not definedrequire(slippageLimit!=0,"slippage limit not defined");uint256oraclePrice=_toUint(AggregatorV2V3Interface(priceOracle).latestAnswer());uint256priceFloor= (oraclePrice*slippageLimit) /SLIPPAGE_LIMIT_PRECISION;uint256makerDecimals=10**ERC20(makerToken).decimals();// makerPrice = takerAmount / makerAmountuint256makerPrice= (takerAmount*makerDecimals) /makerAmount;require(makerPrice>=priceFloor,"slippage is too high");}
+Recommended Mitigation Steps
+Consider checking thatmakerFee == 0andtakerFee == 0inEIP1271Wallet._validateOrders.t. the treasury manager cannot sign unfair orders which severely impact theTreasuryManagercontract.
+jeffywu (Notional) confirmed and commented:
+Confirmed, we will fix this.
+pauliax (judge) commented:
+Good job warden for identifying this issue with 0x integration.
+

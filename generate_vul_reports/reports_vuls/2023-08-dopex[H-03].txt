@@ -1,0 +1,18 @@
+[H-03] The settle feature will be broken if attacker arbitrarily transfer collateral tokens to the PerpetualAtlanticVaultLP
+Submitted byklau5, also found byKrisApostolov,Toshii,0xc0ffEE,codegpt,clash,ge6a,QiuhaoLi,parsely,Tendency,wintermute,bin2chen,Blockian,__141345__,Evo,0xbranded,visualbits,Udsen,0xvj,nirlin,ak1,jasonxiale,pontifex,Aymen0909,DanielArmstrong,AkshaySrivastav,savi0ur,RED-LOTUS-REACH,crunch,sces60107,pks_, Mike_Bello90 (1,2),tnquanghuy0512,circlelooper,ubermensch,asui,oakcobalt,bart1e, Anirruth (1,2),0xklh,blutorque,Baki,Snow24,Yanchuan,Jiamin,SBSecurity,kutugu,LokiThe5th,Juntao,nobody2018,juancito,carrotsmuggler,ladboy233,mert_eren,BugzyVonBuggernaut,GangsOfBrahmin,said,rokinot,ayden,0xDING99YA,lanrebayode77,peakbolt,chainsnake,T1MOH,Inspex,gjaldon,SpicyMeatball,LFGSecurity,ke1caM,Norah,auditsea,dirk_y,max10afternoon,tapir,spidy730,HChang26,grearlake,0xCiphky,chaduke,volodya,sl1,0x3b,Nyx,kodyvim,ravikiranweb3,ABA,0xWaitress,0xsurena,rvierdiiev,degensec,Kow,Krace,mahdikarimi, andsh1v
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/perp-vault/PerpetualAtlanticVaultLP.sol#L199-L205
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/perp-vault/PerpetualAtlanticVault.sol#L359-L361
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/core/RdpxV2Core.sol#L772-L774
+RdpxV2Core.settlereverts and the protocol stops.
+Proof of Concept
+If a collateral token(WETH) is arbitrarily sent to PerpetualAtlanticVaultLP, the values ofcollateral.balanceOf(address(this))and_totalCollateralwill be different.
+SincePerpetualAtlanticVaultLP.subtractLossrequires thatcollateral.balanceOf(address(this))exactly match with_totalCollateral - loss,PerpetualAtlanticVaultLP.subtractLosswill be failed if an attacker arbitrarily transfers collateral tokens to the PerpetualAtlanticVaultLP contract.
+functionsubtractLoss(uint256loss)publiconlyPerpVault{require(collateral.balanceOf(address(this)) ==_totalCollateral-loss,"Not enough collateral was sent out");_totalCollateral-=loss;}
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/perp-vault/PerpetualAtlanticVaultLP.sol#L199-L205
+Since there is no function that synchronizes_totalCollateralwithcollateral.balanceOf(address(this))without moving tokens, even admin cannot fix.
+This is exploit PoC. Add this test case attests/perp-vault/Unit.t.sol
+functiontestSettlePoC()public{weth.mint(address(1),1ether);weth.mint(address(777),1ether);// give some tokens to attackerdeposit(1ether,address(1));vault.purchase(1ether,address(this));uint256[]memoryids=newuint256[](1);ids[0] =0;skip(86500);// expirepriceOracle.updateRdpxPrice(0.010gwei);// ITMuint256wethBalanceBefore=weth.balanceOf(address(this));uint256rdpxBalanceBefore=rdpx.balanceOf(address(this));// attackvm.startPrank(address(777),address(777));weth.transfer(address(vaultLp),1);// send 1 wei of collateralvm.stopPrank();vm.expectRevert("Not enough collateral was sent out");vault.settle(ids);}
+Recommended Mitigation Steps
+Use>=instead of==atPerpetualAtlanticVaultLP.subtractLoss
+function subtractLoss(uint256 loss) public onlyPerpVault {require(-   collateral.balanceOf(address(this)) == _totalCollateral - loss,+   collateral.balanceOf(address(this)) >= _totalCollateral - loss,"Not enough collateral was sent out");_totalCollateral -= loss;}
+psytama (Dopex) confirmed via duplicate issue 619

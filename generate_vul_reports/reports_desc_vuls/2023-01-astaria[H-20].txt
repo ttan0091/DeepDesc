@@ -1,0 +1,16 @@
+Type of vulnerability: Arithmetic Over/Underflow Leading to Deadlock
+
+Cause of vulnerability: The contract does not properly adjust the scale of the withdraw ratio to match the decimals of the underlying token, leading to arithmetic underflow and subsequent function revert.
+
+Execution process:
+1. A token with fewer than 18 decimals is used as the underlying token for a vault.
+2. After a liquidation event, the `claim` function in `WithdrawProxy.sol` attempts to process the epoch.
+3. The withdraw ratio, stored in 1e18 scale, is not transformed into the token's decimal scale.
+4. This results in `transferAmount` being orders of magnitude larger than the actual balance.
+5. An underflow occurs in the balance calculation.
+6. The function reverts, causing a deadlock that locks all user funds in both the vault and the withdraw proxy.
+
+Vulnerable code:
+- https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L271-L274
+- https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L277
+- https://github.com/code-423n4/2023-01-astaria/blob/1bfc58b42109b839528ab1c21dc9803d663df898/src/WithdrawProxy.sol#L281

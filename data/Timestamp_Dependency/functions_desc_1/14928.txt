@@ -1,0 +1,41 @@
+This code defines a smart contract named W4T, which includes several variables and a fallback function to handle incoming Ether transactions. Here’s a detailed explanation of how this contract works:
+
+### Variables
+1. miningReward: A public variable of type uint initialized to 1000000000000000000 (1 Ether in Wei). This represents the base reward for mining.
+2. randomNumber: A private variable of type uint used to store a random number. This number is updated each time the fallback function is called.
+3. balanceOf: A public mapping where the key is an address and the value is a uint256. This mapping keeps track of the balance of each address.
+4. balanceRel: A uint variable initialized to 100. This variable is used to determine the probability of mining success.
+
+### Fallback Function
+The contract includes a fallback function, which is defined as:
+solidity
+function () external payable {
+    randomNumber += block.timestamp;
+    uint minedAtBlock = uint(block.blockhash(block.number  1));
+    uint minedHashRel = uint(sha256(minedAtBlock + randomNumber + uint(msg.sender))) % 100000;
+
+    if (minedHashRel < balanceRel) {
+        uint reward = miningReward + minedHashRel  100000000000000;
+        balanceOf[msg.sender] += reward;
+    }
+}
+
+
+#### Detailed Steps:
+1. Update randomNumber:
+    The randomNumber is incremented by the current block's timestamp (block.timestamp). This introduces a timedependent element to the random number generation.
+
+2. Calculate minedAtBlock:
+    The minedAtBlock is calculated by converting the block hash of the previous block (block.blockhash(block.number  1)) to a uint. This ensures that the mining process is tied to the blockchain's history.
+
+3. Calculate minedHashRel:
+    The minedHashRel is computed by hashing the sum of minedAtBlock, randomNumber, and the sender's address (uint(msg.sender)) using the sha256 function. The result is then taken modulo 100000 to get a value between 0 and 99999.
+
+4. Check Mining Success:
+    If the minedHashRel is less than balanceRel (which is 100), the mining attempt is considered successful.
+
+5. Calculate Reward:
+    The reward is calculated as the sum of the miningReward and minedHashRel multiplied by 100000000000000 (a scaling factor). This reward is added to the sender's balance in the balanceOf mapping.
+
+### Summary
+The W4T contract allows users to "mine" tokens by sending Ether to the contract. The mining success is determined by a probabilistic mechanism based on the block hash, a random number, and the sender's address. If the mining attempt is successful, the user receives a reward that is added to their balance in the balanceOf mapping.

@@ -1,0 +1,13 @@
+Type of vulnerability: Unauthorized Function Call
+
+Cause of vulnerability: The Puppet contract allows an unauthorized account to set the WBNB contract instance as the target contract, bypassing the LiquidationMachine version check and gaining access to the liq() function, which can be abused to steal tokens from the Puppet contract. 
+
+Working process of the vulnerability: 
+1. Attacker creates a new contract and initializes it with the Puppet contract address. 
+2. Attacker calls the test() function of the Puppet contract with a small amount of BNB as the gas subsidy.
+3. The test() function allows the WBNB contract to receive the BNB but skips the puppet[Path].liq process, going directly to the liq() function of the LiquidationMachine (attached via target[0]).
+4. The liq() function transfers all LP tokens, Borrowed Tokens and the unmatched LPs (WBNB) to its own address.
+5. The liq() function is then called with a dummy amountIn value, which triggers the token(callosp]T().transfer function with a fake assertion. 
+6. The transaction is eventually reverted, but the LP tokens have already been transferred to the attacker's contract, bypassing their safeties and remaining locked in the LastWizards's process.
+
+Impact of the vulnerability: The unauthorized caller (attacker) can steal LP tokens from the Puppet contract, causing significant financial loss to the Puppet contract and its users.

@@ -1,0 +1,34 @@
+[H-12] Malicious Users Can Exploit Residual Allowance To Steal Assets
+Submitted by xiaoming90, also found by 0x29A, 0xalpharush, 0xDjango, ayeslick, Critical, infosec_us_team, and Treasure-Seeker
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L58
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L77
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L91
+Vulnerability Details
+A depositor cannot have any residual allowance after depositing to the vault because the tokens can be stolen by anyone.
+Proof of Concept
+Assume that Alice has finished deploying the vault, and she would like to deposit her ERC20, ERC721, and ERC1155 tokens to the vault. She currently holds the following assets in her wallet
+1000XYZ ERC20 tokensAPE #1 ERC721 NFT, APE #2 ERC721 NFT, APE #3 ERC721 NFT,1000ABC ERC1155 tokens
+Thus, she sets up the necessary approval to grantbaseVaultcontract the permission to transfer her tokens to the vault.
+erc20.approve(address(baseVault),type(uint256).max);erc721.setApprovalForAll(address(baseVault),true);erc1155.setApprovalForAll(address(baseVault),true);
+Alice decided to deposit50XYZ ERC20 tokens, APE #1 ERC721 NFT, and50ABC tokens to the vault by callingbaseVault.batchDepositERC20,baseVault.batchDepositERC721, andbaseVault.batchDepositERC1155as shown below:
+baseVault.batchDepositERC20(alice.addr,vault, [XYZ.addr], [50])baseVault.batchDepositERC721(alice.addr,vault, [APE.addr], [#1])baseVault.batchDepositERC1155(alice.addr,vault, [ABC.addr], [#1], [50],"")
+An attacker notices that there is residual allowance left on thebaseVault, thus the attacker executes the following transactions to steal Alice’s assets and send them to the attacker’s wallet address.
+baseVault.batchDepositERC20(alice.addr,attacker.addr, [XYZ.addr], [950])baseVault.batchDepositERC721(alice.addr,attacker.addr, [APE.addr,APE.addr], [#2, #3])baseVault.batchDepositERC1155(alice.addr,attacker.addr, [ABC.addr], [#1], [950],"")
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L58
+functionbatchDepositERC20(address_from,address_to,address[]calldata_tokens,uint256[]calldata_amounts)external{for(uint256i=0;i<_tokens.length; ) {IERC20(_tokens[i]).transferFrom(_from,_to,_amounts[i]);unchecked{++i;}}}
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L77
+functionbatchDepositERC721(address_from,address_to,address[]calldata_tokens,uint256[]calldata_ids)external{for(uint256i=0;i<_tokens.length; ) {IERC721(_tokens[i]).safeTransferFrom(_from,_to,_ids[i]);unchecked{++i;}}}
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L91
+functionbatchDepositERC1155(address_from,address_to,address[]calldata_tokens,uint256[]calldata_ids,uint256[]calldata_amounts,bytes[]calldata_datas)external{unchecked{for(uint256i=0;i<_tokens.length; ++i) {IERC1155(_tokens[i]).safeTransferFrom(_from,_to,_ids[i],_amounts[i],_datas[i]);}}}
+Impact
+Loss of assets for users as a malicious user could utilise thebaseVaultcontract to exploit the user’s residual allowance to steal their assets.
+Recommended Mitigation Steps
+It is recommended to only allow thebaseVault.batchDepositERC20,baseVault.batchDepositERC721, andbaseVault.batchDepositERC1155functions to pull tokens from the caller (msg.sender).
+Considering updating the affected functions to remove thefromparameter, and usemsg.senderinstead.
+function batchDepositERC20(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _amounts) external {for (uint256 i = 0; i < _tokens.length; ) {-       IERC20(_tokens[i]).transferFrom(_from, _to, _amounts[i]);+       IERC20(_tokens[i]).transferFrom(msg.sender, _to, _amounts[i]);unchecked {++i;}}}
+function batchDepositERC721(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _ids) external {for (uint256 i = 0; i < _tokens.length; ) {-       IERC721(_tokens[i]).safeTransferFrom(_from, _to, _ids[i]);+       IERC721(_tokens[i]).safeTransferFrom(msg.sender, _to, _ids[i]);unchecked {++i;}}}
+function batchDepositERC1155(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _ids,uint256[] calldata _amounts,bytes[] calldata _datas) external {unchecked {for (uint256 i = 0; i < _tokens.length; ++i) {IERC1155(_tokens[i]).safeTransferFrom(-               _from,+               msg.sender,_to,_ids[i],_amounts[i],_datas[i]);}}}
+stevennevins (Fractional) confirmed and commented:
+Confirmed, we will be addressing this issue!
+HardlyDifficult (judge) commented:
+Anyone who approved the BaseVault can have their tokens stolen. Agree this is high risk.

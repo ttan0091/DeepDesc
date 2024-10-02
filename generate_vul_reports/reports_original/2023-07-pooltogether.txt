@@ -1,0 +1,224 @@
+[H-01] The_currentExchangeRateof the Vault contract can’t increase and will always be lower than or equal to_assetUnit
+Submitted byKIntern_NA, also found byKupiaSec
+The_currentExchangeRateof the Vault contract can not increase and will always be lower than or equal to_assetUnit. Therefore, when the vault is under-collateralized (_currentExchangeRate<_assetUnit), it can’t be further collateralized.
+Proof of concept
+function_currentExchangeRate()internalviewreturns(uint256) {uint256_totalSupplyAmount=_totalSupply();uint256_totalSupplyToAssets=_convertToAssets(_totalSupplyAmount,_lastRecordedExchangeRate,Math.Rounding.Down);uint256_withdrawableAssets=_yieldVault.maxWithdraw(address(this));if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}return_assetUnit;}
+The_totalSupplyAmount != 0 && _withdrawableAssets != 0,_currentExchangeRatefunction will return a value_withdrawableAssets * _assetUnit / _totalSupplyAmount. However,_withdrawableAssetscan not exceed_totalSupplyToAssets, which is equal to_totalSupplyAmount * _lastRecordedExchangeRate / _assetUnit. Therefore,_currentExchangeRatewill always be lower than or equal to_lastRecordedExchangeRate.
+Add this assert line and runforge test; all tests will pass.
+if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {assert(_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down) <=_assetUnit);return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}
+Recommended Mitigation Steps
+Remove the lines of code that limit the_withdrawableAssets:
+if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}
+Assessed type
+Context
+asselstine (PoolTogether) confirmed and commented:
+Hmm, I’m not sure about this one.  Will mark as confirmed and figure it out later.
+Picodes (judge) commented:
+@asselstine - did you figure it out?It seems to me that because ofif (_withdrawableAssets > _convertToAssets(_totalSupplyAmount, _lastRecordedExchangeRate, Math.Rounding.Down)), the rate indeed can’t increase; which is a huge issue in case of a momentary undercollateralization.
+PierrickGT (PoolTogether) commented:
+@Picodes - Indeed, the exchange rate should not be greater than 1 because users should not be able to claim the yield that has accrued in theYieldVault.That’s why we have the following condition:if (_withdrawableAssets > _totalSupplyToAssets) {_withdrawableAssets = _withdrawableAssets - (_withdrawableAssets - _totalSupplyToAssets);}We subtract the yield from the total amount, with the yield being the difference between_withdrawableAssetsand_totalSupplyToAssets.If theYieldVaultbecomes under-collateralized, users won’t be able to deposit anymore, but will be able to withdraw their share of the deposit. Any yield that as accrued and has not been claimed yet will be shared proportionally amongst users.
+PierrickGT (PoolTogether) commented:
+The code has been improved and clarified in the following PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/13.
+Picodes (judge) commented:
+Keeping high severity here because of the issue in case of temporary undercollateralization.
+PoolTogether mitigated:
+The issue turned out not to be the case; the exchange rate is always<=1 (yield is liquidated). However, comments were added to clarify the behaviour.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/13
+Status: Mitigation confirmed. Full details in reports from0xStalin,dirk_yandrvierdiiev.
+
+[H-02] A malicious user can steal other user’s deposits from Vault.sol
+Submitted byzzzitron, also found bypontifex
+Lines of code
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L509-L521https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L407-L415
+Impact
+When theVault.withdraw()function is called, a maximum oftype(uint96).maxshares are burnt subsequently:Vault.withdraw()->Vault._withdraw()->Vault._burnburnsuint96(_shares), seeVault.sol line 1139.
+A malicious user can exploit this in the following way:
+A malicious user deposits, for example, two times the value oftype(uint96).maxunderlying assets into the Vault; calling the functionVault.deposit()two times. They can’t deposit more in a single transaction becausetype(uint96).maxis the maximum value to deposit.Then, the malicious user callsVault.withdraw()with a higher value of assets to withdraw more thantype(uint96).max. For example, they withdraw (2 * type(uint96).max), which is the total amount of assets they deposited before.Now what happens, is the Vault.sol contract only burnstype(uint96).maxshares for the user, but transfers2 * type(uint96).maxunderlying assets to the malicious user, which is the total amount they deposited before.This happens becauseVault._burn()only burnsuint96(shares)shares of the malicious users - see Vault.sol line 1155.Now, the malicious user has still vault shares left but they withdrew the total amount of their deposited assets.Now, the vault transferred the total amount of the malicious user’s assets back to them and the malicious user still has shares left to withdraw; with even more assets that are now being stolen from assets deposited by other users.Or, if the malicious user was the first depositor, they wait until another user deposits and the malicious user can now withdraw the other users deposited assets since the malicious user still has Vault shares left.Or, if the malicious user is not the first depositor, they use aflashLoanorflashMintto deposit multiple timestype(uint96).maxassets into the vault. Then, they can withdraw their deposit, pay back theflashLoanorflashMintand they will still have enough vault shares left to steal all other users assets by withdrawing them.
+In this way, other user’s deposited assets can be stolen, as explained above.
+Proof of Concept
+Here is a POC, where the problem is illustrated:
+https://gist.github.com/zzzitron/397790302ca95aa3fbf05694ae1497ab
+Recommended Mitigation Steps
+Consider adjusting theVault._burnfunction to not convert fromuint256touint96when burning shares.
+Assessed type
+Math
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Added SafeCastPR:https://github.com/GenerationSoftware/pt-v5-vault/pull/9
+Status: Mitigation confirmed. Full details in reports fromdirk_y,rvierdiievand0xStalin.
+
+[H-03]_amountOutis representing assets and shares at the same time in theliquidatefunction
+Submitted byAymen0909, also found byKupiaSec, wangxx2026 (1,2), and0xWaitress
+In theliquidatefunction from theVaultcontract, the input argument_amountOutis used as if it was representing a value of asset amounts and share amounts at the same time; which is impossible as there is a conversion rate between them. This error will make theliquidatefunction behave in an expected manner, not the one that was intended.
+Proof of Concept
+The issue is occurring in theliquidatefunction below:
+functionliquidate(address_account,address_tokenIn,uint256_amountIn,address_tokenOut,uint256_amountOut)publicvirtualoverridereturns(bool) {_requireVaultCollateralized();if(msg.sender!=address(_liquidationPair))revertLiquidationCallerNotLP(msg.sender,address(_liquidationPair));if(_tokenIn!=address(_prizePool.prizeToken()))revertLiquidationTokenInNotPrizeToken(_tokenIn,address(_prizePool.prizeToken()));if(_tokenOut!=address(this))revertLiquidationTokenOutNotVaultShare(_tokenOut,address(this));if(_amountOut==0)revertLiquidationAmountOutZero();uint256_liquidableYield=_liquidatableBalanceOf(_tokenOut);// @audit _amountOut compared with _liquidableYield which represents an asset amount// @audit _amountOut is considered as an asset amountif(_amountOut>_liquidableYield)revertLiquidationAmountOutGTYield(_amountOut,_liquidableYield);_prizePool.contributePrizeTokens(address(this),_amountIn);if(_yieldFeePercentage!=0) {// @audit _amountOut used to increase fee shares so considered as representing a share amount_increaseYieldFeeBalance((_amountOut*FEE_PRECISION) / (FEE_PRECISION-_yieldFeePercentage) -_amountOut);}uint256_vaultAssets=IERC20(asset()).balanceOf(address(this));// @audit _amountOut compared with _vaultAssets which represents an asset amount// @audit _amountOut is considered as an asset amountif(_vaultAssets!=0&&_amountOut>=_vaultAssets) {_yieldVault.deposit(_vaultAssets,address(this));}// @audit _amountOut representing a share amount minted to the _account_mint(_account,_amountOut);returntrue;}
+As you can see from the code above, the value of the argument_amountOutis used multiple times in the function logic and each time is representing either an asset amount or a share amount; which is impossible as there is a conversion formula used to transform the asset amount into the share amount (and inversely) with the function_convertToShares(or_convertToAssets).
+From the function comments, I couldn’t figure out what the value of_amountOutactually represents, but because there is also another argument given to theliquidatefunction, which is_tokenOut == address(this), I’m supposing that_amountOutis representing as a share amount; which will mean that all the instances highlighted in the code above, when_amountOutis considered as an asset amount, are wrong.
+Instance 1:
+// @audit _amountOut compared with _liquidableYield which represents an asset amountif(_amountOut>_liquidableYield)revertLiquidationAmountOutGTYield(_amountOut,_liquidableYield);
+Instance 2:
+// @audit _amountOut compared with _vaultAssets which represents an asset amountif(_vaultAssets!=0&&_amountOut>=_vaultAssets) {_yieldVault.deposit(_vaultAssets,address(this));}
+And before comparing_amountOutto the asset amount values of_vaultAssetsand_liquidableYield, it’s value should be converted to an asset amount with the function_convertToAssets.
+This issue will cause problems for the protocol working, as theliquidatefunction logic will not behave as expected, because it’s comparing values that represent different things.
+Note: If_amountOutis actually representing an asset amount (not a share amount as I supposed), the issue is still valid because_amountOutis also used as being a share amount inside theliquidatefunction. In that case, it should first be converted to a share amount with_convertToSharesin order to get the correct behavior of theliquidatefunction.
+Recommended Mitigation Steps
+To solve this issue, I recommend to first convert the value of_amountOutin theliquidatefunction to an asset amount and store it in a local variable,_amountOutToAsset. In the function logic, use the correct variable, either_amountOutor_amountOutToAsset, when interacting with a share amount or an asset amount.
+Assessed type
+Error
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Fixed conversion and naming of field.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/6
+Status: Mitigation confirmed. Full details in reports fromdirk_y,rvierdiievand0xStalin.
+
+[H-04]Vault.mintYieldFeefunction can be called by anyone to mintVault Sharesto any recipient address
+Submitted byUdsen, also found byminhtrng,markus_ether,GREY-HAWK-REACH,KupiaSec,serial-coder,Aymen0909,peanuts,teawaterwire,ni8mare,alexweb3,josephdara,zzzitron,Jeiwan,Nyx,keccak123,LuchoLeonel1,btk,seeques,0xPsuedoPandit,0xMirce,RedTiger,Praise,bin2chen,ktg,Bobface,rvierdiiev,wangxx2026,0xbepresent,dirk_y,ptsanev,shaka,dacian,mahdirostami,John,0xStalin,ravikiranweb3, andCo0nan
+TheVault.mintYieldFeeexternal function is used to mintVault sharesto the yield fee_recipient. The function is an external function and can be called by anyone since there is no access control. The function will revert only under following two conditions:
+If the Vault is under-collateralized.If the_sharesare greater than the accrued_yieldFeeTotalSupply.
+The issue with this function is, it allows the caller to set the_recipient(address of the yield fee recipient). It does not use the_yieldFeeRecipientstate variable, which was set in theVault.constructoras theyield fee recipient.
+Which means, anyone can steal the availableyield feefrom the vault (as long as the above two revert conditions are not satisfied) byminting sharesto their own address or to any address of their choice.
+Proof of Concept
+functionmintYieldFee(uint256_shares,address_recipient)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);_yieldFeeTotalSupply-=_shares;_mint(_recipient,_shares);emitMintYieldFee(msg.sender,_recipient,_shares);}
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L394-L402
+Tools Used
+VSCode
+Recommended Mitigation Steps
+Hence, it is recommended to use the_yieldFeeRecipientstate variable value as theyield fee recipientinside theVault.mintYieldFeeexternal function and to remove the input parameteraddress _recipientfrom theVault.mintYieldFeefunction; so that the caller will not be able to mint shares to any arbitrary address of their choice and steal the yield fee of the protocol.
+The updated function should be as follows:
+functionmintYieldFee(uint256_shares)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);_yieldFeeTotalSupply-=_shares;_mint(_yieldFeeRecipient,_shares);emitMintYieldFee(msg.sender,_recipient,_shares);}
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Removed recipient param.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/7
+Status: Mitigation confirmed. Full details in reports fromrvierdiiev,dirk_yand0xStalin.
+
+[H-05] Delegated amounts can be forcefully removed from anyone in theTwabController
+Submitted by0xkasper, also found byminhtrng,qpzm,Aymen0909,Jeiwan,GREY-HAWK-REACH,0xStalin,0xbepresent,3docSec, andCo0nan
+Thesponsorfunction in theVault.solcontract allows anyone to remove another user’s delegation by forcing them to delegate to the sponsor address._sponsorwill deposit some amount from the caller for the target user and then force a delegation to the sponsor address (address(1)).
+However, this amount can just be 0 and so it becomes a function to simply force a removal of a delegation. The full delegated power gets removed, because delegations to the sponsor address are not tracked.
+As such, it becomes possible to call thesponsorfunction for every user and make the total delegated power supply in theTwabControllerequal to 0. The attacker can then be the only one with some delegated amount that is equal to 100% of the total supply, manipulating the process of the lottery.
+Rectifying the delegation requires manual interaction from the user and the exploit can be repeated anytime and continuously, further manipulating the values in theTwabController.
+Proof of Concept
+function testPoCDelegateRemoval() public {address SPONSORSHIP_ADDRESS = address(1);uint96 BALANCE = 100_000_000 ether;token.approve(address(vault), BALANCE);vault.deposit(BALANCE, address(this));assertEq(address(this), twab_controller.delegateOf(address(vault), address(this)));assertEq(BALANCE, twab_controller.delegateBalanceOf(address(vault), address(this)));// As attacker, call sponsor with 0 amount and victim addressvm.prank(address(0xdeadbeef));vault.sponsor(0, address(this));// Delegated balance is now goneassertEq(SPONSORSHIP_ADDRESS, twab_controller.delegateOf(address(vault), address(this)));assertEq(0, twab_controller.delegateBalanceOf(address(vault), address(this)));assertEq(0, twab_controller.delegateBalanceOf(address(vault), SPONSORSHIP_ADDRESS));}
+Tools Used
+VSCode, Foundry.
+Recommended Mitigation Steps
+Thesponsorfunction should only accept deposits if the receiver has already delegated to the sponsorship address. Otherwise, the deposit is accepted, but the delegation should not be forced.
+asselstine (PoolTogether) confirmed via duplicate issue #393
+PierrickGT (PoolTogether) commented via duplicate issue #393:
+I’ve removed thereceiverparam in the following PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/19.This way, only themsg.sendercan sponsor the Vault by depositing into it and delegating to the sponsorship address, if it is not already the case. If the user wants to deposit on behalf of another user, they can still use thedepositfunction. Funds will then be delegated to any address set by thereceiver.
+PoolTogether mitigated:
+Removed recipient param.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/19
+Status: Mitigation error. Full details in report fromrvierdiiev, and in theMitigation Reviewsection below.
+
+[H-06] Resetting delegation will result in user funds being lost forever
+Submitted bydirk_y, also found byKupiaSec,Jeiwan,0xkasper,0xbepresent,bin2chen,rvierdiiev, andxuwinnie
+Lines of code
+https://github.com/GenerationSoftware/pt-v5-twab-controller/blob/0145eeac23301ee5338c659422dd6d69234f5d50/src/TwabController.sol#L596-L599https://github.com/GenerationSoftware/pt-v5-twab-controller/blob/0145eeac23301ee5338c659422dd6d69234f5d50/src/TwabController.sol#L648-L664
+Impact
+The default delegate value for a user isaddress(0), which maps to the user delegating to themselves. If a user had delegated to another address and wanted to reset their delegated balance back to themselves, they would lose all of their funds contributed to the vault.
+Proof of Concept
+As mentioned above, the default behaviour for a user is that they delegate their balance to themselves, where the actual default value in storage is the0 address:
+function _delegateOf(address _vault, address _user) internal view returns (address) {address _userDelegate;if (_user != address(0)) {_userDelegate = delegates[_vault][_user];// If the user has not delegated, then the user is the delegateif (_userDelegate == address(0)) {_userDelegate = _user;}}return _userDelegate;}
+When a user wants to delegate their balance, they calldelegateinTwabController.soland specify which vault they want to delegate the balance of and to which address they want to delegate to. This calls_delegateunder the hood:
+function _delegate(address _vault, address _from, address _to) internal {address _currentDelegate = _delegateOf(_vault, _from);if (_to == _currentDelegate) {revert SameDelegateAlreadySet(_to);}delegates[_vault][_from] = _to;_transferDelegateBalance(_vault,_currentDelegate,_to,uint96(userObservations[_vault][_from].details.balance));emit Delegated(_vault, _from, _to);}
+If a user wanted to reset the delegation to themselves, they would specify_toasaddress(0). However, the issue with this is that the underlying_transferDelegateBalancecall will mistakenly move the delegated user funds to the0 address.
+At this point, the user might try to calldelegateagain with their actual address; however, now the(_to == _currentDelegate)check will be true and revert because of the behaviour specified earlier. The user also can’t delegate to any other address because they don’t own their own delegate balance anymore. Their funds are officially lost forever.
+Below is a change to the existing test suite that can be executed withforge test -vvv --match-path test/unit/Vault/Withdraw.t.solto demonstrate this issue:
+diff --git a/test/unit/Vault/Withdraw.t.sol b/test/unit/Vault/Withdraw.t.solindex 6a15a59..3cec9e3 100644--- a/test/unit/Vault/Withdraw.t.sol+++ b/test/unit/Vault/Withdraw.t.sol@@ -47,6 +47,36 @@ contract VaultWithdrawTest is UnitBaseSetup {vm.stopPrank();}+  function testFundsLostForever() external {+    vm.startPrank(alice);+    uint256 _amount = 1000e18;+    underlyingAsset.mint(alice, _amount);++    // Alice deposits as usual+    _deposit(underlyingAsset, vault, _amount, alice);++    // Alice decides she wants to delegate to bob+    twabController.delegate(address(vault), bob);++    // Alice now tries to reset her delegation+    twabController.delegate(address(vault), address(0));++    // At this point the funds are lost!! Alice tries to recover her funds in any way...++    // Alice tries to delegate back to herself but can't+    vm.expectRevert();+    twabController.delegate(address(vault), alice);++    // Alice also can't delegate to any other address+    vm.expectRevert();+    twabController.delegate(address(vault), bob);++    // Alice can't withdraw because her funds have been lost forever :(+    // Expecting a revert with "DelegateBalanceLTAmount(0, 1000000000000000000000)"+    vault.withdraw(vault.maxWithdraw(alice), alice, alice);+    vm.stopPrank();+  }+function testWithdrawMoreThanMax() external {vm.startPrank(alice);
+Tools Used
+Foundry
+Recommended Mitigation Steps
+The simplest way to fix this issue is to prevent delegating back to the0 address. If a user delegates away from the default, then they can delegate back to themselves by specifying their own address:
+diff --git a/src/TwabController.sol b/src/TwabController.solindex a7e2d51..ae7b9ea 100644--- a/src/TwabController.sol+++ b/src/TwabController.sol@@ -646,6 +646,7 @@ contract TwabController {* @param _to the address to delegate to*/function _delegate(address _vault, address _from, address _to) internal {+    require(_to != address(0), "Cannot delegate back to 0 address");address _currentDelegate = _delegateOf(_vault, _from);if (_to == _currentDelegate) {revert SameDelegateAlreadySet(_to);
+Assessed type
+Invalid Validation
+asselstine (PoolTogether) confirmed via duplicate issue #293
+Picodes (judge) commented via duplicate issue #293:
+High severity seems justified because of the linesif (_userDelegate == address(0)) { _userDelegate = _user;}. It seems likely that some users are tricked into thinking that delegating back to the0 addresswill cancel their delegation.
+PoolTogether mitigated:
+Added check for zero address.PR:https://github.com/GenerationSoftware/pt-v5-twab-controller/pull/7
+Status: Mitigation confirmed with comments. Full details in reports from0xStalin,dirk_yandrvierdiiev.
+
+[H-07]_requireVaultCollateralized()is called at the beginning of the functionsmintYieldFee()andliquidate()
+Submitted byRedTiger, also found byzzzitronandwangxx2026
+Theliquidate()andmintYieldFee()functions  could leave the vaults under-collateralized.
+Proof of Concept
+_requireVaultCollateralized()is called at the beginning ofmintYieldFee()andliquidate(). These two functions change the state and the vault could become under-collateralized at the end of the functions.
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L557
+functionmintYieldFee(uint256_shares,address_recipient)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L395
+functionmintYieldFee(uint256_shares,address_recipient)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);
+Recommended Mitigation Steps
+Call_requireVaultCollateralized()at the end of these functions instead of calling it at the beginning.
+Assessed type
+Invalid Validation
+Picodes (judge) increased severity to High
+asselstine (PoolTogether) confirmed via duplicate issue #307
+Picodes (judge) commented via duplicate issue #307:
+Keeping High severity as this report shows how shares could be minted; although, the vault is in fact under-collateralized leading to a loss of funds for users.
+PierrickGT (PoolTogether) commented via duplicate issue #307:
+The warden missed the following comment:* @dev - We exclude the amount of yield generated by the YieldVault, so the user can only withdraw their share of deposits.*      Except when the vault is under-collateralized, in this case, any unclaimed yield fee is included in the calculation.https://github.com/GenerationSoftware/pt-v5-vault/blob/a08fe40155aa65aab202c8bda5806dd91eaa1a9a/src/Vault.sol#L1169-L1170If the Vault ends up being under-collateralized, any yield that has not been claimed will be shared proportionally between depositors.
+If we use_totalSharesinstead of_totalSupply, we would account for Vault shares that have not been minted yet, since_yieldFeeTotalSupplykeeps track of the accrued yield fee, but needs to be minted as Vault shares by callingmintYieldFee:https://github.com/GenerationSoftware/pt-v5-vault/blob/44a6c6b081db5cc5e2acc4757a3c9dbaa6f60943/src/Vault.sol#L395I’ve added the following to test this scenario:https://github.com/GenerationSoftware/pt-v5-vault/blob/44a6c6b081db5cc5e2acc4757a3c9dbaa6f60943/test/unit/Vault/Withdraw.t.sol#L128
+Picodes (judge) commented via duplicate issue #307:
+@PierrickGT - I do agree with you that the mitigation of this report is incorrect. However, my understanding is that there is still an important issue here; becausemintYieldFeecould be called even when it would lead to an under-collateralized state.So we could imagine a scenario where_yieldFeeTotalSupplyis 4, assets in the vault are 10, and user shares are 10. Then, a call tomintYieldFeewould mint4and would lead to a loss of funds for users, as it’d bring the vault into an under-collateralized state.
+PierrickGT (PoolTogether) commented via duplicate issue #307:
+@Picodes - Yes, exactly. This issue you are referring to was better explained inthis issue.
+PoolTogether mitigated:
+Fixed check for partial collateralization.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/13
+Status: Mitigation confirmed. Full details in reports from0xStalin,dirk_yandrvierdiiev.
+
+[H-08] Increasing reserves breaks PrizePool accounting
+Submitted bydirk_y, also found byJeiwan,0xStalin, and seeques (1,2)
+Lines of code
+https://github.com/GenerationSoftware/pt-v5-prize-pool/blob/4bc8a12b857856828c018510b5500d722b79ca3a/src/PrizePool.sol#L498-L502https://github.com/GenerationSoftware/pt-v5-prize-pool/blob/4bc8a12b857856828c018510b5500d722b79ca3a/src/PrizePool.sol#L743-L746https://github.com/GenerationSoftware/pt-v5-prize-pool/blob/4bc8a12b857856828c018510b5500d722b79ca3a/src/PrizePool.sol#L312
+Impact
+When anyone calls theincreaseReservemethod inPrizePool.solthe accounted balance in the prize pool isn’t properly updated. This allows a vault to effectively steal the prize token contribution and this contribution gets distributed during draws; effectively double counting the initial injection into the reserves. The actual prize token balance of the prize pool will be below the accounted balance of the prize pool as time goes on.
+Proof of Concept
+As mentioned in the audit README:
+“the balance of prize tokens held by the contract must always be equal to the sum of the available tier liquidity and the reserve. When contributing liquidity, the prize pool will temporarily hold a balance greater than the accounted balance, but otherwise the two should match”.
+Unfortunately, this is broken when anyone contributes directly to the reserve by callingincreaseReserve.
+In the normal audit flow, the reserve is increased when a draw is closed by the draw manager. During calls tocloseDraw, the next draw is started with a given number of tiers and the contributions for the round are calculated and split across the tiers and the reserve:
+_nextDraw(_nextNumberOfTiers, uint96(_contributionsForDraw(lastClosedDrawId + 1)));
+Under the hood, this calls_computeNewDistributionswhich calculates the amount to increase the reserves, based on the number of reserve shares and the new prize token liquidity being contributed in this round. During this flow, the actual balance of reward tokens held in the prize pool are equal to the accounted balance.
+The break in accounting occurs when callingincreaseReserve:
+function increaseReserve(uint104 _amount) external {_reserve += _amount;prizeToken.safeTransferFrom(msg.sender, address(this), _amount);emit IncreaseReserve(msg.sender, _amount);}
+As you can see, the prize tokens are transferred into the pool and the reserve increased. But the accounted balance is unchanged:
+function _accountedBalance() internal view returns (uint256) {Observation memory obs = DrawAccumulatorLib.newestObservation(totalAccumulator);return (obs.available + obs.disbursed) - _totalWithdrawn;}
+Because the accounted balance is unchanged, any vault can now callcontributePrizeTokensto effectively steal the funds meant for the reserve:
+function contributePrizeTokens(address _prizeVault, uint256 _amount) external returns (uint256) {uint256 _deltaBalance = prizeToken.balanceOf(address(this)) - _accountedBalance();
+This increases the relevant vault accumulator and the total accumulator; thereby, effectively double counting the same prize tokens, since we’ve already increased_reserve.
+Recommended Mitigation Steps
+The accounted balance of the prize pool should be updated whenincreaseReserveis called. I think the easiest way of achieving this is having a tracker for “reserve injections”:
+diff --git a/src/PrizePool.sol b/src/PrizePool.solindex a42a27e..3c14476 100644--- a/src/PrizePool.sol+++ b/src/PrizePool.sol@@ -233,6 +233,9 @@ contract PrizePool is TieredLiquidityDistributor {/// @notice The total amount of prize tokens that have been claimed for all time.uint256 internal _totalWithdrawn;+  /// @notice The total amount of reserve injections that have been performed for all time.+  uint256 internal _reserveInjections;+/// @notice The winner random number for the last closed draw.uint256 internal _winningRandomNumber;@@ -497,6 +500,7 @@ contract PrizePool is TieredLiquidityDistributor {/// @param _amount The amount of tokens to increase the reserve byfunction increaseReserve(uint104 _amount) external {_reserve += _amount;+    _reserveInjections += amount;prizeToken.safeTransferFrom(msg.sender, address(this), _amount);emit IncreaseReserve(msg.sender, _amount);}@@ -742,7 +746,7 @@ contract PrizePool is TieredLiquidityDistributor {/// @return The balance of tokens that have been accounted forfunction _accountedBalance() internal view returns (uint256) {Observation memory obs = DrawAccumulatorLib.newestObservation(totalAccumulator);-    return (obs.available + obs.disbursed) - _totalWithdrawn;+    return (obs.available + obs.disbursed) - _totalWithdrawn + _reserveInjections;}/// @notice Returns the start time of the draw for the next successful closeDraw
+Assessed type
+Math
+asselstine (PoolTogether) confirmed and commented via duplicate issue #200:
+Going to add some notes here:The issue is that_accountedBalance()computes(obs.available + obs.disbursed) - _totalWithdrawn, which basically means the total contributed liquidity minus the withdrawn liquidity.However, when adding liquidity manually, viaincreaseReserve, it does not increase the contributed liquidity.This issue points to back-running as the problem, but that’s not the case. The case is improper accounting, as inthis issuethat was closed as a duplicate.
+PoolTogether mitigated:
+Fixed reserve accounting.PR:https://github.com/GenerationSoftware/pt-v5-prize-pool/pull/18
+Status: Mitigation confirmed. Full details in reports fromdirk_y,rvierdiievand0xStalin.
+
+[H-09]Vaultis not compatible with some ERC4626 vaults
+Submitted byrvierdiiev, also found byBrenzee
+Depositors can lose funds.
+Proof of Concept
+Anyone can buildVaultwith an underlying vault inside, which should earn yields. When a user deposits/withdraws then the_convertToSharesfunction is usedto determine amount of shares the user will receive for the provided assets amount. This functioncalls_currentExchangeRateto find out current rate.
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L1168-L1187
+function_currentExchangeRate()internalviewreturns(uint256) {uint256_totalSupplyAmount=_totalSupply();uint256_totalSupplyToAssets=_convertToAssets(_totalSupplyAmount,_lastRecordedExchangeRate,Math.Rounding.Down);uint256_withdrawableAssets=_yieldVault.maxWithdraw(address(this));if(_withdrawableAssets>_totalSupplyToAssets) {_withdrawableAssets=_withdrawableAssets- (_withdrawableAssets-_totalSupplyToAssets);}if(_totalSupplyAmount!=0&&_withdrawableAssets!=0) {return_withdrawableAssets.mulDiv(_assetUnit,_totalSupplyAmount,Math.Rounding.Down);}return_assetUnit;}
+As you can see, in order to find the current exchange rate, function_yieldVault.maxWithdraw(address(this))is used. In this case, if this value (which is supposed to be a full amount of deposits + yields inside_yieldVault) is less than_totalSupplyAmount(which is the total supply_lastRecordedExchangeRate), then the rate will be decreased. Which means that the vault lost funds and users should receive less when they withdraw. Later, this new_currentExchangeRatewill be stored as_lastRecordedExchangeRate.
+Now, when I explained how rate is changed, I can also explain the problem with some ERC4626 vaults.
+There are some ERC4626 vaults asDnGmxSeniorVault, that collect deposited funds and borrow them. When youcallmaxWithdrawfor such vaults, if not enough funds are present (due to some borrowing percentages on the vault), then the amount returned can be less than real balance of caller.
+In case a such wrong value is returned, then depositors of thePoolvault will face losses, as their exchange rate will be less than 1.DnGmxSeniorVaultwill again have enough balance (when the debt is repaid byjnvault), and the exchange rate will be 1.
+Another problem ERC4626 vaults can create are vaults that have a withdraw limit. In that case, if thePoolvault has balance inside the yield vault that is bigger than the borrow limit, depositors will face the same problem, which leads to a loss of funds.
+Tools Used
+VsCode
+Recommended Mitigation Steps
+You need to consider cases where some vaults can’t be used as yield vaults and be aware of vault creators for that.
+Assessed type
+Error
+asselstine (PoolTogether) confirmed
+asselstine (PoolTogether) commented:
+This is more of a general warning about the possible incompatibilities of 4626 vaults.
+PoolTogether mitigated:
+Fixed undercollateralized redemption while providing an exit.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/37
+Status: Not fully mitigated. Full details in reports from0xStalinandrvierdiiev, and in theMitigation Reviewsection below.
+

@@ -1,0 +1,35 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: Lack of access control on `emitForWeek()` allows any attacker to call it and set the emission for the current week, preventing subsequent calls from updating the emission value.
+Execution process: An attacker calls `emitForWeek()` before the legitimate call to `newEpoch()` is executed. This causes `emitForWeek()` to return `0` during the legitimate `newEpoch()` call, preventing any rewards from being distributed to the gauges for that epoch.
+Vulnerable code: 
+```solidity
+function emitForWeek() external notPaused returns (uint256) {
+    require(_getChainId() == governanceChainIdentifier, "chain not valid");
+    uint256 week = _timestampToWeek(block.timestamp);
+    if (emissionForWeek[week] > 0) return 0;
+    // Update DSO supply from last minted emissions
+    dso_supply -= mintedInWeek[week - 1];
+    // Compute unclaimed emission from last week and add it to the current week emission
+    uint256 unclaimed = emissionForWeek[week - 1] - mintedInWeek[week - 1];
+    uint256 emission = uint256(_computeEmission());
+    emission += unclaimed;
+    emissionForWeek[week] = emission;
+    emit Emitted(week, emission);
+    return emission;
+}
+
+function newEpoch() external {
+    require(block.timestamp >= lastEpochUpdate + EPOCH_DURATION, "tOB: too soon");
+    uint256[] memory singularities = tOLP.getSingularities();
+    require(singularities.length > 0, "tOB: No active singularities");
+    // Update epoch info
+    lastEpochUpdate = block.timestamp;
+    epoch++;
+    // Extract TAP
+    uint256 epochTAP = tapOFT.emitForWeek();
+    _emitToGauges(epochTAP);
+    // Get epoch TAP valuation
+    (, epochTAPValuation) = tapOracle.get(tapOracleData);
+    emit NewEpoch(epoch, epochTAP, epochTAPValuation);
+}
+```

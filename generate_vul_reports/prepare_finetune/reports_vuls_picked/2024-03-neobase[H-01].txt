@@ -1,0 +1,20 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The require statement in the `vote_for_gauge_weights` function incorrectly checks if the gauge type is greater than 0, which prevents users from removing their votes from removed gauges, causing their voting power to be permanently lost.
+Execution process: When a gauge is removed, users are unable to reallocate their voting power to other gauges because the function reverts due to the gauge type being 0.
+Vulnerable code: 
+```solidity
+function vote_for_gauge_weights(address _gauge_addr, uint256 _user_weight) external {
+    require(_user_weight >= 0 && _user_weight <= 10_000, "Invalid user weight");
+    require(_user_weight == 0 || gauge_types_[_gauge_addr] != 0, "Can only vote 0 on non-gauges"); // We allow withdrawing voting power from invalid (removed) gauges
+    VotingEscrow ve = votingEscrow;
+    (,/*int128 bias*/int128 slope_, /*uint256 ts*/) = ve.getLastUserPoint(msg.sender);
+    require(slope_ >= 0, "Invalid slope");
+    uint256 slope = uint256(uint128(slope_));
+    uint256 lock_end = ve.lockEnd(msg.sender);
+    uint256 next_time = ((block.timestamp + WEEK) / WEEK) * WEEK;
+    require(lock_end > next_time, "Lock expires too soon");
+    int128 gauge_type = gauge_types_[_gauge_addr] - 1;
+    require(gauge_type >= 0, "Gauge not added");
+    ...
+}
+```

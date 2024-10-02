@@ -1,0 +1,25 @@
+Type of vulnerability: Inconsistent Decimal Normalization
+Cause of vulnerability: The `Vault.balance` function normalizes balances to 18 decimals using the `balanceOfThis` function, but the second term `IController(manager.controllers(address(this))).balanceOf()` is not normalized. This inconsistency leads to incorrect comparisons and arithmetic operations involving normalized and unnormalized values.
+Execution process: An attacker can exploit this vulnerability by initiating a withdrawal where the output token has fewer than 18 decimals (e.g., USDC with 6 decimals). The attacker withdraws a small amount of shares, leading to a normalized `_amount` in 18 decimals. This normalized amount is then compared and subtracted from an unnormalized balance, resulting in an inflated withdrawal amount.
+Vulnerable code:
+```solidity
+for(uint8 i; i < _tokens.length; i++) {
+    address _token = _tokens[i];
+    // everything is padded to 18 decimals
+    _balance = _balance.add(_normalizeDecimals(_token, IERC20(_token).balanceOf(address(this))));
+}
+
+if(_balance < _amount) {
+    IController _controller = IController(manager.controllers(address(this)));
+    // @audit cannot directly subtract unnormalized
+    uint256 _toWithdraw = _amount.sub(_balance);
+    if(_controller.strategies() > 0) {
+        _controller.withdraw(_output, _toWithdraw);
+    }
+    uint256 _after = IERC20(_output).balanceOf(address(this));
+    uint256 _diff = _after.sub(_balance);
+    if(_diff < _toWithdraw) {
+        _amount = _balance.add(_diff);
+    }
+}
+```

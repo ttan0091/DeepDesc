@@ -1,0 +1,21 @@
+Type of vulnerability: Initialization Failure
+Cause of vulnerability: New user's `numCheckpoints` is zero and never gets initialized, preventing the creation of a new checkpoint for the conviction score.
+Execution process: When a new user (Bob) receives FSD tokens for the first time, the function `_updateConvictionScore(Bob, 100)` is called. Since `numCheckpoints[Bob]` is zero, `ts = 0` and `convictionDelta = 0`, preventing the control from passing Line 129 and thus failing to initialize a new checkpoint.
+Vulnerable code: 
+```solidity
+function _updateConvictionScore(address user, uint256 amount) internal {
+    uint256 nCheckpoints = numCheckpoints[user];
+    uint256 ts = 0;
+    if (nCheckpoints > 0) {
+        ts = checkpoints[user][nCheckpoints - 1].timestamp;
+    }
+    uint256 convictionDelta = 0;
+    if (balanceOf(user) > 0) {
+        convictionDelta = (amount * (block.timestamp - ts)) / balanceOf(user);
+    }
+    if (convictionDelta > 0) {
+        numCheckpoints[user] = nCheckpoints + 1;
+        checkpoints[user][nCheckpoints] = Checkpoint(block.timestamp, convictionDelta);
+    }
+}
+```

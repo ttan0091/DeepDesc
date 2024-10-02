@@ -1,0 +1,30 @@
+This code defines a private view function named _overflowDuring, which calculates the overflow amount for a given project during a specific funding cycle. The function is designed to work with a specific payment terminal and takes into account the project's balance, distribution limits, and currency conversions.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    _terminal: An instance of IJBSingleTokenPaymentTerminal, representing the payment terminal through which the project is funded.
+    _projectId: A uint256 identifier for the project.
+    _fundingCycle: A JBFundingCycle memory object representing the current funding cycle.
+    _balanceCurrency: A uint256 representing the currency in which the balance is denominated.
+
+2. Retrieving the Project Balance:
+    The function starts by retrieving the current balance of the project from a state variable balanceOf which is a mapping indexed by the terminal and project ID.
+    If the balance is zero (_balanceOf == 0), the function immediately returns 0, indicating there is no overflow.
+
+3. Fetching Distribution Limits:
+    The function then retrieves the distribution limit for the project during the specified funding cycle. This is done by calling the distributionLimitOf function on an instance of IJBController, obtained from a directory contract using controllerOf(_projectId).
+    The distribution limit and its currency are returned as _distributionLimit and _distributionLimitCurrency, respectively.
+
+4. Calculating Remaining Distribution Limit:
+    The function calculates the remaining distribution limit by subtracting the used distribution limit (usedDistributionLimitOf[_terminal][_projectId][_fundingCycle.number]) from the total distribution limit (_distributionLimit).
+
+5. Currency Conversion:
+    If there is a remaining distribution limit and the currency of the distribution limit does not match the balance currency, the function converts the remaining distribution limit to the balance currency using the PRBMath.mulDiv function. This conversion is necessary to ensure that all amounts are compared in the same currency.
+    The conversion uses a high precision value (_MAX_FIXED_POINT_FIDELITY) to maintain as much precision as possible during the multiplication and division operations.
+
+6. Calculating Overflow:
+    Finally, the function calculates the overflow by comparing the project's balance (_balanceOf) with the remaining distribution limit (_distributionLimitRemaining).
+    If the balance is greater than the remaining distribution limit, the overflow is calculated as the difference between the balance and the remaining distribution limit. If not, the function returns 0, indicating no overflow.
+
+This function is crucial for managing and monitoring the financial health and distribution capabilities of a project within a decentralized funding system, ensuring that funds are distributed according to predefined limits and currency standards.

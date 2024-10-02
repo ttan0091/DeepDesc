@@ -1,0 +1,44 @@
+This code defines a library named SafeMath and a contract named PrivateBank. The SafeMath library provides a safe method for subtraction to prevent underflow, and the PrivateBank contract manages user balances and allows users to withdraw their funds.
+
+Here’s a detailed explanation of how this code works:
+
+### SafeMath Library
+
+The SafeMath library contains a single function named sub, which performs a safe subtraction operation.
+
+ Function Signature: function sub(uint256 a, uint256 b) internal pure returns (uint256)
+   internal: This function can only be called from within the current contract or derived contracts.
+   pure: This function does not read from or modify the state of the blockchain.
+   returns (uint256): The function returns a uint256 value.
+
+ Function Logic:
+   assert(b <= a): This line checks if b is less than or equal to a. If b is greater than a, the function will throw an exception, which is a way to ensure that no underflow occurs.
+   return a  b: If the assertion passes, the function returns the result of a minus b.
+
+### PrivateBank Contract
+
+The PrivateBank contract uses the SafeMath library for safe mathematical operations and manages user balances.
+
+ Using SafeMath: using SafeMath for uint;
+   This line attaches the SafeMath library functions to the uint type, allowing the use of SafeMath functions directly on uint variables.
+
+ Mapping: mapping (address => uint) public balances;
+   This line declares a public mapping named balances that maps addresses to uint values. This mapping keeps track of the balance of each user.
+
+ Function Signature: function CashOut(uint _am)
+   _am: This is a parameter representing the amount of tokens the user wants to withdraw.
+
+ Function Logic:
+   if(_am <= balances[msg.sender]): This line checks if the requested amount _am is less than or equal to the balance of the sender (msg.sender).
+   if(msg.sender.call.value(_am)()): This line sends the requested amount _am to the sender using the call function, which is a lowlevel function that can send Ether. The value(_am) part specifies the amount of Ether to send. The outer () at the end of the statement executes the call.
+   balances[msg.sender] = balances[msg.sender].sub(_am): If the call to send Ether is successful, this line updates the balance of the sender by subtracting the withdrawn amount _am using the sub function from the SafeMath library to ensure safe subtraction.
+
+### Summary
+
+ The SafeMath library provides a safe subtraction function to prevent underflow.
+ The PrivateBank contract uses this library to manage user balances and allows users to withdraw their funds safely.
+ The CashOut function checks if the requested withdrawal amount is less than or equal to the user's balance, sends the amount to the user, and updates the user's balance safely using the SafeMath library.
+
+### Potential Vulnerability
+
+ The CashOut function uses the call.value() method to send Ether, which is susceptible to reentrancy attacks. If the recipient of the Ether is a malicious contract that calls back into CashOut before the balance is updated, it could repeatedly withdraw funds until the balance is drained. This is a known vulnerability and can be mitigated by updating the balance before making the call or using the transfer method instead, which limits the gas available for the recipient's fallback function.

@@ -1,0 +1,22 @@
+This code defines an internal function named _swapForWeth, which is designed to swap various tokens for wrapped Ether (WETH). The function takes an address token_ as input and returns the amount of WETH received after the swap. Here’s a detailed explanation of how this function works:
+
+1. Direct WETH Return:
+    If the input token address token_ is the same as the address of the WETH token (_WETH), the function immediately returns the balance of WETH held by the contract itself. This is done to handle the case where the contract already holds WETH and no swap is necessary.
+
+2. ETH to WETH Conversion:
+    If the input token address token_ is the zero address (address(0)), indicating that the input is native Ether, the function proceeds to convert all Ether held by the contract into WETH.
+    It first checks the balance of Ether in the contract (address(this).balance). If the balance is zero, it returns 0.
+    If there is a nonzero balance, it deposits the entire Ether balance into the WETH contract using the _WETH.deposit{value: ethBalance_}() function call. This converts the Ether into WETH and credits it to the contract's address. The function then returns the amount of Ether that was converted.
+
+3. Curve Pool Swaps:
+    If the input token address token_ is not WETH or native Ether, the function checks if there is a corresponding Curve pool for the token (curvePools[token_]).
+    If a Curve pool exists (address(curvePool_) != address(0)), the function retrieves the balance of the input token held by the contract (IERC20(token_).balanceOf(address(this))). If the balance is zero, it returns 0.
+    The function then approves the Curve pool to spend the token balance of the contract using the _approve(token_, address(curvePool_)) function call.
+    It retrieves the indices of the input token and WETH in the Curve pool using the _getIndices(curvePool_, token_) function.
+    The function then calls the exchange function on the Curve pool to perform the swap. It specifies the indices of the tokens, the amount to swap, and the minimum amount of WETH to receive (_minWethAmountOut(amount_, token_)).
+    After the swap, the function returns the new balance of WETH held by the contract.
+
+4. General ERC20 to WETH Swap:
+    If none of the above conditions are met, the function assumes that the input token is an ERC20 token and performs a generic swap to WETH using the _swap(token_, address(_WETH), IERC20(token_).balanceOf(address(this))) function call. This function is responsible for handling the swap through a generic swap mechanism, which is not detailed in the provided code.
+
+In summary, the _swapForWeth function handles various scenarios for swapping tokens to WETH, including direct WETH return, ETH to WETH conversion, Curve pool swaps, and generic ERC20 to WETH swaps. Each scenario is carefully handled to ensure that the swap is performed correctly and the amount of WETH received is returned to the caller.

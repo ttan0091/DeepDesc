@@ -1,0 +1,69 @@
+[H-01]forceUnsponsor()may open a window for attackers to manipulate the_totalSharesand freeze users’ funds at a certain deposit amount
+Submitted by WatchPug
+https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L390-L401
+if(_force&&sponsorAmount>totalUnderlying()) {sponsorToTransfer=totalUnderlying();}elseif(!_force) {require(sponsorToTransfer<=totalUnderlying(),"Vault: not enough funds to unsponsor");}totalSponsored-=sponsorAmount;underlying.safeTransfer(_to,sponsorToTransfer);
+WhensponsorAmount > totalUnderlying(), the contract will transfertotalUnderlying()tosponsorToTransfer, even if there are other depositors andtotalShares> 0.
+After that, and before others despoiting into the Vault, the Attacker can send1 weiunderlying token, then caldeposit()with 0.1 * 1e18 , sincenewShares = (_amount * _totalShares) / _totalUnderlyingMinusSponsoredand_totalUnderlyingMinusSponsoredis1, with a tiny amount of underlying token,newShareswill become extremly large.
+As we stated in issue#166, when the value oftotalSharesis manipulated precisely, the attacker can plant a bomb, and the contract will not work when the deposit/withdraw amount reaches a certain value, freezing the user’s funds.
+However, this issue is not caused by lack of reentrancy protection, therefore it cant be solved by the same solution in issue#166.
+Recommendation
+Consider adding a minimum balance reserve (eg. 1e18 Wei) that cannot be withdrawn by anyone in any case. It can be transferred in alongside with the deployment by the deployer.
+This should make it safe or at least make it extremely hard or expensive for the attacker to initiate such an attack.
+naps62 (Sandclock) confirmed and commented:
+@gabrielpoca @ryuheimat is this new?
+ryuheimat (Sandclock) commented:
+it’s new
+gabrielpoca (Sandclock) commented:
+yap, it’s interesting. The sponsor really is an issue
+[H-02] Withdrawers can get more value returned than expected with reentrant call
+Submitted by camden, also found by cmichel and harleythedog
+The impact of this is that users can get significantly more UST withdrawn than they would be alotted if they had done non-reentrant withdraw calls.
+Proof of Concept
+Here’s an outline of the attack:
+Assume the vault has 100 UST in it.
+The attacker makes two deposits of 100UST and waits for them to be withdrawable.
+The attacker triggers a withdraw one of their deposit positions.
+The vault code executes until it reaches this point:https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L565Since the attacker is the claimer, the vault will call back to the attacker.
+InsideonDepositBurned, trigger another 100 UST deposit.
+Sinceclaimers.onWithdrawhas already been called, reducing the amount of shares, but the UST hasn’t been transferred yet, the vault will compute the amount of UST to be withdrawn based on an unexpected value for_totalUnderlyingMinusSponsored(300).https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/Vault.sol#L618
+After the attack, the attacker will have significantly more than if they had withdrawn without reentrancy.
+Here’s my proof of concept showing a very similar exploit withdeposit, but I think it’s enough to illustrate the point. I have a forge repo if you want to see it, just ping me on discord.https://gist.github.com/CamdenClark/abc67bc1b387c15600549f6dfd5cb27a
+Tools Used
+Forge
+Recommended Mitigation Steps
+Reentrancy guards.
+Also, consider simplifying some of the shares logic.
+ryuheimat (Sandclock) confirmed
+naps62 (Sandclock) resolved:
+Fixed inhttps://github.com/sandclock-org/solidity-contracts/pull/75
+[H-03] Vaults with non-UST underlying asset vulnerable to flash loan attack on curve pool
+Submitted by camden, also found by cccz, cmichel, danb, defsec, harleythedog, hyh, kenzo, leastwood, palina, pauliax, pmerkleplant, Ruhum, WatchPug, and ye0lde
+In short, theNonUSTStrategyis vulnerable to attacks by flash loans on curve pools.
+Here’s an outline of the attack:
+Assume there is a vault with DAI underlying and aNonUSTStrategywith a DAI / UST curve poolTake out a flash loan of DAIExchange a ton of DAI for USTThe exchange rate from DAI to UST has gone up (!!)Withdraw or deposit from vault with more favorable terms than marketTransfer back UST to DAIRepay flash loan
+Proof of Concept
+Here is my proof of concept:https://gist.github.com/CamdenClark/932d5fbeecb963d0917cb1321f754132
+I can provide a full forge repo. Just ping me on discord.
+Exploiting this line:https://github.com/code-423n4/2022-01-sandclock/blob/a90ad3824955327597be00bb0bd183a9c228a4fb/sandclock/contracts/strategy/NonUSTStrategy.sol#L135
+Tools Used
+Forge
+Recommended Mitigation Steps
+Use an oracle
+naps62 (Sandclock) confirmed
+[H-04] deposit() function is open to reentrancy attacks
+Submitted by jayjonah8, also found by bugwriter001, camden, cccz, cmichel, danb, defsec, Fitraldys, harleythedog, hickuphh3, jayjonah8, kenzo, leastwood, onewayfunction, pedroais, and WatchPug
+InVault.solthedeposit()function is left wide open to reentrancy attacks.  The function eventually calls\_createDeposit() => \_createClaim()which callsdepositors.mint()which will then mint an NFT.  When the NFT is minted the sender will receive a callback which can then be used to call thedeposit()function again before execution is finished.  An attacker can do this minting multiple NFT’s for themselves.claimers.mint()is also called in the same function which can also be used to call back into the deposit function before execution is complete.  Since there are several state updates before and after NFT’s are minted this can be used to further manipulate the protocol like withnewShareswhich is called before minting.  This is not counting what an attacker can do with cross function reentrancy entering into several other protocol functions (like withdraw) before code execution is complete further manipulating the system.
+Proof of Concept
+https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L160https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L470https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L476
+Recommended Mitigation Steps
+Reentrancy guard modifiers should be placed on thedeposit(),withdraw()and all other important protocol functions to prevent devastating attacks.
+ryuheimat (Sandclock) confirmed
+[H-05] sponsor() function in open to reentrancy attacks
+Submitted by jayjonah8, also found by camden
+InVault.solthesponsor()function does not have a reentrancy guard allowing an attacker to reenter the function because thedepositors.mint()function has as callback to the msg.sender.  Since there are state updates after the call todepositors.mint()function this is especially dangerous.  An attacker can make it so the totalSponsored amount is only updated once after callingmint()several times since the update takes place after the callback.  The same will be true for the Sponsored event that is emitted.
+Proof of Concept
+https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L244
+Recommended Mitigation Steps
+A reentrancy guard modifier should be added to the sponsor() function in Vault.sol
+naps62 (Sandclock) confirmed and resolved:
+Fixed inhttps://github.com/sandclock-org/solidity-contracts/pull/75

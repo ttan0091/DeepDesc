@@ -1,0 +1,59 @@
+[H-01]transfer_share_and_rewardsallows for self transfer
+Submitted byZanyBonzy, also found byihtishamsudo
+The rewards library holds thetransfer_share_and_rewardsallows for self transfer which can be used to double shares and rewards. Important to note that the function, for now is not in use by the in-scope contracts. However, I still believe it’s worth pointing out.
+Proof of Concept
+Copy and paste the below test intotests.rs. It shows how users Alice and Bob, by invoking this function, can increase their share/rewards balance.
+fntransfer_to_self() {ExtBuilder::default().build().execute_with(|| {// Open a pool with bob holding 100 shares in the poolRewardsModule::add_share(&BOB, &DOT_POOL,100);// Accumulate rewardsassert_ok!(RewardsModule::accumulate_reward(&DOT_POOL, NATIVE_COIN,100));// Alice deposits into the pool and gets shares, assert that it succeedsRewardsModule::add_share(&ALICE, &DOT_POOL,100);// Assert that rewards still existassert_ok!(RewardsModule::accumulate_reward(&DOT_POOL, NATIVE_COIN,100));// Gets pools infoletpool_info = RewardsModule::pool_infos(DOT_POOL);// Ensures that reward transfer doesn't affect poolletnew_pool_info = RewardsModule::pool_infos(DOT_POOL);assert_eq!(pool_info, new_pool_info,"reward transfer does not affect the pool");// Assert that Alice's share/rewards transfer to self succeedsassert_ok!(RewardsModule::transfer_share_and_rewards(&ALICE, &DOT_POOL,90, &ALICE));// Assert that alice's share/reward balance has now increasedassert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE),(190,vec![(NATIVE_COIN,190)].into_iter().collect()));// Alice has discovered infinite money glitch? She tries again to be sure its not a fluke// Alice's transfers shares and rewards again to to self, assert that it succeedsassert_ok!(RewardsModule::transfer_share_and_rewards(&ALICE, &DOT_POOL,180, &ALICE));// Assert that her share/reward balance still increasedassert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE),(370,vec![(NATIVE_COIN,370)].into_iter().collect()));// She transfers a some of her shares/rewards to Bob, while teaching him the glitchassert_ok!(RewardsModule::transfer_share_and_rewards(&ALICE, &DOT_POOL,70, &BOB));assert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE),(300,vec![(NATIVE_COIN,300)].into_iter().collect()));assert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB),(170,vec![(NATIVE_COIN,70)].into_iter().collect()));// Bob decides to try it out himself, Assert that it worksassert_ok!(RewardsModule::transfer_share_and_rewards(&BOB, &DOT_POOL,100, &BOB));assert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB),(270,vec![(NATIVE_COIN,111)].into_iter().collect()));assert_ok!(RewardsModule::transfer_share_and_rewards(&BOB, &DOT_POOL,100, &BOB));assert_eq!(RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB),(370,vec![(NATIVE_COIN,152)].into_iter().collect()));});}
+Recommended Mitigation Steps
+Include a check in the function that returns ifwho==other.
+Lambda (judge) increased severity to High
+xlc (Acala) confirmed and commented:
+Fixed bythis PR. Just want to highlight thattransfer_share_and_rewardsis not currently used.
+
+[H-02] Early user can break pool via inflation attack due to no minimum liquidity check in the incentive contract
+Submitted bycarrotsmuggler, also found byzhaojie
+The incentive contract does not enforce a minimum liquidity limit. This means users can have as little as 1 share in the pool. This can lead to inflation attacks as described below.
+Let’s imagine the state of the pool is as follows:
+There is a single depositor, with 1000 shares deposited. Rewards have been accumulated up to 500 tokens. The user can then withdraw 998 shares, leaving 2 shares. They will also claim the rewards, and leave 1 reward tokens in the pool. This is the setup for the inflation attack. The user can then deposit 1 share.
+The inflation is calculated as shown below:
+U256::from(add_amount.to_owned().saturated_into::<u128>()).saturating_mul(total_reward.to_owned().saturated_into::<u128>().into()).checked_div(initial_total_shares.to_owned().saturated_into::<u128>().into()).unwrap_or_default().as_u128().saturated_into()
+Heretotal_reward=1,add_amount=1andinitial_total_shares=2. So the result is calculated to0; so inflation is0.
+After this step, theinitial_total_sharesis updated to 3. Now the user can deposit 2 wei of shares without changing the inflation amount. Next iteration, they can deposit 4 shares. This way, the user can deposit2**nshares each iteration, and inflate theinitial_total_shareswithout affecting the reward inflation. This leads to the situation where thetotal_shareskeeps growing according to the deposit, but the entire reward inflation mechanism is broken. This lets users steal reward tokens from other users, and is a high severity issue.
+In fact, whenever thetotal_rewardvalue is less than thetotal_shares, this issue can be triggered. This is because in those conditions, users can create deposits and have thereward_inflationevaluate to0.0reward_inflationbasically means later users can steal rewards of earlier users, as is outlined in the docs. However, this donation attack is more effective the lower thetotal_sharesin the system.
+Proof of Concept
+The situation can be created via the following steps:
+Since there is no minimum deposit, we can create a situation where thetotal_reward < total_shares, andtotal_shares=2. This also works for higher values oftotal_share, but is most potent in this stage.User deposits 1 share, or any number of shares as long asdeposit*total_reward/total_sharesis less than 1.reward_inflationwill be0, while the user gets their shares accounted for.Sincetotal_shareshas now increased, the user can deposit more shares now, and still have thereward_inflationbe0. This way, the user can keep depositing shares and increasing thetotal_shareswithout affecting the reward inflation.Sincereward_inflationand thustotal_rewardhas not increased, but thetotal_shareshave increased, users will lose rewards, since the rewards are calculated astotal_reward * user_shares / total_shares. This means older users lose shares.
+While this vector is generally applicable and can lead to small losses when there’s a lot of liquidity, this becomes more potent when there is very low liquidity in the pool. This was the method of attack for the Wise Lending hack and is a high severity issue. More details can be found in the blog postherewhich outlines the attack scenario with more numbers and examples.
+Tools Used
+Substrate
+Recommended Mitigation Steps
+Add a minimum liquidity limit. This will ensure the pool never reaches a liquidity amount so low that rounding errors become significant.
+xlc (Acala) confirmed and commented:
+It is actually almost impossible to trigger this in production because anyone can deposit into the incentives pool at any time. I.E. before rewards starts accumulates.Fixed bythis PR.
+
+[H-03]transfer_share_and_rewardscan be used to transfer out shares without transferring reward debt due to rounding
+Submitted bycarrotsmuggler, also found byAM
+The functiontransfer_share_and_rewardscan be used to split up the position in a single account into multiple accounts. The contract sends some of the shares to be held by the second account, and similarly also updates the reward debt of the receiving account so that the receiver cannot take out more rewards than they deserve.
+This is calculated in the following snippet.move_balanceis the amount of the reward debt that is to be transferred to the receiver.
+letmove_balance = U256::from(balance.to_owned().saturated_into::<u128>())* U256::from(move_share.to_owned().saturated_into::<u128>())/ U256::from(share.to_owned().saturated_into::<u128>());
+Here we see the calculation is simple and by default is rounded down. So ifbalance*move_shareis lower thanshare,move_balanceevaluates to 0. So the receiving account’s reward debt is not increased at all!
+increased_rewards.entry(*reward_currency).and_modify(|increased_reward| {*increased_reward = increased_reward.saturating_add(move_balance);
+Sincemove_balanceis0, theincreased_rewardis not updated. This means the new account now has shares, but no reward debt. So the receiving account can claim rewards that were already claimed.
+This can be done multiple times to drain the reward pool.
+The criteria is thatbalance*move_sharehas to be lower thanshare. This can be achieved by sending a small fraction of the funds to the receiving account, such thatmove_shareis much lower thanshare. Also, ifbalance, the reward debt of the sender is low, this facilitates the attack more.
+Proof of Concept
+A short POC is shown here demonstrating the issue. The attacker sends to the receiver a small share of their total. The receiver is shown to have no reward debt, while the sender does have reward debt. This shows that the receiver can claim rewards already claimed by the sender.
+#[test]fntest_rounding() {ExtBuilder::default().build().execute_with(|| {RewardsModule::add_share(&ALICE, &DOT_POOL,1000);assert_ok!(RewardsModule::accumulate_reward(&DOT_POOL, NATIVE_COIN,100));// RewardsModule::add_share(&BOB, &DOT_POOL, 100);RewardsModule::claim_rewards(&ALICE, &DOT_POOL);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE);println!("ALICE stat before transfer: {:?}", user_stat);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB);println!("BOB stat before transfer: {:?}", user_stat);assert_ok!(RewardsModule::transfer_share_and_rewards(&ALICE, &DOT_POOL,5, &BOB));letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, ALICE);println!("ALICE stat after transfer: {:?}", user_stat);letuser_stat = RewardsModule::shares_and_withdrawn_rewards(DOT_POOL, BOB);println!("BOB stat after transfer: {:?}", user_stat);});}
+Output:
+# Output is of the form ( ${share_balance}, {0: ${reward_debt}} )ALICE stat before transfer: (1000, {0: 100})BOB stat before transfer: (0, {})ALICE stat after transfer: (995, {0: 100})BOB stat after transfer: (5, {0: 0})test tests::test_rounding ... ok
+The output shows that ALICE has 1000 shares and 100 reward debt, since ALICE just claimed her rewards. Alice sends BOB 5 shares. BOB ends up with 5 shares and 0 reward debt. So BOB can claim rewards again, even though it’s the same money!
+Tools Used
+Substrate
+Recommended Mitigation Steps
+The calculation ofmove_balanceshould be changed to saturated round up instead of rounding down. This will ensure that the receiving account’s reward debt is updated correctly. Thesaturatedrounding up is important since the reward debt should never be larger than the reward pool, or it will cause underflow errors when subtracting.
+Another option is to reverttransfer_share_and_rewardsoperations if the reward debt of the receiving account is calculated to be0, unless the sending account ALSO has a reward debt of0.
+Assessed type
+Math
+xlc (Acala) confirmed and commented:
+Just want to highlight thattransfer_share_and_rewardsis not currently used.We will choose to not fix this issue as the impact are relatively small and a complete fix is non-trivial. I don’t think it is possible to make profit that is more than transaction fee anyway.
+

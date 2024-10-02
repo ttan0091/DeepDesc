@@ -1,0 +1,44 @@
+Type of vulnerability: Reentrancy and Logic Error
+
+Cause of vulnerability: The contract allows reentrancy by the fee recipient due to inadequate protection mechanisms, and a logic error in the `_returnDust` function that allows the fee recipient to drain the contract's balance.
+
+Execution process: 
+1. Buyer calls `bulkExecute` with multiple orders and sufficient ETH.
+2. The first order is executed, sending a fee to the malicious fee recipient contract.
+3. The fee recipient contract reenters `bulkExecute` with an empty array, bypassing the reentrancy guard.
+4. The `_returnDust` function is called, sending the remaining ETH to the fee recipient.
+5. The fee recipient sends a portion of the ETH back to the contract to prevent reverts and then drains the rest.
+
+Vulnerable code:
+- `bulkExecute` function in `Exchange.sol`:
+  ```solidity
+  function bulkExecute(Execution[] calldata executions) external payable whenOpen setupExecution {
+      uint256 executionsLength = executions.length;
+      for (uint8 i = 0; i < executionsLength; i++) {
+          _execute(executions[i]);
+      }
+      _returnDust(remainingETH);
+  }
+  ```
+- `_returnDust` function in `Exchange.sol`:
+  ```solidity
+  function _returnDust() private {
+      uint256 _remainingETH = remainingETH;
+      assembly {
+          if gt(_remainingETH, 0) {
+              let callStatus := call(gas(), caller(), selfbalance(), 0, 0, 0, 0)
+          }
+      }
+  }
+  ```
+- `_executeFundsTransfer` function in `Exchange.sol`:
+  ```solidity
+  function _executeFundsTransfer(address seller, address buyer, address paymentToken, Fee[] calldata fees, uint256 price) internal {
+      if (msg.sender == buyer && paymentToken == address(0)) {
+          require(remainingETH >= price);
+          remainingETH -= price;
+      }
+      uint256 receiveAmount = _transferFees(fees, paymentToken, buyer, price);
+      _transferTo(paymentToken, buyer, seller, receiveAmount);
+  }
+  ```

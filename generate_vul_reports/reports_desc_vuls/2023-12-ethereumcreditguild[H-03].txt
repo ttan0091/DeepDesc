@@ -1,0 +1,15 @@
+Type of vulnerability: Bad Debt Creation Leading to Cascading Losses
+
+Cause of vulnerability: The `callDebt` in the auction process does not dynamically update with the current `creditMultiplier`, leading to a mismatch between the actual debt and the debt snapshot taken at the start of the auction.
+
+Execution process: 
+1. A loan enters the auction process and its debt is recorded as `callDebt`.
+2. During the auction, if the `creditMultiplier` decreases due to bad debt creation, the actual debt (calculated with the updated `creditMultiplier`) becomes higher than the `callDebt`.
+3. Bids during the first phase of the auction fail because the `principle` (calculated with the updated `creditMultiplier`) exceeds `creditFromBidder` (which is equal to `callDebt`).
+4. Only bids during the second phase of the auction are allowed, leading to further bad debt creation as the protocol receives less credit than the actual debt owed.
+
+Vulnerable code:
+- `LendingTerm::getLoanDebt` function where the debt is adjusted by the `creditMultiplier`.
+- `LendingTerm::_call` function where `callDebt` is set as a snapshot of the loan debt at the start of the auction.
+- `LendingTerm::onBid` function where the `principle` is calculated with the current `creditMultiplier` but compared against `callDebt` which does not reflect the updated `creditMultiplier`.
+- `AuctionHouse::getBidDetail` and `AuctionHouse::bid` functions where the auction logic determines the `creditAsked` based on `callDebt`.

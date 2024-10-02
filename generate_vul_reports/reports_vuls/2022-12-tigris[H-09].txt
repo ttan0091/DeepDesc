@@ -1,0 +1,20 @@
+[H-09] Users can bypass themaxWinPercentlimit using a partially closing
+Submitted byhansfriese, also found by0x52,0xA5DF, andbin2chen
+Users can bypass themaxWinPercentlimit using a partial closing.
+As a result, users can receive more funds than their upper limit from the protocol.
+Proof of Concept
+As we can see from thedocumentation, there is limitation of a maximum PnL.
+Maximum PnL is +500%. The trade won't be closed unless the user sets a Take Profit order or closes the position manually.
+And this logic was implemented like below in_closePosition().
+File:2022-12-tigris\contracts\Trading.sol624:_toMint=_handleCloseFees(_trade.asset,uint256(_payout)*_percent/DIVISION_CONSTANT,_trade.tigAsset,_positionSize*_percent/DIVISION_CONSTANT,_trade.trader,_isBot);625:if(maxWinPercent>0&&_toMint>_trade.margin*maxWinPercent/DIVISION_CONSTANT) {//@audit bypass limit626:_toMint=_trade.margin*maxWinPercent/DIVISION_CONSTANT;627:                 }
+But it checks themaxWinPercentbetween the partial payout and full margin so the below scenario is possible.
+Alice opened an order of margin = 100 and PnL = 1000 after taking closing fees.IfmaxWinPercent= 500%, Alice should receive 500 at most.But Alice closed 50% of the position and she got 500 for a 50% margin because it checksmaxWinPercentwith_toMint = 500and_trade.margin = 100After she closed 50% of the position, the remaining margin = 50 and PnL = 500 so she can continue step 3 again and again.As a result, she can withdraw almost 100% of the initial PnL(1000) even though she should receive at most 500.
+Recommended Mitigation Steps
+We should check themaxWinPercentbetween the partial payout and partial margin like below.
+_toMint=_handleCloseFees(_trade.asset,uint256(_payout)*_percent/DIVISION_CONSTANT,_trade.tigAsset,_positionSize*_percent/DIVISION_CONSTANT,_trade.trader,_isBot);uint256partialMarginToClose=_trade.margin*_percent/DIVISION_CONSTANT;//+++++++++++++++++++++++if(maxWinPercent>0&&_toMint>partialMarginToClose*maxWinPercent/DIVISION_CONSTANT) {_toMint=partialMarginToClose*maxWinPercent/DIVISION_CONSTANT;}
+TriHaz (Tigris Trade) confirmed, but disagreed with severity and commented:
+I would label this as Medium risk as a +500% win is required so assets are not in a direct risk.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, by partially closing an order, it is possible to bypass themaxWinPercentcap.Per similar discussion to#111the fact that not every trade can be above 500% in payout is not a guarantee that some trade will be, and those that will, will cause the invariant to be broken and LPs to be deeper in the red than they should.Because this causes an immediate gain to the attacker, at a loss for LPs, I agree with High Severity.
+GainsGoblin (Tigris Trade) resolved:
+Mitigation:https://github.com/code-423n4/2022-12-tigris/pull/2#issuecomment-1419176771

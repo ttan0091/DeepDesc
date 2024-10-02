@@ -1,0 +1,21 @@
+[H-06]Mul/divrelation should not be enforced when divisor is zero
+Submitted byxuwinnie
+Lines of code
+https://github.com/code-423n4/2023-10-zksync/blob/1fb4649b612fac7b4ee613df6f6b7d921ddd6b0d/code/era-zkevm_circuits/src/main_vm/opcodes/mul_div.rs#L286-L292https://github.com/code-423n4/2023-10-zksync/blob/1fb4649b612fac7b4ee613df6f6b7d921ddd6b0d/code/era-zkevm_circuits/src/main_vm/opcodes/mul_div.rs#L358
+Impact
+When applying opcodediv, if dividend is nonzero and divisor is zero, the resulted quotient and remainder are both zero. The enforcedmul/divrelation does not hold. An unprovable transaction will dos the priority queue.
+Proof of Concept
+quotient_is_zero.conditionally_enforce_true(cs, divisor_is_zero);remainder_is_zero.conditionally_enforce_true(cs, divisor_is_zero);
+According to the EraVM spec, if divisor is zero, quotient and remainder should also be zero.
+let uint256_zero = UInt256::zero(cs);let rem_to_enforce = UInt32::parallel_select(cs,should_apply_mul,&uint256_zero.inner,&remainder_unchecked,);let a_to_enforce =UInt32::parallel_select(cs, should_apply_mul, src0_view, &quotient_unchecked);let b_to_enforce = src1_view.clone();let mul_low_to_enforce =UInt32::parallel_select(cs, should_apply_mul, &mul_low_unchecked, &src0_view);let mul_high_to_enforce = UInt32::parallel_select(cs,should_apply_mul,&mul_high_unchecked,&uint256_zero.inner,);let mul_relation = MulDivRelation {a: a_to_enforce,b: b_to_enforce,rem: rem_to_enforce,mul_low: mul_low_to_enforce,mul_high: mul_high_to_enforce,};
+When dividing, the relation we need to enforce issrc0 = q * src1 + rem.However, ifsrc0(dividend) is nonzero andsrc1(divisor) is zero, bothqandremwill be zero. The relation does not hold.
+let apply_any = Boolean::multi_or(cs, &[should_apply_mul, should_apply_div]);......diffs_accumulator.mul_div_relations.push((apply_any, mul_div_relations));
+In fact, this relation will be enforced as long as we applydiv, which will make the operation unprovable.
+Recommended Mitigation Steps
+Don’t enforcemul/divrelation when divisor is zero.
+Assessed type
+Context
+miladpiri (zkSync) confirmed and commented:
+Overconstrained.
+Alex the Entreprenerd (judge) commented:
+The Warden has shown a case in which themul/divrelation doesn’t require an additional constraint in the case of a zero divisor.

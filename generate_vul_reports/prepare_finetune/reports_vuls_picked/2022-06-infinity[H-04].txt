@@ -1,0 +1,11 @@
+Type of vulnerability: Unreachable Contract Balance
+Cause of vulnerability: The `rescueETH` function incorrectly uses `msg.value` instead of the contract's balance to transfer ETH, making the accumulated ETH fees inaccessible.
+Execution process: When ETH fees are collected through the `_transferFees` function, they are stored in the contract's balance. However, when the `rescueETH` function is called, it attempts to transfer only the ETH attached to the call (`msg.value`), not the total ETH balance of the contract, leaving the accumulated fees permanently unretrievable.
+Vulnerable code: 
+```solidity
+/// @dev used for rescuing exchange fees paid to the contract in ETH
+function rescueETH(address destination) external payable onlyOwner {
+    (bool sent, ) = destination.call{value: msg.value}('');
+    require(sent, 'failed');
+}
+```

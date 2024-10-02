@@ -1,0 +1,33 @@
+Type of the contract: Vault or Strategy
+    This contract acts as a strategy that indexes multiple precious metals tokens into a unified peg mechanism. It encompasses a dynamically managed mixed commodity vault and reward distribution system.
+
+Working process of the code:
+1. Initialization: The contract is deployed with the necessary parameters, including the controller.
+2. Index Adding/Removing:
+    The controller can add or remove indexes, i.e., different underlying tokens representing commodities, to the strategy.
+    This is achieved by updating the getUnderlying() method to include new indexes or exclude existing ones.
+3. Adding Collateral and Borrowing
+    Users can deposit collateral (USDC/USDT) to the vault to receive the peg token crETH.
+    Collateral tokens are swapped to a target ratio of underlying tokens (precious metals) based on their current prices via the addCollateral() function.
+    Users can then borrow underlying tokens from the vault using their deposited collateral as leverage through the borrow() function.
+4. Reward Rate Management
+    The reward rate is managed through the updateRewardPerToken() function, updating the rewardPerTokenStored based on the time and rate of rewards.
+    The rate is decreased for each index that is not in a certain timebound.
+5. Accruing Rewards and Minting feeCollectorTokens
+    Transaction fees charged for borrowing precious metals are accrued as rewards in crETH.
+    Users' shares of the fees are added to their fpTokenShares and crRewardNfts.mphRewards.
+    The earned rewards can be minted as feeColonectorTokens through the function mintForFees() to unlock the pending reward tokens deposits.
+    The fee tokens can be swapped for USDC/USDT via the rewards contract for a fair market value.
+    /mrate can be used to view the latest reward rate updates.
+6. Swap Precious Metals for PEG
+    The precious metals can be swapped for PEG using the reward tokens in the strategy if price and price instability conditions are met.
+    This function is used to partially address the overwhelming collateral problem.
+    The swap can only occur when the current rate exceeds the target rate by a predetermined percentage (30  PRICE_PRECISION).
+    If the price drift is larger for some indexes, their rates will be decreased over time.
+7. admin Role Management:
+    The admin role can be transferred by the controller to other trusted parties.
+    Present and future strategies need to be audited, so they must not expose impostors as admins.
+    The crBorrowerWhitelist.parse(bytes8) function parses the whitelist to a new address.
+8. Maintaining the Strategy:
+    Issuer can modify the strategy in response to FLASHLOAN events through the function processFlashLoan().
+    Any unauthorized access will result in the loan balance drained.

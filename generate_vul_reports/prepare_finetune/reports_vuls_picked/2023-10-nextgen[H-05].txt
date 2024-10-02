@@ -1,0 +1,17 @@
+Type of vulnerability: Denial of Service (DoS) due to unbounded array growth
+
+Cause of vulnerability: The arrays `auctionInfoData[_tokenid]` grow indefinitely as new bids are added using the `push` method, but they never shrink. This unbounded growth leads to excessive gas consumption when these arrays are iterated over in loops, eventually causing the functions to run out of gas and revert.
+
+Execution process: An attacker can exploit this vulnerability by repeatedly calling the `participateToAuction` function with minimal bids (dust amounts) to fill the `auctionInfoData[_tokenid]` array. Once the array is sufficiently large, any function that iterates over this array, such as `returnHighestBid`, `returnHighestBidder`, `claimAuction`, or `cancelAllBids`, will consume too much gas and revert, leading to a permanent DoS for these functions.
+
+Vulnerable code:
+```solidity
+69: for(uint256 i = 0; i < auctionInfoData[_tokenid].length; i++) {
+60: auctionInfoData[_tokenid].push(newBid);
+90: for(uint256 i = 0; i < auctionInfoData[_tokenid].length; i++) {
+60: auctionInfoData[_tokenid].push(newBid);
+110: for(uint256 i = 0; i < auctionInfoData[_tokenid].length; i++) {
+60: auctionInfoData[_tokenid].push(newBid);
+136: for(uint256 i = 0; i < auctionInfoData[_tokenid].length; i++) {
+60: auctionInfoData[_tokenid].push(newBid);
+```

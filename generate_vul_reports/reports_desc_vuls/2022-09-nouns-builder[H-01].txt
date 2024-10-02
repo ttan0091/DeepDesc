@@ -1,0 +1,25 @@
+Type of vulnerability: Integer Underflow Leading to Unlimited Votes
+
+Cause of vulnerability: The vulnerability arises from the unchecked arithmetic operations in the `_moveDelegateVotes` function, which can lead to an integer underflow when subtracting votes from a user's balance. This underflow can result in a user gaining unlimited votes.
+
+Execution process: 
+1. A user (bidder1) delegates their votes to another address (bidder2).
+2. The system incorrectly transfers votes based on the balance of the user (bidder1) rather than the delegated address.
+3. When the user (bidder1) gains more tokens and delegates back to themselves, the system attempts to subtract the user's balance from the delegated address's votes, causing an underflow.
+4. This underflow results in the user (bidder1) obtaining an extremely high number of votes, effectively unlimited.
+
+Vulnerable code:
+```solidity
+function _afterTokenTransfer(address _from, address _to, uint256 _tokenId) internal override {
+    // Transfer 1 vote from the sender to the recipient
+    _moveDelegateVotes(_from, _to, 1);
+    super._afterTokenTransfer(_from, _to, _tokenId);
+}
+
+_moveDelegateVotes(prevDelegate, _to, balanceOf(_from));
+...
+unchecked {
+    // Update their voting weight
+    _writeCheckpoint(_from, nCheckpoints, prevTotalVotes, prevTotalVotes - _amount);
+}
+```

@@ -1,0 +1,39 @@
+[H-01] Anyone can arbitrarily add router liquidity
+Submitted by 0xRajeev, also found by cmichel and pauliax
+TheaddLiquidity()function takes a router address parameter, whose liquidity is increased (instead of assuming thatrouter==msg.senderlike is done onremoveLiquidity()) on this contract/chain, by transferring the fund amount from router address to this contract ifassetID!= 0 (i.e. ERC20 tokens). However, anyone can call this function on the router’s behalf. ForassetID== 0, the Ether transfer viamsg.valuecomes frommsg.senderand hence is assumed to be the router itself.
+The impact is that this will allow anyone to call this function and arbitrarily move ERC20 tokens from router address to this contract, assuming router has given max approval to this contract and hasassetIDamount available for transfer. While the router can always remove the liquidity if it doesn’t want to maintain that level of liquidity, this lack of access control or flexibility for a relayer to add liquidity on router’s behalf, may unnecessarily (and without authorization) increase the router’s exposure to protocol risk to more than it desires. SeeTransactionManager.sol#L88-L98. See also, use ofmsg.senderinremoveLiquidity(#L88-L98).
+Recommend considering the use ofmsg.senderinaddLiquidity()or evaluate this risk otherwise.
+LayneHaber (Connext) acknowledged:
+The bigger issue here is the typohere, if we use the funds frommsg.senderthat means that people are donating funds to the router.We will fix themsg.sender, but allowaddLiquidityto be callable by anyone
+ghoul-sol (Judge) commented:
+This is high risk because funds can be send to the wrong address.
+[H-02]activeTransactionBlocksare vulnerable to DDoS attacks
+Submitted by gpersoon, also found by pauliax and shw
+There is a potential issue in functionremoveUserActiveBlocksand the for loop inside it. I assume you are aware of block gas limits (they may be less relevant on other chains but still needs to be accounted for), so as there is no limit foractiveTransactionBlocks, it may grow so large that the for loop may never finish. You should consider introducing an upper limit foractiveTransactionBlocks. Also, a malicious actor may block any account (DDOS) by just callingprepareagain and again with 0 amount acting as a router. This will pushactiveTransactionBlocksto the specified user until it is no longer possible to remove them from the array.
+This is also a gas issue, as functionremoveUserActiveBlocksiterating and assigning large dynamic arrays is very gas-consuming. Consider optimizing the algorithm, e.g. finding the first occurrence, then swap it with the last item, pop the array, and break. Or maybe even using anEnumerableMap, so you can find and remove elements inO(1).
+The best solution depends on what the usual number ofactiveTransactionBlocksis. If it is expected to be low (e.g. less than 5), then the current approach will work. But with larger arrays, I expectEnumerableMapwould be more efficient.
+Because an upper limit will not fully mitigate this issue, as a malicious actor can still DDOS the user by pushing useless txs until this limit is reached and a valid router may not be able to submit new txs. And, because you need to improve both the securityandperformance ofremoveUserActiveBlocks;EnumerableMapmay be a go-to solution.
+LayneHaber (Connext) confirmed:
+https://github.com/connext/nxtp/pull/24
+[H-03] Router liquidity on receiving chain can be double-dipped by the user
+Submitted by 0xRajeev, also found by cmichel, gpersoon, pauliax, s1m0 and shw
+Duringfulfill()on the receiving chain, if the user has set up an external contract attxData.callTo, the catch blocks for bothIFulfillHelper.addFunds()andIFulfillHelper.excute()performtransferAssetto the predetermined fallback addresstxData.receivingAddress.
+IfaddFunds()has reverted earlier,toSendamount would already have been transferred to thereceivingAddress. Ifexecute()also fails, it is again transferred.
+Scenario:User sets up receiver chaintxData.callTocontract such that bothaddFunds()andexecute()calls revert. That will let him get twice thetoSendamount credited to thereceivingAddress. So effectively, Alice locks 100tokenAson chain A, and can get 200tokenAs(or twice the amount of any token she is supposed to get on chain B from the router), minus relayer fee, on chain B. Router liquidity is double-dipped by Alice and router loses funds. SeeTransactionManager.solL395-L409andL413-L428.
+Recommend that the second catch block forexecute()should likely not have thetransferAsset()call. It seems like a copy-and-paste bug unless there is some reason that is outside the specified scope and documentation for this contest.
+LayneHaber (Connext) confirmed and patched:
+https://github.com/connext/nxtp/pull/39
+[H-04] Expired transfers will lock user funds on the sending chain
+Submitted by 0xRajeev
+The cancelling relayer is being paid inreceivingAssetIdon thesendingChaininstead of insendingAssetID. If the user relies on a relayer to cancel transactions, and thatreceivingAssetIdasset does not exist on the sending chain (assuming onlysendingAssetIDon the sending chain andreceivingAssetIdon the receiving chain are assured to be valid and present), then the cancel transaction from the relayer will always revert and user’s funds will remain locked on the sending chain.
+The impact is that expired transfers can never be cancelled and user funds will be locked forever if user relies on a relayer.
+Recommend changingreceivingAssetIdtosendingAssetIdintransferAsset()onTransactionManager.solL514.
+LayneHaber (Connext) confirmed and patched:
+https://github.com/connext/nxtp/pull/25
+[H-05]Approvalis not reset if the call toIFulfillHelperfails
+Submitted by pauliax, also found by 0xsanson, cmichel and shw
+The functionfulfillfirst approves thecallToto transfer an amount oftoSendtokens and tries to callIFulfillHelper, but if the call fails, it transfers these assets directly. However, in such case the approval is not reset, so a malicouscallTocan pull these tokens later:
+// First, approve the funds to the helper if neededif(!LibAsset.isEther(txData.receivingAssetId) &&toSend>0) {require(LibERC20.approve(txData.receivingAssetId,txData.callTo,toSend),"fulfill: APPROVAL_FAILED");}// Next, call `addFunds` on the helper. Helpers should internally// track funds to make sure no one user is able to take all funds// for txif(toSend>0) {tryIFulfillHelper(txData.callTo).addFunds{ value:LibAsset.isEther(txData.receivingAssetId) ?toSend:0}(txData.user,txData.transactionId,txData.receivingAssetId,toSend){}catch{// Regardless of error within the callData execution, send funds// to the predetermined fallback addressrequire(LibAsset.transferAsset(txData.receivingAssetId,payable(txData.receivingAddress),toSend),"fulfill: TRANSFER_FAILED");}}
+Tuesday, August 10, 2021Recommend thatapprovalshould be placed inside the try/catch block orapprovalneeds to be reset if the call fails.
+LayneHaber (Connext) confirmed and patched:
+https://github.com/connext/nxtp/pull/39

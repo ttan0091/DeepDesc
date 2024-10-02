@@ -1,0 +1,20 @@
+[H-02] The first disputer might lose funds although his dispute is valid
+Submitted byauditor0517, also found byUdsenandJeiwan
+Users can dispute the current tree usingdisputeTree()and the governor refunds the dispute funds if the dispute is valid inresolveDispute().
+functiondisputeTree(stringmemoryreason)external{if(block.timestamp>=endOfDisputePeriod)revertInvalidDispute();IERC20(disputeToken).safeTransferFrom(msg.sender,address(this),disputeAmount);disputer=msg.sender;emitDisputed(reason);}/// @notice Resolve the ongoing dispute, if any/// @param valid Whether the dispute was validfunctionresolveDispute(boolvalid)externalonlyGovernorOrGuardian{if(disputer==address(0))revertNoDispute();if(valid) {IERC20(disputeToken).safeTransfer(disputer,disputeAmount);// If a dispute is valid, the contract falls back to the last tree that was updated_revokeTree();}else{IERC20(disputeToken).safeTransfer(msg.sender,disputeAmount);endOfDisputePeriod=_endOfDisputePeriod(uint48(block.timestamp));}disputer=address(0);emitDisputeResolved(valid);}
+ButdisputeTree()can be called again by another disputer although there is an active disputer andresolveDispute()refunds to the last disputer only.
+In the worst case, a valid disputer might lose the dispute funds by malicious frontrunners.
+A valid disputer creates a dispute usingdisputeTree().As it’s valid, the governor callsresolveDispute(valid = true)to accept the dispute and refund the funds.A malicious user callsdisputeTree()by front running.Then duringresolveDispute(true), the dispute funds will be sent to the second disputer and the first disputer will lose the funds although he’s valid.
+Recommended Mitigation Steps
+disputeTree()shouldn’t allow another dispute when there is an active dispute already.
+Picodes (Angle) confirmed, but disagreed with severity and commented:
+Valid scenario and issue, although this is only a griefing attack, and the governance could still send back the funds to the first dispute usingrecoverERC20.Considering the scenario is very unlikely as it would cost gas to the attacker for nothing, and easily fixable, I think this should be downgraded to Med
+hansfriese (Judge) commented:
+@Picodes - Will keep as High because honest disputers may lose their funds and it requires the governance’s additional work to recover.
+Picodes (Angle) commented:
+@hansfriese - indeed but when there is a dispute it requires additional work from the governance anyway. Like the permissions forresolveDisputeandrecoverERC20, andrecoverERC20is even cheaper. So the trust assumptions of the disputer are exactly the same with and without this issue: he trusts the governance to send him back its deposit at some point.This wholedisputeAmount/periodthing is meant to prevent spam and to force disputers to behave correctly as they will lose some funds if they don’t, so someone using this attack vector also exposes himself to the governance deciding to not accept the dispute and seize the funds. Overall we will of course respect your final decision but still think med is more appropriate here
+hansfriese (Judge) commented:
+@Picodes - I totally understand your point and I’d like to mention two things.The governance should refund one by one outside of the contract.While checkingdisputeTree(), I see it doesn’t emit the disputer’s address anddisputeAmountwhich would be changed later. So it wouldn’t be that easy to refund in practice.I agree it’s between High and Medium and will keep as High.
+Angle mitigated:
+PR:https://github.com/AngleProtocol/merkl-contracts/commit/7402ee6b84789391479c5876b27be23fd579f7b2Applies the suggested fix.
+Status:Mitigation confirmed. Full details in reports fromLambda,auditor0517, andJeiwan.

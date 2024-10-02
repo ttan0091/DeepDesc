@@ -1,0 +1,22 @@
+Type of vulnerability: Denial of Service (DOS)
+Cause of vulnerability: Misuse of `liquidationInitialAsk` in lien stack validation
+Execution process: A borrower sets their `liquidationInitialAsk` to a value that blocks future borrowers by making it impossible for any future borrow amount plus the existing borrow to be less than or equal to the `liquidationInitialAsk`.
+Vulnerable code: 
+```solidity
+for (uint256 i = stack.length; i > 0; ) {
+    uint256 j = i - 1;
+    newStack[j] = stack[j];
+    if (block.timestamp >= newStack[j].point.end) {
+        revert InvalidState(InvalidStates.EXPIRED_LIEN);
+    }
+    unchecked {
+        potentialDebt += _getOwed(newStack[j], newStack[j].point.end);
+    }
+    if (potentialDebt > newStack[j].lien.details.liquidationInitialAsk) {
+        revert InvalidState(InvalidStates.INITIAL_ASK_EXCEEDED);
+    }
+    unchecked {
+        --i;
+    }
+}
+```

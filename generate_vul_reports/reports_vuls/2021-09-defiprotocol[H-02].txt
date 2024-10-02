@@ -1,0 +1,20 @@
+[H-02]Basket.sol#auctionBurn()A failed auction will freeze part of the funds
+Submitted by WatchPug
+https://github.com/code-423n4/2021-09-defiProtocol/blob/main/contracts/contracts/Basket.sol#L102-L108
+Given theauctionBurn()function will_burn()the auction bond without updating theibRatio. Once the bond of a failed auction is burned, the proportional underlying tokens won’t be able to be withdrawn, in other words, being frozen in the contract.
+Proof of Concept
+With the configuration of:
+basket.ibRatio = 1e18
+factory.bondPercentDiv = 400
+basket.totalSupply = 400
+basket.tokens = [BTC, ETH]
+basket.weights = [1, 1]
+Create an auction;Bond with 1 BASKET TOKEN;Wait for 24 hrs and callauctionBurn();
+basket.ibRatioremains to be 1e18; basket.totalSupply = 399.
+Burn 1 BASKET TOKEN will only get back 1 BTC and 1 ETH, which means, there are 1 BTC and 1 ETH frozen in the contract.
+Recommended Mitigation Steps
+Change to:
+functionauctionBurn(uint256amount)onlyAuctionexternaloverride{handleFees();uint256startSupply=totalSupply();_burn(msg.sender,amount);uint256newIbRatio=ibRatio*startSupply/ (startSupply-amount);ibRatio=newIbRatio;emitNewIBRatio(newIbRatio);emitBurned(msg.sender,amount);}
+frank-beard (Kuiper) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has identified a way for funds to be stuck without a way to recoup them, this is becauseibRatiois not updated, whiletotalSupplyis.Because this is a specific accounting error, which is effectively a bug in the logic of the protocol, and funds can be irrevocably lost, this is a high severity finding

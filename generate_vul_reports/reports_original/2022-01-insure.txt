@@ -1,0 +1,234 @@
+[H-01] Tokens can be burned with no access control
+Submitted by sirhashalot
+The Vault.sol contract has two address state variables, thekeepervariable and thecontrollervariable, which are both permitted to be the zero address. If both variables are zero simultaneously, any address can burn the available funds (available funds = balance - totalDebt) by sending these tokens to the zero address with the unprotectedutilitize()function. If a user has no totalDebt, the user can lose their entire underlying token balance because of this.
+Proof of Concept
+The problematicutilize()function isfound here. To see how the two preconditions can occur:
+The keeper state variable is only changed by thesetKeeper()functionfound here. If this function is not called, the keeper variable will retain the default value of address(0), which bypassesthe only access control for the utilize function.There is a commenthere on line 69stating the controller state variable can be zero. There is no zero address check for the controller state variable in the Vault constructor.
+If both address variables are left at their defaults ofaddress(0), then thesafeTransfer()callon line 348would send the tokens to address(0).
+Recommended Mitigation Steps
+Add the following line to the very beginning of theutilize()function:require(address(controller) != address(0))
+This check is already found in many other functions in Vault.sol, including the_unutilize()function.
+oishun1112 (Insure) confirmed and resolved:
+https://github.com/InsureDAO/pool-contracts/blob/audit/code4rena/contracts/Vault.sol#L382
+[H-02] Typo in PoolTemplate unlock function results in user being able to unlock multiple times
+Submitted by loop, also found by p4st13r4 and ye0lde
+The functionunlock()in PoolTemplate has a typo where it comparesinsurances[_id].statustofalserather than setting it tofalse. If the conditions are met to unlock the funds for an id, the user should be able to call theunlock()function once for that id asinsurances[_id].amountis subtracted fromlockedAmount. However, sinceinsurances[_id].statusdoes not get set tofalse, a user can callunlock()multiple times for the same id, resulting inlockedAmountbeing way smaller than it should be sinceinsurances[_id].amountis subtracted multiple times.
+Impact
+lockedAmountis used to calculate the amount of underlying tokens available for withdrawals. IflockedAmountis lower than it should be users are able to withdraw more underlying tokens than available for withdrawals.
+Proof of Concept
+Typo inunlock():
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L360-L362
+Calculation of underlying tokens available for withdrawal:
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L836
+Recommended Mitigation Steps
+Changeinsurances[_id].status == false;toinsurances[_id].status = false;
+oishun1112 (Insure) confirmed and resolved:
+https://github.com/InsureDAO/pool-contracts/blob/audit/code4rena/contracts/PoolTemplate.sol#L375
+0xean (judge) commented:
+upgrading to sev-3 based on assets being compromised.
+[H-03] Malicious Market Creators Can Steal Tokens From Unsuspecting Approved Reference Accounts
+Submitted by leastwood
+The current method of market creation involves callingFactory.createMarket()with a list of approved_conditionsand_referencesaccounts. If a registered template address hastemplates[address(_template)].isOpen == true, then any user is able to callcreateMarket()using this template. If the template points toPoolTemplate.sol, then a malicious market creator can abusePoolTemplate.initialize()as it makes a vault deposit from an account that they control. The vulnerable internal function,_depositFrom(), makes a vault deposit from the_references[4]address (arbitrarily set to an approved reference address upon market creation).
+Hence, if approved_referencesaccounts have set an unlimited approval amount forVault.solbefore deploying their market, a malicious user can frontrun market creation and cause these tokens to be transferred to the incorrect market.
+This issue can cause honest market creators to have their tokens transferred to an incorrectly configured market, leading to unrecoverable funds. If their approval toVault.solwas set to the unlimited amount, malicious users will also be able to force honest market creators to transfer more tokens than they would normally want to allow.
+Proof of Concept
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/Factory.sol#L158-L231
+functioncreateMarket(IUniversalMarket_template,stringmemory_metaData,uint256[]memory_conditions,address[]memory_references)publicoverridereturns(address) {//check eligibilityrequire(templates[address(_template)].approval==true,"ERROR: UNAUTHORIZED_TEMPLATE");if(templates[address(_template)].isOpen==false) {require(ownership.owner() ==msg.sender,"ERROR: UNAUTHORIZED_SENDER");}if(_references.length>0) {for(uint256i=0;i<_references.length;i++) {require(reflist[address(_template)][i][_references[i]] ==true||reflist[address(_template)][i][address(0)] ==true,"ERROR: UNAUTHORIZED_REFERENCE");}}if(_conditions.length>0) {for(uint256i=0;i<_conditions.length;i++) {if(conditionlist[address(_template)][i] >0) {_conditions[i] =conditionlist[address(_template)][i];}}}if(IRegistry(registry).confirmExistence(address(_template),_references[0]) ==false) {IRegistry(registry).setExistence(address(_template),_references[0]);}else{if(templates[address(_template)].allowDuplicate==false) {revert("ERROR: DUPLICATE_MARKET");}}//create marketIUniversalMarketmarket=IUniversalMarket(_createClone(address(_template)));IRegistry(registry).supportMarket(address(market));markets.push(address(market));//initializemarket.initialize(_metaData,_conditions,_references);emitMarketCreated(address(market),address(_template),_metaData,_conditions,_references);returnaddress(market);}
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L178-L221
+functioninitialize(stringcalldata_metaData,uint256[]calldata_conditions,address[]calldata_references)externaloverride{require(initialized==false&&bytes(_metaData).length>0&&_references[0] !=address(0) &&_references[1] !=address(0) &&_references[2] !=address(0) &&_references[3] !=address(0) &&_references[4] !=address(0) &&_conditions[0] <=_conditions[1],"ERROR: INITIALIZATION_BAD_CONDITIONS");initialized=true;stringmemory_name=string(abi.encodePacked("InsureDAO-",IERC20Metadata(_references[1]).name(),"-PoolInsurance"));stringmemory_symbol=string(abi.encodePacked("i-",IERC20Metadata(_references[1]).symbol()));uint8_decimals=IERC20Metadata(_references[0]).decimals();initializeToken(_name,_symbol,_decimals);registry=IRegistry(_references[2]);parameters=IParameters(_references[3]);vault=IVault(parameters.getVault(_references[1]));metadata=_metaData;marketStatus=MarketStatus.Trading;if(_conditions[1] >0) {_depositFrom(_conditions[1],_references[4]);}}
+Tools Used
+Manual code review.
+Discussions with kohshiba.
+Recommended Mitigation Steps
+After discussions with the sponsor, they have opted to parse a_creatoraddress toPoolTemplate.solwhich will act as the depositor and be set tomsg.senderinFactory.createMarket(). This will prevent malicious market creators from forcing vault deposits from unsuspecting users who are approved inFactory.soland have also approvedVault.solto make transfers on their behalf.
+oishun1112 (Insure) confirmed:
+https://github.com/code-423n4/2022-01-insure-findings/issues/250
+[H-04] Initial pool deposit can be stolen
+Submitted by cmichel, also found by WatchPug
+Note that thePoolTemplate.initializefunction, called when creating a market withFactory.createMarket, calls a vault function to transfer an initial deposit amount (conditions[1])fromthe initial depositor (_references[4]):
+// PoolTemplatefunctioninitialize(stringcalldata_metaData,uint256[]calldata_conditions,address[]calldata_references)externaloverride{// ...if(_conditions[1] >0) {// @audit vault calls asset.transferFrom(_references[4], vault, _conditions[1])_depositFrom(_conditions[1],_references[4]);}}function_depositFrom(uint256_amount,address_from)internalreturns(uint256_mintAmount){require(marketStatus==MarketStatus.Trading&&paused==false,"ERROR: DEPOSIT_DISABLED");require(_amount>0,"ERROR: DEPOSIT_ZERO");_mintAmount=worth(_amount);// @audit vault calls asset.transferFrom(_from, vault, _amount)vault.addValue(_amount,_from,address(this));emitDeposit(_from,_amount,_mintAmount);//mint iToken_mint(_from,_mintAmount);}
+The initial depositor needs to first approve the vault contract for thetransferFromto succeed.
+An attacker can then frontrun theFactory.createMarkettransaction with their own market creation (it does not have access restrictions) and create a marketwith different parametersbut still passing in_conditions[1]=amountand_references[4]=victim.
+A market with parameters that the initial depositor did not want (different underlying, old whitelisted registry/parameter contract, etc.) can be created with their tokens and these tokens are essentially lost.
+Recommended Mitigation Steps
+Can the initial depositor be set toFactory.createMarket’smsg.sender, instead of being able to pick a whitelisted one as_references[4]?
+oishun1112 (Insure) confirmed:
+https://github.com/code-423n4/2022-01-insure-findings/issues/224
+[H-05] backdoor inwithdrawRedundant
+Submitted by cmichel, also found by camden, WatchPug, and Ruhum
+TheVault.withdrawRedundanthas wrong logic that allows the admins to steal the underlying vault token.
+functionwithdrawRedundant(address_token,address_to)externaloverrideonlyOwner{if(_token==address(token) &&balance<IERC20(token).balanceOf(address(this))) {uint256_redundant=IERC20(token).balanceOf(address(this)) -balance;IERC20(token).safeTransfer(_to,_redundant);}elseif(IERC20(_token).balanceOf(address(this)) >0) {// @audit they can rug users. let's say balance == IERC20(token).balanceOf(address(this)) => first if false => transfers out everythingIERC20(_token).safeTransfer(_to,IERC20(_token).balanceOf(address(this)));}}
+POC
+Vault deposits increase asVault.addValueis called and thebalanceincreases by_amountas well as the actualIERC20(token).balanceOf(this). Note thatbalance == IERC20(token).balanceOf(this)Admins callvault.withdrawRedundant(vault.token(), attacker)which goes into theelse ifbranch due to the balance inequality condition beingfalse. It will transfer out allvault.token()amounts to the attacker.
+Impact
+There’s a backdoor in thewithdrawRedundantthat allows admins to steal all user deposits.
+Recommended Mitigation Steps
+I think the devs wanted this logic from the code instead:
+functionwithdrawRedundant(address_token,address_to)externaloverrideonlyOwner{if(_token==address(token)) {if(balance<IERC20(token).balanceOf(address(this))) {uint256_redundant=IERC20(token).balanceOf(address(this)) -balance;IERC20(token).safeTransfer(_to,_redundant);}}elseif(IERC20(_token).balanceOf(address(this)) >0) {IERC20(_token).safeTransfer(_to,IERC20(_token).balanceOf(address(this)));}}
+oishun1112 (Insure) confirmed:
+similar to PVE03 (Peckshield audit)
+We will create a PR and merge after we merge both audit/code4rena and audit/peckshield branches in the InsureDAO repository.
+[H-06] the first depositor to a pool can drain all users
+Submitted by danb
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L807if there is no liquidity in the pool, the first deposit determines the total liquidity, if the amount is too small the minted liquidity for the next liquidity providers will round down to zero.
+Impact
+An attacker can steal all money from liquidity providers.
+Proof of Concept
+consider the following scenario:
+a pool is created.
+the attacker is the first one to deposit, they deposit with _amount == 1, the smallest amount possible. meaning the total liquidity is 1.
+then they join another pool in order to get attributions in the vault.
+they transfer the attributions to the pool usingtransferAttribution.
+for example, they transferred 1M dollar worth of attributions.
+the next person deposits in the index, for example, 500,000 dollars.https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L803the amount they will get is:
+_amount = (_value * _supply) / _originalLiquidity;
+as we know:
+_amount = 500,000 dollar
+_supply = 1
+_totalLiquidity = 1,000,000 dollar (the attacker transferred directly)
+the investor will get (500,000 dollar * 1) / (1,000,000 dollar) = 0
+and they will pay 500,000
+this money will go to the index, and the attacker holds all of the shares, so they can withdraw it and get 1,500,000 stealing 500,000 dollars from the second investor.
+oishun1112 (Insure) acknowledged and disagreed with severity:
+yes. Every address that has attributions can call transferAttribution(), however, the address has to call addValue() to earn attributions. addValue() has onlyMarket modifier.
+To pass onlyMarket modifier, ownership has to be stolen, in short.
+Since we assume ownership control is driven safely, we don’t take this as an issue.
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-07] Wrong design/implementation of permission control allows malicious/compromised Registry or Factory admin to steal funds from users’ wallet balances
+Submitted by WatchPug
+The current design/implementation allows amarketaddress (registered onregistry) to callVault#addValue()and transfer tokens from an arbitrary address to a specified_beneficiaryup the approved amount at any time, and the_beneficiarycan withdraw the funds by callingVault#withdrawAllAttribution()immediately.
+This poses a very dangerous risk to all the users that approved their tokens to the Vault contracts (each one holds all users’ allowances for that token).
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L52-L58
+modifieronlyMarket() {require(IRegistry(registry).isListed(msg.sender),"ERROR_ONLY_MARKET");_;}
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L124-L140
+functionaddValue(uint256_amount,address_from,address_beneficiary)externaloverrideonlyMarketreturns(uint256_attributions) {if(totalAttributions==0) {_attributions=_amount;}else{uint256_pool=valueAll();_attributions= (_amount*totalAttributions) /_pool;}IERC20(token).safeTransferFrom(_from,address(this),_amount);balance+=_amount;totalAttributions+=_attributions;attributions[_beneficiary] +=_attributions;}
+Registry owner can callRegistry#supportMarket()and mark an arbitrary address as amarket.
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Registry.sol#L49-L60
+functionsupportMarket(address_market)externaloverride{require(!markets[_market],"ERROR: ALREADY_REGISTERED");require(msg.sender==factory||msg.sender==ownership.owner(),"ERROR: UNAUTHORIZED_CALLER");require(_market!=address(0),"ERROR: ZERO_ADDRESS");allMarkets.push(_market);markets[_market] =true;emitNewMarketRegistered(_market);}
+Or, the owner of the Factory can callcreateMarket()to add a malicous market contract via a custom template contract to themarketslist.
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Factory.sol#L214-L216
+Proof of Concept
+A malicious/compromised Registry owner can:
+CallRegistry#supportMarket()and setmarkets[attackerAddress]totrue;CallVault#addValue(token.balanceOf(victimAddress), victimAddress, attackerAddress)and transferring all the balanceOf victim’s wallet to the vault, owned byattackerAddress.CallVault#withdrawAllAttribution(attackerAddress)and retrive the funds.
+The malicious/compromised Registry owner can repeat the steps above for all the users who approved the Vault contract for all the Vault contracts.
+As a result, the attacker can steal all the wallet balances of the tokens approved to the protocol.
+Root Cause
+Improper access control for using users’ allowances.
+Recommendation
+Consider changing the design/implementation to make sure that the allowances approved by the users can only be used by themselves.
+oishun1112 (Insure) acknowledged and disagreed with severity:
+this is an issue only when ownership control has fail. This architecture is necessary to achieve simplicity of the code.
+We assume ownership control works fine.
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-08]IndexTemplate.sol#compensate()will most certainly fail
+Submitted by WatchPug
+Precision loss while converting betweenthe amount of sharesandthe amount of underlying tokensback and forth is not handled properly.
+
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/IndexTemplate.sol#L438-L447
+uint256_shortage;if(totalLiquidity() <_amount) {//Insolvency case_shortage=_amount-_value;uint256_cds=ICDSTemplate(registry.getCDS(address(this))).compensate(_shortage);_compensated=_value+_cds;}vault.offsetDebt(_compensated,msg.sender);
+In the current implementation, when someone tries to resume the market after a pending period ends by callingPoolTemplate.sol#resume(),IndexTemplate.sol#compensate()will be called internally to make a payout. If the index pool is unable to cover the compensation, the CDS pool will then be used to cover the shortage.
+However, whileCDSTemplate.sol#compensate()takes a parameter for the amount of underlying tokens, it usesvault.transferValue()to transfer corresponding_attributions(shares) instead of underlying tokens.
+Due to precision loss, the_attributionstransferred in the terms of underlying tokens will most certainly be less than the shortage.
+At L444, the contract believes that it’s been compensated for_value + _cds, which is lower than the actual value, due to precision loss.
+At L446, when it callsvault.offsetDebt(_compensated, msg.sender), the tx will revert atrequire(underlyingValue(msg.sender) >= _amount).
+As a result,resume()can not be done, and the debt can’t be repaid.
+Proof of Concept
+Given:
+vault.underlyingValue = 10,000vault.valueAll = 30,000totalAttributions = 2,000,000_amount = 1,010,000_shortage = _amount - vault.underlyingValue = 1,000,000_attributions = (_amount * totalAttributions) / valueAll = 67,333,333actualValueTransfered = (valueAll * _attributions) / totalAttributions = 1009999
+Expected results: actualValueTransfered = _shortage;
+Actual results: actualValueTransfered < _shortage.
+Impact
+The precision loss isn’t just happening on special numbers, but will most certainly always revert the txs.
+This will malfunction the contract as the index pool can notcompensate(), therefore the pool can notresume(). Causing the funds of the LPs of the pool and the index pool to be frozen, and other stakeholders of the same vault will suffer fund loss from an unfair share of the funds compensated before.
+Recommendation
+Change to:
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/IndexTemplate.sol#L439-L446
+if(totalLiquidity() <_amount) {//Insolvency case_shortage=_amount-_value;uint256_cds=ICDSTemplate(registry.getCDS(address(this))).compensate(_shortage);_compensated=vault.underlyingValue(address(this));}vault.offsetDebt(_compensated,msg.sender);
+oishun1112 (Insure) confirmed and disagreed with severity
+oishun1112 (Insure) resolved
+[H-09]Vault#setController()owner of the Vault contracts can drain funds from the Vault
+Submitted by WatchPug
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L485-L496
+functionsetController(address_controller)publicoverrideonlyOwner{require(_controller!=address(0),"ERROR_ZERO_ADDRESS");if(address(controller) !=address(0)) {controller.migrate(address(_controller));controller=IController(_controller);}else{controller=IController(_controller);}emitControllerSet(_controller);}
+The owner of the Vault contract can set an arbitrary address as thecontroller.
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L342-L352
+functionutilize()externaloverridereturns(uint256_amount) {if(keeper!=address(0)) {require(msg.sender==keeper,"ERROR_NOT_KEEPER");}_amount=available();//balanceif(_amount>0) {IERC20(token).safeTransfer(address(controller),_amount);balance-=_amount;controller.earn(address(token),_amount);}}
+A maliciouscontrollercontract can transfer funds from the Vault to the attacker.
+Proof of Concept
+A malicious/compromised can:
+CallVault#setController()and setcontrollerto a malicious contract;L489 the old controller will transfer funds to the new, malicious controller.CallVault#utilize()to deposit all the balance in the Vault contract into the malicious controller contract.Withdraw all the funds from the malicious controller contract.
+Recommendation
+Consider disallowingVault#setController()to set a new address if a controller is existing, which terminates the possibility of migrating funds to a specified address provided by the owner. Or, putting a timelock to this function at least.
+oishun1112 (Insure) acknowledged and disagreed with severity:
+we assume ownership control is driven safely
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-10] A malicious/compromised Registry or Factory admin can drain all the funds from the Vault contracts
+Submitted by WatchPug
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L52-L58
+modifieronlyMarket() {require(IRegistry(registry).isListed(msg.sender),"ERROR_ONLY_MARKET");_;}
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/Vault.sol#L201-L206
+functionborrowValue(uint256_amount,address_to)externalonlyMarketoverride{debts[msg.sender] +=_amount;totalDebt+=_amount;IERC20(token).safeTransfer(_to,_amount);}
+The current design/implementation allows a market address (registered on theregistry) to callVault#borrowValue()and transfer tokens to an arbitrary address.
+Proof of Concept
+See the PoC section on [WP-H24].
+Recommendation
+Consider adding constrains (eg. timelock) toRegistry#supportMarket().Consdier adding constrains (upper bound for each pool, and index pool for example) toVault#borrowValue().
+oishun1112 (Insure) acknowledged and disagreed with severity:
+Ownership has to be stolen to drain funds using this method and we assume ownership control driven safely, so we don’t treat this as issue
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).
+[H-11]PoolTemplate.sol#resume()Wrong implementation ofresume()will compensate overmuch redeem amount from index pools
+Submitted by WatchPug, also found by danb
+Wrong arithmetic.
+
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/PoolTemplate.sol#L700-L717
+uint256_deductionFromIndex= (_debt*_totalCredit*MAGIC_SCALE_1E6) /totalLiquidity();uint256_actualDeduction;for(uint256i=0;i<indexList.length;i++) {address_index=indexList[i];uint256_credit=indicies[_index].credit;if(_credit>0) {uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);_actualDeduction+=IIndexTemplate(_index).compensate(_redeemAmount);}}
+Proof of Concept
+totalLiquidity = 200,000* 10**18;totalCredit = 100,000 * 10**18;debt = 10,000 * 10**18;[Index Pool 1] Credit = 20,000 * 10**18;[Index Pool 2] Credit = 30,000 * 10**18;
+uint256 _deductionFromIndex = (_debt * _totalCredit * MAGIC_SCALE_1E6) /totalLiquidity();// _deductionFromIndex = 10,000 * 10**6 * 10**18;
+[Index Pool 1]:
+uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;//  _shareOfIndex = 200000uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);// _redeemAmount = 25,000 * 10**18;
+[Index Pool 2]:
+uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;//  _shareOfIndex = 300000uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);// _redeemAmount = 16666666666666666666667 (~ 16,666 * 10**18)
+In most cases, the transaction will revet on underflow at:
+uint256_shortage=_deductionFromIndex/MAGIC_SCALE_1E6-_actualDeduction;
+In some cases, specific pools will be liable for unfair compensation:
+If the CSD is empty,Index Pool 1only have6,000 * 10**18andIndex Pool 2only have4,000 * 10**18, the_actualDeductionwill be10,000 * 10**18,_deductionFromPoolwill be0.
+Index Pool 1should only pay1,000 * 10**18, but actually paid6,000 * 10**18, the LPs ofIndex Pool 1now suffer funds loss.
+Recommendation
+Change to:
+uint256_deductionFromIndex= (_debt*_totalCredit*MAGIC_SCALE_1E6) /totalLiquidity();uint256_actualDeduction;for(uint256i=0;i<indexList.length;i++) {address_index=indexList[i];uint256_credit=indicies[_index].credit;if(_credit>0) {uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;uint256_redeemAmount=_divCeil(_deductionFromIndex*_shareOfIndex,MAGIC_SCALE_1E6*MAGIC_SCALE_1E6);_actualDeduction+=IIndexTemplate(_index).compensate(_redeemAmount);}}
+oishun1112 (Insure) confirmed and resolved
+[H-12]IndexTemplate.solWrong implementation allows lp of the index pool to resume a lockedPayingOutpool and escape the responsibility for the compensation
+Submitted by WatchPug, also found by leastwood
+Based on the context, the system intends to lock all the lps during PayingOut period.
+However, the current implementation allows anyone, including LPs to callresume()and unlock the index pool.
+It allows a malicious LP to escape the responsibility for the compensation, at the expense of other LPs paying more than expected.
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/IndexTemplate.sol#L459-L471
+functionresume()externaloverride{uint256_poolLength=poolList.length;for(uint256i=0;i<_poolLength;i++) {require(IPoolTemplate(poolList[i]).paused() ==false,"ERROR: POOL_IS_PAUSED");}locked=false;emitResumed();}
+Recommendation
+Change to:
+functionresume()externaloverride{uint256_poolLength=poolList.length;for(uint256i=0;i<_poolLength;i++) {require(IPoolTemplate(poolList[i]).marketStatus() ==MarketStatus.Trading,"ERROR: POOL_IS_PAYINGOUT");}locked=false;emitResumed();}
+oishun1112 (Insure) confirmed
+[H-13] Admin of the index pool canwithdrawCredit()afterapplyCover()to avoid taking loss for the compensation paid for a certain pool
+Submitted by WatchPug
+In the current implementation, when an incident is reported for a certain pool, the index pool can stillwithdrawCredit()from the pool, which in the best interest of an index pool, the admin of the index pool is preferred to do so.
+This allows the index pool to escape from the responsibility for the risks of invested pools.
+Making the LPs of the pool take an unfair share of the responsibility.
+Proof of Concept
+Pool AtotalCredit= 10,000Pool ArewardPerCredit= 1[Index Pool 1] allocates 1,000 credits to PoolA:totalCredit= 11,000indicies[Index Pool 1] = 1,000After a while, Pool ArewardPerCredithas grown to1.1, andapplyCover()has been called, [Index Pool 1] callwithdrawCredit()get 100 premiumtotalCredit= 10,000indicies[Index Pool 1] = 0AfterpendingEnd, the poolresume(),[ Index Pool 1] will not be paying for the compensation sincecreditis 0.
+In our case, [Index Pool 1] earned premium without paying for a part of the compensation.
+Recommendation
+Change to:
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/PoolTemplate.sol#L416-L421
+functionwithdrawCredit(uint256_credit)externaloverridereturns(uint256_pending){require(marketStatus==MarketStatus.Trading,"ERROR: WITHDRAW_CREDIT_BAD_CONDITIONS");IndexInfostorage_index=indicies[msg.sender];
+oishun1112 (Insure) confirmed and disagreed with severity:
+to call PoolTemplate: withdrawCredit(), someone has to call IndexTemplate: withdraw(), set(), and adjustAlloc().set() is onlyOwner, so we assume it’s fine()
+adjustAlloc() is public. this clean up and flatten the credit distribution.
+withdraw() is public. this reduce totalCredit to distribute. when exceed upperSlack, call adjustAlloc().We should lock the credit control when pool is in payout status.
+This implementation, still allows small amount of withdraw, for users who were requested Withdraw.
+oishun1112 (Insure) commented:
+We have fixed with PVE02 (Peckshield audit) issue together.

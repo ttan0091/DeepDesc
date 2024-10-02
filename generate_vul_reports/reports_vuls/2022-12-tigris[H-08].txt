@@ -1,0 +1,20 @@
+[H-08] Incorrect Assumption of Stablecoin Market Stability
+Submitted by0xsomeone, also found byCritical,__141345__,Tointer,Secureverse,SamGMK,rotcivegaf,0xhacksmithh,8olidity,Ruhum, andaviggiano
+https://github.com/code-423n4/2022-12-tigris/blob/main/contracts/StableVault.sol#L39-L51
+https://github.com/code-423n4/2022-12-tigris/blob/main/contracts/StableVault.sol#L60-L72
+Impact
+TheStableVaultcontract attempts to group all types of stablecoins under a single token which can be minted for any of the stablecoins supported by the system as well as burned for any of them.
+This is at minimum a medium-severity vulnerability as the balance sheet of theStableVaultwill consist of multiple assets which do not have a one-to-one exchange ratio between them as can be observed by trading pools such asCurveas well as theChainlink oracle reported prices themselves.
+Given that the contract exposes a 0% slippage 1-to-1 exchange between assets that in reality have varying prices, the balance sheet of the contract can be arbitraged (especially by flash-loans) to swap an undesirable asset (i.e. USDC which at the time of submission was valued at0.99994853USD) for a more desirable asset (i.e. USDT which at the time of submission was valued at1.00000000USD) acquiring an arbitrage in the price by selling the traded asset.
+Proof of Concept
+To illustrate the issue, simply view the exchange output you would get for swapping your USDC to USDT in a stablecoin pool (i.e. CurveFi) and then proceed toinvokedepositwith your USDC asset and retrieve yourincorrectly calculatedUSDTequivalent viawithdraw.
+The arbitrage can be observed by assessing the difference in the trade outputs and can be capitalized by selling our newly acquiredUSDTforUSDCon the stablecoin pair we assessed earlier, ultimately ending up with a greater amount ofUSDCthan we started with. This type of attack can be extrapolated by utilizing a flash-loan rather than our personal funds.
+Tools Used
+Chainlink oracle resources
+Curve Finance pools
+Recommended Mitigation Steps
+We advise theStableVaultto utilize Chainlink oracles for evaluating the inflow of assets instead, ensuring that all inflows and outflows of stablecoins are fairly evaluated based on their “neutral” USD price rather than their subjective on-chain price or equality assumption.
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has shown how, due to an incorrect assumption, the system offers infinite leverage.This can be trivially exploited by arbitraging with any already available exchange.Depositors will incur a loss equal to the size of the arbitrage as the contract is always taking the losing side.I believe this should be High because of it’s consistently losing nature.
+TriHaz (Tigris Trade) acknowledged and commented:
+We are aware of this issue, we will keep the vault with one token for now.

@@ -1,0 +1,24 @@
+Type of vulnerability: Incorrect Token Amount Calculation
+Cause of vulnerability: Misinterpretation of price denominations in token minting and burning calculations
+Execution process: When a user calls the `mint` function with a specified `vAmount` of Vader tokens, the contract incorrectly calculates the `uAmount` of USDV tokens to mint by multiplying the Vader price (in USD/Vader) by `vAmount` and then dividing by `1e18`. Similarly, in the `burn` function, the contract incorrectly calculates the `vAmount` of Vader tokens to mint by multiplying the USDV price (in USD/USDV) by `uAmount` and then dividing by `1e18`.
+Vulnerable code:
+```solidity
+function mint(uint256 vAmount) external onlyWhenNotLocked returns (uint256 uAmount) {
+    uint256 vPrice = lbt.getVaderPrice();
+    vader.transferFrom(msg.sender, address(this), vAmount);
+    vader.burn(vAmount);
+    uAmount = (vPrice * vAmount) / 1e18; // Incorrect calculation
+    // Additional logic for cycleTimestamp, cycleMints, and fees
+    _mint(address(this), uAmount);
+    _createLock(LockTypes.USDV, uAmount);
+}
+
+function burn(uint256 uAmount) external onlyWhenNotLocked returns (uint256 vAmount) {
+    uint256 uPrice = lbt.getUSDVPrice();
+    _burn(msg.sender, uAmount);
+    vAmount = (uPrice * uAmount) / 1e18; // Incorrect calculation
+    // Additional logic for fees
+    vader.mint(address(this), vAmount);
+    _createLock(LockTypes.VADER, vAmount);
+}
+```

@@ -1,0 +1,17 @@
+[H-02] NFT transfer approvals are not removed and cannot be revoked thus leading to loss of NFT tokens
+Submitted by 0xRajeev, also found by shw
+NFT transfer approvals that are set to true inapproveTransferERC721()are never set to false and there is no way to remove such an nft approval.
+Impact 1: The approval is not removed (set to false) after a transfer intransferERC721(). So if the NFT is ever moved back into the owner’s vault again, then the previous/compromised delegate can again transfer it to any address of choice without requiring a new approval.
+Impact 2: If a delegate becomes compromised/untrustworthy after granting approval but before transfer then the owner will lose its NFT because there is no mechanism to revoke the approval that was granted earlier.
+PoC-1:
+Alice grants Eve approval to transfer a particular NFT out of its vault usingapproveTransferERC721()Eve, who has transfer rights to that NFT from Alice’s vault,  transfers that NFT to Bob usingtransferERC721()Alice decides to buy back that NFT (e.g. because it is now considered rare and more valuable) from Bob and transfers it back to its vaultEve, who continues to have transfer rights to that NFT from Alice’s vault, can steal that NFT and transfer to anyone
+PoC-2:
+Alice grants Eve approval to transfer a particular NFT out of its vault usingapproveTransferERC721()Alice learns that Eve’s keys are compromises or that Eve is malicious and wants to revoke the approval but there is no mechanism to do soEve (or whoever stole her credentials) has transfer rights to that NFT from Alice’s vault and can steal that NFT and transfer to anyone
+Recommend adding a boolean parameter toapproveTransferERC721()and set thenftApprovalsto that parameter which can be true for giving approval and false for removing/revoking approval
+Ifmsg.sender != _getOwner(), callapproveTransferERC721()with the boolean false to remove approval before making a transfer intransferERC721()on L515.
+xyz-ctrl (Visor) commented:
+duplicatehttps://github.com/code-423n4/2021-05-visorfinance-findings/issues/35
+ghoul-sol (Judge) commented:
+35 is about token being stuck in the vault. This issue is about not being able to revoke approval. Marking this as separate.
+ztcrypto (Visor) patched:
+patchlink

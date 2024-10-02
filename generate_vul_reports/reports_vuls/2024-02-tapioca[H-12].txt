@@ -1,0 +1,11 @@
+[H-12] Adversary can steal user’s NFT’s if they have set Magnetar asisApprovedForAll == true
+Submitted bydeadrxsezzz
+Since Magnetar is supposed to be used as a router for multiple operations, it can be expected that user will have it pre-approved for their NFTs (such astOLPasoTAPones, as they’ll be the ones primarily used).
+The Magnetar contract allows for any user to make aERC721.approve, via_processPermitOperation:
+function_processPermitOperation(address_target,bytescalldata_actionCalldata,bool_allowFailure)private{if(!cluster.isWhitelisted(0,_target))revertMagnetar_NotAuthorized(_target,_target);/// @dev owner address should always be first param.// permitAction(bytes,uint16)// permit(address owner...)// revoke(address owner...)// permitAll(address from,..)// permit(address from,...)// setApprovalForAll(address from,...)// setApprovalForAsset(address from,...)bytes4funcSig=bytes4(_actionCalldata[:4]);if(funcSig==IPermitAll.permitAll.selector||funcSig==IPermitAll.revokeAll.selector||funcSig==IPermit.permit.selector||funcSig==IPermit.revoke.selector||funcSig==IYieldBox.setApprovalForAll.selector||funcSig==IYieldBox.setApprovalForAsset.selector||funcSig==IERC20.approve.selector||funcSig==IPearlmit.approve.selector||funcSig==IERC721.approve.selector) {/// @dev Owner param check. See Warning above._checkSender(abi.decode(_actionCalldata[4:36], (address)));// No need to send value on permit_executeCall(_target,_actionCalldata,0,_allowFailure);return;}revertMagnetar_ActionNotValid(MagnetarAction.Permit,_actionCalldata);}
+The problem is that for OZ ERC721s (such asoTAPandtOLP), if an NFT owner has approved a spender asisApprovedForAll, the spender can callapprovefor any NFTs belonging to the owner.
+In other words, if user A has set Magnetar asapprovedForAll, user B can callNFT.approve(userB, id)and get access to user A’s NFT:
+functionapprove(addressto,uint256tokenId)publicvirtualoverride{addressowner=ERC721.ownerOf(tokenId);require(to!=owner,"ERC721: approval to current owner");require(_msgSender() ==owner||isApprovedForAll(owner,_msgSender()),"ERC721: approve caller is not token owner or approved for all");_approve(to,tokenId);}
+Recommended Mitigation Steps
+Do not allow users to make a call withERC721.approveselector.
+0xWeiss (Tapioca) confirmed

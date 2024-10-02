@@ -1,0 +1,16 @@
+[H-08]HybridPool’s reserve is converted to “amount” twice
+Submitted by cmichel, also found by 0xsanson and WatchPug
+TheHybridPool’s reserves are stored as Bento “amounts” (not Bento shares) in_updateReservesbecause_balance()converts the current share balance to amount balances.
+However, when retrieving thereserve0/1storage fields in_getReserves, they are converted to amounts a second time.
+Impact
+TheHybridPoolreturns wrong reserves which affects all minting/burning and swap functions.
+They all return wrong results making the pool eventually economically exploitable or leading to users receiving less tokens than they should.
+POC
+Imagine the current Bento amount / share price being1.5.
+The pool’s Bentosharebalance being1000._updateReserveswill store a reserve of1.5 * 1000 = 1500.
+When anyone trades using theswapfunction,_getReserves()is called and multiplies it by1.5again, leading to using a reserve of 2250 instead of 1500.
+A higher reserve for the output token leads to receiving more tokens as the swap output.
+Thus the pool lost tokens and the LPs suffer this loss.
+Recommended Mitigation Steps
+Make sure that the reserves are in the correct amounts.
+maxsam4 (Sushi) confirmed

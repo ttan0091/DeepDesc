@@ -1,0 +1,77 @@
+[H-01] Can force borrower to pay huge interest
+Submitted by cmichel, also found by AuditsAreUS, csanuragjain, danb, IllIllI, joshie, Ruhum, t11s, and tintin
+NFTLoanFacilitator.sol#L148
+The loan amount is used as a min loan amount. It can be matched as high as possible (realistically up to the collateral NFT’s worth to remain in profit) and the borrower has to pay interest on the entire amount instead of just on the desired loan amount when the loan was created.
+Proof of Concept
+User needs a 10k USDC loan, NFTs are illiquid and they only have a BAYC worth 350k$. So buying another NFT worth roughly the desired 10k$ is not feasible. They will put the entire 350k$ BAYC as collateral for the 10k USDC loan.A lender matches the loan callinglendwith 350k USDC.The borrower now has to pay interest on the entire 350k USDC even though they only wanted a 10k loan. Otherwise, they risk losing their collateral. Their effective rate on their 10k loan is 35x higher.
+Recommended Mitigation Steps
+The loan amount should not have min amount semantics.
+When someone wants to get a loan, they specify a certain amount they need, they don’t want to receive and pay interest on more than that.
+wilsoncusack (Backed Protocol) disputed and commented:
+The ability to increase the loan amount is seen as a feature of the protocol, not a bug.
+gzeon (judge) decreased severity to Medium and commented:
+While a larger loan size is strictly beneficial to the borrower, the higher interest payment it entitled is not. The warden suggested a valid situation that may cost the user more than intended. Considering the amount lost is bounded because the lender carry more risk for a larger loan, downgrading this to Medium risk for the sponsor to consider a maxLoanAmount parameter.
+gzeon (judge) increased severity to High and commented:
+After considering#9bringing up the loan origination fee, I believe this is a High risk issue for the protocol to not have amaxLoanAmountparameter.
+wilsoncusack (Backed Protocol) commented:
+IMO it does not make sense to label this as High severity. This is not an exploit but is just the protocol working exactly as described in the README.
+gzeon (judge) commented:
+From READMEPerpetual lender buyout: a lender can be boughtout at any time by a new lender who meets the existing terms and beats at least one term by at least 10%, e.g. 10% longer duration, 10% higher loan amount, 10% lower interest. The new lender pays the previous lender their principal + any interest owed. The loan duration restarts on buyout.I don’t agree that allowing higher loan amount necessarily means the loan amount needs to be unbounded. Given the increased interest and origination fee, a higher loan amount is not necessarily “beating existing terms” as described in the README.
+wilsoncusack (Backed Protocol) commented:
+It certainly doesn’t necessarily mean that but it is how we chose to implement it and I think the description is clear that there is no cap. We define “beating” as having one of those values changed by at least 10% and so I think it is beating as described by the readme.
+Nonetheless, I appreciate your drawing focus again to this point (we discussed on twitterwith our community during audit as this became a point of interest, and have of course considered this idea when designing the protocol at the outset). We will again consider adding a Boolean flag to each loan as to whether the borrower allows loan amount increases
+wilsoncusack (Backed Protocol) commented:
+Respect judge to have final say, but since this is going public want to make sure our take on this is clear.We believe the protocol design was clearly communicated in the README, including origination fee and the possibility for perpetually increasing loan amount. We think there is no “exploit” here, just people pointing out potential downsides to how the protocol is designed (as one might point out problems of impermanent loss with an AMM.) We view these as QA reports. We are interested in this feedback and listening to it in that we want to listen to potential users and make sure our protocol appeals to as many people as possible.
+gzeon (judge) commented:
+I consider this as an exploit because asset can be lost. Combining unbounded loan amount, interest rate and origination fee (max 5%), a malicious lender can grief borrower with limited risk and get a chance to seize the collateral as demonstrated in the POC.The fact that the code is working as described in README is irrelevant if it is going to make user lose their asset. If this is going to stay as a protocol design, I recommend to clearly communicate the risk of unbounded loan amount which is lacking in the contest repo.
+wilsoncusack (Backed Protocol) resolved
+
+[H-02] currentLoanOwner can manipulate loanInfo when any lenders try to buyout
+Submitted by rayn
+NFTLoanFacilitator.sol#L205-L208NFTLoanFacilitator.sol#L215-L218
+If an attacker already callslend()to lend to a loan, the attacker can manipulateloanInfoby reentrancy attack when any lenders try to buyout. The attacker can set bad values oflendInfo(e.g. very long duration, and 0 interest rate) that the lender who wants to buyout don’t expect.
+Proof of Concept
+An attacker lends a loan, andloanAssetContractAddressinloanInfois ERC777 which is suffering from reentrancy attack. When a lender (victim) try to buyout the loan of the attacker:
+The victim calledlend().Inlend(), it always callERC20(loanAssetContractAddress).safeTransferto sendaccumulatedInterest + previousLoanAmounttocurrentLoanOwner(attacker).ThetransferofloanAssetContractAddressERC777 will call_callTokensReceivedso that the attacker can calllend()again in reentrancy with parameters:loanId: same loan IdinterestRate: set to bad value (e.g. 0)amount: same amountdurationSeconds: set to bad value (e.g. a long durationSeconds)sendLendTicketTo: same address of the attacker (currentLoanOwner)Now the variables inloanInfoare changed to bad value, and the victim will get the lend ticket but the loan term is manipulated, and can not set it back (because it requires a better term).
+Tools Used
+vim
+Recommended Mitigation Steps
+UsenonReentrantmodifier onlend()to prevent reentrancy attack:OpenZeppelin/ReentrancyGuard.sol
+wilsoncusack (Backed Protocol) acknowledged, but disagreed with High severity and commented:
+We should mitigate, but will think on this.
+wilsoncusack (Backed Protocol) confirmed and commented:
+Not sure whether this should be Medium or High risk.
+wilsoncusack (Backed Protocol) commented:
+Thinking more, again we should definitely mitigate, but I think this is less severe because I do not think ERC777 tokens will work with our contract? The on received call will revert? So this would need to be a malicious ERC20 designed just for this.
+wilsoncusack (Backed Protocol) resolved and commented:
+er erc777 does work because reception ack is not needed in the normal case.
+gzeon (judge) commented:
+Sponsor confirmed with fix.
+
+[H-03] Borrower can be their own lender and steal funds from buyout due to reentrancy
+Submitted by 0xDjango
+NFTLoanFacilitator.sol#L214-L221NFTLoanFacilitator.sol#L230-L250
+If borrower lends their own loan, they can repay and close the loan before ownership of the lend ticket is transferred to the new lender. The borrower will keep the NFT + loan amount + accrued interest.
+Proof of Concept
+This exploit requires that theloanAssetContractAddresstoken transfers control to the receiver.
+Steps of exploit:
+Borrower creates loan withcreateLoan().The same Borrower callslend(), funding their own loan. The Borrower receives the lend ticket, and funds are transferred to themself.A new lender attempts to buy out the loan. The original loan amount + accruedInterest are sent to the original lender (same person as borrower).Due to lack of checks-effects-interactions pattern, the borrower is able to immediately callrepayAndCloseLoan()before the lend ticket is transferred to the new lender.
+The following code illustrates that the new lender sends funds to the original lender prior to receiving the lend ticket in return.
+}else{ERC20(loan.loanAssetContractAddress).safeTransferFrom(msg.sender,currentLoanOwner,accumulatedInterest+previousLoanAmount);}ILendTicket(lendTicketContract).loanFacilitatorTransfer(currentLoanOwner,sendLendTicketTo,loanId);
+Theoriginallender/borrowercallsthefollowing`repayAndCloseLoan()`functionsothattheyreceivetheircollateralNFTfromtheprotocol.functionrepayAndCloseLoan(uint256loanId)externaloverridenotClosed(loanId) {Loanstorageloan=loanInfo[loanId];uint256interest=_interestOwed(loan.loanAmount,loan.lastAccumulatedTimestamp,loan.perAnumInterestRate,loan.accumulatedInterest);addresslender=IERC721(lendTicketContract).ownerOf(loanId);loan.closed=true;ERC20(loan.loanAssetContractAddress).safeTransferFrom(msg.sender,lender,interest+loan.loanAmount);IERC721(loan.collateralContractAddress).safeTransferFrom(address(this),IERC721(borrowTicketContract).ownerOf(loanId),loan.collateralTokenId);emitRepay(loanId,msg.sender,lender,interest,loan.loanAmount);emitClose(loanId);}
+Finally, the new lender receives the lend ticket that has no utility at this point. The borrower now possesses the NFT, original loan amount, and accrued interest.
+Recommended Mitigation Steps
+Move the line to transfer the lend ticket to the new lender above the line to transfer to funds to the original lender. Or, use reentrancyGuard from OpenZeppelin to remove the risk of reentrant calls completely.
+If desired, also require that the lender cannot be the same account as the borrower of a loan.
+wilsoncusack (Backed Protocol) confirmed and commented:
+Borrower would need to convince lender to use an ERC20 with this malicious callback, but yes is legit.malicious ERC20-> transfers value to borrow ticket holder-> calls repay and close loan (would need funds available to do so, but still nets up)
+wilsoncusack (Backed Protocol) commented:
+Possibility of an ERC777 loan asset warrants this as high, I think. Even though the warden didn’t suggest that vector.
+wilsoncusack (Backed Protocol) commented:
+Scratch that, I think ERC777 not possible because our contract isn’t setup to receive them.
+wilsoncusack (Backed Protocol) commented:
+er erc777 does work because reception ack is not needed in the normal case.
+wilsoncusack (Backed Protocol) resolved
+gzeon (judge) commented:
+Sponsor confirmed.
+

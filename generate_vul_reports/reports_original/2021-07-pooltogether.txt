@@ -1,0 +1,55 @@
+[H-01]onlyOwnerOrAssetManagercan swap Yield Source inSwappableYieldSourceat any time, immediately rugging all funds from old yield source
+Submitted by GalloDaSballo, also found by 0xRajeev and gpersoon
+The functionswapYieldSourceSwappableYieldSource.sol` L307
+Can be called by the owner (deployer / initializer) or Asset Manager. The function will take all funds from the old Yield Source, and transfer them to the new Yield source. Any contract that implement the functionfunction depositToken() external returns (address)will pass the check
+However, if either the owner or theassetManagerhave malicious intent, this function allows them to instantly rug all funds
+Create a contract that implements thefunction depositToken() external returns (address)Be the Owner orAssetManagerCallsetYieldSourcewhile pointing at your malicious contractProfit
+I highly recommend checking that theYieldSourceis from a trusted registry before allowing this swap.
+Alternatively forcing eachOwnerto be aTimeLockwith at least 48 hours may provide enough security to allow this to be used in practice
+PierrickGT (PoolTogether) disputed:
+This is why we will use a multi sig owned by governance to deploy swappable yield sources and manage them. This way, we will avoid these kind of scenarios.
+0xean (Judge) commented:
+Agree with warden on the risk here. Will both the AssetManager and the Owner be owned by your governance?The YieldSource could easily extract user funds or send them back to the SwappableYieldSource contract and then remove them from there.
+PierrickGT (PoolTogether) commented:
+We have removed theAssetManagerrole andOwnerwill be owned by governance who will vet any change of yield source before going through a vote.
+[H-02]redeemTokencan fail for certain tokens
+Submitted by cmichel, also found by hickuphh3, pauliax and jonah1005XXX
+TheSwappableYieldSource.redeemTokenfunction transfers tokens from the contract back to the sender, however, it uses theERC20.transferFrom(address(this), msg.sender, redeemableBalance)function for this.
+Some deposit token implementations might fail astransferFromchecks if the contract approved itself for theredeemableBalanceinstead of skipping the allowance check in case the sender is thefromaddress.
+This can make the transaction revert and the deposited funds will be unrecoverable for the user.
+It’s recommended to use_depositToken.safeTransfer(msg.sender, redeemableBalance)instead.
+PierrickGT (PoolTogether) commented:
+Duplicate ofhttps://github.com/code-423n4/2021-07-pooltogether-findings/issues/25
+0xean (Judge) commented:
+re-opening this issue and marking #25 as a duplicate of this issue which clearly articulates the potential severity of unrecoverable user funds.
+PierrickGT (PoolTogether) resolved:
+This issue has been fixed and we are now usingsafeTransfer:https://github.com/pooltogether/swappable-yield-source/blob/bf943b3818b81d5f5cb9d8ecc6f13ffecd33a1ff/contracts/SwappableYieldSource.sol#L235
+[H-03]setYieldSourceleads to temporary wrong results
+Submitted by gpersoon
+The use ofsetYieldSourceleaves the contract in a temporary inconsistent state because it changes the underlying yield source,
+but doesn’t (yet) transfer the underlying balances, while the shares stay the same.
+The functionbalanceOfTokenwill show the wrong results, because it is based on_sharesToToken, which usesyieldSource.balanceOfToken(address(this)), that isn’t updated yet.
+More importantlysupplyTokenTowill give the wrong amount of shares back:
+First it supplies tokens to theyieldsource.
+Then is calls_mintShares, which calls_tokenToShares, which calculates the shares, usingyieldSource.balanceOfToken(address(this))ThisyieldSource.balanceOfToken(address(this))only contains the just supplied tokens, but doesn’t include the tokens from the previousYieldSource.
+So the wrong amount of shares is given back to the user; they will be given more shares than appropriate which means they can drain funds later on (oncetransferFundshas been done).
+It is possible to make use of this problem in the following way:
+monitor the blockchain until you seesetYieldSourcehas been doneimmediately call the functionsupplyTokenTo(which can be called because there is no access control on this function)
+// https://github.com/pooltogether/swappable-yield-source/blob/main/contracts/SwappableYieldSource.solfunctionsetYieldSource(IYieldSource_newYieldSource)external`onlyOwnerOrAssetManager`returns(bool) {_setYieldSource(_newYieldSource);function_setYieldSource(IYieldSource_newYieldSource)internal{..yieldSource=_newYieldSource;functionsupplyTokenTo(uint256amount,addressto)externaloverridenonReentrant{..yieldSource.supplyTokenTo(amount,address(this));_mintShares(amount,to);}function_mintShares(uint256mintAmount,addressto)internal{uint256shares=`_tokenToShares`(mintAmount);require(shares>0,"SwappableYieldSource/shares-gt-zero");_mint(to,shares);}function_tokenToShares(uint256tokens)internalreturns(uint256) {uint256shares;uint256_totalSupply=totalSupply();..uint256exchangeMantissa=FixedPoint.calculateMantissa(_totalSupply,yieldSource.balanceOfToken(address(this)));// based on incomplete yieldSource.balanceOfToken(address(this))shares=FixedPoint.multiplyUintByMantissa(tokens,exchangeMantissa);functionbalanceOfToken(addressaddr)externaloverridereturns(uint256) {return_sharesToToken(balanceOf(addr));}function_sharesToToken(uint256shares)internalreturns(uint256) {uint256tokens;uint256_totalSupply=totalSupply();..uint256exchangeMantissa=FixedPoint.calculateMantissa(yieldSource.balanceOfToken(address(this)),_totalSupply);// based on incomplete yieldSource.balanceOfToken(address(this))tokens=FixedPoint.multiplyUintByMantissa(shares,exchangeMantissa);
+Reocommend removing the functionsetYieldSource(e.g. only leaveswapYieldSource)
+Or temporally disable actions likesupplyTokenTo,redeemTokenand balanceOfToken, aftersetYieldSourceand untiltransferFundshas been done.
+PierrickGT (PoolTogether) confirmed and resolved:
+PR:https://github.com/pooltogether/swappable-yield-source/pull/4We’ve mitigated this issue by removing thetransferFundsandsetYieldSourceexternal functions and makingswapYieldSourcecallable only by the owner that will be a multi sig wallet for governance pools.
+[H-04]SwappableYieldSource: Missing same deposit token check intransferFunds()
+Submitted by hickuphh3, also found by 0xRajeev
+transferFunds()will transfer funds from a specified yield source_yieldSourceto the current yield source set in the contract_currentYieldSource. However, it fails to check that the deposit tokens are the same. If the specified yield source’s assets are of a higher valuation, then a malicious owner or asset manager will be able to exploit and pocket the difference.
+Assumptions:
+_yieldSourcehas a deposit token of WETH (18 decimals)_currentYieldSourcehas a deposit token of DAI (18 decimals)1 WETH > 1 DAI (definitely true, I’d be really sad otherwise)
+Attacker does the following:
+Deposit 100 DAI into the swappable yield source contractCalltransferFunds(_yieldSource, 100 * 1e18)_requireDifferentYieldSource()passes_transferFunds(_yieldSource, 100 * 1e18)is called_yieldSource.redeemToken(_amount);→ This will transfer 100 WETH out of the_yieldSourceinto the contractuint256 currentBalance = IERC20Upgradeable(_yieldSource.depositToken()).balanceOf(address(this));→ This will equate to ≥ 100 WETH.require(_amount <= currentBalance, "SwappableYieldSource/transfer-amount-different");is true since both are100 * 1e18_currentYieldSource.supplyTokenTo(currentBalance, address(this));→ This supplies the transferred 100 DAI from step 1 to the current yield sourceWe now have 100 WETH in the swappable yield source contractCalltransferERC20(WETH, attackerAddress, 100 * 1e18)to withdraw 100 WETH out of the contract to the attacker’s desired address.
+_requireDifferentYieldSource()should also verify that the yield sources’ deposit token addresses are the same.
+function_requireDifferentYieldSource(IYieldSource_yieldSource)internalview{require(address(_yieldSource) !=address(yieldSource),"SwappableYieldSource/same-yield-source");require(_newYieldSource.depositToken() ==yieldSource.depositToken(),"SwappableYieldSource/different-deposit-token");}
+PierrickGT (PoolTogether) acknowledged:
+This exploit was indeed possible when we had thetransferFundsfunction but now that we have removed it and funds can only be moved byswapYieldSource(), this exploit is no longer possible since we check for the samedepositTokenin_setYieldSource().https://github.com/pooltogether/swappable-yield-source/pull/4
+0xean (Judge) commented:
+Upgrading to 3 considering the potential for loss of funds

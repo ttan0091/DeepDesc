@@ -1,0 +1,15 @@
+[H-02] Non-existing revenue contract can be passed to claimRevenue to send all tokens to treasury
+Submitted byLambda, also found byberndartmueller,adriro, andaphak5010
+NeitherSpigotLib.claimRevenuenorSpigotLib._claimRevenuecheck that the providedrevenueContractwas registered before. If this is not the case,SpigotLib._claimRevenueassumes that this is a revenue contract with push payments (becauseself.settings[revenueContract].claimFunctionis 0) and just returns the difference since the last call toclaimRevenue:
+if(self.settings[revenueContract].claimFunction==bytes4(0)) {// push payments// claimed = total balance - already accounted for balanceclaimed=existingBalance-self.escrowed[token];//@audit Rebasing tokens// underflow revert ensures we have more tokens than we started with and actually claimed revenue}
+SpigotLib.claimRevenuewill then readself.settings[revenueContract].ownerSplit, which is 0 for non-registered revenue contracts:
+uint256escrowedAmount=claimed*self.settings[revenueContract].ownerSplit/100;
+Therefore, the wholeclaimedamount is sent to the treasury.
+This becomes very problematic for revenue tokens that use push payments. An attacker (in practice the borrower) can just regularly callclaimRevenuewith this token and a non-existing revenue contract. All of the tokens that were sent to the spigot since the last call will be sent to the treasury and none to the escrow, i.e. a borrower can ensure that no revenue will be available for the lender, no matter what the configured split is.
+Proof Of Concept
+As mentioned above, the attack pattern works for arbitrary tokens where one (or more) revenue contracts use push payments, i.e. where the balance of the Spigot increases from time to time. Then, the attacker just callsclaimRevenuewith a non-existing address. This is illustrated in the following diff:
+--- a/contracts/tests/Spigot.t.sol+++ b/contracts/tests/Spigot.t.sol@@ -174,7 +174,7 @@ contract SpigotTest is Test {assertEq(token.balanceOf(address(spigot)), totalRevenue);bytes memory claimData;-        spigot.claimRevenue(revenueContract, address(token), claimData);+        spigot.claimRevenue(address(0), address(token), claimData);
+Thanks to this small modification, all of the tokens are sent to the treasury and none are sent to the escrow.
+Recommended Mitigation Steps
+Check that a revenue contract was registered before, revert if it does not.
+kibagateaux (Debt DAO) confirmed

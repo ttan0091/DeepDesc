@@ -1,0 +1,14 @@
+Type of vulnerability: Inadequate Handling of State Transitions
+Cause of vulnerability: Lack of re-staking LP tokens after exiting the shelter mechanism
+Execution process: When the `exitShelter` function is called, LP tokens are transferred back to the `ConvexStakingWrapper` contract but are not re-staked into the pool. This causes the `withdraw` function to fail when attempting to `withdrawAndUnwrap` from the staking pool due to an insufficient staked balance.
+Vulnerable code: 
+```solidity
+function exitShelter(uint256[] calldata _pids) external onlyOwner {
+    for(uint256 i = 0; i<_pids.length; i++){
+        IRewardStaking pool = IRewardStaking(convexPool[_pids[i]]);
+        IERC20 lpToken = IERC20(pool.poolInfo(_pids[i]).lptoken);
+        amountInShelter[lpToken] = 0;
+        shelter.deactivate(lpToken);
+    }
+}
+```

@@ -1,0 +1,28 @@
+This code defines an external function named inflationMintTokens, which is designed to handle the minting of new tokens based on an inflation rate. This function is part of a smart contract system that manages token inflation and distribution. Here’s a detailed explanation of how this function works:
+
+1. Check for Inflation Interval:
+    The function starts by retrieving the last time the inflation was calculated using getInflationCalcTime().
+    It then calculates how many inflation intervals have passed since the last minting using _getInflationIntervalsPassed(inflationLastCalcTime).
+    If no intervals have passed (intervalsSinceLastMint == 0), the function immediately returns 0, indicating no new tokens are minted.
+
+2. Retrieve Vault Address:
+    The function fetches the address of the Rocket Vault, which is where the newly minted tokens will be sent. This is done using getContractAddress("rocketVault").
+    It checks if the Rocket Vault address is valid (not zero) using require(rocketVaultAddress != address(0x0), "rocketVault address not set").
+
+3. Calculate New Tokens:
+    The function calculates the number of new tokens to be minted based on the inflation rate and the number of intervals passed using _inflationCalculate(intervalsSinceLastMint).
+
+4. Update Inflation Calculation Time:
+    Even if no tokens are minted (inflation rate is zero), the function updates the last inflation calculation timestamp to the current time adjusted by the number of intervals passed. This is done using inflationCalcTime = inflationLastCalcTime.add(inflationInterval.mul(intervalsSinceLastMint)).
+
+5. Mint and Transfer Tokens:
+    If the number of new tokens (newTokens) is greater than zero, the function proceeds to mint these tokens.
+    It mints the tokens to the contract itself using _mint(address(this), newTokens).
+    The function then approves the Rocket Vault to transfer the newly minted tokens from the contract's balance. This is done using rplInflationContract.approve(rocketVaultAddress, vaultAllowance.add(newTokens)).
+    Finally, it instructs the Rocket Vault to deposit these tokens into the Rocket Rewards Pool using rocketVaultContract.depositToken("rocketRewardsPool", IERC20(address(this)), newTokens).
+
+6. Log and Return:
+    The function emits an event RPLInflationLog to log the minting of new tokens, including the sender, the number of tokens minted, and the updated inflation calculation time.
+    It returns the number of new tokens minted.
+
+This function ensures that tokens are minted and distributed according to a predefined inflation schedule, while also maintaining proper accounting and authorization checks to ensure secure and controlled token transfers.

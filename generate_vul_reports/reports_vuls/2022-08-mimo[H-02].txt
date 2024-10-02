@@ -1,0 +1,17 @@
+[H-02] Automation / management can be set for not yet existing vault
+Submitted by Lambda, also found by ayeslick
+https://github.com/code-423n4/2022-08-mimo/blob/9adf46f2efc61898247c719f2f948b41d5d62bbe/contracts/actions/automated/MIMOAutoAction.sol#L33
+https://github.com/code-423n4/2022-08-mimo/blob/9adf46f2efc61898247c719f2f948b41d5d62bbe/contracts/actions/managed/MIMOManagedAction.sol#L35
+Impact & Proof Of Concept
+vaultOwnerreturns zero for a non-existingvaultId. Similarly,proxyRegistry.getCurrentProxy(msg.sender)returns zero whenmsg.senderhas not deployed a proxy yet. Those two facts can be combined to set automation for a vault ID that does not exist yet. When this is done by a user without a proxy, it will succeed, as bothvaultOwnerandmimoProxyareaddress(0), i.e. we havevaultOwner == mimoProxy.
+The consequences of this are quite severe. As soon as the vault is created, it will be an automated vault (with potentially very high fees). An attacker can exploit this by setting very high fees before the creation of the vault and then performing actions for the automated vault, which leads to a loss of funds for the user.
+The same attack is possible forsetManagement.
+Recommended Mitigation Steps
+Do not allow setting automation parameters for non-existing vaults, i.e. check thatvaultOwner != address(0).
+RayXpub (Mimo) confirmed and commented:
+We confirm that this is a high risk issue and intend to fix this.
+horsefacts (warden) reviewed mitigation:
+Status:✅ Resolved after review (see finding M.H-01 in Mitigation Review section below)
+Finding:Wardens identified that malicious callers could configure automation and management parameters for uninitialized vaults when vault owner and proxy address were unset for a given vault ID and caller and returnedadress(0), which caused an access control check to unintentionally pass.
+What changed:MIMOAutoAction#setAutomationnowcheckswhether the vault owner is the zero address. Anintegration testdemonstrates that attempting to callsetAutomationon an uninitialized vault will revert.MIMOManagedAction#setAutomationperforms the samecheck, and anintegration testexercises it.
+Why it works:SincesetAutomationnow explicitly checks that the vault is initialized, configuration cannot be set for an uninitialized vault.

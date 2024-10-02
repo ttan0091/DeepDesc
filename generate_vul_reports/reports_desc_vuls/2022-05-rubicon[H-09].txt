@@ -1,0 +1,15 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: The contract allows for a surge in the price per share of BathToken when `rebalancePair()` is called, due to the transfer of underlying tokens into the contract. This creates an opportunity for attackers to front-run the rebalancing transaction and profit from the temporary price deviation.
+Execution process: An attacker observes a pending `rebalancePair()` transaction by a strategist. The attacker then sends a deposit transaction with a higher gas price to deposit a significant amount of underlying tokens, thereby taking a large share of the pool. After the rebalancing transaction is mined, the attacker immediately calls `withdraw()` to retrieve more underlying tokens than initially deposited, effectively stealing a portion of the pending rebalancing amount.
+Vulnerable code: 
+```solidity
+function underlyingBalance() public view returns (uint256) {
+    uint256 _pool = IERC20(underlyingToken).balanceOf(address(this));
+    return _pool.add(outstandingAmount);
+}
+
+function removeFilledTradeAmount(uint256 amt) external onlyPair {
+    outstandingAmount = outstandingAmount.sub(amt);
+    emit LogRemoveFilledTradeAmount(IERC20(underlyingToken), amt, underlyingBalance(), outstandingAmount, totalSupply);
+}
+```

@@ -1,0 +1,27 @@
+[H-06] the first depositor to a pool can drain all users
+Submitted by danb
+https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L807if there is no liquidity in the pool, the first deposit determines the total liquidity, if the amount is too small the minted liquidity for the next liquidity providers will round down to zero.
+Impact
+An attacker can steal all money from liquidity providers.
+Proof of Concept
+consider the following scenario:
+a pool is created.
+the attacker is the first one to deposit, they deposit with _amount == 1, the smallest amount possible. meaning the total liquidity is 1.
+then they join another pool in order to get attributions in the vault.
+they transfer the attributions to the pool usingtransferAttribution.
+for example, they transferred 1M dollar worth of attributions.
+the next person deposits in the index, for example, 500,000 dollars.https://github.com/code-423n4/2022-01-insure/blob/main/contracts/PoolTemplate.sol#L803the amount they will get is:
+_amount = (_value * _supply) / _originalLiquidity;
+as we know:
+_amount = 500,000 dollar
+_supply = 1
+_totalLiquidity = 1,000,000 dollar (the attacker transferred directly)
+the investor will get (500,000 dollar * 1) / (1,000,000 dollar) = 0
+and they will pay 500,000
+this money will go to the index, and the attacker holds all of the shares, so they can withdraw it and get 1,500,000 stealing 500,000 dollars from the second investor.
+oishun1112 (Insure) acknowledged and disagreed with severity:
+yes. Every address that has attributions can call transferAttribution(), however, the address has to call addValue() to earn attributions. addValue() has onlyMarket modifier.
+To pass onlyMarket modifier, ownership has to be stolen, in short.
+Since we assume ownership control is driven safely, we don’t take this as an issue.
+0xean (judge) commented:
+Agree with warden that the privilege addresses should not be able to use approvals in a way that rugs users funds.Based on the fact that we have seen many rug pulls in the space based on compromised “owner” keys, this is a valid attack path.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

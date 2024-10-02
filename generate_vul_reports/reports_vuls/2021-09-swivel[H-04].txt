@@ -1,0 +1,19 @@
+[H-04] return value of 0 from ecrecover not checked
+Submitted by gpersoon, also found by 0xRajeev, cmichel, and nikitastupin.
+Impact
+The solidity functionecrecoveris used, however the error result of 0 is not checked for.
+See documentation:https://docs.soliditylang.org/en/v0.8.9/units-and-global-variables.html?highlight=ecrecover#mathematical-and-cryptographic-functions“recover the address associated with the public key from elliptic curve signature or return zero on error. ”
+Now you can supply invalid input parameters to theSig.recoverfunction, which will then result 0.
+If you also seto.makerto be 0 then this will match and an invalid signature is not detected.
+So you can do all kinds of illegal & unexpected transactions.
+Proof of Concept
+https://github.com/Swivel-Finance/gost/blob/v2/test/swivel/Swivel.sol#L476-L484
+functionvalidOrderHash(Hash.Ordercalldatao, Sig.Componentscalldatac)internalviewreturns(bytes32) {...require(o.maker==Sig.recover(Hash.message(domain,hash),c),'invalid signature');returnhash;}
+https://github.com/Swivel-Finance/gost/blob/v2/test/swivel/Sig.sol#L16-L23
+functionrecover(bytes32h,Componentscalldatac)internalpurereturns(address) {...returnecrecover(h,c.v,c.r,c.s);
+Tools Used
+Recommended Mitigation Steps
+Verify that the result fromecrecoverisn’t 0
+JTraversa (Swivel) acknowledgedJTraversa (Swivel) commented:
+Id say this is noteable, but because all actions require approvals from o.maker, having 0x00 as o.maker with an “invalid” but valid signature should not be impactful.
+The suggestion would be to filter 0x00 makers from the orderbook? (which we do)

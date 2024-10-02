@@ -1,0 +1,23 @@
+This code defines a public view function named getVotesAtBlock, which is designed to retrieve the number of votes an account had at a specific historical block. The function takes two parameters: account, which is the address of the account whose votes are being queried, and blockNumber, which is the specific block number at which the votes are to be checked.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function begins by checking if the blockNumber provided is less than the current block number (block.number). If the blockNumber is in the future, the function will revert with an error message: "FLOKI:getVotesAtBlock:FUTURE_BLOCK: Cannot get votes at a block in the future."
+
+2. Check for No Checkpoints:
+    The function then checks if there are any checkpoints for the given account by looking at numCheckpoints[account]. If there are no checkpoints (nCheckpoints == 0), it returns 0, indicating that the account had no votes at any block.
+
+3. Check Most Recent Balance:
+    If there are checkpoints, the function first checks the most recent checkpoint (checkpoints[account][nCheckpoints  1]). If the block number of this most recent checkpoint is less than or equal to the blockNumber being queried, it returns the votes recorded in this checkpoint.
+
+4. Check Implicit Zero Balance:
+    If the block number of the first checkpoint (checkpoints[account][0]) is greater than the blockNumber being queried, it means the account had no votes before this first checkpoint, so it returns 0.
+
+5. Binary Search:
+    If none of the above conditions are met, the function performs a binary search through the checkpoints to find the closest checkpoint to the blockNumber. The binary search is performed by initializing lowerBound to 0 and upperBound to nCheckpoints  1. It then iteratively narrows down the search range by adjusting lowerBound and upperBound based on the comparison between the checkpoint block numbers and the blockNumber.
+
+6. Return Result:
+    If an exact match for the blockNumber is found during the binary search, it returns the votes from that checkpoint. If no exact match is found, it returns the votes from the last known checkpoint before the blockNumber.
+
+This function is efficient for querying historical voting data, especially when there are many checkpoints, due to the use of binary search. It ensures that the query can be performed in logarithmic time relative to the number of checkpoints, making it suitable for decentralized applications where historical data retrieval is frequent.

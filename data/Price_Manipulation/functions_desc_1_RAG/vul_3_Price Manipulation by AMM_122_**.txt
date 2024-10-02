@@ -1,0 +1,32 @@
+This code defines a public function named redeem, which is an override of a previously defined function. The function allows a user to redeem their LP tokens for the underlying asset, subject to certain conditions and fees. Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function takes two parameters: redeemLpTokens (the amount of LP tokens the user wants to redeem) and minRedeemAmount (the minimum amount of underlying assets the user expects to receive).
+    The function first checks if redeemLpTokens is greater than 0. If not, it reverts the transaction with the error Error.INVALID_AMOUNT.
+
+2. Balance Check:
+    The function then checks if the user's balance of LP tokens is sufficient to cover the requested redemption amount. It does this by querying the balance of msg.sender using lpToken_.balanceOf(msg.sender). If the balance is insufficient, the transaction is reverted with the error Error.INSUFFICIENT_BALANCE.
+
+3. Fee Calculation:
+    The function calculates the withdrawal fee. If the msg.sender is an action (as determined by addressProvider.isAction(msg.sender)), the fee is set to 0. Otherwise, it calculates the fee using the getWithdrawalFee function.
+    The function then calculates redeemMinusFees by subtracting the withdrawal fee from redeemLpTokens.
+
+4. Special Case Handling:
+    If the user is redeeming all LP tokens (i.e., redeemLpTokens equals the total supply of LP tokens), the function sets redeemMinusFees to redeemLpTokens to ensure no fees are charged on the last withdrawal, preventing funds from being locked in the pool.
+
+5. Underlying Asset Calculation:
+    The function calculates the amount of underlying assets the user will receive (redeemUnderlying) by multiplying redeemMinusFees by the exchange rate obtained from the exchangeRate() function.
+    It then checks if redeemUnderlying is greater than or equal to minRedeemAmount. If not, the transaction is reverted with the error Error.NOT_ENOUGH_FUNDS_WITHDRAWN.
+
+6. Rebalancing and Token Operations:
+    The function calls _rebalanceVault(redeemUnderlying) to ensure the vault is rebalanced based on the withdrawal.
+    It then burns the redeemed LP tokens from the user's balance using lpToken_.burn(msg.sender, redeemLpTokens).
+    Finally, it transfers the underlying assets to the user using _doTransferOut(payable(msg.sender), redeemUnderlying).
+
+7. Event Emission:
+    The function emits a Redeem event to log the redemption, including the sender's address, the amount of underlying assets redeemed, and the amount of LP tokens burned.
+
+8. Return Value:
+    The function returns the amount of underlying assets redeemed (redeemUnderlying).
+
+This function ensures that users can redeem their LP tokens for the underlying assets while handling fees and ensuring the vault remains balanced. The use of require statements throughout the function helps maintain the integrity and security of the contract by enforcing necessary conditions and validations.

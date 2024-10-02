@@ -1,0 +1,38 @@
+This code defines a public view function named getPriorVotes, which is used to retrieve the number of votes an account had at a specific block number in the past. The function is part of a smart contract that likely manages a governance system, where votes are recorded and can be queried retrospectively.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    address account: The Ethereum address of the account for which to retrieve the prior votes.
+    uint blockNumber: The block number at which to check the account's votes.
+
+2. Return Type:
+    uint96: The function returns a 96bit unsigned integer representing the number of votes.
+
+3. Precondition Check:
+    The function starts by checking if blockNumber is less than the current block number (block.number). If not, it reverts with the message "Comp::getPriorVotes: not yet determined". This ensures that the requested block number is in the past and the state is already determined.
+
+4. Checkpoints Initialization:
+    uint32 nCheckpoints = numCheckpoints[account];: Retrieves the number of checkpoints recorded for the given account. Checkpoints are records of the account's voting power at specific blocks.
+
+5. Edge Case Handling:
+    If there are no checkpoints (nCheckpoints == 0), the function immediately returns 0, indicating that the account had no votes at any point.
+
+6. Most Recent Checkpoint Check:
+    If the most recent checkpoint's block number is less than or equal to the requested blockNumber, the function returns the votes recorded in that most recent checkpoint. This is checked using checkpoints[account][nCheckpoints  1].fromBlock <= blockNumber.
+
+7. Implicit Zero Balance Check:
+    If the earliest checkpoint's block number is greater than the requested blockNumber, the function returns 0, indicating that the account had no votes at the requested block. This is checked using checkpoints[account][0].fromBlock > blockNumber.
+
+8. Binary Search for Checkpoint:
+    If neither of the above conditions is met, the function performs a binary search to find the correct checkpoint. This is done to efficiently locate the checkpoint that is closest to but not exceeding the requested blockNumber.
+    The binary search initializes two indices, lower and upper, representing the range of checkpoints to search within.
+    The search iteratively narrows down the range by comparing the block number of the checkpoint at the midpoint (center) with the requested blockNumber.
+    If the midpoint checkpoint's block number matches the requested blockNumber, its votes are returned.
+    If the midpoint checkpoint's block number is less than the requested blockNumber, the search continues in the upper half.
+    If the midpoint checkpoint's block number is greater than the requested blockNumber, the search continues in the lower half.
+
+9. Final Checkpoint Return:
+    Once the search converges (upper == lower), the function returns the votes from the checkpoint at the lower index, which is the closest checkpoint to the requested blockNumber.
+
+This function is designed to efficiently and accurately retrieve historical voting data, leveraging binary search for performance optimization when dealing with a potentially large number of checkpoints.

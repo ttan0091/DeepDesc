@@ -1,0 +1,19 @@
+[H-04]Vault.mintYieldFeefunction can be called by anyone to mintVault Sharesto any recipient address
+Submitted byUdsen, also found byminhtrng,markus_ether,GREY-HAWK-REACH,KupiaSec,serial-coder,Aymen0909,peanuts,teawaterwire,ni8mare,alexweb3,josephdara,zzzitron,Jeiwan,Nyx,keccak123,LuchoLeonel1,btk,seeques,0xPsuedoPandit,0xMirce,RedTiger,Praise,bin2chen,ktg,Bobface,rvierdiiev,wangxx2026,0xbepresent,dirk_y,ptsanev,shaka,dacian,mahdirostami,John,0xStalin,ravikiranweb3, andCo0nan
+TheVault.mintYieldFeeexternal function is used to mintVault sharesto the yield fee_recipient. The function is an external function and can be called by anyone since there is no access control. The function will revert only under following two conditions:
+If the Vault is under-collateralized.If the_sharesare greater than the accrued_yieldFeeTotalSupply.
+The issue with this function is, it allows the caller to set the_recipient(address of the yield fee recipient). It does not use the_yieldFeeRecipientstate variable, which was set in theVault.constructoras theyield fee recipient.
+Which means, anyone can steal the availableyield feefrom the vault (as long as the above two revert conditions are not satisfied) byminting sharesto their own address or to any address of their choice.
+Proof of Concept
+functionmintYieldFee(uint256_shares,address_recipient)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);_yieldFeeTotalSupply-=_shares;_mint(_recipient,_shares);emitMintYieldFee(msg.sender,_recipient,_shares);}
+https://github.com/GenerationSoftware/pt-v5-vault/blob/b1deb5d494c25f885c34c83f014c8a855c5e2749/src/Vault.sol#L394-L402
+Tools Used
+VSCode
+Recommended Mitigation Steps
+Hence, it is recommended to use the_yieldFeeRecipientstate variable value as theyield fee recipientinside theVault.mintYieldFeeexternal function and to remove the input parameteraddress _recipientfrom theVault.mintYieldFeefunction; so that the caller will not be able to mint shares to any arbitrary address of their choice and steal the yield fee of the protocol.
+The updated function should be as follows:
+functionmintYieldFee(uint256_shares)external{_requireVaultCollateralized();if(_shares>_yieldFeeTotalSupply)revertYieldFeeGTAvailable(_shares,_yieldFeeTotalSupply);_yieldFeeTotalSupply-=_shares;_mint(_yieldFeeRecipient,_shares);emitMintYieldFee(msg.sender,_recipient,_shares);}
+asselstine (PoolTogether) confirmed
+PoolTogether mitigated:
+Removed recipient param.PR:https://github.com/GenerationSoftware/pt-v5-vault/pull/7
+Status: Mitigation confirmed. Full details in reports fromrvierdiiev,dirk_yand0xStalin.

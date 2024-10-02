@@ -1,0 +1,18 @@
+[H-01]VaultProxyimplementation can be initialized by anyone and self-destructed
+Submitted bybroccolirob, also found bydwward3n,hals,bin2chen, and0x70C9
+https://github.com/code-423n4/2023-06-stader/blob/7566b5a35f32ebd55d3578b8bd05c038feb7d9cc/contracts/VaultProxy.sol#L20-L36https://github.com/code-423n4/2023-06-stader/blob/7566b5a35f32ebd55d3578b8bd05c038feb7d9cc/contracts/VaultProxy.sol#L41-L50
+When theVaultFactorycontract is deployed and initialized, theinitialisemethod on the newly createdVaultProxyimplementation contract is never called. As such, anyone can call that method and pass in whatever values they want as arguments. One important argument is the_staderConfigaddress, which controls where thefallbackfunction will directdelegatecalloperations. If an attacker passes in a contract that callsselfdestruct, it will be run in the context of theVaultProxyimplementation contract and will erase all code from that address. Since the clones from theVaultProxycontract merely delegate calls to the implementation address, all subsequent calls for all created vaults from that implementation will be treated like an EOA and returntrue, even though calls to functions on that proxy were never executed.
+Proof of Concept
+First, an attacker deploys a contract calledAttackContractthat callsselfdestructin itsfallbackfunction.
+contract AttackContract {function getValidatorWithdrawalVaultImplementation() public view returns(address) {return address(this);}function getNodeELRewardVaultImplementation() public view returns(address) {return address(this);}fallback(bytes calldata _input) external payable returns(bytes memory _output) {selfdestruct(address(0));}}
+The attacker calls theinitialisemethod on theVaultProxyimplementation contract. That address is stored in thevaultProxyImplementationvariable on theVaultFactorycontract. The attacker passes in the address ofAttackContractas the_staderConfigargument for theinitialisefunction.The attacker then calls a non-existent function on theVaultProxyimplementation contract, which triggers it’sfallbackfunction. Thefallbackfunction callsstaderConfig.getNodeELRewardVaultImplementation(), and sincestaderConfigis set theAttackContractaddress, it returns the address of theAttackContract.delegatecallruns the fallback function ofAttackContractin its own execution environment.selfdestructis called in the execution environment of theVaultProxyimplementation, which erases the code at that address.All cloned copies of theVaultProxyimplementation contract are now forwarding calls to an implementation address that has no code stored at it. These calls will be treated like calls to an EOA and returntrueforsuccess.
+Recommended Mitigation Steps
+Prevent theinitialisefunction from being called on theVaultProxyimplementation contract by inheriting from OpenZeppelin’sInitializablecontract, like the system is doing in other contracts. Call the_disableInitializersfunction in the constructor and protectinitialisewith theinitializermodifier. Alternatively, theinitialisefunction can be called from theinitializefunction of theVaultFactorycontract when theVaultProxycontract is instantiated.
+Assessed type
+Access Control
+Picodes (judge) commented:
+Keeping High severity. This seems exploitable to lock funds with no cost, as the fallback function is payable.
+sanjay-staderlabs (Stader) confirmed
+sanjay-staderlabs (Stader) commented:
+This is fixed in the code.
+

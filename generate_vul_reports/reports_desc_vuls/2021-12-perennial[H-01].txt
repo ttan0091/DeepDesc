@@ -1,0 +1,15 @@
+Type of vulnerability: Incorrect shortfall calculation
+Cause of vulnerability: The shortfall is being added twice due to improper handling of the shortfall variable within the conditional block.
+Execution process: When an account is settled and a shortfall is created, the shortfall is first added with the new balance's absolute value, and then again with the shortfall variable, resulting in an inflated shortfall.
+Vulnerable code: 
+```solidity
+function settleAccount(OptimisticLedger storage self, address account, Fixed18 amount) internal returns (UFixed18 shortfall) {
+    Fixed18 newBalance = Fixed18Lib.from(self.balances[account]).add(amount);
+    if (newBalance.sign() == -1) {
+        shortfall = self.shortfall.add(newBalance.abs());
+        newBalance = Fixed18Lib.ZERO;
+    }
+    self.balances[account] = newBalance.abs();
+    self.shortfall = self.shortfall.add(shortfall);
+}
+```

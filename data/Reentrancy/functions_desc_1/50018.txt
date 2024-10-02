@@ -1,0 +1,19 @@
+This code defines a smart contract named PreICOProxyBuyer, which manages investor balances and allows for refunds. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping(address => uint) public balances; This line declares a public state variable balances which is a mapping that associates Ethereum addresses with unsigned integer values. This mapping is used to store the balance of each investor.
+    address investor = msg.sender; This line declares a state variable investor and initializes it with the address of the message sender (msg.sender). This variable is used to reference the address of the investor who interacts with the contract.
+
+2. Function refund:
+    The refund function is a public function that allows an investor to request a refund of their balance.
+    The function starts with a conditional check if(balances[investor] == 0) throw;. This line checks if the balance of the investor is zero. If it is, the function throws an exception, which stops the execution of the function and reverts any state changes made so far.
+    If the balance is not zero, the function proceeds to the next step where it assigns the investor's balance to a local variable uint amount = balances[investor];.
+    The next line if(!(investor.call.value(amount)())) throw; is crucial. It uses the call function to send Ether to the investor. The call.value(amount)() function is used to send Ether to the investor address. The call function returns a boolean indicating whether the call was successful or not. If the call fails (i.e., the boolean is false), the function throws an exception.
+    After successfully sending the Ether, the function sets the investor's balance to zero with balances[investor] = 0;.
+
+Security Considerations:
+ The use of call.value(amount)() is susceptible to reentrancy attacks. If the investor address is a contract that implements a fallback function which recursively calls the refund function, it could potentially withdraw more funds than intended. It is generally recommended to use transfer or send methods which are safer against reentrancy attacks, but they have their own limitations (like the 2300 gas stipend which might be insufficient for complex fallback functions).
+ The throw keyword used for error handling is deprecated in favor of revert(), require(), and assert(). Using throw will consume all gas provided to the transaction, which is not gasefficient.
+
+Summary:
+The PreICOProxyBuyer contract manages investor balances and provides a mechanism for investors to refund their balances. The refund function checks the balance, sends Ether back to the investor, and resets the balance to zero. However, the contract should be updated to use more secure methods for transferring Ether and handling errors to mitigate potential security risks.

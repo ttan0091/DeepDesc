@@ -1,0 +1,18 @@
+Type of vulnerability: Access Control Vulnerability
+Cause of vulnerability: The contract incorrectly checks if the claimed amount (`tokenClaim`) is equal to the initial vesting amount (`amount`) instead of checking if the total claimed amount (`totalClaimed`) is equal to the initial vesting amount.
+Execution process: A beneficiary calls the `claimVestedTokens` function to claim their vested tokens. If they have claimed any amount before the vesting is fully completed, the condition `if(amount == tokenClaim)` will fail, preventing them from receiving the `fairSideConvictionNFT` even after fully vesting.
+Vulnerable code: 
+```solidity
+function claimVestedTokens() external override onlyBeneficiary {
+    uint256 tokenClaim = calculateVestingClaim();
+    require(tokenClaim > 0, "FSDVesting::claimVestedTokens: Zero claimable tokens");
+    totalClaimed = totalClaimed.add(tokenClaim);
+    lastClaimAt = block.timestamp;
+    fsd.safeTransfer(msg.sender, tokenClaim);
+    emit TokensClaimed(msg.sender, tokenClaim, block.timestamp);
+    if(amount == tokenClaim) {
+        uint256 tokenId = fsd.tokenizeConviction(0);
+        fairSideConviction.transferFrom(address(this), msg.sender, tokenId);
+    }
+}
+```

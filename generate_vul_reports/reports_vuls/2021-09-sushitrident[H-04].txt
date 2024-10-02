@@ -1,0 +1,13 @@
+[H-04] IndexPool’sINIT_POOL_SUPPLYis not fair.
+Submitted by broccoli, also found by WatchPug
+Impact
+TheindexPoolmintINIT_POOL_SUPPLYto address 0 in the constructor. However, the value of the burned lp is decided by the first lp provider. According to the formula inIndexPool.solL106.
+AmountIn = first_lp_amount / INIT_POOL_SUPPLYand the burned lp worth =AmountIn * (INIT_POOL_SUPPLY) / (first_lp_amount + INIT_POOL_SUPPLY).
+If a pool is not initialized with optimal parameters, it would be a great number of tokens been burn. All lp providers in the pool would receive less profit.
+The optimal parameter is10**8. It’s likely no one would initialize with10**8wei in most pools. I consider this is a high-risk issue.
+Proof of concept
+There are two scenarios that the first lp provider can do. The lp provider provides the same amount of token in both cases. However, in the first scenario, he gets about10 ** 18 * 10**18lp while in the other scenario he gets100 * 10**18lp.
+deposit_amount =10**18bento.functions.transfer(link.address, admin, pool.address, deposit_amount).transact()bento.functions.transfer(dai.address, admin, pool.address, deposit_amount).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin,10**8]# minimum)).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin,10000000000009999*10**20])).transact()
+deposit_amount =10**18bento.functions.transfer(link.address, admin, pool.address, deposit_amount).transact()bento.functions.transfer(dai.address, admin, pool.address, deposit_amount).transact()pool.functions.mint(encode_abi(['address','uint256'],[admin, deposit_amount *100])).transact()
+Recommended Mitigation Steps
+Recommend to handleINIT_POOL_SUPPLYin uniswap-v2’s way. Determine an optimized parameter for the user would be a better UX design.

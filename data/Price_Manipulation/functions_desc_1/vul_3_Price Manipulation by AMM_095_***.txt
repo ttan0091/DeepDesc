@@ -1,0 +1,29 @@
+This code defines a public view function named latestRoundData, which is designed to fetch and process the latest round data from two external oracles (oracleA and oracleB). The function then calculates a weighted average price based on the data received from these oracles and the balances of underlying assets in a liquidity pool. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Return Values:
+    The function latestRoundData is declared as public and view, meaning it can be called externally and does not modify the state of the blockchain.
+    It overrides a function from a base contract (not shown in the snippet but implied by the override keyword).
+    It returns five values: roundId, answer, startedAt, updatedAt, and answeredInRound. These are standard return values for oracle data, though roundId and answeredInRound are not explicitly set in this function and will return default values (likely 0).
+
+2. Fetching Data from Oracles:
+    The function calls latestRoundData on oracleA and oracleB to get the latest price data for two assets. It discards some of the returned values using , (e.g., roundId and startedAt from each oracle).
+    It retrieves answerA and answerB (prices), and assetUpdatedAtA and assetUpdatedAtB (timestamps indicating when the prices were last updated).
+
+3. Price Calculation:
+    Converts answerA and answerB from int256 to uint256 to handle them as unsigned integers for further calculations.
+    Calculates a sqrtPriceX96 which is the square root of the ratio of priceA to priceB, adjusted by token decimals and shifted left by 96 bits. This is a common format in DeFi for representing prices, especially in AMM (Automated Market Maker) contexts.
+
+4. Fetching Pool Balances:
+    Calls getUnderlyingBalancesAtPrice on a pool object, passing sqrtPriceX96 to get the balances of the underlying assets (rA and rB).
+    Checks if either rA or rB is greater than zero to ensure there are valid balances. If not, it reverts with error code "C100".
+
+5. Total Supply Check:
+    Retrieves the total supply of tokens in the pool and checks if it is greater than or equal to 1e9. If not, it reverts with error code "C101".
+
+6. Weighted Average Calculation:
+    Computes a weighted average price using the prices from the oracles and the balances of the underlying assets in the pool. This is done by multiplying each price by its respective balance (adjusted by token decimals), summing these products, and then dividing by the total supply of tokens.
+
+7. Setting the updatedAt Timestamp:
+    Sets updatedAt to the earlier of assetUpdatedAtA and assetUpdatedAtB to indicate the most recent update time among the two oracles.
+
+This function is crucial for smart contracts that need to make decisions based on the latest market prices, especially in DeFi applications where accurate and timely price data is essential for operations like trading, lending, and collateral management.

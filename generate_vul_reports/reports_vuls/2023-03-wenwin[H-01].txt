@@ -1,0 +1,25 @@
+[H-01]LotteryMath.calculateNewProfitreturns wrong profit when there is no jackpot winner
+Submitted byCyfrin, also found byminhtrng,adriro,gogo,bin2chen,auditor0517,Yukti_Chinta, andanodaram
+https://github.com/code-423n4/2023-03-wenwin/blob/main/src/LotteryMath.sol#L50-L53
+https://github.com/code-423n4/2023-03-wenwin/blob/main/src/Lottery.sol#L216-L223
+https://github.com/code-423n4/2023-03-wenwin/blob/main/src/Lottery.sol#L238-L247
+Impact
+LotteryMath.calculateNewProfitreturns the wrong profit when there is no jackpot winner, and the library function is used when we updatecurrentNetProfitofLotterycontract.
+currentNetProfit=LotteryMath.calculateNewProfit(currentNetProfit,ticketsSold[drawFinalized],ticketPrice,jackpotWinners>0,fixedReward(selectionSize),expectedPayout);
+Lottery.currentNetProfitis used during reward calculation, so it can ruin the main functionality of this protocol.
+functiondrawRewardSize(uint128drawId,uint8winTier)privateviewreturns(uint256rewardSize) {returnLotteryMath.calculateReward(currentNetProfit,fixedReward(winTier),fixedReward(selectionSize),ticketsSold[drawId],winTier==selectionSize,expectedPayout);}
+Proof of Concept
+InLotteryMath.calculateNewProfit,expectedRewardsOutis calculated as follows:
+uint256expectedRewardsOut=jackpotWon?calculateReward(oldProfit,fixedJackpotSize,fixedJackpotSize,ticketsSold,true,expectedPayout):calculateMultiplier(calculateExcessPot(oldProfit,fixedJackpotSize),ticketsSold,expectedPayout)*ticketsSold*expectedPayout;
+The calculation is not correct when there is no jackpot winner. WhenjackpotWonis false,ticketsSold * expectedPayoutis the total payout in reward token, and then we need to apply a multiplier to the total payout, and the multiplier iscalculateMultiplier(calculateExcessPot(oldProfit, fixedJackpotSize), ticketsSold, expectedPayout).
+The calculation result isexpectedRewardsOut, and it is also in reward token, so we should usePercentageMathinstead of multiplying directly.
+For coded PoC, I added this function inLotteryMath.soland importedforge-std/console.solfor console log.
+functiontestCalculateNewProfit()public{int256oldProfit=0;uint256ticketsSold=1;uint256ticketPrice=5ether;uint256fixedJackpotSize=1_000_000e18;// don't affect the profit when oldProfit is 0, use arbitrary valueuint256expectedPayout=38e16;int256newProfit=LotteryMath.calculateNewProfit(oldProfit,ticketsSold,ticketPrice,false,fixedJackpotSize,expectedPayout);uint256TICKET_PRICE_TO_POT=70_000;uint256ticketsSalesToPot=PercentageMath.getPercentage(ticketsSold*ticketPrice,TICKET_PRICE_TO_POT);int256expectedProfit=oldProfit+int256(ticketsSalesToPot);uint256expectedRewardsOut=ticketsSold*expectedPayout;// full percent because oldProfit is 0expectedProfit-=int256(expectedRewardsOut);console.log("Calculated value (Decimal 15):");console.logInt(newProfit/1e15);// use decimal 15 for output purposeconsole.log("Expected value (Decimal 15):");console.logInt(expectedProfit/1e15);}
+The result is as follows:
+Calculated value (Decimal 15):-37996500Expected value (Decimal 15):3120
+Tools Used
+Foundry
+Recommended Mitigation Steps
+UsePercentageMathinstead of multiplying directly.
+uint256expectedRewardsOut=jackpotWon?calculateReward(oldProfit,fixedJackpotSize,fixedJackpotSize,ticketsSold,true,expectedPayout): (ticketsSold*expectedPayout).getPercentage(calculateMultiplier(calculateExcessPot(oldProfit,fixedJackpotSize),ticketsSold,expectedPayout))
+rand0c0des (Wenwin) confirmed

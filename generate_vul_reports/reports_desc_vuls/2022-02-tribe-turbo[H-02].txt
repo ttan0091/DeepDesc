@@ -1,0 +1,25 @@
+Type of vulnerability: Functionality Failure
+Cause of vulnerability: Lack of token transfer and approval before calling deposit and mint functions
+Execution process: When a user calls the deposit, mint, createSafeAndDeposit, and createSafeAndDepositAndBoost functions of the TurboRouter contract, the functions attempt to call the deposit and mint functions of the ERC4626 contract. However, since the user has not transferred tokens to the TurboRouter contract and approved the TurboSafe contract to use the tokens, the safeTransferFrom function in the ERC4626 contract fails, causing the entire transaction to revert.
+Vulnerable code:
+```solidity
+function deposit(IERC4626 safe, address to, uint256 amount, uint256 minSharesOut) public payable override authenticate(address(safe)) returns (uint256) {
+    return super.deposit(safe, to, amount, minSharesOut);
+}
+...
+function deposit(IERC4626 vault, address to, uint256 amount, uint256 minSharesOut) public payable virtual override returns (uint256 sharesOut) {
+    if ((sharesOut = vault.deposit(amount, to)) < minSharesOut) {
+        revert MinAmountError();
+    }
+}
+...
+function deposit(uint256 amount, address to) public virtual returns (uint256 shares) {
+    // Check for rounding error since we round down in previewDeposit.
+    require((shares = previewDeposit(amount)) != 0, "ZERO_SHARES");
+    // Need to transfer before minting or ERC777s could reenter.
+    asset.safeTransferFrom(msg.sender, address(this), amount);
+    _mint(to, shares);
+    emit Deposit(msg.sender, to, amount, shares);
+    afterDeposit(amount, shares);
+}
+```

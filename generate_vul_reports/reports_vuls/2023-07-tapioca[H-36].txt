@@ -1,0 +1,20 @@
+[H-36]twTAP.sol: Reward tokens stored in index 0 can be stolen
+Submitted bycarrotsmuggler, also found byKIntern_NA
+The functionclaimAndSendRewardscan be called to collect rewards accrued by the twTAP position. This function can only be called by theTapOFT.solcontract during a crosschain operation. Thus a user on chain A can callclaimRewardsand on chain B, the function_claimRewardswill be called and a bunch of parameters will be passed in that message.
+(,,addressto,uint256tokenID,IERC20[]memoryrewardTokens,IRewardClaimSendFromParams[]memoryrewardClaimSendParams) =abi.decode(_payload,(uint16,address,address,uint256,IERC20[],IRewardClaimSendFromParams[]));
+All these parameters passed here comes from the original lz payload sent by the user from chain A. Of note is the arrayrewardTokenswhich is a user inputted value.
+This function then calls the twtap.sol contract as shown below.
+trytwTap.claimAndSendRewards(tokenID,rewardTokens) {
+In the twTAP contract, the functionclaimAndSendRewardseventually calls_claimRewardsOn, the functionality of which is shown below.
+function_claimRewardsOn(uint256_tokenId,address_to,IERC20[]memory_rewardTokens)internal{uint256[]memoryamounts=claimable(_tokenId);unchecked{uint256len=_rewardTokens.length;for(uint256i=0;i<len; ) {uint256claimableIndex=rewardTokenIndex[_rewardTokens[i]];uint256amount=amounts[i];if(amount>0) {// Math is safe: `amount` calculated safely in `claimable()`claimed[_tokenId][claimableIndex] +=amount;rewardTokens[claimableIndex].safeTransfer(_to,amount);}++i;}}}
+Here we want to investigate a case where a user sends some random address in the arrayrewardTokens. We already showed that this value is set by the user, and the above quoted snippet receives the same value in the_rewardTokensvariable.
+In the for loop, the indexes are found. But ifrewardTokens[i]is a garbage address, the mappingrewardTokenIndexwill return the default value of 0 which will be stored inclaimableIndex. The arrayamountsstores the amounts of the different tokens that can be claimed by the user. But sinceclaimableIndexis now 0, thesafeTransferfunction in the end is always called on the tokenrewardTokens[0]. Thus a user can withdraw the rewardtoken in index 0 multiple times and in amounts based on the values stored in theamountsarray.
+Thus we have shown that a user can steal an unfair amount of tokens stored in the 0 index of therewardTokensarray variable in the twTAP.sol contract. This will mess up the reward distribution for all users, and can lead to an insolvent contract. Thus this is deemed a high severity issue.
+Proof of Concept
+The attack can be done in the following steps:
+Attacker callsclaimRewardson chain A. The attacker is assumed to have a valid position on chain B with pending rewards.The attacker passes an array of garbage addresses in therewardTokensparameter.The contract sends forth the message to the destination chain, where the twTAP contract is called to collect the rewards.As shown above, the reward token stored in index 0 is sent multiple times to the caller, which is theTapOFTcontract.In the TapOFT contract, the contract then sends all the collected rewards in the contract cross chain back to the attacker. Thus the tokens in index 0 were claimed and collected.
+Thus the attacker can claim an unfair number of tokens present in the 0th index. If this token is more valuable than the other rewward tokens, the attacker can profit from this exploit.
+Recommended Mitigation Steps
+Mitigation can be done by not using the 0th index. The zero index of therewardTokensarray intwTAP.sol, if left empty, will point to the zero address, and if an unknown address is encountered, the contract will try to claim the tokens from the zero address which will revert.
+This can be enforced by using the statementrewardTokens.push(address(0))in the constructor. However changes will need to be made on other operations in the contract which loops over this array to skip operations on this zero address now present in the array.
+0xRektora (Tapioca) confirmed via duplicate issue 1093

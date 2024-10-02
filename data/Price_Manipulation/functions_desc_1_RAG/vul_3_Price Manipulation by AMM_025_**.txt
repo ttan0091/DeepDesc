@@ -1,0 +1,34 @@
+This code defines a private view function named _peek, which retrieves the price of a token based on its base and kind from a specified source. The function returns both the price and the update time of the price.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    The function _peek is marked as private and view, meaning it can only be called internally by other functions within the same contract and does not modify the state of the blockchain.
+    It takes two parameters:
+      base (type bytes6): This likely represents the base currency or token.
+      kind (type bytes6): This specifies the type of price to be fetched, such as "rate" or "chi".
+
+2. Variable Initialization:
+    uint256 rawPrice;: This variable is initialized to store the raw price fetched from the source.
+
+3. Source Address Retrieval:
+    address source = sources[base][kind];: This line retrieves the address of the source from a mapping sources that maps base and kind to an address. This address is expected to be an interface to a token or a price oracle.
+    require(source != address(0), "Source not found");: This ensures that a valid source address is found. If not, the function reverts with the message "Source not found".
+
+4. Price Retrieval Based on Kind:
+    The function then checks the kind parameter to determine how to fetch the price:
+      If kind is "rate", it calls borrowIndex() on the CTokenInterface at the source address to get the raw price.
+      If kind is "chi", it calls exchangeRateStored() on the CTokenInterface at the source address to get the raw price.
+      If kind is neither "rate" nor "chi", the function reverts with the message "Unknown oracle type".
+
+5. Price Validation:
+    require(rawPrice > 0, "Compound price is zero");: This ensures that the fetched raw price is greater than zero. If not, the function reverts with the message "Compound price is zero".
+
+6. Price Scaling and Update Time:
+    price = rawPrice  SCALE_FACTOR;: The raw price is scaled by a constant SCALE_FACTOR to adjust its precision or format.
+    updateTime = block.timestamp;: The current block timestamp is assigned to updateTime, indicating when the price was last updated.
+
+7. Return Values:
+    The function returns two values: price and updateTime.
+
+This function is designed to fetch and scale prices from a specified source based on the type of price requested, ensuring that the source is valid and the price is nonzero. It is a crucial component for any smart contract that needs to handle or react to token prices accurately.

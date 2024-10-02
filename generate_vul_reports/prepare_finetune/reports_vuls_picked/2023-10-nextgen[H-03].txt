@@ -1,0 +1,20 @@
+Type of vulnerability: Denial of Service (DOS)
+Cause of vulnerability: Push-strategy for transferring assets to multiple bidders without a pull-strategy fallback
+Execution process: An adversary can create multiple small bids and use a contract to execute arbitrary code that always reverts, preventing the `claimAuction()` function from successfully transferring funds to other bidders
+Vulnerable code: 
+```solidity
+function claimAuction(uint256 _tokenid) public WinnerOrAdminRequired(_tokenid, this.claimAuction.selector) {
+    /// ...
+    for (uint256 i = 0; i < auctionInfoData[_tokenid].length; i++) {
+        if (auctionInfoData[_tokenid][i].bidder == highestBidder && auctionInfoData[_tokenid][i].bid == highestBid && auctionInfoData[_tokenid][i].status == true) {
+            IERC721(gencore).safeTransferFrom(ownerOfToken, highestBidder, _tokenid);
+            (bool success, ) = payable(owner()).call{value: highestBid}("");
+            emit ClaimAuction(owner(), _tokenid, success, highestBid);
+        } else if (auctionInfoData[_tokenid][i].status == true) {
+            (bool success, ) = payable(auctionInfoData[_tokenid][i].bidder).call{value: auctionInfoData[_tokenid][i].bid}("");
+            emit Refund(auctionInfoData[_tokenid][i].bidder, _tokenid, success, highestBid);
+        } else {
+        }
+    }
+}
+```

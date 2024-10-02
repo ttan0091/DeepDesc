@@ -1,0 +1,18 @@
+[H-01] Malicious users can provide liquidity on behalf of others to keep others in the liquidity cooldown
+Submitted by cccz, also found by 0x52
+In the AlgebraPool contract, when the user provides liquidity via the mint function, the lastLiquidityAddTimestamp is updated to the current time.
+(_position.liquidity, _position.lastLiquidityAddTimestamp) = (liquidityNext,liquidityNext > 0 ? (liquidityDelta > 0 ? _blockTimestamp() : lastLiquidityAddTimestamp) : 0);
+Later when the user removes the liquidity via burn function, the transaction will revert if the current time is less than lastLiquidityAddTimestamp + _liquidityCooldown.
+if (liquidityDelta < 0) {uint32 _liquidityCooldown = liquidityCooldown;if (_liquidityCooldown > 0) {require((_blockTimestamp() - lastLiquidityAddTimestamp) >= _liquidityCooldown);}}
+liquidityCooldown is max 1 day.However, in the mint function, users can provide liquidity on behalf of other users, which also means that malicious users can keep other users on liquidity cooldown forever by providing a little bit of liquidity on behalf of other users, thus preventing other users from removing liquidity.
+function mint(vladyan18address sender,address recipient,  // @audit: users can provide liquidity on behalf of other usersint24 bottomTick,int24 topTick,uint128 liquidityDesired,bytes calldata data)...(, int256 amount0Int, int256 amount1Int) = _updatePositionTicksAndFees(recipient, bottomTick, topTick, int256(liquidityActual).toInt128());
+Proof of Concept
+AlgebraPool.sol#L226-L231AlgebraPool.sol#L513-L523
+Recommended Mitigation Steps
+Consider allowing users to provide liquidity only for themselves, or setting liquidityCooldown to 0.
+vladyan18 (QuickSwap & StellaSwap) confirmed
+sameepsi (QuickSwap & StellaSwap) disagreed with severity and commented:
+This is a valid issue but the severity should be medium. This can be easily mitigated by simply setting up cool down period to 0.
+0xean (judge) commented:
+See comment onissue #83.Issue is valid and leads to locking of funds, High severity is warranted.  Turning cool down to 0 would work, but has other consequences for JIT liquidity.
+

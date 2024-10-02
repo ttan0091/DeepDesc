@@ -1,0 +1,27 @@
+Type of vulnerability: Re-entrancy Attack
+Cause of vulnerability: Lack of re-entrancy protection allowing multiple executions of the `crossSwapExactTokensForTokens` function during a single transaction.
+Execution process: 
+1. Attacker initiates a swap with a fake contract as a token pair.
+2. The fake contract manipulates the reserve values to inflate the output amount.
+3. The inflated amount is credited through `registerTrade`.
+4. The swap function is called again with manipulated values, allowing re-entrancy.
+5. During re-entrancy, the attacker performs a legitimate swap, bypassing checks due to the previous manipulation.
+6. The attacker is credited multiple times for the same transaction, leading to balance inflation.
+Vulnerable code: 
+```solidity
+function crossSwapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata pairs, address[] calldata tokens) external {
+    uint[] memory amounts = UniswapStyleLib.getAmountsOut(amountIn - fees, pairs, tokens);
+    registerTrade(amounts[amounts.length - 1]);
+    _swapExactT4T(amounts, amountOutMin, pairs, tokens);
+}
+
+function _swapExactT4T(uint[] memory amounts, uint amountOutMin, address[] memory pairs, address[] memory tokens) internal {
+    uint startingBalance = balanceOf(tokens[tokens.length - 1]);
+    for (uint i = 0; i < pairs.length; i++) {
+        IUniswapV2Pair pair = IUniswapV2Pair(pairs[i]);
+        pair.swap(amounts[i], amounts[i + 1], address(this), new bytes(0)); // Vulnerable to re-entrancy
+    }
+    uint endingBalance = balanceOf(tokens[tokens.length - 1]);
+    require(endingBalance >= startingBalance + amounts[amounts.length - 1], "Insufficient output");
+}
+```

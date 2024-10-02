@@ -1,0 +1,16 @@
+Type of vulnerability: Cross-Chain Interaction Failure
+Cause of vulnerability: Attempt to call a function on a non-existing market contract on a non-host chain
+Execution process: User triggers `Singularity.multiHopSellCollateral()` on host chain Arbitrum, which bridges collateral to Ethereum mainnet and attempts to call `getBorrowPartForAmount()` on a non-existing market, causing the transaction to revert and locking the collateral.
+Vulnerable code: 
+```solidity
+function leverageDownInternal(uint256 amount, IUSDOBase.ILeverageSwapData memory swapData, IUSDOBase.ILeverageExternalContractsData memory externalData, IUSDOBase.ILeverageLZData memory lzData, address leverageFor) public payable {
+    _unwrap(address(this), amount);
+    // swap to USDO
+    IERC20(erc20).approve(externalData.swapper, amount);
+    ISwapper.SwapData memory _swapperData = ISwapper(externalData.swapper).buildSwapData(erc20, swapData.tokenOut, amount, 0, false, false);
+    (uint256 amountOut, ) = ISwapper(externalData.swapper).swap(_swapperData, swapData.amountOutMin, address(this), swapData.data);
+    // @audit this call will fail as there is no market in destination chain
+    // repay
+    uint256 repayableAmount = IMagnetar(externalData.magnetar).getBorrowPartForAmount(externalData.srcMarket, amountOut);
+}
+```

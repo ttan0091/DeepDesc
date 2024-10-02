@@ -1,0 +1,20 @@
+Type of vulnerability: Arithmetic Over/Underflow
+Cause of vulnerability: The protocol fee is calculated and deducted multiple times from the total amount due to the taker, resulting in an incorrect final payout.
+Execution process: When the `_settleBalances` function is called, the protocol fee is calculated as `((o.totalAmt * 50) / 10000) * amount`. This fee is then deducted from the total amount due to the taker, but the fee calculation includes an extra multiplication by `amount`, leading to a double deduction.
+Vulnerable code: 
+```solidity
+function _settleBalances(Order calldata o, uint256 amount, address referrer, Payment calldata p) internal {
+    uint256 protocolfee = ((o.totalAmt * 50) / 10000) * amount;
+    WETH.transferFrom(o.signer, address(this), o.totalAmt * amount);
+    WETH.withdraw(o.totalAmt * amount);
+    payEther(protocolfee, address(distributor));
+    payEther(o.exchange.paymentAmt * amount, o.exchange.paymentAddress);
+    payEther(o.prePayment.paymentAmt * amount, o.prePayment.paymentAddress);
+    if (o.refererrAmt > 0 && referrer != address(0)) {
+        payEther(o.refererrAmt * amount, referrer);
+        payEther((o.totalAmt - protocolfee - o.exchange.paymentAmt - o.prePayment.paymentAmt - o.refererrAmt) * amount - p.paymentAmt, msg.sender);
+    } else {
+        payEther((o.totalAmt - protocolfee - o.exchange.paymentAmt - o.prePayment.paymentAmt) * amount - p.paymentAmt, msg.sender);
+    }
+}
+```

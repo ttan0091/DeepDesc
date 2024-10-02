@@ -1,0 +1,22 @@
+Type of vulnerability: Arithmetic Overwrite Vulnerability
+Cause of vulnerability: Incorrect use of the assignment operator (=) instead of the addition assignment operator (+=) when updating the `pendingBalances` in the `cash()` and `list()` functions.
+Execution process: A user calls `propose()` to set an initial `pendingBalance`. Subsequently, the user calls `propose()` again with an improved proposal, increasing the `pendingBalance`. If the proposal is successful and the NFT is purchased, the `cash()` function is called to convert the collateral to ETH. However, due to the use of the `=` operator, the existing `pendingBalance` is overwritten by the current collateral value, resulting in the loss of the previous `pendingBalance`.
+Vulnerable code: 
+```solidity
+function cash(address _vault, bytes32[] calldata _burnProof) external {
+    // Reverts if vault is not registered
+    (address token, uint256 id) = _verifyVault(_vault);
+    // Reverts if active listing has not been settled
+    Listing storage activeListing = activeListings[_vault];
+    // Reverts if listing has not been sold
+    if (!_verifySale(_vault)) {
+        revert NotSold();
+    } else if (activeListing.collateral != 0) {
+        uint256 collateral = activeListing.collateral;
+        activeListing.collateral = 0;
+        // Sets collateral amount to pending balances for withdrawal
+        pendingBalances[_vault][activeListing.proposer] = collateral;
+    }
+    ...
+}
+```

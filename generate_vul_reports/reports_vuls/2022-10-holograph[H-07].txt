@@ -1,0 +1,22 @@
+[H-07] Failed job can’t be recovered. NFT may be lost.
+Submitted by Chom, also found by 0x52, 0xA5DF, adriro, and ladboy233
+HolographOperator.sol#L329HolographOperator.sol#L419-L429
+functionexecuteJob(bytescalldatabridgeInRequestPayload)externalpayable{...delete_operatorJobs[hash];...tryHolographOperatorInterface(address(this)).nonRevertingBridgeCall{value:msg.value}(msg.sender,bridgeInRequestPayload){/// @dev do nothing}catch{_failedJobs[hash] =true;emitFailedOperatorJob(hash);}}
+First, it willdelete _operatorJobs[hash];to have it not replayable.
+Next, assumenonRevertingBridgeCallfailed. NFT won’t be minted and the catch block is entered.
+_failedJobs[hash]is set to true and event is emitted
+Notice that_operatorJobs[hash]has been deleted, so this job is not replayable. This mean NFT is lost forever since we can’t retry executeJob.
+Recommended Mitigation Steps
+Movedelete _operatorJobs[hash];to the end of function executeJob covered inif (!_failedJobs[hash])
+...if(!_failedJobs[hash])delete_operatorJobs[hash];...
+But this implementation is not safe. The selected operator may get slashed. Additionally, you may need to check_failedJobsflag to allow retry for only the selected operator.
+gzeon (judge) commented:
+While the use of non-blocking call is good to unstuck operator, consider making the failed job still executable by anyone (so the user can e.g. use a higher gas limit) to avoid lost fund. Kinda like how Arbitrum retryable ticket works. Can be high risk due to asset lost.
+Trust (warden) commented:
+I think it’s a design choice to make it not replayable. Sponsor discussed having a refund mechanism at the source chain, if we were to leave it replayable the refunding could lead to double mint attack.
+alexanderattar (Holograph) commented:
+This is a valid point and the desired code is planned but wasn’t implemented in time for the audit. We will add logic to handle this case.
+gzeon (judge) increased severity to High and commented:
+Since asset can be lost, I think it is fair to judge this as High risk.
+alexanderattar (Holograph) resolved and commented:
+We have a fix for this:https://github.com/holographxyz/holograph-protocol/pull/98/files#diff-552f4c851fa3089f9c8efd33a2f10681bc27743917bb63000a5d19d5b41e0d3f

@@ -1,0 +1,38 @@
+This code defines an external view function named getPriorVotes, which is designed to retrieve the number of votes an account had at a specific historical block number. This function is typically used in governance systems or token voting mechanisms to determine the voting power of an account at a past block.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    getPriorVotes(address account, uint blockNumber): This function takes two parameters: account (the address of the account whose votes are being queried) and blockNumber (the block number at which the votes are to be determined).
+    external: This keyword indicates that the function can only be called from outside the contract.
+    view: This keyword indicates that the function does not modify the state of the blockchain; it only reads data.
+    returns (uint256): The function returns a uint256 value, which represents the number of votes.
+
+2. Input Validation:
+    require(blockNumber < block.number, "CAKE::getPriorVotes: not yet determined");: This line checks if the requested block number is less than the current block number. If not, it throws an error with the message "CAKE::getPriorVotes: not yet determined". This ensures that the function is only called with valid historical block numbers.
+
+3. Checkpoint Count:
+    uint32 nCheckpoints = numCheckpoints[account];: This line retrieves the number of checkpoints (historical records of votes) for the specified account.
+
+4. Initial Check for No Checkpoints:
+    if (nCheckpoints == 0) { return 0; }: If the account has no checkpoints, the function returns 0, indicating that the account had no votes at any point.
+
+5. Check Most Recent Balance:
+    if (checkpoints[account][nCheckpoints  1].fromBlock <= blockNumber) { return checkpoints[account][nCheckpoints  1].votes; }: If the block number is greater than or equal to the block number of the most recent checkpoint, the function returns the votes from that most recent checkpoint.
+
+6. Check Implicit Zero Balance:
+    if (checkpoints[account][0].fromBlock > blockNumber) { return 0; }: If the block number is before the earliest checkpoint, the function returns 0, indicating that the account had no votes at that point.
+
+7. Binary Search for Checkpoint:
+    The function then performs a binary search to find the checkpoint that corresponds to the specified block number. This is done to efficiently locate the correct historical record of votes.
+    uint32 lower = 0; uint32 upper = nCheckpoints  1;: Initializes the lower and upper bounds for the binary search.
+    while (upper > lower) { ... }: The binary search loop continues until the upper bound is greater than the lower bound.
+    uint32 center = upper  (upper  lower) / 2;: Calculates the center point of the current search range, ensuring that the calculation avoids overflow.
+    Checkpoint memory cp = checkpoints[account][center];: Retrieves the checkpoint at the center point.
+    if (cp.fromBlock == blockNumber) { return cp.votes; }: If the checkpoint's block number matches the requested block number, the function returns the votes from that checkpoint.
+    else if (cp.fromBlock < blockNumber) { lower = center; } else { upper = center  1; }: Adjusts the search bounds based on whether the center checkpoint's block number is less than or greater than the requested block number.
+
+8. Return Final Result:
+    return checkpoints[account][lower].votes;: Once the binary search completes, the function returns the votes from the checkpoint at the lower bound, which is the closest checkpoint before or at the requested block number.
+
+This function is efficient and leverages binary search to quickly find the historical voting power of an account, making it suitable for use in decentralized governance systems where querying historical data is a common requirement.

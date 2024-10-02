@@ -1,0 +1,26 @@
+Type of vulnerability: Integer Underflow
+Cause of vulnerability: The unchecked block allows for arithmetic operations without checking for underflow, leading to the principal value being set to a very large number when the repayment amount exceeds the principal and accrued interest.
+Execution process: A borrower or lender calls the `SpigotedLine.useAndRepay` function with an amount that exceeds the principal and accrued interest. This causes the `credit.principal` to underflow, setting it to a very large number, which forces the line of credit into immediate liquidation.
+Vulnerable code: 
+```solidity
+function repay(ILineOfCredit.Credit memory credit, bytes32 id, uint256 amount) external returns (ILineOfCredit.Credit memory) {
+    unchecked {
+        if (amount <= credit.interestAccrued) {
+            credit.interestAccrued -= amount;
+            credit.interestRepaid += amount;
+            emit RepayInterest(id, amount);
+            return credit;
+        } else {
+            uint256 interest = credit.interestAccrued;
+            uint256 principalPayment = amount - interest;
+            // update individual credit line denominated in token
+            credit.principal -= principalPayment; // @audit-info potential underflow without an error due to the unchecked block
+            credit.interestRepaid += interest;
+            credit.interestAccrued = 0;
+            emit RepayInterest(id, interest);
+            emit RepayPrincipal(id, principalPayment);
+            return credit;
+        }
+    }
+}
+```

@@ -1,0 +1,36 @@
+Type of vulnerability: Initialization Failure
+
+Cause of vulnerability: The `time_weight` mapping for a newly added gauge is not initialized, causing its value to remain 0. This results in the `_get_weight` function iterating over old values without updating recent data, leading to a loss of voting power.
+
+Execution process: 
+1. A gauge is added without initializing `time_weight`.
+2. Users vote for the gauge, but `_get_weight` returns 0 because `time_weight` is still 0.
+3. The voting power is lost as the function iterates over old values without setting recent data.
+
+Vulnerable code: 
+```solidity
+function _get_weight(address _gauge_addr) private returns(uint256) {
+    uint256 t = time_weight[_gauge_addr];
+    if (t > 0) {
+        Point memory pt = points_weight[_gauge_addr][t];
+        for (uint256 i; i < 500; ++i) {
+            if (t > block.timestamp) break;
+            t += WEEK;
+            uint256 d_bias = pt.slope * WEEK;
+            if (pt.bias > d_bias) {
+                pt.bias -= d_bias;
+                uint256 d_slope = changes_weight[_gauge_addr][t];
+                pt.slope -= d_slope;
+            } else {
+                pt.bias = 0;
+                pt.slope = 0;
+            }
+            points_weight[_gauge_addr][t] = pt;
+            if (t > block.timestamp) time_weight[_gauge_addr] = t;
+        }
+        return pt.bias;
+    } else {
+        return 0;
+    }
+}
+```

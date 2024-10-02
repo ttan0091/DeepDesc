@@ -1,0 +1,26 @@
+Type of vulnerability: Token Blacklist Vulnerability
+Cause of vulnerability: The contract attempts to transfer tokens to a borrower who is on the token's blacklist, causing the transfer to revert and preventing the closing of the borrower's position.
+Execution process: When the borrower's position is closed either through active closure or forced liquidation, the contract attempts to refund the borrower with tokens that may be on a blacklist. If the borrower is on the blacklist, the `TransferHelper.safeTransfer` function will revert, causing the `_closePosition` function to fail and locking the LP's liquidity in the contract.
+Vulnerable code: 
+```solidity
+function _closePosition(DataStruct.ClosePositionParams calldata params, DataCache.ClosePositionCache memory cache, Lien.Info memory lien, address borrower) internal {
+    ...
+    if (lien.zeroForOne) {
+        cache.token0Owed = cache.token0Owed < cache.tokenToPremium ? cache.token0Owed : cache.tokenToPremium;
+        cache.token1Owed = cache.token1Owed < cache.tokenFromPremium ? cache.token1Owed : cache.tokenFromPremium;
+        Base.refundWithCheck(borrower, cache.tokenFrom, cache.collateralFrom + cache.tokenFromPremium, cache.amountSpent + cache.amountFromAdd + cache.token1Owed);
+        Base.refundWithCheck(borrower, cache.tokenTo, cache.amountReceived + cache.tokenToPremium, cache.amountToAdd + cache.token0Owed);
+    } else {
+        cache.token0Owed = cache.token0Owed < cache.tokenFromPremium ? cache.token0Owed : cache.tokenFromPremium;
+        cache.token1Owed = cache.token1Owed < cache.tokenToPremium ? cache.token1Owed : cache.tokenToPremium;
+        Base.refundWithCheck(borrower, cache.tokenFrom, cache.collateralFrom + cache.tokenFromPremium, cache.amountSpent + cache.amountFromAdd + cache.token0Owed);
+        Base.refundWithCheck(borrower, cache.tokenTo, cache.amountReceived + cache.tokenToPremium, cache.amountToAdd + cache.token1Owed);
+    }
+}
+
+function refund(address recipient, address token, uint256 amountExpected, uint256 amountActual) internal {
+    if (amountExpected > amountActual) {
+        TransferHelper.safeTransfer(token, recipient, amountExpected - amountActual);
+    }
+}
+```

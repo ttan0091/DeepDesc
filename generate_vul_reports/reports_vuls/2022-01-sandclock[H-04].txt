@@ -1,0 +1,8 @@
+[H-04] deposit() function is open to reentrancy attacks
+Submitted by jayjonah8, also found by bugwriter001, camden, cccz, cmichel, danb, defsec, Fitraldys, harleythedog, hickuphh3, jayjonah8, kenzo, leastwood, onewayfunction, pedroais, and WatchPug
+InVault.solthedeposit()function is left wide open to reentrancy attacks.  The function eventually calls\_createDeposit() => \_createClaim()which callsdepositors.mint()which will then mint an NFT.  When the NFT is minted the sender will receive a callback which can then be used to call thedeposit()function again before execution is finished.  An attacker can do this minting multiple NFT’s for themselves.claimers.mint()is also called in the same function which can also be used to call back into the deposit function before execution is complete.  Since there are several state updates before and after NFT’s are minted this can be used to further manipulate the protocol like withnewShareswhich is called before minting.  This is not counting what an attacker can do with cross function reentrancy entering into several other protocol functions (like withdraw) before code execution is complete further manipulating the system.
+Proof of Concept
+https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L160https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L470https://github.com/code-423n4/2022-01-sandclock/blob/main/sandclock/contracts/Vault.sol#L476
+Recommended Mitigation Steps
+Reentrancy guard modifiers should be placed on thedeposit(),withdraw()and all other important protocol functions to prevent devastating attacks.
+ryuheimat (Sandclock) confirmed

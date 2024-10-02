@@ -1,0 +1,36 @@
+[H-01] Attacker can call sweepRewardToken() whenbribesProcessor==0and reward funds will be lost because there is no check in sweepRewardToken() and _handleRewardTransfer() and _sendTokenToBribesProcessor()
+Submitted by unforgiven, also found by GimelSec, and zzzitron
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L107-L113
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L405-L413
+https://github.com/Badger-Finance/vested-aura/blob/d504684e4f9b56660a9e6c6dfb839dcebac3c174/contracts/MyStrategy.sol#L421-L425
+Impact
+If the value ofbribesProcessorwas0x0(the default is0x0andgovernance()can set to0x0) then attacker can callsweepRewardToken()make contract to send his total balance in attacker specified token to0x0address.
+Proof of Concept
+The default value ofbribesProcessoris0x0andgovernancecan set the value to0x0at any time. Rewards are stacking in contract address and they are supposed to send tobribesProcessor.
+This issweepRewardToken()and_handleRewardTransfer()and_sendTokenToBribesProcessor()code:
+/// @dev Function to move rewards that are not protected/// @notice Only not protected, moves the whole amount using _handleRewardTransfer/// @notice because token paths are hardcoded, this function is safe to be called by anyone/// @notice Will not notify the BRIBES_PROCESSOR as this could be triggered outside bribesfunction sweepRewardToken(address token) public nonReentrant {_onlyGovernanceOrStrategist();_onlyNotProtectedTokens(token);uint256 toSend = IERC20Upgradeable(token).balanceOf(address(this));_handleRewardTransfer(token, toSend);}function _handleRewardTransfer(address token, uint256 amount) internal {// NOTE: BADGER is emitted through the treeif (token == BADGER) {_sendBadgerToTree(amount);} else {// NOTE: All other tokens are sent to bribes processor_sendTokenToBribesProcessor(token, amount);}}function _sendTokenToBribesProcessor(address token, uint256 amount) internal {// TODO: Too many SLOADsIERC20Upgradeable(token).safeTransfer(address(bribesProcessor), amount);emit RewardsCollected(token, amount);}
+As you can see callingsweepRewardToken()eventually (sweepRewardToken() -> _handleRewardTransfer() -> _sendTokenToBribesProcessor()) would transfer reward funds tobribesProcessorand there is no check thatbribesProcessor!=0x0in execution follow. so attacker can callsweepRewardToken()whenbribesProcessoris0x0and contract will lose all reward tokens.
+Tools Used
+VIM
+Recommended Mitigation Steps
+Check the value ofbribesProcessorin_sendTokenToBribesProcessor().
+Alex the Entreprenerd (BadgerDAO) confirmed and commented:
+A transfer to address 0 would cause a loss, we should have a check or add a safe default (governance for example).Mitigated by adding a 0 check.
+jack-the-pug (judge) validated
+
+[H-02] auraBAL can be stuck into the Strategy contract
+Submitted by PumpkingWok, also found by kirk-baird, rfa, tabish, and unforgiven
+https://github.com/Badger-Finance/vested-aura/blob/v0.0.2/contracts/MyStrategy.sol#L220-L228
+https://github.com/Badger-Finance/vested-aura/blob/v0.0.2/contracts/MyStrategy.sol#L288
+Impact
+The internal_harvest()function defined is responsible to claim auraBAL from the aura locker and within the function it swaps them to auraBAL -> BAL/ETH BPT -> WETH -> AURA, finally it locks AURA to the locker to increase the position. For claiming auraBAL it callsLOCKER.getReward(address(this))and it calculates the tokes earned, checking the balance before and after the claiming.
+The function to get the rewards is public and any address can call it for the strategy address, and it will transfer all rewards tokens to the strategy, but in this scenario the auraBAL will remain in stuck into the contract, because they won’t be counted as auraBAL earned during the next_harvest(). Also they could not sweep because auraBAL is a protected token.
+Also, the aura Locker will be able to add other token as reward apart of auraBAL, but the harvest function won’t be able to manage them, so they will need to be sweep every time.
+The same scenario can happen during theclaimBribesFromHiddenHand()call, theIRewardDistributor.Claim[] calldata _claimspass as input parameters could be frontrunned, and another address can call thehiddenHandDistributor.claim(_claims)(except for ETH rewards) for the strategy address, and like during the_harvest()only the tokens received during the call will be counted as earned. However every token, except auraBAL can be sweep, but the_notifyBribesProcessor()may never be called.
+Proof of Concept
+At every_harvest()it checks the balance before the claim and after, to calculate the auraBAL earned, so every auraBAL transferred to the strategy address not during this call, won’t be swapped to AURA.
+Recommended Mitigation Steps
+Instead of calculating the balance before and after the claim, for bothharvest≠ andclaimBribesFromHiddenHand()`, the whole balance could be taken, directly after the claim.
+Alex the Entreprenerd (BadgerDAO) confirmed and commented:
+Mitigated by refactoring from a delta of balance to absolute balances
+

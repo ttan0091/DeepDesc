@@ -1,0 +1,67 @@
+[H-01] User can steal all rewards due to checkpoint after transfer
+Submitted by 0xDjango, also found by unforgiven
+StakerVault.sol#L112-L119
+I believe this to be a high severity vulnerability that is potentially included in the currently deployedStakerVault.solcontract also. The team will be contacted immediately following the submission of this report.
+InStakerVault.sol, the user checkpoints occur AFTER the balances are updated in thetransfer()function. The user checkpoints update the amount of rewards claimable by the user. Since their rewards will be updated after transfer, a user can send funds between their own accounts and repeatedly claim maximum rewards since the pool’s inception.
+In every actionable function excepttransfer()ofStakerVault.sol, a call toILpGauge(lpGauge).userCheckpoint()is correctly made BEFORE the action effects.
+Proof of Concept
+Assume a certain period of time has passed since the pool’s inception. For easy accounting, assumepoolStakedIntegralofLpGauge.solequals1. ThepoolStakedIntegralis used to keep track of the current reward rate.
+Steps:
+Account A stakes 1000 LP tokens.balances[A] += 1000In the samestakeFor()function,userCheckpoint()was already called so A will already haveperUserShare[A]set correctly based on their previously 0 balance and the currentpoolStakedIntegral.Account A can immediately send all balance to Account B viatransfer().Since the checkpoint occurs after the transfer, B’s balance will increase and thenperUserShare[B]will be updated. The calculation forperUserSharelooks as follows.
+perUserShare[user] += ((stakerVault.stakedAndActionLockedBalanceOf(user)).scaledMul((poolStakedIntegral_-perUserStakedIntegral[user])));
+Assuming Account B is new to the protocol, theirperUserStakedIntegral[user]will default to0.
+perUserShare[B] += 1000 * (1 - 0) = 1000
+B is able to callclaimRewards()and mint all 1000 reward tokens.B then callstransfer()and sends all 1000 staked tokens to Account C.Same calculation occurs, and C can claim all 1000 reward tokens.This process can be repeated until the contract is drained of reward tokens.
+Recommended Mitigation Steps
+InStakerVault.transfer(), move the call toILpGauge(lpGauge).userCheckpoint()to before the balances are updated.
+chase-manning (Backd) confirmed and resolved
+
+[H-02] functionlockFundsinTopUpActionLibrarycan cause serious fund lose. fee and Capped bypass. It’s not callingstakerVault.increaseActionLockedBalancewhen transfers stakes.
+Submitted by unforgiven
+TopUpAction.sol#L57-L65
+In function TopUpActionLibrary.lockFunds when transfers stakes from payer it doesn’t call stakerVault.increaseActionLockedBalance for that payer so stakerVault.actionLockedBalances[payer] is not get updated for payer and stakerVault.stakedAndActionLockedBalanceOf(payer) is going to show wrong value and any calculation based on this function is gonna be wrong which will cause fund lose and theft and some restriction bypasses.
+Proof of Concept
+When user wants to create a TopUpAction. so he deposit his funds to Pool and get LP token. then stake the LP token in StakerVault and use that stakes to create a TopUp position with function TopUpAction.register. This function transfer user stakes (locks user staks) and create his position.
+For transferring and locking user stakes it uses TopUpActionLibrary.lockFunds. function lockFunds transfers user stakes but don’t call stakerVault.increaseActionLockedBalance for the payer which cause that stakerVault.actionLockedBalances[payer] to get different values(not equal to position.depositTokenBalance).
+Function StakerVault.stakedAndActionLockedBalanceOf(account) uses stakerVault.actionLockedBalances[account] so it will return wrong value and any where in code that uses stakedAndActionLockedBalanceOf() is going to cause problems.
+three part of the codes uses stakerVault.stakedAndActionLockedBalanceOf():
+LiqudityPool.depositFor() for checking user total deposits to be less than depositCap.LiqudityPool._updateUserFeesOnDeposit() for updating user fee on new deposits.userCheckpoint() for calculating user rewards.attacker can use #1 and #2 to bypass high fee payment and max depositCap and #3 will cause users to lose
+rewards.
+The detail steps:1- user deposit fund to Pool and get LP token.2- user stakes LP token in StakerVault.3- user approve TopUpAction address to transfer his staks in StakerVault.3- user use all his stakes to create a position with TopUpAction.register() function.3.1- register() will call lockFunds to transfer and lock user stakes.3.2- lockFunds() will transfer user stakes with stakerVault.transferFrom() but don’t call stakerVault.increaseActionLockedBalance() so StakerVault.actionLockedBalances[user] will be zero.3.3- StakerVault.balance[useer] will be zero too because his stakes get transfers in 3.24- StakerVault.stakedAndActionLockedBalanceOf(user) will return zero (user has some locked stakes in TopUpAction but because of the bug calculation get out of sync)
+In this moment user will lose all the rewards that are minted in LpGauge. because userCheckpoint() use stakerVault.stakedAndActionLockedBalanceOf(user) for calculating rewards which is zero  and new rewards will be zero too.
+Attacker can use this process to bypass “max deposit Cap” and deposit any amount of assets he wants. because LiqudityPool.depositFor(address,uint256,uint256) uses stakedAndActionLockedBalanceOf to check user deposits which is zero so Attacker can deposit & stake & register to make his balance zero and repeat this and in the end reset his TopUp positions to get back his large stakes which are multiple time bigger than “max deposit Cap”
+Attacker can also use this process to bypass fee penalties for early withdraw. because LiqudityPool._updateUserFeesOnDeposit() to get user current balance use stakedAndActionLockedBalanceOf() which is zero. so the value of shareExisting variable become zero and newFeeRatio will be calculated based on feeOnDeposit which can be minFee if asset is already in wallet for some time.
+Tools Used
+VIM
+Recommended Mitigation Steps
+Add this line to TopUpActionLibrary.lockFunds() after stakerVault.transferFrom():
+stakerVault.increaseActionLockedBalance(payer, amountLeft);
+chase-manning (Backd) confirmed and resolved
+
+[H-03] Customers cannot betopUp()ed a second time
+Submitted by IllIllI
+CompoundHandler.sol#L71CompoundHandler.sol#L120AaveHandler.sol#L53TopUpAction.sol#L847
+OpenZeppelin’ssafeApprove()will revert if the account already is approved and the newsafeApprove()is done with a non-zero value.
+functionsafeApprove(IERC20token,addressspender,uint256value)internal{// safeApprove should only be called when setting an initial allowance,// or when resetting it to zero. To increase and decrease it, use// 'safeIncreaseAllowance' and 'safeDecreaseAllowance'require((value==0) || (token.allowance(address(this),spender) ==0),"SafeERC20: approve from non-zero to non-zero allowance");_callOptionalReturn(token,abi.encodeWithSelector(token.approve.selector,spender,value));}
+OpenZeppelin/SafeERC20.sol#L45-L58
+Impact
+Customers cannot be topped up a second time, which will cause them to be liquidated even though they think they’re protected.
+Proof of Concept
+There are multiple places wheresafeApprove()is called a second time without setting the value to zero first. The instances below are all related to topping up.
+Compound-specific top-ups will fail the second time around when approving thectokenagain:
+File:backd/contracts/actions/topup/handlers/CompoundHandler.sol#150functiontopUp(51bytes32account,52addressunderlying,53uint256amount,54bytesmemoryextra55       )externaloverridereturns(bool) {56boolrepayDebt=abi.decode(extra, (bool));57CTokenctoken=cTokenRegistry.fetchCToken(underlying);58uint256initialTokens=ctoken.balanceOf(address(this));5960addressaddr=account.addr();6162if(repayDebt) {63amount-=_repayAnyDebt(addr,underlying,amount,ctoken);64if(amount==0)returntrue;65}6667uint256err;68if(underlying==address(0)) {69err=ctoken.mint{value:amount}(amount);70}else{71IERC20(underlying).safeApprove(address(ctoken),amount);
+CompoundHandler.sol#L50-L71
+Compound-specific top-ups will also fail when trying to repay debt:
+File:backd/contracts/actions/topup/handlers/CompoundHandler.sol#262if(repayDebt) {63amount-=_repayAnyDebt(addr,underlying,amount,ctoken);64if(amount==0)returntrue;65}
+CompoundHandler.sol#L62-L65
+Aave-specific top-ups will fail for thelendingPool:
+File:backd/contracts/actions/topup/handlers/AaveHandler.sol#336functiontopUp(37bytes32account,38addressunderlying,39uint256amount,40bytesmemoryextra41       )externaloverridereturns(bool) {42boolrepayDebt=abi.decode(extra, (bool));43if(underlying==address(0)) {44weth.deposit{value:amount}();45underlying=address(weth);46}4748addressaddr=account.addr();4950DataTypes.ReserveDatamemoryreserve=lendingPool.getReserveData(underlying);51require(reserve.aTokenAddress!=address(0),Error.UNDERLYING_NOT_SUPPORTED);5253IERC20(underlying).safeApprove(address(lendingPool),amount);
+AaveHandler.sol#L36-L53
+TheTopUpActionitself fails for thefeeHandler:
+File:backd/contracts/actions/topup/TopUpAction.sol#4840function_payFees(841addresspayer,842addressbeneficiary,843uint256feeAmount,844addressdepositToken845       )internal{846addressfeeHandler=getFeeHandler();847IERC20(depositToken).safeApprove(feeHandler,feeAmount);
+TopUpAction.sol#L840-L847
+I’ve filed the other less-severe instances as a separate medium-severity issue, and flagged the remaining low-severity instances in my QA report.
+Recommended Mitigation Steps
+Always dosafeApprove(0)if the allowance is being changed, or usesafeIncreaseAllowance().
+chase-manning (Backd) confirmed and resolved
+

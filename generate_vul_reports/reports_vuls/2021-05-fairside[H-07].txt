@@ -1,0 +1,17 @@
+[H-07]ERC20ConvictionScore._updateConvictionScoreuses stale credit score forgovernanceDelta
+InERC20ConvictionScore._updateConvictionScore, when the user does not fulfill the governance criteria anymore, thegovernanceDeltais the old conviction score of the previous block.
+isGovernance[user] =false;governanceDelta=getPriorConvictionScore(user,block.number-1);
+The user could increase their conviction/governance score first (in the same block) and then lose their status in a second transaction. After which, the total governance conviction score would only be reduced by the previous score.
+** Example:**
+Block n - 10000: User is a governor and has a credit score of 1000, which was also contributed to theTOTAL_GOVERNANCE_SCOREBlock n:
+User updates their own conviction score using the publicupdateConvictionScorefunction, which increases the credit score by 5000 based on the accumulated time. The total governance credit score increased by 5000, making the user contribute 6000 credit score to governance in total.User transfers their whole balance away, the balance drops belowgovernanceMinimumBalance, and the user is not a governor anymore. ThegovernanceDeltaupdate of the transfer should be 6000 (user’s whole credit score), but it’s only1000because it takes the snapshot of block n - 1.
+In this way, theTOTAL_GOVERNANCE_SCOREscore can be inflated and, in the worst case, break the voting mechanism, as no proposals can reach the quorum (percentage oftotalVotes) anymore.
+Recommend using the current conviction store which should begovernanceDelta = checkpoints[user][userCheckpointsLength - 1].convictionScore.
+fairside-core (FairSide) confirmed but disagreed with severity:
+As with the other governance-related issues, this would once again cause dilution of all users and would not really be a viable attack vector. As such, I believe it is better suited for a medium severity (2) label.
+fairside-core (FairSide) disputed:
+This issue is actually quite deeper. When a transaction occurs in the same block, the logic paths within theifblock will not execute (due to time elapsed being 0), meaning that the conviction score will not be properly accounted for if I have a single normal transaction where I am still governance and consequently lose my governance in a second transaction. As such, the code needs to be adjusted to check governance eligibility outside of the if block as well (if no time has passed -> same block transaction).The code highlighted in the finding is actuallycorrect. The conviction score should be reduced by the previous blocks as the newly accrued conviction score was never accounted for in governance. The proposed solution would lead to more conviction being reduced than it should. However, the finding did point out something wrong, so not sure whether it should be nullified or not.I believe it should be awarded as it was on the right track to find the underlying issue!
+fairside-core (FairSide) re-confirmed:
+Fixed inPR#13.
+cemozerr (Judge) commented:
+Labeling this issue as valid because although it wasn’t 100% right on suggesting where the code was problematic, it did point out that the users could wrongfully transfer their whole balance and update their conviction score in the same block to keep their conviction score high, and then potentially do harmful things to the protocol by using their wrong conviction scores.

@@ -1,0 +1,33 @@
+This code defines a public function named stabilizeFlan, which is designed to maintain the stability of a token (referred to as Flan) by ensuring its value aligns with another token (presumably DAI, though the code refers to it as Flan hitting parity with Dai). The function is marked as override, indicating it overrides a function from a base contract, and it includes modifiers onlyLimbo and ensurePriceStability, which enforce certain access controls and preconditions before execution.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    public override onlyLimbo ensurePriceStability: This indicates that the function is publicly accessible, overrides a function from a base contract, and can only be called by an authorized address (due to onlyLimbo) and only if certain price stability conditions are met (due to ensurePriceStability).
+
+2. Initial SCX Balance Check:
+    uint256 localSCXBalance = IERC20(VARS.behodler).balanceOf(address(this));: This line retrieves the balance of SCX tokens held by the contract itself.
+    require((localSCXBalance  100) / rectangleOfFairness == 98, "EM");: This checks if the actual SCX balance matches the expected balance considering a 2% fee on SCX transfers. If not, the function reverts with the error message "EM".
+
+3. Adjusting for SCX Transfers:
+    rectangleOfFairness = localSCXBalance;: Since the balance check passed, the function updates rectangleOfFairness to the actual SCX balance.
+
+4. Calculating Desired Flan Balance:
+    uint256 existingSCXBalanceOnLP = IERC20(VARS.behodler).balanceOf(address(VARS.Flan_SCX_tokenPair));: Retrieves the current SCX balance in a liquidity pool (LP).
+    uint256 finalSCXBalanceOnLP = existingSCXBalanceOnLP + rectangleOfFairness;: Calculates the expected final SCX balance in the LP after adding the new SCX.
+    uint256 DesiredFinalFlanOnLP = (finalSCXBalanceOnLP  latestFlanQuotes[0].DaiScxSpotPrice) / EXA;: Computes the desired Flan balance in the LP based on the spot price of DAI per SCX.
+
+5. Minting Flan Tokens:
+    The function checks if the existing Flan balance in the LP is less than the desired balance.
+    If true, it calculates the amount of Flan to mint, considering a potential price boost overshoot.
+    FlanLike(VARS.flan).mint(pair, flanToMint);: Mints the calculated amount of Flan to the LP.
+    IERC20(VARS.behodler).transfer(pair, rectangleOfFairness);: Transfers the SCX tokens to the LP.
+    lpMinted = VARS.Flan_SCX_tokenPair.mint(VARS.blackHole);: Mints LP tokens and sends them to a designated address (black hole).
+
+6. Handling Excess Flan:
+    If the existing Flan balance is not less than the desired balance, it mints a minimum amount of Flan plus a small buffer.
+
+7. Resetting Quotes:
+    _zeroOutQuotes();: Resets any collected data from recent migrations to prevent future migrations from using outdated data.
+
+This function is crucial for maintaining the peg between Flan and DAI by adjusting the Flan supply based on the SCX balance in a liquidity pool, ensuring that the Flan token remains stable relative to DAI.

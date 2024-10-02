@@ -1,0 +1,22 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Lack of duplicate address check in the reward token array
+Execution process: An attacker passes an array of reward tokens with duplicate addresses, causing the contract to transfer the same reward token multiple times to the attacker.
+Vulnerable code: 
+```solidity
+function _claimRewardsOn(uint256 _tokenId, address _to, IERC20[] memory _rewardTokens) internal {
+    uint256[] memory amounts = claimable(_tokenId);
+    unchecked {
+        uint256 len = _rewardTokens.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 claimableIndex = rewardTokenIndex[_rewardTokens[i]];
+            uint256 amount = amounts[i];
+            if (amount > 0) {
+                // Math is safe: `amount` calculated safely in `claimable()`
+                claimed[_tokenId][claimableIndex] += amount;
+                rewardTokens[claimableIndex].safeTransfer(_to, amount);
+            }
+            ++i;
+        }
+    }
+}
+```

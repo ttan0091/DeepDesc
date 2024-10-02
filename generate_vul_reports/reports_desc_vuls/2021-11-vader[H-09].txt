@@ -1,0 +1,18 @@
+Type of vulnerability: Incorrect Calculation of IL Protection
+Cause of vulnerability: The contract incorrectly assumes a 1:1 exchange rate between USDV and VADER when calculating the amount of IL protection to be paid out.
+Execution process: When an LP experiences IL, the contract calculates the loss in USDV but pays out the equivalent amount in VADER without considering the actual exchange rate between USDV and VADER.
+Vulnerable code: 
+```solidity
+// From VaderMath.calculateLoss
+function calculateLoss(uint256 amount0, uint256 amount1, uint256 reserve0, uint256 reserve1) internal pure returns (uint256) {
+    uint256 loss0 = amount0 > reserve0 ? amount0 - reserve0 : 0;
+    uint256 loss1 = amount1 > reserve1 ? amount1 - reserve1 : 0;
+    return loss0 + loss1;
+}
+
+// From VaderPoolV2
+function _handleILProtection(address member, uint256 amount) internal {
+    uint256 loss = VaderMath.calculateLoss(amount0, amount1, reserve0, reserve1);
+    VaderReserve.payout(member, loss); // Pays out loss in VADER without considering the exchange rate
+}
+```

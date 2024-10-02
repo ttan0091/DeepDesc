@@ -1,0 +1,21 @@
+[H-09] Potential DOS in Contracts InheritingUUPSUpgradeable.sol
+Submitted by leastwood
+There are a number of contracts which inheritUUPSUpgradeable.sol, namely;GovernanceAction.sol,PauseRouter.solandNoteERC20.sol.
+All these contracts are deployed using a proxy pattern whereby the implementation contract is used by the proxy contract for all its logic. The proxy contract will make delegate calls to the implementation contract. This helps to facilitate future upgrades by pointing the proxy contract to a new and upgraded implementation contract.
+However, if the implementation contract is left uninitialized, it is possible for any user to gain ownership of theonlyOwnerrole in the implementation contract forNoteERC20.sol. Once the user has ownership they are able to perform an upgrade of the implementation contract’s logic contract and delegate call into any arbitrary contract, allowing them to self-destruct the proxy’s implementation contract. Consequently, this will prevent allNoteERC20.solinteractions until a new implementation contract is deployed.
+Initial information about this issue was foundhere.
+Consider the following scenario:
+Notional finance deploys their contracts using their deployment scripts. These deployment scripts leave the implementation contracts uninitialized. Specifically the contract in question isNoteERC20.sol.This allows any arbitrary user to callinitialize()on theNoteERC20.solimplementation contract.Once a user has gained control overNoteERC20.sol’s implementation contract, they can bypass the_authorizeUpgradecheck used to restrict upgrades to theonlyOwnerrole.The malicious user then callsUUPSUpgradeable.upgradeToAndCall()shownherewhich in turn callsthisfunction. The new implementation contract then points to their own contract containing a self-destruct call in its fallback function.As a result, the implementation contract will be self-destructed due to the user-controlled delegate call shownhere, preventing all future calls to theNoteERC20.solproxy contract until a new implementation contract has been deployed.
+Recommend considering initializing the implementation contract forNoteERC20.soland checking the correct permissions before deploying the proxy contract or performing any contract upgrades. This will help to ensure the implementation contract cannot be self-destructed.
+jeffywu (Notional) acknowledged and disagreed with severity:
+Acknowledged, I don’t think this should be categorized high risk because the worst case is a denial of service and a redeployment of the ERC20 contract. As it stands, we’ve already successfully deployed our ERC20 contract so this is a non-issue.I would categorize as0 (Non-critical)
+adamavenir (organizer) commented:
+Warden leastwood added this proof of concept to illustrate the vulnerabilityhttps://gist.github.com/leastwood/b23d9e975883c817780116c2ceb785b8
+jeffywu (Notional) commented:
+Ok I retract my previous statement, I misread the issue description. Up to you guys but do you want to pay out a full amount to someone who is reporting issues discovered elsewhere? OZ has already called initialize on our deployed contract for us.
+adamavenir (organizer) commented:
+@jeffywu (Notional) I think the question is whether the issue is valid based on the original code base. Given your initial response and change after his proof of concept, my read was there was value here in what he reported. Is that a correct understanding?
+jeffywu (Notional) commented:
+There was value added here but perhaps not at the same level as the other high risk issues.
+adamavenir (organizer) commented:
+@jeffywu (Notional) Thanks for the input. As per our rules, awards are determined strictly based on the judge’s assessment of the validity and severity, so we’ll see how our judge chooses to score this.

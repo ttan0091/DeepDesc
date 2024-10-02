@@ -1,0 +1,21 @@
+This code defines a public constant function named balanceOfAt, which is used to retrieve the balance of a specific owner at a given block number. This function is particularly useful for querying historical balances of an account in a blockchain where token balances can change over time.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature:
+    balanceOfAt(address _owner, uint _blockNumber): This function takes two parameters: _owner, which is the address of the token holder, and _blockNumber, which is the block number at which the balance is to be queried.
+    public constant returns (uint): The function is marked as public, meaning it can be called from any contract or externally. It is also marked as constant, indicating that it does not modify the state of the blockchain but only reads data. The function returns a uint, which represents the balance of the owner at the specified block number.
+
+2. Initial Check for No Historical Data:
+    The function first checks if there are no historical balances recorded for the _owner (balances[_owner].length == 0) or if the earliest recorded balance for the _owner starts after the specified _blockNumber (balances[_owner][0].fromBlock > _blockNumber).
+    If either of these conditions is true, it means there is no direct historical data available for the _owner at the specified block number.
+
+3. Fallback to Parent Token:
+    If the above condition is met, the function checks if there is a parentToken (address(parentToken) != 0). If a parentToken exists, it recursively calls the balanceOfAt function of the parentToken to get the balance of the _owner at the minimum of _blockNumber and parentSnapShotBlock. This is because the initial balance of the token might be inherited from its parent token.
+    If there is no parentToken, the function simply returns 0, indicating that the _owner had no balance at the specified block number.
+
+4. Normal Situation Handling:
+    If the initial check does not find any issues, the function proceeds to retrieve the balance directly from the historical data stored in balances[_owner].
+    It calls another function getValueAt(balances[_owner], _blockNumber) to get the balance at the specified block number. This function getValueAt is assumed to be defined elsewhere in the contract and is responsible for interpolating or finding the exact balance from the historical snapshots.
+
+In summary, the balanceOfAt function provides a mechanism to query historical balances of token holders by either directly accessing stored historical data or, if necessary, falling back to querying a parent token's historical data. This ensures that even if historical data for a token is missing or incomplete, the function can still provide accurate balance information by leveraging related tokens' data.

@@ -1,0 +1,36 @@
+[H-03] Migration: no check that user-suppliedproposalIdandvaultmatch
+Submitted by kenzo, also found by 0x1f8b, bin2chen, codexploder, dipp, minhtrng, and smiling_heretic
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L111
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L124
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L143
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L157
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L164
+Vulnerability Details
+In Migration, when joining or leaving a migration proposal, Fractional does not check whether the user suppliedproposalIdandvaultmatch the actual vault that the proposal belongs to.
+This allows the user to trick the accounting.
+Impact
+Loss of funds for users.
+Malicious users can withdraw tokens from proposals which have not been committed yet.
+Proof of Concept
+Let’s say Vault A’s FERC1155 token is called TOKEN.
+Alice has deposited 100 TOKEN in Migration to Vault A on proposal ID 1.
+Now Malaclypse creates Vault B with token ERIS as FERC1155 and mints 100 tokens to himself.
+He then calls Migration’sjoinwith amount as 100, Vault B asvault, proposal ID as 1.
+The functionwill getERIS as the token to deposit.
+Itwill pullthe ERIS from Mal.
+And now for the problem - itwill setthe following variable:
+userProposalFractions[_proposalId][msg.sender] += _amount;
+Notice that this does not correspond to the vault number.
+Now, Mal will call theleavefunction, this time with Vault A address and proposal ID 1.
+The functionwill getthe token to send from the vault as TOKEN.
+Itwill getthe amount to withdraw fromuserProposalFractions[_proposalId][msg.sender], which as we saw previously will be 100.
+It willdeductthis amount frommigrationInfo[_vault][_proposalId], which won’t revert as Alice deposited 100 to this vault and proposal.
+And finallyit will send100 TOKENs to Mal - although he deposited ERIS.
+Mal received Alice’s valuable tokens.
+Recommended Mitigation Steps
+I think that one option would be to save for each proposal which vault it corresponds to.
+Then you can verify that user supplies a matching vault-proposal pair, or he can even just supply proposal and the contract will get the vault from that.
+Another solution would be to haveuserProposalFractionssave the relevant vault also, not just a general proposal id.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+The warden’s POC shows how an attacker can effectively steal tokens by creating a migration for a new vault with worthless tokens and reusing an existingproposalId, then withdrawing valuable tokens from the original proposal. I agree this is a High risk issue.

@@ -1,0 +1,27 @@
+This code defines an external function named permit, which is designed to allow a token holder to grant approval to a spender without the need for an additional onchain transaction. This function is typically used in ERC20 token contracts to enable metatransactions, where the approval can be signed offchain and then submitted to the blockchain to update the allowance.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Parameters:
+    target: The address of the token owner who is granting the approval.
+    spender: The address of the account that is being granted approval to spend the token owner's funds.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which the permit is no longer valid.
+    v, r, s: These are components of an ECDSA signature that verify the token owner's consent to the permit.
+
+2. Time Validity Check:
+    The function first checks if the current block timestamp (block.timestamp) is less than or equal to the deadline. If the permit has expired (i.e., the current time is after the deadline), the function reverts with the message "AnyswapV3ERC20: Expired permit".
+
+3. Hash Calculation:
+    The function calculates a hash (hashStruct) of the structured data that includes the type hash (PERMIT_TYPEHASH), the target, spender, value, the current nonce of the target (which is incremented after use to prevent replay attacks), and the deadline. This hash is used to verify the signature.
+
+4. Signature Verification:
+    The function then verifies the signature by checking if it matches the EIP712 standard or a personal sign standard. This is done using two helper functions: verifyEIP712 and verifyPersonalSign. If either verification passes, it means the signature is valid and the token owner indeed intended to grant this permit.
+
+5. Approval Update:
+    If the signature is valid, the function updates the allowance mapping to reflect the new approval amount (value) for the spender by the target.
+
+6. Event Emission:
+    Finally, the function emits an Approval event to notify the blockchain that a new approval has been set. This event includes the target, spender, and value.
+
+This function is crucial for enhancing the usability of ERC20 tokens by reducing the need for multiple onchain transactions for approvals, thereby saving gas fees and improving the user experience. However, it is important to ensure that the signature verification process is robust to prevent unauthorized approvals.

@@ -1,0 +1,13 @@
+Type of vulnerability: Incorrect Address Handling
+Cause of vulnerability: The `from` address used for refunds is incorrectly set to the address of the `DecentBridgeAdapter` on the source chain, rather than the actual user's address on the destination chain.
+Execution process: When a cross-chain transaction fails, the refund is issued to the `from` address, which is incorrectly set to the `DecentBridgeAdapter` address on the source chain. This results in the funds being sent to a random or incorrect address, leading to permanent loss of funds.
+Vulnerable code: 
+```solidity
+function _executeEth(address from, address target, uint256 amount, bytes memory callPayload) private {
+    weth.withdraw(amount);
+    (bool success, ) = target.call{value: amount}(callPayload);
+    if (!success) {
+        payable(from).transfer(amount); // @audit wrong address as it uses the source address, not destination
+    }
+}
+```

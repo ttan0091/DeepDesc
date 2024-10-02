@@ -1,0 +1,19 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: The `burnFlashGovernanceAsset` function incorrectly resets a user’s `spendingFlashDecision` to the default configuration, allowing the user to bypass the lock on their assets and potentially steal assets locked by other users.
+Execution process: 
+1. An attacker (Alice) executes a malicious flash governance decision, locking her assets in the `FlashGovernanceArbiter` contract.
+2. The community disagrees with Alice’s decision and calls `burnFlashGovernanceAsset` to burn her locked assets.
+3. The `burnFlashGovernanceAsset` function resets Alice’s `spendingFlashDecision` to the default config.
+4. A benign user (Bob) executes another flash governance decision, locking his assets in the contract.
+5. Alice calls `withdrawGovernanceAsset` to withdraw Bob’s locked asset, as her `spendingFlashDecision` being reset allows her to bypass the lock condition.
+Vulnerable code: 
+```solidity
+// Line 134 in DAO/FlashGovernanceArbiter.sol
+pendingFlashDecision[targetContract][user] = FlashGovernanceConfig({
+    unlockTime: 0,
+    maxAmount: 0
+});
+
+// Line 146 in DAO/FlashGovernanceArbiter.sol
+require(unlockTime < block.timestamp, "Flash governance asset still locked");
+```

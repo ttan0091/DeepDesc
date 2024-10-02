@@ -1,0 +1,23 @@
+[H-09] GroupBuy can be drained of all ETH.
+Submitted byTrust, also found byLambda
+purchase()in GroupBuy faciilitates the purchasing of an NFT after enough contributions were gathered. Another report titled“Attacker can steal the amount collected so far in the GroupBuy for NFT purchase” describes a high impact bug in purchase. It is advised to read that first for context.
+Additionally,purchase()is vulnerable to a re-entrancy exploit which can bechainedornot chainedto the\_marketissue to stealthe entireETH stored in GroupBuy, rather than being capped tominReservePrices[_poolId] * filledQuantities[_poolId].
+Attacker may take control of execution using this call:
+// Executes purchase order transaction through market buyer contract and deploys new vaultaddress vault = IMarketBuyer(_market).execute{value: _price}(_purchaseOrder);
+It could occur either by exploiting the unvalidated\_marketvulnerability , or by abusing an existing market that uses a user address in\_purchaseOrder.
+There is no re-entrancy protection inpurchase()call:
+function purchase(uint256 _poolId,address _market,address _nftContract,uint256 _tokenId,uint256 _price,bytes memory _purchaseOrder,bytes32[] memory _purchaseProof) external {
+\_verifyUnsuccessfulState()needs to not revert for purchase call. It checks the pool.success flag:if (pool.success || block.timestamp > pool.terminationPeriod) revert InvalidState();
+However, success is only set as the last thing inpurchase():
+// Stores mapping value of poolId to newly deployed vaultpoolToVault[_poolId] = vault;// Sets pool state to successfulpoolInfo[_poolId].success = true;// Emits event for purchasing NFT at given priceemit Purchase(_poolId, vault, _nftContract, _tokenId, _price);}
+Therefore, attacker can re-enter purchase() function multiple times, each time extracting the maximum allowed price. If attacker uses the controlled\_marketexploit, the function will return the current NFT owner, so when all the functions unwind they will keep setting success to true and exit nicely.
+Impact
+GroupBuy can be drained of all ETH.
+Proof of Concept
+GroupBuy holds 1500 ETH, from various bidsmaximum allowed price (minReservePrices[_poolId] * filledQuantities[_poolId]) is 50 * 20 = 1000 ETHpurchase(1000 ETH) is calledGroupBuy sends attacker 1000 ETH and callsexecute()execute()calls purchase(500ETH)GroupBuy sends attacker 500 ETH and callsexecute()execute returns NFT owner addressGroupBuy sees returned address is NFT owner. Marks success and returnsexecute returns NFT owner addressGroupBuy sees returned address is NFT owner. Marks success and returnsAttacker is left with 1500 ETH. Previous exploit alone can only net 1000ETH. Additionally, this exploit can be chained to any trusted MarketBuyer which passes control to user for purchasing and storing in vault, and then returns a valid vault.
+Recommended Mitigation Steps
+Add a re-entrancy guard topurchase()function. Also, change success variable before performing external contract calls.
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Instead of addingre-entrancytag topurchasefunction, pool state simply needs to be updated tosuccessbefore execution.In regards to:or by abusing an existing market that uses a user address in _purchaseOrder.This is not considered an issue since users will most likely NOT contribute to a pool where they are not familiar with the NFT and / or contract. Since the NFT contract is set when the pool is created, it should not matter whether the contract is malicious or is for an existing market that uses a user address, the pool will just be disregarded.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/201Status:Mitigation confirmed bygzeon,IllIllI, andLambda.

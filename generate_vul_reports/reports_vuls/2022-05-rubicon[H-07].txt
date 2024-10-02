@@ -1,0 +1,16 @@
+[H-07] RubiconRouter.swapEntireBalance() doesn’t handle the slippage check properly
+Submitted by Ruhum, also found by IllIllI, berndartmueller, eccentricexit, blackscale, and hansfriese
+TheswapEntireBalance()function allows the user to pass abuy_amt_minvalue which is the minimum number of tokens they should receive from the swap. But, the function doesn’t pass the value to the underlyingswap()function. Thus, the user’s min value will be ignored. Since that will result in unexpected outcomes where user funds might be lost, I rate this issue as HIGH.
+Proof of Concept
+swapEntireBalance():
+functionswapEntireBalance(uint256buy_amt_min,address[]calldataroute,// First address is what is being payed, Last address is what is being boughtuint256expectedMarketFeeBPS)externalreturns(uint256) {//swaps msg.sender entire balance in the tradeuint256maxAmount=ERC20(route[0]).balanceOf(msg.sender);ERC20(route[0]).transferFrom(msg.sender,address(this),maxAmount// Account for expected fee);return_swap(maxAmount,maxAmount.sub(buy_amt_min.mul(expectedMarketFeeBPS).div(10000)),//account for feeroute,expectedMarketFeeBPS,msg.sender);}
+The second parameter of the_swap()call should be the min out value. InsteadmaxAmount.sub(buy_amt_min.mul(expectedMarketFeeBPS).div(10000))is used.
+Example:
+amount=100buy_amt_min=99expectedMarketFeeBPS=500// 5%actualbuy_amy_min=100- (99* (500/10000)) =95.05
+So instead of using99the function uses95.05which could result in the user receiving fewer tokens than they expected.
+Recommended Mitigation Steps
+Passbuy_amt_mindirectly to_swap().
+bghughes (Rubicon) marked as duplicate:
+Duplicate of#104.
+HickupHH3 (judge) commented:
+Not a duplicate. This has to do with applying a fee onbuy_amt_mininstead of passing the actual value directly. Lower slippage tolerance means potential loss of funds, hence the high severity.

@@ -1,0 +1,27 @@
+Type of vulnerability: Creator-driven Revenue Theft
+Cause of vulnerability: Misuse of royalty recipient information to override sale revenue distribution
+Execution process: A creator updates the Royalty Registry to include the seller as a royalty recipient, causing the sale price minus fees to be redirected to the creator instead of the owner.
+Vulnerable code: 
+```solidity
+if(isCreator && !_nftContractToTokenIdToFirstSaleCompleted[nftContract][tokenId]) {
+    fee = PRIMARY_FOUNDATION_FEE_BASIS_POINTS;
+} else {
+    fee = SECONDARY_FOUNDATION_FEE_BASIS_POINTS;
+}
+foundationFee = (price * fee) / BASIS_POINTS;
+if(creatorRecipients.length > 0) {
+    if(isCreator) {
+        // When sold by the creator, all revenue is split if applicable.
+        creatorRev = price - foundationFee;
+    } else {
+        // Rounding favors the owner first, then creator, and foundation last.
+        creatorRev = (price * CREATOR_ROYALTY_BASIS_POINTS) / BASIS_POINTS;
+        ownerRevTo = seller;
+        ownerRev = price - foundationFee - creatorRev;
+    }
+} else {
+    // No royalty recipients found.
+    ownerRevTo = seller;
+    ownerRev = price - foundationFee;
+}
+```

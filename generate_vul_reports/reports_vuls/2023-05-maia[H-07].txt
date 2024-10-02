@@ -1,0 +1,18 @@
+[H-07]redeem()inbeforeRedeemis using the wrong owner parameter
+Submitted bybin2chen
+Using the wrong owner parameter can cause users to lose rewards.
+Proof of Concept
+InTalosStrategyStaked.sol, if the user’sshareshave changed, we need to callflywheel.accrue()first, which will accruerewardsand update the correspondinguserIndex. This way, we can ensure the accuracy ofrewards. So we will callflywheel.accrue()beforebeforeDeposit/beforeRedeem/transfer etc.
+Takeredeem()as an example, the code is as follows:
+contractTalosStrategyStakedisTalosStrategySimple,ITalosStrategyStaked{...functionbeforeRedeem(uint256_tokenId,address_owner)internaloverride{_earnFees(_tokenId);@>flywheel.accrue(_owner);}
+But whenbeforeRedeem()is called with the wrong owner passed in. Theredeem()code is as follows:
+functionredeem(uint256shares,uint256amount0Min,uint256amount1Min,addressreceiver,address_owner)publicvirtualoverridenonReentrantcheckDeviationreturns(uint256amount0,uint256amount1){...if(msg.sender!=_owner) {uint256allowed=allowance[_owner][msg.sender];// Saves gas for limited approvals.if(allowed!=type(uint256).max)allowance[_owner][msg.sender] =allowed-shares;}if(shares==0)revertRedeemingZeroShares();if(receiver==address(0))revertReceiverIsZeroAddress();uint256_tokenId=tokenId;@>beforeRedeem(_tokenId,receiver);INonfungiblePositionManager_nonfungiblePositionManager=nonfungiblePositionManager;// Saves an extra SLOAD{uint128liquidityToDecrease=uint128((liquidity*shares) /totalSupply);(amount0,amount1) =_nonfungiblePositionManager.decreaseLiquidity(INonfungiblePositionManager.DecreaseLiquidityParams({tokenId:_tokenId,liquidity:liquidityToDecrease,amount0Min:amount0Min,amount1Min:amount1Min,deadline:block.timestamp}));if(amount0==0&&amount1==0)revertAmountsAreZero();@>_burn(_owner,shares);liquidity-=liquidityToDecrease;}
+From the above code, we see that the parameter is thereceiver, but the person whose shares are burned is_owner.
+We need to accrue_owner, notreceiver. This leads to a direct reduction of the user’s shares withoutaccrue, and the user loses the corresponding rewards.
+Recommended Mitigation Steps
+functionredeem(uint256shares,uint256amount0Min,uint256amount1Min,addressreceiver,address_owner)publicvirtualoverridenonReentrantcheckDeviationreturns(uint256amount0,uint256amount1){if(msg.sender!=_owner) {uint256allowed=allowance[_owner][msg.sender];// Saves gas for limited approvals.if(allowed!=type(uint256).max)allowance[_owner][msg.sender] =allowed-shares;}if(shares==0)revertRedeemingZeroShares();if(receiver==address(0))revertReceiverIsZeroAddress();uint256_tokenId=tokenId;-beforeRedeem(_tokenId,receiver);+beforeRedeem(_tokenId,_owner);
+Assessed type
+Context
+0xLightt (Maia) confirmed
+0xLightt (Maia) commented:
+Addressedhere.

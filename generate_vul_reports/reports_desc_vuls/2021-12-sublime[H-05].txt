@@ -1,0 +1,26 @@
+Type of vulnerability: Rebase Token Mismanagement
+
+Cause of vulnerability: The contract incorrectly handles rebasing tokens by caching the share amount statically, which does not account for the rebase adjustments over time.
+
+Execution process:
+1. User deposits 1000 DAI, receiving 1000 aDAI shares which are cached.
+2. Over time, Aave accrues interest, increasing the aDAI balance.
+3. When the user withdraws their cached 1000 aDAI shares, they receive only the initial deposit amount (1000 DAI), missing out on the accrued interest.
+
+Vulnerable code:
+```solidity
+function deposit(uint256 _amount, address _token, address _strategy, address _to) external payable override nonReentrant returns (uint256) {
+    require(_to != address(0), 'SavingsAccount::deposit receiver address should not be zero address');
+    uint256 _sharesReceived = _deposit(_amount, _token, _strategy);
+    balanceInShares[_to][_token][_strategy] = balanceInShares[_to][_token][_strategy].add(_sharesReceived);
+    emit Deposited(_to, _sharesReceived, _token, _strategy);
+    return _sharesReceived;
+}
+
+function getTokensForShares(uint256 shares, address asset) public view override returns (uint256 amount) {
+    if (shares == 0) return 0;
+    address aToken = liquidityToken(asset);
+    ( , , , , , , , uint256 liquidityIndex, , ) = IProtocolDataProvider(protocolDataProvider).getReserveData(asset);
+    amount = IScaledBalanceToken(aToken).scaledBalanceOf(address(this)).mul(liquidityIndex).mul(shares).div(IERC20(aToken).balanceOf(address(this)));
+}
+```

@@ -1,0 +1,23 @@
+[H-40]BalancerStrategy.sol:_withdrawwithdraws insufficient tokens
+Submitted bycarrotsmuggler, also found bykaden,n1punp, andchaduke
+The funciton_withdrawin the balancer strategy contract is called during withdraw operations to withdraw WETH from the balancer pool. The function calculats the amount to withdraw, and then calls_vaultWithdrawfunction.
+if(amount>queued) {uint256pricePerShare=pool.getRate();uint256decimals=IStrictERC20(address(pool)).decimals();uint256toWithdraw= (((amount-queued) * (10**decimals)) /pricePerShare);_vaultWithdraw(toWithdraw);}
+The function_vaultWithdrawsubmits an exit request with the following userData.
+exitRequest.userData=abi.encode(2,exitRequest.minAmountsOut,pool.balanceOf(address(this)));
+A value of 2 here corresponds to specifying the exact number of tokens coming out of the contract. Thus the function_vaultWithdrawwill withdraw the exact number of tokens passed to it in its parameter.
+The issue however is that the function_vaultWithdrawis not called with the amount of tokens needed to be withdrawn, it is called by the amount scaled down bypricePerShare. Thus if the actual withdrawn amount is less the amounts the user actually wanted. This causes a revert in the next step.
+require(amount<=wrappedNative.balanceOf(address(this)),"BalancerStrategy: not enough");
+Since an insuffucient amount of tokens are withdrawn, this step will revert if there arent enough spare tokens in the contract. Since the contract incorrectly scales doen the withdraw amount and causes a revert, this is classified as a high severity issue.
+Proof of Concept
+The following exercise shows that passing the sameexitRequestdata to the balancerPool actually extracts the exact number of tokens as specified inminamountsOut.
+A position is created on optimism’s weth-reth pool. TheuserDatais generated using the following code.
+```solidityfunction temp() external pure returns(bytes memory){uint256[] memory amts = new uint256[](2);amts[0] = 500;amts[1] = 0;uint256 max = 20170422329691;return(abi.encode(2,amts,max));}
+Min amount out of WETH is set to 500 wei. TheexitRequestis then constructed as follows with the userData from above.
+{"assets": ["0x4200000000000000000000000000000000000006","0x9bcef72be871e61ed4fbbc7630889bee758eb81d"],"minAmountsOut": ["500","0"],"toInternalBalance":false,"userData":"0x00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000012584adba15b000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000001f40000000000000000000000000000000000000000000000000000000000000000"}
+This is an exit request of type 2, which specifies the exact amount of tokens to be withdrawn. This transaction was then run on tenderly to check how many tokens are withdrawn. From the screenshotherefrom tenderly we can see only 500 wei of WETH is withdrawn.
+This proves that the_vaultWithdrawfunction withdraws the exact amount of tokens passed to it as a parameter. Since the passed parameter is scaled down bypricePerShare, this leads to an insufficient amount withdrawn, and eventually a revert.
+Tools Used
+Tenderly
+Recommended Mitigation Steps
+Pass the amount to be withdrawn without scaling it down bypricePerShare.
+0xRektora (Tapioca) confirmed via duplicate issue 51

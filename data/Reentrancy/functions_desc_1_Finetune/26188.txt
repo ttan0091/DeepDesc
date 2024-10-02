@@ -1,0 +1,8 @@
+Type of vulnerability: Reentrant Attack
+Cause of vulnerability: The `Bids` mapping allows for multiple bids, which are not deposited or incremented to the auction itself. This allows an attacker to call the `RevokeBid` function multiple times for the same bid, each time withdrawing the bid amount, leading to multiple withdrawals for a single deposit.
+Working of the vulnerability: 
+1. An attacker (Bob) places a bid with a certain value (e.g., 1 ETH) using the `MakeBid` function.
+2. Another user places a higher bid, making Bob's bid the current winner with the second highest amount ($100, for example).
+3. Bob, being the winner, can call `RevokeBid`. This function should only allow the initial bid to be revoked and pay back the remaining amount after fees. However, due to a misconfiguration, the bid is not placed in the auction, which means Bob's `Bids[msg.sender]` will always be transferred back to him when calling `RevokeBid`.
+4. Bob can call `RevokeBid` multiple times until he exhausts the total bid amount. This allows him to withdraw multiple ETH for a single ETH deposit.
+5. If Bob's ETH deposit was the maximum, no one can outbid him and a re-entry attack is possible.

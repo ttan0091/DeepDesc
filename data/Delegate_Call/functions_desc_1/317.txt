@@ -1,0 +1,38 @@
+This code defines two smart contracts: Delegate and Delegation. Each contract has specific functionalities and interactions. Here’s a detailed explanation of how these contracts work:
+
+### Contract Delegate
+
+1. State Variables:
+    address public owner;: This variable stores the address of the contract owner. It is publicly accessible, meaning anyone can read its value.
+
+2. Functions:
+    function pwn() { owner = msg.sender; }: This function sets the owner variable to the address of the caller (msg.sender). The function name pwn suggests a securityrelated operation, typically used in the context of gaining control over something, in this case, the contract ownership.
+
+### Contract Delegation
+
+1. State Variables:
+    Delegate delegate;: This variable is of type Delegate, which means it holds a reference to an instance of the Delegate contract.
+
+2. Constructor:
+    function delegation() { if(!delegate.delegatecall(msg.data)) { throw; } }: This function is likely intended to be the constructor of the Delegation contract. It uses the delegatecall function to execute code from the Delegate contract in the context of the Delegation contract.
+      delegate.delegatecall(msg.data): The delegatecall function is a lowlevel function in Solidity that allows a contract to execute code from another contract but with the state of the calling contract. This means that any state changes in the Delegate contract will actually modify the state of the Delegation contract.
+      if(!delegate.delegatecall(msg.data)) { throw; }: If the delegatecall fails (returns false), the function throws an exception, which reverts all state changes made so far in the transaction.
+
+### Detailed Working Process
+
+1. Initialization:
+    When the Delegation contract is deployed, it likely initializes the delegate variable with an instance of the Delegate contract. This is not explicitly shown in the provided code but is a common practice.
+
+2. Execution of delegatecall:
+    When the delegation function is called, it attempts to execute the code specified in msg.data within the context of the Delegation contract using delegatecall.
+    If msg.data contains the function selector for the pwn function of the Delegate contract, the delegatecall will execute the pwn function.
+    Since delegatecall uses the context of the Delegation contract, the owner variable in the Delegation contract will be set to msg.sender, not the owner variable in the Delegate contract.
+
+3. Security Implications:
+    The use of delegatecall in this context can be risky. If an attacker can control msg.data to call the pwn function, they can take ownership of the Delegation contract. This is a common vulnerability known as a "delegatecall proxy vulnerability."
+
+### Summary
+
+ The Delegate contract allows setting its owner variable through the pwn function.
+ The Delegation contract uses delegatecall to execute code from the Delegate contract in its own context, which can lead to the Delegation contract's owner being changed if the pwn function is called via delegatecall.
+ This setup can be exploited if not handled carefully, leading to unauthorized control over the Delegation contract.

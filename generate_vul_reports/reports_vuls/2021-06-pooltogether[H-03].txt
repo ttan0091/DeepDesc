@@ -1,0 +1,12 @@
+[H-03]BadgerYieldSourcebalanceOfTokenshare calculation seems wrong
+Submitted by cmichel
+When suppling to theBadgerYieldSource, someamountofbadgeris deposited tobadgerSettand one receivesbadgerSettshare tokens in return which are stored in thebalancesmapping of the user. So far this is correct.
+ThebalanceOfTokenfunction should then return the redeemable balance inbadgerfor the user’sbadgerSettbalance.
+It computes it as the pro-rata share of the user balance (compared to the total-supply ofbadgerSett) on thebadgerin the vault:
+balances[addr].mul(badger.balanceOf(address(badgerSett))).div(badgerSett.totalSupply())
+However,badger.balanceOf(address(badgerSett))is only a small amount of badger that is deployed in the vault (“Sett”) due to most of the capital being deployed to thestrategies. Therefore, it under-reports the actual balance:
+Typically, a Sett will keep a small portion of deposited funds in reserve to handle small withdrawals cheaply.Badger Docs
+Any contract or user calling thebalanceOffunction will receive a value that is far lower than the actual balance.
+Using this value as a basis for computations will lead to further errors in the integrations.
+Recommend usingbadgerSett.balance()instead ofbadger.balanceOf(address(badgerSett))to also account for “the balance in the Sett, the Controller, and the Strategy”.
+asselstine (PoolTogether) confirmed

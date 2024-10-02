@@ -1,0 +1,31 @@
+[H-12] Denial of service of LiquiditypoolQueuedWithdrawals
+Submitted byLirios, also found bybin2chen
+The preferred way for withdrawals of the Liquiditypool is to do this via a withdrawal queue.
+According to Polynomial:
+Queuing will be the default deposit/withdraw mechanism (In the UI) and not planning to charge any fees for this mechanismInstant deposit / withdraw is mechanism is meant for external integrations in case if they don’t want to track status of the queued deposit or withdraw
+It is also stimulated to usequeueWithdraw()overwithdraw()by charging a withdrawalFee for direct withdrawals.
+QueuedWithdrawals work in two steps.
+A user initialtes the Withdrawal viaqueueWithdraw(). This burns theliquidityTokensand adds the request to thewithdrawalQueue.processWithdraws()can be called to process requests in thewithdrawalQueuethat have passedminWithdrawDelayto transfer the SUSD tokens to the user.
+If the processing of aQueuedWithdrawin thewithdrawalQueuereverts, thequeuedWithdrawalHead(LiquidityPool.sol#LL331C13-L331C33) will never increase and further processing of the queue will be impossible.
+This means that any users that have placed a QueuedWithdraw after the reverting entry will have lost their liquiditytokens without receiving their SUSD.
+Proof of Concept
+When calling thequeueWithdraw()function, the user can provide an address of the receiver of funds.
+When processing the withdrawal queue, the contracts does all the required checks, and then transfers the SUSD (LiquidityPool.sol#L311) to the provided user.
+If we look at theSynthetix sUSD tokenand it’starget implementationwe will find that the SUSD token transfer code is:
+sUSD MultiCollateralSynth:L723-L739
+function_internalTransfer(addressfrom,addressto,uintvalue)internalreturns(bool) {/* Disallow transfers to irretrievable-addresses. */require(to!=address(0) &&to!=address(this) &&to!=address(proxy),"Cannot transfer to this address");// Insufficient balance will be handled by the safe subtraction.tokenState.setBalanceOf(from,tokenState.balanceOf(from).sub(value));tokenState.setBalanceOf(to,tokenState.balanceOf(to).add(value));// Emit a standard ERC20 transfer eventemitTransfer(from,to,value);returntrue;}
+This means any transfer to the SUSD proxy or implementation contract, will result in a revert.
+An attacker can use this to makequeueWithdraw()request withuser=sUSDproxyoruser=sUSD_MultiCollateralSynth.   Any user that request a Withdrawal viaqueueWithdraw()after this, will lose their liquidity tokens without receiving their SUSD.
+The attacker can do this at any time, or by frontrunning a specific (large)queueWithdraw()request.
+To test it, a check is added to the mock contract that is used for SUSD in the test scripts to simulate the SUSD contract behaviour:
+diff --git a/src/test-helpers/MockERC20Fail.sol b/src/test-helpers/MockERC20Fail.solindex e987f04..1ce10ec 100644--- a/src/test-helpers/MockERC20Fail.sol+++ b/src/test-helpers/MockERC20Fail.sol@@ -18,6 +18,9 @@ contract MockERC20Fail is MockERC20 {}function transfer(address receiver, uint256 amount) public override returns (bool) {++        require(receiver != address(0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB) , "Cannot transfer to this address");+if (forceFail) {return false;}
+In the test/LiquidityPool.Deposits.t.sol test file, the following was added.This results in a revert of the processWithdraws function and failing the test
+iff --git a/test/LiquidityPool.Deposits.t.sol b/test/LiquidityPool.Deposits.t.solindex 0bb6f5f..8d70c60 100644--- a/test/LiquidityPool.Deposits.t.sol+++ b/test/LiquidityPool.Deposits.t.sol@@ -291,6 +291,9 @@ contract LiquidityPoolTest is TestSystem {// user_2 i-withdraw 20$// user_3 q-withdraw 13$+        // Frontrun all withdrawal requests, since amount =0, can be called by anyone+        pool.queueWithdraw(0, 0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB);+vm.prank(user_1);pool.queueWithdraw(2e19, user_1);vm.prank(user_3);
+Tools Used
+Manual review, forge
+Recommended Mitigation Steps
+The processing of withdrawalQueue should have a mechanism to handle revertingQueuedWithdrawentries.
+Either by skipping them and/or moving them to anotherfailedWithdrawalsqueue.
+mubaris (Polynomial) confirmed
+Dravee (judge) commented:
+The frontrunning part isn’t an issue on Optimism, but the rest is valid.

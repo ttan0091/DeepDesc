@@ -1,0 +1,24 @@
+Type of vulnerability: Loss of Funds
+Cause of vulnerability: The `batchContributeFor` function does not refund ETH for failed contributions when `args.revertOnFailure` is set to `false`.
+Execution process: A user calls `batchContributeFor` with multiple contributions, some of which fail. If `args.revertOnFailure` is `false`, the ETH for the failed contributions is not refunded, leading to a loss of funds for the user.
+Vulnerable code: 
+```solidity
+function batchContributeFor(BatchContributeForArgs calldata args) external payable onlyDelegateCall returns (uint96[] memory votingPowers) {
+    uint256 numContributions = args.recipients.length;
+    votingPowers = new uint96[](numContributions);
+    uint256 ethAvailable = msg.value;
+    for (uint256 i; i < numContributions; ++i) {
+        ethAvailable -= args.values[i];
+        (bool s, bytes memory r) = address(this).call{ value: args.values[i] }(abi.encodeCall(this.contributeFor, (args.tokenIds[i], args.recipients[i], args.initialDelegates[i], args.gateDatas[i])));
+        if (!s) {
+            if (args.revertOnFailure) {
+                r.rawRevert();
+            }
+        } else {
+            votingPowers[i] = abi.decode(r, (uint96));
+        }
+    }
+    // Refund any unused ETH.
+    if (ethAvailable > 0) payable(msg.sender).transfer(ethAvailable);
+}
+```

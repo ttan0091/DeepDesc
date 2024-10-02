@@ -1,0 +1,26 @@
+This code defines an internal function named concatStorage, which concatenates two byte arrays: one stored in storage (_preBytes) and one in memory (_postBytes). The function modifies the storage array to include the contents of the memory array.
+
+Here’s a detailed explanation of how this function works:
+
+1. Reading the Length of _preBytes:
+    The function starts by reading the first 32 bytes of _preBytes storage, which contains the length of the array. This is done using sload(_preBytes.slot), where _preBytes.slot is the storage slot of _preBytes.
+    The length is calculated based on whether the slot value is even or odd. For even values, the length is the lowestorder byte divided by two. For odd values, it's the slot divided by two.
+
+2. Calculating New Length:
+    The length of _postBytes is obtained using mload(_postBytes).
+    The new length, which is the sum of the lengths of _preBytes and _postBytes, is calculated.
+
+3. Handling Different Length Scenarios:
+    The function uses a switch statement to handle different scenarios based on the lengths of the arrays:
+      Case 2: Both the original and the new array fit within a single storage slot. The function updates the contents of the slot by adding the new bytes to the existing bytes.
+      Case 1: The original array fits in a slot, but the combined array exceeds it. The function stores the new length and then copies the bytes from _postBytes into the storage, starting from the last used word of _preBytes.
+      Default Case: The combined array spans multiple storage slots. The function stores the new length and then copies the bytes from _postBytes into the storage, handling the overlap and masking as needed.
+
+4. Copying Bytes:
+    For each case, the function uses lowlevel operations like mload, sload, sstore, and bitwise operations to read from memory and write to storage.
+    The function ensures that the new bytes are correctly aligned and masked to fit into the existing storage structure.
+
+5. Updating Storage:
+    The function updates the storage by writing the new length and the concatenated bytes. It uses sstore to write to storage slots, ensuring that the data is correctly placed and aligned.
+
+This function is optimized for efficiency by using inline assembly to directly manipulate storage and memory, avoiding the higherlevel abstractions of Solidity. This approach allows for precise control over how data is stored and retrieved, which is crucial for performance in smart contracts.

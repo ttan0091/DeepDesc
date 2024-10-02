@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy and Logic Errors
+
+Cause of vulnerability: The confirm function allows the same address to confirm txs repeatedly, either by re-executing through the current function or by doing so in child token contracts through inheritance.
+
+Working process of the vulnerable code: 
+1. An attacker (Noble) sends deposits to the Wallet in Rare through the __walletFallback hook, where they are received and recorded by the hook. At this point, the contract's balance increases by the deposit amount.
+2. Since the guarantee txs remain unconfirmed, Noble can confirm them and receive back the deposited amounts. However, the __walletFallback hook invariant is not upheld, as it still has to pay the associated guarantee txs: a logic bug.
+3. Noble can re-enter confirm, the inherited function, from the current __walletFallback hook, which leads to the invariant violation the attacker Noble needs to avoid: his receive-tokens can't pay his pledge. 
+4. This let Noble exploit the invariant, getting executed the current tx body repeatedly, each time with singular promise fulfillment and caller promise charged.
+
+Patch/ Solution: The implementation follows several patches to fix the issues with the original contract, specifically the confirm function in the Wallet contract. These include reverting the confirm function, implementing the unrendering mechanics, and ensuring the use of m_txs >= value in witness before transmitting the calls' balance.

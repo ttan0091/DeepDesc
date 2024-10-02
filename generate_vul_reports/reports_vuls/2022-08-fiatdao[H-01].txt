@@ -1,0 +1,22 @@
+[H-01] Unsafe usage of ERC20 transfer and transferFrom
+Submitted by CertoraInc, also found by 0x1f8b, 0xSky, CodingNameKiki, DecorativePineapple, jonatascm, Noah3o6, oyc_109, pedr02b2, peritoflores, and Waze
+https://github.com/code-423n4/2022-08-fiatdao/blob/fece3bdb79ccacb501099c24b60312cd0b2e4bb2/contracts/VotingEscrow.sol#L425-L428https://github.com/code-423n4/2022-08-fiatdao/blob/fece3bdb79ccacb501099c24b60312cd0b2e4bb2/contracts/VotingEscrow.sol#L485-L488https://github.com/code-423n4/2022-08-fiatdao/blob/fece3bdb79ccacb501099c24b60312cd0b2e4bb2/contracts/VotingEscrow.sol#L546https://github.com/code-423n4/2022-08-fiatdao/blob/fece3bdb79ccacb501099c24b60312cd0b2e4bb2/contracts/VotingEscrow.sol#L657https://github.com/code-423n4/2022-08-fiatdao/blob/fece3bdb79ccacb501099c24b60312cd0b2e4bb2/contracts/VotingEscrow.sol#L676
+Some ERC20 tokens functions don’t return a boolean, for example USDT, BNB, OMG. So theVotingEscrowcontract simply won’t work with tokens like that as thetoken.
+Proof of Concept
+The USDT’stransferandtransferFromfunctions doesn’t return a bool, so the call to these functions will revert although the user has enough balance and theVotingEscrowcontract won’t work, assuming that token is USDT.
+Tools Used
+Manual auditing - VS Code, some hardhat tests and me :)
+Recommended Mitigation Steps
+Use the OpenZepplin’ssafeTransferandsafeTransferFromfunctions.
+lacoop6tu (FIAT DAO) disputed and commented:
+In our case the token is a BalancerV2 Pool Token which returns the boolean
+Justin Goro (judge) commented:
+This should be acknowledged, not disputed, since there is nothing in documentation suggesting the token is inherently safe to use.
+elnilz (FIAT DAO) commented:
+@Justin Goro it’s a no-issue in our specific case bc we will use VotingEscrow in combination withtokenwhich returns bool upon transfer/transferFrom. So at best this is a QA issue bc we should document that. some wardens actually asked us about what token we will be using pointing out the issue.Now even if you’d want to award wardens who reported the issue it should then be a Med Risk bc if VotingEscrow is deployed with an unsafetokenppl would simply not be able to deposit into the contract but no funds would be at risk.
+elnilz (FIAT DAO) commented:
+Fyi, even though we don’t think this is an issue, we will make use of safeTransfer and safeTransferFrom so its a helpful submission nonetheless.
+Justin Goro (judge) commented:
+It’s tokens like BNB that led me to maintain the high risk rating. For BNB, transferFrom returns a bool but transfer doesn’t. In other words, users can stake but not unstake on any protocol that doesn’t use safeTransfer.I agree that wardens should contact sponsors but it’s not a channel we can really monitor. So although the net result is a documentation fix rather than a bug fix, it’s a documentation fix informed by the identification of a potentially show stopping bug rather than something like “Comment typo: it should be Bitcoin, not bit coin”.
+IllIllI (warden) reviewed mitigation:
+The sponsor disputed the issue because the token it’s planned to be used with does correctly return a boolean. However, the sponsor decided to make a change to address the finding asIssue 18. The fix properly replaces therequire()statements that check for successful transfers, with calls to OpenZeppelin’ssafeTransfer(). The PR also replaces the internal definition of theIERC20interface with OpenZeppelin’s version. The prior version of the code’sIERC20included the functiondecimals(), which is not one of the required functions for the interface, so it’s possible for the code to encounter a token without this function, but it would be immediately apparent what happened because the constructor is the function that callsdecimals(). The change to using OpenZeppelin required making this distinction more visible due to the fact that they’re defined separately asIERC20andIERC20Metadata. The new code is not checking that the token actually supports the function (e.g. using asafeDecimals()-like function), but it is not any worse off that it had been prior to the change.

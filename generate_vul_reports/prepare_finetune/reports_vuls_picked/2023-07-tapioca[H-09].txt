@@ -1,0 +1,21 @@
+Type of vulnerability: Reentrancy and Incorrect Use of `staticcall`
+
+Cause of vulnerability: The `staticcall` is used to call a function that modifies state, which causes the call to revert, leading to incorrect return values.
+
+Execution process: 
+1. The `compoundAmount` function attempts to use `staticcall` to call a function that changes state (`checkpoint`).
+2. The `staticcall` reverts because it is not allowed to modify state.
+3. As a result, `compoundAmount` always returns 0, underpricing the strategy.
+4. An attacker can exploit this by depositing to own a high percentage of shares (underpriced), compounding to socialize yield, and withdrawing to lock in profits without contributing to yield.
+
+Vulnerable code:
+```solidity
+function doTheCallView() internal returns (uint256) {
+    (bool success, bytes memory response) = address(lpGauge).staticcall(abi.encodeWithSignature("claimable_tokens(address)", address(this)));
+    uint256 claimable = 1;
+    if (success) {
+        claimable = abi.decode(response, (uint256));
+    }
+    return claimable;
+}
+```

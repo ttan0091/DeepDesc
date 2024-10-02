@@ -1,0 +1,19 @@
+[H-05] Add members to the not yet created community
+Submitted by vlad_bochok, also found by indijanc, Lambda, and wastewa
+Community.sol#L187Community.sol#L179Community.sol#L878SignatureDecoder.sol#L39
+There is aaddMemberfunction in theCommunity.  The function accepts_datathat should be signed by the_community.ownerand_newMemberAddr.
+// Compute hash from bytesbytes32 _hash = keccak256(_data);// Decode params from _data(uint256 _communityID,address _newMemberAddr,bytes memory _messageHash) = abi.decode(_data, (uint256, address, bytes));CommunityStruct storage _community = _communities[_communityID];// check signaturescheckSignatureValidity(_community.owner, _hash, _signature, 0); // must be community ownercheckSignatureValidity(_newMemberAddr, _hash, _signature, 1); // must be new member
+The code above shows exactly what the contract logic looks like.
+_communityIDis taken from the data provided by user, so it can arbitrarily. Specifically,  community with selected_communityIDcan be not yet created. For instance, it can be equal to thecommunityCount + 1, thus the next created community will have this_communityID._communities[_communityID]will store null values for all fields, for a selected_communityID. That means,_community.owner == address(0)checkSignatureValiditywith a parametersaddress(0), _hash, _signature, 0will not revert a call if an attacker provide incorrect_signature.
+Let’s see the implementation ofcheckSignatureValidity:
+// Decode signeraddress _recoveredSignature = SignatureDecoder.recoverKey(_hash,_signature,_signatureIndex);// Revert if decoded signer does not match expected address// Or if hash is not approved by the expected address.require(_recoveredSignature == _address || approvedHashes[_address][_hash],"Community::invalid signature");// Delete from approvedHash. So that signature cannot be reused.delete approvedHashes[_address][_hash];
+No restrictions on_recoveredSignatureor_address. Moreover, ifSignatureDecoder.recoverKeycan return zero value, then there will be no revert.
+if (messageSignatures.length % 65 != 0) {return (address(0));}uint8 v;bytes32 r;bytes32 s;(v, r, s) = signatureSplit(messageSignatures, pos);// If the version is correct return the signer addressif (v != 27 && v != 28) {return (address(0));} else {// solium-disable-next-line arg-overflowreturn ecrecover(toEthSignedMessageHash(messageHash), v, r, s);}
+As we can see below,recoverKeyfunction can return zero value, if anecrecoverreturn zero value or ifv != 27 || v != 28. Both cases are completely dependent on the input parameters to the function, namely fromsignaturethat is provided by attacker.
+checkSignatureValidity(_newMemberAddr, _hash, _signature, 1)will not revert the call if an attacker provide correct signature in the function. It is obviously possible.
+All in all, an attacker can add as many members as they want, BEFORE thecommunitywill be created.
+Recommended Mitigation Steps
+checkSignatureValidity/recoverKeyshould revert the call if anaddress == 0.addMembershould have arequire(_communityId <= communityCount)
+parv3213 (Rigor) confirmed
+Jack the Pug (judge) commented:
+Nice catch!Btw, thisv != 27 && v != 28check is no longer needed:if(v!=27&&v!=28) {return(address(0));}See:https://twitter.com/alexberegszaszi/status/1534461421454606336?s=20&t=H0Dv3ZT2bicx00hLWJk7Fg

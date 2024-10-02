@@ -1,0 +1,26 @@
+Type of vulnerability: Arbitrary Memory Read
+Cause of vulnerability: Improper handling of memory access when offset is beyond the slice length, allowing an attacker to forge arbitrary read results.
+Execution process: An attacker manipulates the offset to be beyond the slice length, bypassing the intended zero-masking of out-of-bound bytes, and thus allowing arbitrary values to be read into `dst0_value`.
+Vulnerable code: 
+```solidity
+let (_, offset_is_strictly_in_slice) = offset.overflowing_sub(cs, length);
+let offset_is_beyond_the_slice = offset_is_strictly_in_slice.negated(cs);
+let skip_if_legitimate_fat_ptr = Boolean::multi_and(cs, &[offset_is_beyond_the_slice, is_fat_ptr]);
+...
+let skip_memory_access = Boolean::multi_or(cs, &[already_panicked, skip_if_legitimate_fat_ptr, is_non_addressable,]);
+bytes_out_of_bound = bytes_out_of_bound.mask_negated(cs, skip_memory_access);
+bytes_out_of_bound = bytes_out_of_bound.mask_negated(cs, uf);
+let (_, bytes_out_of_bound) = bytes_out_of_bound.div_by_constant(cs, 32);
+let bytes_to_cleanup_out_of_bounds = unsafe { UInt8::from_variable_unchecked(bytes_out_of_bound.get_variable()) };
+let new = Self {
+    absolute_address,
+    page_candidate: page,
+    incremented_offset,
+    heap_deref_out_of_bounds: is_non_addressable,
+    skip_memory_access: skip_memory_access,
+    should_set_panic,
+    bytes_to_cleanup_out_of_bounds,
+};
+...
+let dst0_value = VMRegister::conditionally_select(cs, is_write_access_and_increment, &incremented_src0_register, &read_value_as_register,);
+```

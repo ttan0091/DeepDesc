@@ -1,0 +1,18 @@
+[H-03] Withdrawal delay can be circumvented
+Submitted by cmichel, also found by IllIllI and leastwood
+Collateral.sol#L97
+After initiating a withdrawal withinitiateWithdrawal, it’s still possible to transfer the collateral tokens.
+This can be used to create a second account, transfer the accounts to them and initiate withdrawals at a different time frame such that one of the accounts is always in a valid withdrawal window, no matter what time it is.
+If the token owner now wants to withdraw they just transfer the funds to the account that is currently in a valid withdrawal window.
+Also, note that each account can withdraw the specifiedamount. Creating several accounts and circling & initiating withdrawals with all of them allows withdrawing larger amountseven at the same blockas they are purchased in the future.
+I consider this high severity because it breaks core functionality of the Collateral token.
+Proof of Concept
+For example, assume the_delayedWithdrawalExpiry = 20blocks. Account A owns 1000 collateral tokens, they create a second account B.
+Atblock=0, A callsinitiateWithdrawal(1000). They send their balance to account B.Atblock=10, B callsinitiateWithdrawal(1000). They send their balance to account A.They repeat these steps, alternating the withdrawal initiation every 10 blocks.One of the accounts is always in a valid withdrawal window (initiationBlock < block && block <= initiationBlock + 20). They can withdraw their funds at any time.
+Recommended Mitigation Steps
+If there’s a withdrawal request for the token owner (_accountToWithdrawalRequest[owner].blockNumber > 0), disable their transfers for the time.
+// pseudo-code not testedbeforeTransfer(from,to,amount) {super();uint256withdrawalStart=_accountToWithdrawalRequest[from].blockNumber;if(withdrawalStart>0&&withdrawalStart+_delayedWithdrawalExpiry<block.number) {revert();// still in withdrawal window}}
+ramenforbreakfast (prePO) commented:
+This is a valid claim.
+gzeon (judge) commented:
+Agree with sponsor.

@@ -1,0 +1,91 @@
+[H-01] Lack of access control onassertGovernanceApprovedcan cause funds to be locked
+Submitted by shw, also found by kirk-baird and pauliax
+Lack of access control on theassertGovernanceApprovedfunction ofFlashGovernanceArbiterallows anyone to lock other users’ funds in the contract as long as the users have approved the contract to transferflashGovernanceConfig.amountofflashGovernanceConfig.assetfrom them.
+Proof of Concept
+Alice wants to execute a flash governance decision (e.g., disable to the protocol), so she first callsapproveon theflashGovernanceConfig.assetto allowFlashGovernanceArbiterto transferflashGovernanceConfig.amountof assets from her.An attacker Bob, who listens to the mempool, notices Alice’sapprovetransaction and decides to front-run it. He callsassertGovernanceApprovedwithsenderbeing Alice,targetbeing any address, andemergencybeingtrue.As a result, Alice cannot execute her flash governance decision, and her funds are locked in the contract for theflashGovernanceConfig.unlockTimeperiod.
+Referenced code:DAO/FlashGovernanceArbiter.sol#L60-L81
+Recommended Mitigation Steps
+Only allow certain addresses to call theassertGovernanceApprovedfunction onFlashGovernanceArbiter.
+gititGoro (Behodler) confirmed, but disagreed with High severity and commented:
+The reason I stuck with medium risk is because the user’s funds can’t be lost in this scenario. Only temporarily locked. If the user unapproves FlashGovernanceArbiter on EYE then they simply have to wait until the unlock period has passed and can withdraw again.
+Jack the Pug (judge) commented:
+Agreed. This should be somewhere in between Med and High. If it’s just the users’ deposits being temporarily locked, then it’s definitely a Med. But this one is taking probably all the funds from users’ wallets and locking them against their will, easy to pull off by anyone, all at once for all potential victims.I tend to make it a High so that the future wardens and probably by extent the devs can be more careful with allowances. We have seen so many incidents caused by improper handling of users’ allowances.AtransferFrom()with from not being hard-coded asmsg.senderis evil.My fellow wardens, if you are reading this, do not go easy on atransferFrom()that takes an argument asfrom.
+
+[H-02] wrong minting amount
+Submitted by danb
+https://github.com/code-423n4/2022-01-behodler/blob/main/contracts/TokenProxies/RebaseProxy.sol#L36
+uint256proxy= (baseBalance*ONE) /_redeemRate;
+should be:
+uint256proxy= (amount*ONE) /_redeemRate;
+gititGoro (Behodler) confirmed, but disagreed with High severity and commented:
+Should be a balanceBefore and balanceAfter calculation with the diff being wrapped.
+Jack the Pug (judge) commented:
+Validhigh. The issue description can be more comprehensive though.
+
+[H-03] Double transfer in thetransferAndCallfunction ofERC677
+Submitted by shw, also found by cccz, danb, and wuwe1
+The implementation of thetransferAndCallfunction inERC677is incorrect. It transfers the_valueamount of tokens twice instead of once. Since theFlancontract inheritsERC667, anyone calling thetransferAndCallfunction onFlanis affected by this double-transfer bug.
+Proof of Concept
+Below is the implementation oftransferAndCall:
+functiontransferAndCall(address_to,uint256_value,bytesmemory_data)publicreturns(boolsuccess) {super.transfer(_to,_value);_transfer(msg.sender,_to,_value);if(isContract(_to)) {contractFallback(_to,_value,_data);}returntrue;}
+We can see thatsuper.transfer(_to, _value);and_transfer(msg.sender, _to, _value);are doing the same thing - transfering_valueof tokens frommsg.senderto_to.
+Referenced code:ERC677/ERC677.sol#L28-L29
+Recommended Mitigation Steps
+Remove_transfer(msg.sender, _to, _value);in thetransferAndCallfunction.
+gititGoro (Behodler) confirmed and commented:
+FixBehodler/limbo#3
+
+[H-04] Logic error inburnFlashGovernanceAssetcan cause locked assets to be stolen
+Submitted by shw
+A logic error in theburnFlashGovernanceAssetfunction that resets a user’spendingFlashDecisionallows that user to steal other user’s assets locked in future flash governance decisions. As a result, attackers can get their funds back even if they execute a malicious flash decision and the community burns their assets.
+Proof of Concept
+An attacker Alice executes a malicious flash governance decision, and her assets are locked in theFlashGovernanceArbitercontract.The community disagrees with Alice’s flash governance decision and callsburnFlashGovernanceAssetto burn her locked assets. However, theburnFlashGovernanceAssetfunction resets Alice’spendingFlashDecisionto the default config (see line 134).A benign user, Bob executes another flash governance decision, and his assets are locked in the contract.Now, Alice callswithdrawGovernanceAssetto withdraw Bob’s locked asset, effectively the same as stealing Bob’s assets. Since Alice’spendingFlashDecisionis reset to the default, theunlockTime < block.timestampcondition is fulfilled, and the withdrawal succeeds.
+Referenced code:DAO/FlashGovernanceArbiter.sol#L134DAO/FlashGovernanceArbiter.sol#L146
+Recommended Mitigation Steps
+Change line 134 todelete pendingFlashDecision[targetContract][user]instead of setting thependingFlashDecisionto the default.
+gititGoro (Behodler) confirmed
+
+[H-05] Flash loan price manipulation inpurchasePyroFlan()
+Submitted by sirhashalot
+The comment online 54of FlanBackstop.sol states “the opportunity for price manipulation through flash loans exists”, and I agree that this is a serious risk. While the acceptableHighestPrice variable attempts to limit the maximum price change of the flan-stablecoin LP, a flashloan sandwich attack can still occur within this limit and make up for the limitation with larger volumes or multiple flashloan attacks. Flashloan price manipulation is the cause for many major hacks, includingbZx,Harvest, and others.
+Proof of Concept
+Line 83of FlanBackstop.sol calculates the price of flan to stablecoin in the Uniswap pool based on the balances at a single point in time. Pool balances at a single point in time can be manipulated with flash loans, which can skew the numbers to the extreme. The single data point of LP balances is used to calculatethe growth variable in line 103, and the growth variable influences the quantity of pyroflan a user receives inthe premium calculation on line 108.
+uint256priceBefore= (balanceOfFlanBefore*getMagnitude(stablecoin)) /balanceOfStableBefore;uint256growth= ((priceBefore-tiltedPrice) *100) /priceBefore;uint256premium= (flanToMint* (growth/2)) /100;
+Problems can occur when the volumes that thepurchasePyroFlan()function sends to the Uniswap pool are large compared to the pool’s liquidity volume, or if the Uniswap pool price is temporarily tilted with a flashloan (or a whale). Because this function purposefully changes the exchange rate of the LP, by transferring tokens to the LP in a 2-to-1 ratio, a large volume could caught a large price impact in the LP. The code attempts to protect against this manipulation inline 102with a require statement, but this can be worked around by reducing the volume per flashloan and repeating the attack multiple times. A user can manipulate the LP, especially when the LP is new with low liquidity, in order to achieve large amounts of flan and pyroflan.
+Recommended Mitigation Steps
+Use a TWAP instead of the pool price at a single point in time to increase the cost of performing a flashloan sandwich attack. Seethe Uniswap v2 price oracle solutiondocumentation for more explanations on how Uniswap designed an approach to providing asset prices while reducing the change of manipulation.
+gititGoro (Behodler) acknowledged and commented:
+This is a very well constructed report and if Flan was not intended to target a 1:1 with stablecoins, I’d accept it but since we know Flan shouldn’t diverge far from 1:1, we don’t run very large risks. Essentially, if the flan price crashes dramatically, backstop no longer works so the purpose of this contract is to just boost liquidity for Flan when Flan is operating under normal ish conditions. It’s not intended to be black swan proof.
+
+[H-06] Loss Of Flash Governance Tokens If They Are Not Withdrawn Before The Next Request
+Submitted by kirk-baird
+Users who have not calledwithdrawGovernanceAsset()after  they have locked their tokens from a previous proposal (i.e.assertGovernanceApproved), will lose their tokens ifassertGovernanceApproved()is called again with the sametargetandsender.
+Thesenderwill losependingFlashDecision[target][sender].amounttokens and the tokens will become unaccounted for and locked in the contract. Since the new amount is not added to the previous amount, instead the previous amount is overwritten with the new amount.
+The impact of this is worsened by another vulnerability, that isassertGovernanceApproved()is apublicfunction and may be called by any arbitrary user so long as thesenderfield has calledapprove()forFlashGovernanceArbiteron the ERC20 token. This would allow an attacker to make these tokens inaccessible for any arbitrarysender.
+Proof of Concept
+InassertGovernanceApproved()as seen below, the linependingFlashDecision[target][sender] = flashGovernanceConfigwill overwrite the previous contents. Thereby, making any previous rewards unaccounted for and inaccessible to anyone.
+Note that we must waitpendingFlashDecision[target][sender].unlockTimebetween calls.
+functionassertGovernanceApproved(addresssender,addresstarget,boolemergency)public{if(IERC20(flashGovernanceConfig.asset).transferFrom(sender,address(this),flashGovernanceConfig.amount) &&pendingFlashDecision[target][sender].unlockTime<block.timestamp) {require(emergency|| (block.timestamp-security.lastFlashGovernanceAct>security.epochSize),"Limbo: flash governance disabled for rest of epoch");pendingFlashDecision[target][sender] =flashGovernanceConfig;pendingFlashDecision[target][sender].unlockTime+=block.timestamp;security.lastFlashGovernanceAct=block.timestamp;emitflashDecision(sender,flashGovernanceConfig.asset,flashGovernanceConfig.amount,target);}else{revert("LIMBO: governance decision rejected.");}}
+Recommended Mitigation Steps
+Consider updating the initial if statement to ensure thependingFlashDecisionfor thattargetandsenderis empty, that is:
+functionassertGovernanceApproved(addresssender,addresstarget,boolemergency)public{if(IERC20(flashGovernanceConfig.asset).transferFrom(sender,address(this),flashGovernanceConfig.amount) &&pendingFlashDecision[target][sender].unlockTime==0) {...
+Note we cannot simply add the newamountto the previousamountincase the underlyingassethas been changed.
+gititGoro (Behodler) confirmed and commented:
+Excellent find! Thank you.
+
+[H-07] LP pricing formula is vulnerable to flashloan manipulation
+Submitted by shw
+The LP pricing formula used in theburnAssetfunction ofLimboDAOis vulnerable to flashloan manipulation. By swapping a large number of EYE into the underlying pool, an attacker can intentionally inflate the value of the LP tokens to get morefatethan he is supposed to with a relatively low cost.
+With the large portion offatehe gets, he has more voting power to influence the system’s decisions, or even he can convert hisfateto Flan tokens for a direct profit.
+Proof of Concept
+Below is an example of how the attack works:
+Suppose that there are 1000 EYE and 1000 LINK tokens in the UniswapV2 LINK-EYE pool. The pool’s total supply is 1000, and the attacker has 100 LP tokens.If the attacker burns his LP tokens, he earns1000 * 100/1000 * 20 = 2000amount offate.Instead, the attacker swaps in 1000 EYE and gets 500 LINK from the pool (according tox * y = k, ignoring fees for simplicity). Now the pool contains 2000 EYE and 500 LINK tokens.After the manipulation, he burns his LP tokens and gets2000 * 100/1000 * 20 = 4000amount offate.Lastly, he swaps 500 LINK into the pool to get back his 1000 EYE.Compared to Step 2, the attacker earns a double amount offateby only paying the swapping fees to the pool. The more EYE tokens he swaps into the pool, the morefatehe can get. This attack is practically possible by leveraging flashloans or flashswaps from other pools containing EYE tokens.
+ThesetEYEBasedAssetStakefunction has the same issue of using a manipulatable LP pricing formula. For more detailed explanations, please refer to the analysis of theCheese Bank attackand theWarp Finance attack.
+Referenced code:DAO/LimboDAO.sol#L356DAO/LimboDAO.sol#L392
+Recommended Mitigation Steps
+Use a fair pricing formula for the LP tokens, for example, the one proposed byAlpha Finance.
+gititGoro (Behodler) confirmed and commented:
+This is actually a good fate inflation vector especially when combined with the fateToFlan conversion
+Jack the Pug (judge) commented:
+Good catch! A valid economic attack vector can potentially be exploited using flashloans.
+

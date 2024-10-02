@@ -1,0 +1,15 @@
+[H-51] Funds are locked because borrowFee is not correctly implemented in BigBang
+Submitted by0x007, also found byKoolex,0xrugpull_detector,0xnev, andSaeedAlipoor01988
+There’s borrowOpeningFee for markets. In Singularity, this fee is accumulated over assets as a reward to asset depositors. In BigBang, assets is USD0 which would be minted and burned on borrow, and repay respectively. BigBang does not collect fees, because it uses the same mechanism as Singularity and therefore it would demand more than minted amount from user when it’s time to repay.
+This results in a bird and egg situation where Users can’t fully repay a borrowed amount unless they borrow even more.
+Proof of Concept
+Let’s look at howborrowworks
+function_borrow(addressfrom,addressto,uint256amount)internalreturns(uint256part,uint256share) {uint256feeAmount= (amount*borrowOpeningFee) /FEE_PRECISION;// A flat % fee is charged for any borrow(totalBorrow,part) =totalBorrow.add(amount+feeAmount,true);require(totalBorrowCap==0||totalBorrow.elastic<=totalBorrowCap,"BigBang: borrow cap reached");userBorrowPart[from] +=part;//mint USDOIUSDOBase(address(asset)).mint(address(this),amount);//deposit borrowed amount to userasset.approve(address(yieldBox),amount);yieldBox.depositAsset(assetId,address(this),to,amount,0);share=yieldBox.toShare(assetId,amount,false);emitLogBorrow(from,to,amount,feeAmount,part);}
+As can be seen above, amount would be minted to user, but the userBorrowPart isamount + fee. When it’s time to repay, user have to returnamount + feein other to get all their collateral.
+Assuming the user borrowed1,000 USD0and borrowOpeningFee is at the default value of0.5%. Then the user’s debt would be1,005. If there’s only 1 user, and the totalSupply is indeed1,000, then there’s no other way for the user to get the extra5 USD0. Therefore he can’t fully redeem his collateral and would have at least5 * (1 + collateralizationRate) USD0worth of collateral locked up. This fund cannot be accessed by the user, nor is it used by the protocol. It would be sitting at yieldbox forever earning yields for no one.
+This issue becomes more significant when there are more users and minted amount. If more amount is minted more funds are locked.
+It might seem like user Alice could go to the market to buy5 USD0to fully repay. But the reality is that he is transferring the unfortunate disaster to another user. Cause no matter what, Owed debts would always be higher thantotalSupply.
+This debt would keep accumulating after each mint and every burn. For example, assuming that one 1 billion of USD0 was minted and 990 million was burned in the first month. totalSupply and hence circulating supply would be 10 million, but user debts would be 15 million USD0. That’s 5 million USD that can’t be accessed by user nor fee collector.
+Recommended Mitigation Steps
+borrowOpeningFee should not be added to userBorrowPart. If fee is to implemented, then fee collector should receive collateral or USD0 token.
+0xRektora (Tapioca) confirmed via duplicate issue 739

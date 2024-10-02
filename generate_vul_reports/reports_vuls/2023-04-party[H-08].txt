@@ -1,0 +1,25 @@
+[H-08]VetoProposal: User can veto multiple times so every proposal can be vetoed by any user that has a small amount of votes
+Submitted byHollaDieWaldfee, also found by0x52andhansfriese
+TheVetoProposalcontract allows to veto proposals with thevoteToVetofunction.
+When the amount of votes collected to veto a proposal exceeds a certain threshold (thepassThresholdBps, which is determined upon initialization of the party), the proposal is vetoed, meaning it cannot execute anymore (its status becomesDefeated).
+ThepassThresholdBpsspecifies a percentage of thetotalVotingPowerof the party.
+E.g.passThresholdBps=1000means that 10% of thetotalVotingPowermust veto a proposal such that the veto goes through.
+The issue is that the contract lacks the obvious check that a user has not vetoed before, thereby a user can veto multiple times.
+So say a user holds 1% oftotalVotingPowerand in order for the veto to go through, 10% oftotalVotingPowermust veto.
+The user can just veto 10 times to reach the 10% requirement.
+The impact is obvious: Any user with a small amount of votes can veto any proposal. This is a critical bug since the party may become unable to perform any actions if there is a user that vetoes all proposals.
+Proof of Concept
+Add the following test to theVetoProposal.t.soltest file:
+functiontest_VetoMoreThanOnce()public{_assertProposalStatus(PartyGovernance.ProposalStatus.Voting);// Vote to vetovm.prank(voter1);vetoProposal.voteToVeto(party,proposalId,0);_assertProposalStatus(PartyGovernance.ProposalStatus.Voting);assertEq(vetoProposal.vetoVotes(party,proposalId),1e18);// Vote to veto (passes threshold)vm.prank(voter1);vetoProposal.voteToVeto(party,proposalId,0);_assertProposalStatus(PartyGovernance.ProposalStatus.Defeated);assertEq(vetoProposal.vetoVotes(party,proposalId),0);// Cleared after proposal is vetoed}
+In the test file, these are the conditions:totalVotingPower = 3e18, required votes threshold is 51%,voter1has1e18votes which is~33%. Clearlyvoter1should not be able to veto the proposal on his own.
+You can see in the test thatvoter1can veto 2 times.
+After the first call tovoteToVeto, the threshold is not yet reached (the proposal is still in theVotingstate).
+After the second call tovoteToVetothe threshold is reached and the proposal is in theDefeatedstate.
+Tools Used
+VSCode, Foundry
+Recommended Mitigation Steps
+The fix is straightforward.
+We introduce ahasVotedmapping that tracks for each(party, proposalId, address)triplet if it has vetoed already.
+Fix:
+diff --git a/contracts/proposals/VetoProposal.sol b/contracts/proposals/VetoProposal.solindex 780826f..fb1f1ab 100644--- a/contracts/proposals/VetoProposal.sol+++ b/contracts/proposals/VetoProposal.sol@@ -8,9 +8,11 @@ import "../party/Party.sol";contract VetoProposal {error NotPartyHostError();error ProposalNotActiveError(uint256 proposalId);+    error AlreadyVotedError(address caller);/// @notice Mapping from party to proposal ID to votes to veto the proposal.mapping(Party => mapping(uint256 => uint96)) public vetoVotes;+    mapping(Party => mapping(uint256 => mapping(address => bool))) public hasVoted;/// @notice Vote to veto a proposal./// @param party The party to vote on.@@ -33,6 +35,12 @@ contract VetoProposal {if (proposalStatus != PartyGovernance.ProposalStatus.Voting)revert ProposalNotActiveError(proposalId);+        if (hasVoted[party][proposalId][msg.sender]) {+            revert AlreadyVotedError(msg.sender);+        }++        hasVoted[party][proposalId][msg.sender] = true;+// Increase the veto vote countuint96 votingPower = party.getVotingPowerAt(msg.sender,
+0xble (Party) confirmed

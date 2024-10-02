@@ -1,0 +1,14 @@
+[H-01] Flash swap call back prior to transferring tokens inindexPool
+Submitted by broccoli, also found by 0xsanson and cmichel
+Impact
+In theIndexPoolcontract,flashSwapdoes not work.
+The callback function is called prior to token transfer. The sender won’t receive tokens in the callBack function.ITridentCallee(msg.sender).tridentSwapCallback(context);
+Flashswapis not implemented correctly. It may need a migration to redeploy allindexPoolsif the issue is found after main-net launch.
+I consider this a high-risk issue.
+Proof of Concept
+IndexPool.sol#L196-L223
+ITridentCallee(msg.sender).tridentSwapCallback(context);// @dev Check Trident router has sent `amountIn` for skim into pool.unchecked{// @dev This is safe from under/overflow - only logged amounts handled.require(_balance(tokenIn) >=amountIn+inRecord.reserve,"NOT_RECEIVED");inRecord.reserve+=uint120(amountIn);outRecord.reserve-=uint120(amountOut);}_transfer(tokenOut,amountOut,recipient,unwrapBento);
+Recommended Mitigation Steps
+_transfer(tokenOut,amountOut,recipient,unwrapBento);ITridentCallee(msg.sender).tridentSwapCallback(context);// @dev Check Trident router has sent `amountIn` for skim into pool.unchecked{// @dev This is safe from under/overflow - only logged amounts handled.require(_balance(tokenIn) >=amountIn+inRecord.reserve,"NOT_RECEIVED");inRecord.reserve+=uint120(amountIn);outRecord.reserve-=uint120(amountOut);}
+maxsam4 (Sushi) commented:
+Duplicate ofhttps://github.com/code-423n4/2021-09-sushitrident-findings/issues/157andhttps://github.com/code-423n4/2021-09-sushitrident-findings/issues/80

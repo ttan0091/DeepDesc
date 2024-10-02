@@ -1,0 +1,38 @@
+[H-17] Understanding the fee growth mechanism (whynearestTickis unsuitable)
+Submitted by hickuphh3
+Introduction
+Uniswap V3’s whitepaper describes the fee growth mechanism, but the intuition behind it is not explained well (IMO). I’ve not been able to find any material that tries to describe it, so allow me the luxury of doing so. It is crucial to understand how it works, so that other issues regarding the fee growth variables (and by extension, secondsPerLiquidity) raised by fellow wardens / auditors are better understood by readers.
+Objective
+We want a way to accurately track the fees accumulated by a position. Fees should only be given to the position it is active (the current tick / price is within the lower and upper ticks of the position).
+feeGrowthGlobal
+Defined as the total amount of fees that would have been earned by 1 unit of unbounded liquidity that was deposited when the contract was first initialized. For simplicity, we can take this to be the range betweenMIN_TICKandMAX_TICK. We represent it visually like this:
+// <-------------------------------------------------------------------------->// MIN_TICK                                                               MAX_TICK
+feeGrowthOutside
+The fee growth per unit of liquidity on theotherside of this tick (relative to the current tick). What does this mean?
+As defined, it is the fee growthrelativeto the current tick. Based on the convention, we define 2 cases:
+Case 1: initialized tick ≤ pool tickCase 2: Initialized tick > pool tick
+Visually, the feeGrowthOutside will look like this:
+// CASE 1// <--------------------|--------------------|// MIN_TICK         INIT_TICK            POOL_TICK// <-----------------------------------------|// MIN_TICK                        INIT_TICK = POOL_TICK// CASE 2//                                           |--------------------|---------------->//                                       POOL_TICK           INIT_TICK          MAX_TICK
+Hence, regardless of whether the tick to initialize is either a lower or upper tick of a position, thefeeGrowthOutsidevalue that it is referring to isrelatveto the pool tick.
+In other words, if initialized tick ≤ pool tick, then itsfeeGrowthOutsideis towardsMIN_TICK. Otherwise, itsfeeGrowthOutsideis towardsMAX_TICK.
+Initialization
+By convention, when a tick is initialized, all fee growth is assumed to happen below it. Hence, the feeGrowthOutside is initialized to the following values:
+Case 1: tick’s feeGrowthOutside = feeGrowthGlobalCase 2: tick’s feeGrowthOtuside = 0
+Implications
+One should now understand why thefeeGrowthOutsidevalue is being flipped when crossing a tick, ie.tick.feeGrowthOutside = feeGrowthGlobal - tick.feeGrowthOutsideinTick.cross(), because it needs to follow the definition. (Case 1 becomes case 2 and vice versa).
+It should hopefully become clear whyusingnearestTickas the reference point for fee growth calculations instead of the pool tick might not a wise choice.(Case 1 and 2 becomes rather ambiguous).
+Range fee growth / feeGrowthInside
+Going back to our objective of calculating the fee growth accumulated for a position, we can break it down into 3 cases (take caution with the boundary cases), and understand how their values are calculated. In general, we take it to be feeGrowthGlobal - fee growth below lower tick - fee growth above upper tick (see illustrations), although it can be simplified further.
+pool tick < lower tick// ---------------------|---------------------|-----------------|-----------------//                  POOL_TICK            LOWER_TICK          UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->//       LOWER_TICK.feeGrowthOutside (CASE 2) |---------------------------------->//                         UPPER_TICK.feeGrowthOutside (CASE 2) |---------------->// we want the range between LOWER_TICK and UPPER_TICK// = LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutside// alternatively, following the general formula, it is// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGlobal - (feeGrowthGlobal - LOWER_TICK.feeGrowthOutside) - UPPER_TICK.feeGrowthOtuside// = LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutsidelower tick ≤ pool tick < upper tick// ---------------------|---------------------|-----------------|-----------------//                  LOWER_TICK            POOL_TICK        UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->// <--------------------| LOWER_TICK's feeGrowthOutside (CASE 1)//                       UPPER_TICK's feeGrowthOutside (CASE 2) |---------------->// we want the range between LOWER_TICK and UPPER_TICK// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGLobal - LOWER_TICK.feeGrowthOutside - UPPER_TICK.feeGrowthOutsideupper tick ≤ pool tick// ---------------------|---------------------|-----------------|-----------------//                  LOWER_TICK            POOL_TICK        UPPER_TICK// <---------------------------- feeGrowthGlobal -------------------------------->// <--------------------| LOWER_TICK's feeGrowthOutside (CASE 1)// <------------------------------------------------------------| UPPER_TICK's feeGrowthOutside (CASE 1)// we want the range between LOWER_TICK and UPPER_TICK// = UPPER_TICK.feeGrowthOutside - LOWER_TICK.feeGrowthOutside// alternatively, following the general formula, it is// = feeGrowthGLobal - fee growth below LOWER_TICK - fee growth above UPPER_TICK// = feeGrowthGLobal - LOWER_TICK.feeGrowthOutside - (feeGrowthGlobal - UPPER_TICK.feeGrowthOutside)// = UPPER_TICK.feeGrowthOutside - LOWER_TICK.feeGrowthOutside
+Handling The Boundary Case
+An under appreciated, but very critical line of Uniswap V3’s pool contract is the following:
+state.tick = zeroForOne ? step.tickNext - 1 : step.tickNext;
+It serves a dual purpose:
+Because of how Tick Bitmap works, the tick needs to be manually decremented by 1 so that the next tick to be found is in the next word.More importantly, it handles the boundary case, wherezeroForOneis true (pool tick goes down). In this scenario, case 1 becomes case 2 when the tick is crossed. However, should the poolTick after the swap be equal tostep.tickNext, then when calculating fee growth inside a position that so happens to havestep.tickNextas one of its ticks, it will be treated as case 1 (poolTick = lowerTick / upperTick) when it is required to be treated as case 2.
+Impact
+Hopefully, this writeup helps readers understand the fee growth mechanism and its workings. More importantly, I hope it helps the team to understand why usingnearestTickas the reference point for fee growth mechanism is unsuitable. Specifically, we have 2 high severity issues:
+Wrong initialization value offeeGrowthOutsidein the case either the lower or upper tick becomes thenearestTickupon insertion of a new tick.You are (in a sense) crossing the old nearestTick, so itssecondsPerLiquidityOutsidehas to be flippedThe lower / upper tick’sfeeGrowthOutsideis incorrectly initialized to be0when it should befeeGrowthOutsideCase 1 and 2 becomes ambiguous. When a position is modified with either tick beingnearestTick, it is treated to be case 1 when in fact there are times it should be treated as case 2.
+Recommended Mitigation Steps
+Having a pool tick counter that closely matches the current pool price is rather critical for fee growth and seconds per liquidity initializations / calculations.
+Where relevant, thenearestTickshould be replaced bypoolTick.
+sarangparikh22 (Sushi) acknowledged

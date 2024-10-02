@@ -1,0 +1,184 @@
+[H-01] GroupBuy does not check return value of call
+Submitted byLambda, also found byTrustandIllIllI
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L265
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L283
+Impact
+Both usages ofcalldo not check if the transfer of ETH was succesful:
+payable(msg.sender).call{value:contribution}("");...payable(msg.sender).call{value:balance}("");
+This can become very problematic when the recipient is a smart contract that reverts (for instance, temporarily) in itsreceivefunction. Then,GroupBuystill assumes that this ETH was transferred out and sets the balance to 0 or deletesuserContributions[_poolId][msg.sender], although no ETH was transferred. This leads to a loss of funds for the recipient.
+Proof Of Concept
+We assume that the recipient is a smart contract that performs some logic in itsreceivefunction. For instance, it can be a nice feature for some people to automatically convert all incoming ETH into another token using an AMM. However, it can happen that the used AMM has too little liquidity at the moment or the slippage of a swap would be too high, leading to a revert in the receing contract. In such a scenario, theGroupBuycontract still thinks that the call was succesful, leading to lost funds for the recipient.
+Recommended Mitigation Steps
+requirethat the call was successful.
+HickupHH3 (judge) commented:
+Keeping as High severity because of valid use case and resulting loss of funds if the receiving contract reverts, but the tx doesn’t.
+stevennevins (Tessera) confirmed and mitigated:
+https://github.com/fractional-company/modular-fractional/pull/204Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+
+[H-02] GroupBuy: Lost ETH when the NFT is bought for less than the minimum reserve price
+Submitted byLambda, also found bygzeon
+Thepurchasefunction does not require that an NFT is bought for exactlyminReservePrices[_poolId] * filledQuantities[_poolId], the price is only not allowed to be greater:
+if(_price>minReservePrices[_poolId] *filledQuantities[_poolId])revertInvalidPurchase();
+This makes sense because it is not sensible to pay more when the purchase also succeeds with a smaller amount. However, the logic withinclaimdoes assume that the NFT was bought forminReservePrices[_poolId]. It decreases fromcontributionthe quantity times the reserve price for all bids:
+contribution-=quantity*reservePrice;
+Only the remaining amount is reimbursed to the user, which can lead to a loss of funds.
+Proof Of Concept
+Let’s say thatfilledQuantities[_poolId] = 100andminReservePrices[_poolId](i.e., the lowest bid) was 1 ETH. However, it was possible to buy the NFT for only 50 ETH. When a user has contributed 20 * 1 ETH, he does not get anything back when callingclaim, although only 10 ETH (0.5 ETH * 20) of his contributions were used to buy the NFT. The overall loss of funds for all contributors is 50 ETH.
+Recommended Mitigation Steps
+SetminReservePrices[_poolId]to_price / filledQuantities[_poolId]after a purchase.
+stevennevins (Tessera) disagreed with severity and commented:
+Not sure I agree with the severity.  The mechanism is essentially users pre-state their X interest at Y quantity and so a user can never “pay” at a price greater than they essentially agreed to.  We will look into ways to better handle the change and as it related to#19. I would mark this as Medium.
+mehtaculous (Tessera) confirmed
+HickupHH3 (judge) commented:
+Funds are considered lost if the NFT was bought at a discounted price, and cannot be recovered, right? Would keep at High severity if it’s the case.
+stevennevins (Tessera) commented:
+Yeah correct, confirmed.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/207
+Status:Mitigation not confirmed.  Full details in reports fromgzeonandIllIllI. Also included in Mitigation Review section below.
+
+[H-03] Groupbuy:_verifyUnsuccessfulStateand_verifySuccessfulStateboth can return true when block.timestamp == pool.terminationPeriod
+Submitted byLambda
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L455
+https://github.com/code-423n4/2022-12-tessera/blob/1e408ebc1c4fdcc72678ea7f21a94d38855ccc0b/src/modules/GroupBuy.sol#L478
+Impact
+The functions_verifyUnsuccessfulStateand_verifySuccessfulStateshould always have a differing behavior with regards to reversion, i.e. when one does not revert, the other should revert. In one condition, this is not true. Namely, when we havepool.success == falseandblock.timestamp == pool.terminationPeriod, this check within_verifyUnsuccessfulStateisfalse:
+if(pool.success||block.timestamp>pool.terminationPeriod)revertInvalidState();
+Similarly, this check within_verifySuccessfulStateis alsofalse:
+if(!pool.success&&block.timestamp<pool.terminationPeriod)revertInvalidState();
+Because this breaks a fundamental invariant of the contract, there are probably multiple ways to exploit it.
+One way an attacker can exploit is by callingclaim(to get his contribution back completely), bidding again with a higher value than his previous contributions (to get his contributions back again).
+Proof Of Concept
+Let’s assume we are at timestamppool.terminationPeriod. Attacker Charlie has performed the lowest bid with quantity 10 and price 1 ETH. He callsclaimto get his 10 ETH back. Now, he callscontributewith a quantity of 10 and a price of 2 ETH. Because this bid is higher than his previous one (which was the lowest one), hispendingBalancesis set to 10 ETH (for the deleted entries) and hisuserContributionsis set to 20 ETH (for this new contribution). He can now callclaimagain to get back his 20 ETH inuserContributions, but also the 10 ETH inpendingBalances. Like that, he has stolen 10 ETH (and could use this attack pattern to drain the whole contract).
+Recommended Mitigation Steps
+Change<in_verifySuccessfulStateto<=.
+HickupHH3 (judge) commented:
+Given that block timestamp period for ETH mainnet is now a constant 12s, the probability of a block timestamp being equal toterminationPeriodis 1/12 (~8.3%), which is non-trivial.
+stevennevins (Tessera) confirmed and mitigated:
+https://github.com/fractional-company/modular-fractional/pull/203Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+
+[H-04] OptimisticListingSeaport.propose sets pendingBalances of newly added proposer instead of previous one
+Submitted byLambda, also found byTrust
+InOptimisticListingSeaport.propose,pendingBalancesis set to the collateral. The purpose of this is that the proposer of a previous proposal can withdraw his collateral afterwards. However, this is done on the storage variableproposedListingafter the new listing is already set:
+_setListing(proposedListing,msg.sender,_collateral,_pricePerToken,block.timestamp);// Sets collateral amount to pending balances for withdrawalpendingBalances[_vault][proposedListing.proposer] +=proposedListing.collateral;
+Because of that, it will actually setpendingBalancesof the new proposer. Therefore, the old proposer loses his collateral and the new one can make proposals for free.
+Proof Of Concept
+--- a/test/seaport/OptimisticListingSeaport.t.sol+++ b/test/seaport/OptimisticListingSeaport.t.sol@@ -379,8 +379,11 @@ contract OptimisticListingSeaportTest is SeaportTestUtil {/// ===== LIST =====/// ================function testList(uint256 _collateral, uint256 _price) public {// setuptestPropose(_collateral, _price);+        assertEq(optimistic.pendingBalances(vault, bob), 0);_increaseTime(PROPOSAL_PERIOD);_collateral = _boundCollateral(_collateral, bobTokenBalance);_price = _boundPrice(_price);
+This test fails andoptimistic.pendingBalances(vault, bob)is equal to_collateral.
+Recommended Mitigation Steps
+RunpendingBalances[_vault][proposedListing.proposer] += proposedListing.collateral;before the_setListingcall, in which case the above PoC no longer works.
+HickupHH3 (judge) commented:
+Because of that, it will actually set pendingBalances of the new proposer. Therefore, the old proposer loses his collateral and the new one can make proposals for free.Seems like intended behaviour to me (actually set pendingBalances of the new proposer). The old proposer wouldn’t be losing his collateral because his pendingBalances would’ve been set when he calledpropose().
+mehtaculous (Tessera) confirmed and commented:
+Agree with severity. The suggested solution makes sense.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/202Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+
+[H-05] Attacker can DOS OptimisticListing with very low cost
+Submitted bygzeon, also found byTrust,Trust, andcccz
+The only check on a new proposal is that it is priced lower than the existing proposal. It does not constrain on the_collateralsupplied (except it will revert in\_verifyBalanceif set to 0). Anyone can block normal proposal creation by creating a proposal with lower price but\_collateral == 1. When a high total supply is used, the price of each Rae is negligible and enables an attacker to DOS the protocol.
+This violated theprevent a user from holding a vault hostage and never letting the piece be reasonably boughtrequirement.
+Proof of Concept
+For any proposal, an attacker can deny it with\_collateral = 1and\_price = price - 1.
+If he does not want the NFT to be sold, he can reject the proposal himself, resetting the contract state.
+https://github.com/code-423n4/2022-12-tessera/blob/f37a11407da2af844bbfe868e1422e3665a5f8e4/src/seaport/modules/OptimisticListingSeaport.sol#L112-L116
+// Reverts if price per token is not lower than both the proposed and active listingsif(_pricePerToken>=proposedListing.pricePerToken||_pricePerToken>=activeListings[_vault].pricePerToken)revertNotLower();
+Add this test to OptimisticListingSeaport.t.sol:
+function testProposeRevertLowerTotalValue() public {uint256 _collateral = 100;uint256 _price = 100;// setuptestPropose(_collateral, _price);lowerPrice = pricePerToken - 1;// executevm.expectRevert();_propose(eve, vault, 1, lowerPrice, offer);// expect_assertListing(eve, 1, lowerPrice, block.timestamp);_assertTokenBalance(eve, token, tokenId, eveTokenBalance - 1);}
+[FAIL. Reason: Call did not revert as expected]
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Require the total value of the new collateral to be greater than the previous.
+This however still allows a Rae holder with sufficiently large holding to block proposal by creating a new proposal and immediately reject it himself.
+stevennevins (Tessera) confirmed
+HickupHH3 (judge) commented:
+Best report for Foundry POC + the following statement:This violated theprevent a user from holding a vault hostage and never letting the piece be reasonably boughtrequirement.
+
+[H-06] Funds are permanently stuck in OptimisticListingSeaport.sol contract if active proposal is executed after new proposal is pending.
+Submitted byTrust
+\_constructOrderis called inpropose(), OptimisticListingSeaport.sol. It fills the order params stored in proposedListings[_vault].
+{orderParams.offerer = _vault;orderParams.startTime = block.timestamp;// order doesn't expire in human time scales and needs explicit cancellationsorderParams.endTime = type(uint256).max;orderParams.zone = zone;// 0: no partial fills, anyone can executeorderParams.orderType = OrderType.FULL_OPEN;orderParams.conduitKey = conduitKey;// 1 Consideration for the listing itself + 1 consideration for the feesorderParams.totalOriginalConsiderationItems = 3;}
+Importantly, it updates the order hash associated with the vault:vaultOrderHash[_vault] = _getOrderHash(orderParams, counter);
+There is only one other use ofvaultOrderHash, in\_verifySale().
+function _verifySale(address _vault) internal view returns (bool status) {(bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize) = ISeaport(seaport).getOrderStatus(vaultOrderHash[_vault]);if (isValidated && !isCancelled && totalFilled > 0 && totalFilled == totalSize) {status = true;}}
+This function gets order information from the order hash, and makes sure the order is completely fulfilled.
+After NFT sell has completed,cash()is used to distribute income ETH:
+function cash(address _vault, bytes32[] calldata _burnProof) external {// Reverts if vault is not registered(address token, uint256 id) = _verifyVault(_vault);// Reverts if active listing has not been settledListing storage activeListing = activeListings[_vault];// Reverts if listing has not been sold// -------------- _verifySale MUST BE TRUE ---------if (!_verifySale(_vault)) {revert NotSold();} else if (activeListing.collateral != 0) {uint256 collateral = activeListing.collateral;activeListing.collateral = 0;// Sets collateral amount to pending balances for withdrawalpendingBalances[_vault][activeListing.proposer] = collateral;}
+As long as sale is not complete,cash()can’t be called as highlighted. The issue is thatvaultOrderHash[_vault]is not protected during the lifetime of an active proposal. If another proposal is proposed and then the sell using active proposal takes place,cash()will keep reverting. Funds are stuck in listing contract.
+We can try to be clever and callpropose()again with the same parameters to create an identical orderID, which will makevaultOrderHash[_vault]fine again and allowcash()to go through. But order params contain block.timestamp which will certainly be different which will make the hash different.
+Impact
+Funds are permanently stuck in OptimisticListingSeaport.sol contract if active proposal is executed after new proposal is pending.
+Proof of Concept
+User A callspropose(), setting proposedListing. vaultOrderHash=XPROPOSAL_PERIOD passes , list is called promoting the listing to activeListing.Another user, malicious or innocent, proposes another proposal. vaultOrderHash=YSell goes down due to OpenSea validation confirmed on activeListing.\_verifySalewill never return true because we can never got vaultOrderHash to be Xcash() is bricked. Money is stuck in contract.
+Recommended Mitigation Steps
+Keep the order hash in the Listing structure rather than a single one per vault.
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Solution is to moveorderHashto Listing struct so that active and proposed listings can have separate order hashes.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/211Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+
+[H-07] User loses collateral converted to pendingBalance whencash()orlist()is called
+Submitted byTrust, also found byLambda
+https://github.com/code-423n4/2022-12-tessera/blob/f37a11407da2af844bbfe868e1422e3665a5f8e4/src/seaport/modules/OptimisticListingSeaport.sol#L295
+https://github.com/code-423n4/2022-12-tessera/blob/f37a11407da2af844bbfe868e1422e3665a5f8e4/src/seaport/modules/OptimisticListingSeaport.sol#L232
+Description
+In OptimisticListingOpensea, there are several functions which update pendingBalances of a proposer:
+list()cash()propose()
+Unfortunately, inlist()andcash()the = operator is used instead of += when writing the new pendingBalances. For example:
+function cash(address _vault, bytes32[] calldata _burnProof) external {// Reverts if vault is not registered(address token, uint256 id) = _verifyVault(_vault);// Reverts if active listing has not been settledListing storage activeListing = activeListings[_vault];// Reverts if listing has not been soldif (!_verifySale(_vault)) {revert NotSold();} else if (activeListing.collateral != 0) {uint256 collateral = activeListing.collateral;activeListing.collateral = 0;// Sets collateral amount to pending balances for withdrawalpendingBalances[_vault][activeListing.proposer] = collateral;}...
+pendingBalances is not guaranteed to be zero. There could be funds from previous proposals which are not yet collected. Propose updates pendingBalance correctly:
+// Sets collateral amount to pending balances for withdrawalpendingBalances[_vault][proposedListing.proposer] += proposedListing.collateral;
+So, when propose is followed by another propose(), the pendingBalance is updated correctly, but in cash and list we don’t account for pre-existing balance. This issue would manifest even after the fix suggested in the issue “User can send a proposal and instantly take back their collateral” because reject functions would increment the pendingBalance and then it would be overriden.
+Impact
+User loses collateral converted to pendingBalance whencash()orlist()is called.
+Proof of Concept
+User callspropose()and gets pendingBalance = xUser callspropose()with an improved proposal and gets pendingBalance = 1.5xproposal is successfull and the listing purchased the NFTcash()is called to convert the Raes to ETH amount from the sell. pendingBalance is overridden by the current “collateral”  value. pendingBalance = 0.5xUser loses x collateral value which is stuck in the contract
+Recommended Mitigation Steps
+Change the = operator to += inlist()andcash().
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Solution is to replace=with+=for bothlistandcashfunctions.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/202Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+
+[H-08] Attacker can steal the amount collected so far in the GroupBuy for NFT purchase.
+Submitted byTrust, also found byIllIllIandLambda
+purchase()in GroupBuy.sol executes the purchase call for the group. After safety checks, the NFT is bought with\_market’sexecute()function. Supposedly it deploys a vault which owns the NFT. The code makes sure the vault is the new owner of the NFT and exits.
+// Executes purchase order transaction through market buyer contract and deploys new vaultaddress vault = IMarketBuyer(_market).execute{value: _price}(_purchaseOrder);// Checks if NFT contract supports ERC165 and interface ID of ERC721 tokensif (ERC165Checker.supportsInterface(_nftContract, _INTERFACE_ID_ERC721)) {// Verifes vault is owner of ERC-721 tokenif (IERC721(_nftContract).ownerOf(_tokenId) != vault) revert UnsuccessfulPurchase();} else {// Verifies vault is owner of CryptoPunk tokenif (ICryptoPunk(_nftContract).punkIndexToAddress(_tokenId) != vault)revert UnsuccessfulPurchase();}// Stores mapping value of poolId to newly deployed vaultpoolToVault[_poolId] = vault;// Sets pool state to successfulpoolInfo[_poolId].success = true;// Emits event for purchasing NFT at given priceemit Purchase(_poolId, vault, _nftContract, _tokenId, _price);
+The issue is that\_marketuser-supplied variable is not validated at all. Attacker can pass their malicious contract, which uses the passed funds to buy the NFT and store it in attacker’s wallet. It will return the NFT-holding wallet so the checks will pass. As a result, attacker has the NFT while they could have contributed nothing to the GroupBuy. Attacker can also just steal the supplied ETH and return the current address which holds the NFT.
+Impact
+Attacker can steal the amount collected so far in the GroupBuy for NFT purchase.
+Proof of Concept
+Group assembles and raises funds to buy NFT XAttacker callspurchase()and supplies their malicious contract in\_market, as described.Attacker receives raised funds totallingminReservePrices[_poolId] * filledQuantities[_poolId], as checked in line 182.
+Recommended Mitigation Steps
+\_marketshould be whitelisted, or supplied in createPool stage and able to be scrutinized.
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Solution is to check that thevaultdeployed from the MarketBuyer is actually registered through theVaultRegistry. This would confirm that the vault is not a user address
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/201
+Status:Mitigation not confirmed.  Full details inreport from gzeon, and also included in the Mitigation Review section below.
+
+[H-09] GroupBuy can be drained of all ETH.
+Submitted byTrust, also found byLambda
+purchase()in GroupBuy faciilitates the purchasing of an NFT after enough contributions were gathered. Another report titled“Attacker can steal the amount collected so far in the GroupBuy for NFT purchase” describes a high impact bug in purchase. It is advised to read that first for context.
+Additionally,purchase()is vulnerable to a re-entrancy exploit which can bechainedornot chainedto the\_marketissue to stealthe entireETH stored in GroupBuy, rather than being capped tominReservePrices[_poolId] * filledQuantities[_poolId].
+Attacker may take control of execution using this call:
+// Executes purchase order transaction through market buyer contract and deploys new vaultaddress vault = IMarketBuyer(_market).execute{value: _price}(_purchaseOrder);
+It could occur either by exploiting the unvalidated\_marketvulnerability , or by abusing an existing market that uses a user address in\_purchaseOrder.
+There is no re-entrancy protection inpurchase()call:
+function purchase(uint256 _poolId,address _market,address _nftContract,uint256 _tokenId,uint256 _price,bytes memory _purchaseOrder,bytes32[] memory _purchaseProof) external {
+\_verifyUnsuccessfulState()needs to not revert for purchase call. It checks the pool.success flag:if (pool.success || block.timestamp > pool.terminationPeriod) revert InvalidState();
+However, success is only set as the last thing inpurchase():
+// Stores mapping value of poolId to newly deployed vaultpoolToVault[_poolId] = vault;// Sets pool state to successfulpoolInfo[_poolId].success = true;// Emits event for purchasing NFT at given priceemit Purchase(_poolId, vault, _nftContract, _tokenId, _price);}
+Therefore, attacker can re-enter purchase() function multiple times, each time extracting the maximum allowed price. If attacker uses the controlled\_marketexploit, the function will return the current NFT owner, so when all the functions unwind they will keep setting success to true and exit nicely.
+Impact
+GroupBuy can be drained of all ETH.
+Proof of Concept
+GroupBuy holds 1500 ETH, from various bidsmaximum allowed price (minReservePrices[_poolId] * filledQuantities[_poolId]) is 50 * 20 = 1000 ETHpurchase(1000 ETH) is calledGroupBuy sends attacker 1000 ETH and callsexecute()execute()calls purchase(500ETH)GroupBuy sends attacker 500 ETH and callsexecute()execute returns NFT owner addressGroupBuy sees returned address is NFT owner. Marks success and returnsexecute returns NFT owner addressGroupBuy sees returned address is NFT owner. Marks success and returnsAttacker is left with 1500 ETH. Previous exploit alone can only net 1000ETH. Additionally, this exploit can be chained to any trusted MarketBuyer which passes control to user for purchasing and storing in vault, and then returns a valid vault.
+Recommended Mitigation Steps
+Add a re-entrancy guard topurchase()function. Also, change success variable before performing external contract calls.
+mehtaculous (Tessera) confirmed and commented:
+Agree with High severity. Instead of addingre-entrancytag topurchasefunction, pool state simply needs to be updated tosuccessbefore execution.In regards to:or by abusing an existing market that uses a user address in _purchaseOrder.This is not considered an issue since users will most likely NOT contribute to a pool where they are not familiar with the NFT and / or contract. Since the NFT contract is set when the pool is created, it should not matter whether the contract is malicious or is for an existing market that uses a user address, the pool will just be disregarded.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/201Status:Mitigation confirmed bygzeon,IllIllI, andLambda.
+

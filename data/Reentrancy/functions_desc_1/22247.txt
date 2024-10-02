@@ -1,0 +1,24 @@
+This code defines a smart contract named PIGGY_BANK, which includes a mapping to keep track of account balances and a function to collect funds from these accounts. Here’s a detailed explanation of how this contract works:
+
+1. Mapping Definition:
+    mapping (address => uint) public Accounts;
+    This line declares a public mapping named Accounts. The mapping associates Ethereum addresses with unsigned integer values, representing the balance of each account. The public keyword automatically generates a getter function for this mapping, allowing external contracts and accounts to query the balance of any address.
+
+2. Function Definition:
+    function Collect(uint _am) public payable {
+    This line defines a public payable function named Collect that takes one parameter _am of type uint, representing the amount of funds to be collected. The payable keyword indicates that this function can receive Ether.
+
+3. Function Logic:
+    if(_am <= Accounts[msg.sender]) {
+    This line checks if the amount _am is less than or equal to the balance of the sender's account (msg.sender). If true, it proceeds to the next step.
+   
+    if(msg.sender.call.value(_am)()) {
+    This line attempts to send _am Wei to the sender's address using the lowlevel call function. The call.value(_am)() function is used to send Ether, and it returns a boolean indicating whether the transfer was successful.
+   
+    Accounts[msg.sender] = _am;
+    If the Ether transfer is successful (i.e., the call function returns true), this line deducts the amount _am from the sender's account balance.
+
+4. Potential Vulnerability:
+    The use of call.value(_am)() in this context is susceptible to reentrancy attacks. If the recipient of the funds is a malicious contract that recursively calls back into the Collect function before the balance is updated, it could repeatedly withdraw funds beyond its actual balance. This is a classic example of a reentrancy vulnerability.
+
+In summary, the PIGGY_BANK contract allows users to collect funds from their accounts if they have sufficient balance. However, the contract should be revised to avoid reentrancy attacks, possibly by using a mutex or updating the balance before making the transfer.

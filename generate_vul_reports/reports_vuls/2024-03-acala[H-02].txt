@@ -1,0 +1,20 @@
+[H-02] Early user can break pool via inflation attack due to no minimum liquidity check in the incentive contract
+Submitted bycarrotsmuggler, also found byzhaojie
+The incentive contract does not enforce a minimum liquidity limit. This means users can have as little as 1 share in the pool. This can lead to inflation attacks as described below.
+Let’s imagine the state of the pool is as follows:
+There is a single depositor, with 1000 shares deposited. Rewards have been accumulated up to 500 tokens. The user can then withdraw 998 shares, leaving 2 shares. They will also claim the rewards, and leave 1 reward tokens in the pool. This is the setup for the inflation attack. The user can then deposit 1 share.
+The inflation is calculated as shown below:
+U256::from(add_amount.to_owned().saturated_into::<u128>()).saturating_mul(total_reward.to_owned().saturated_into::<u128>().into()).checked_div(initial_total_shares.to_owned().saturated_into::<u128>().into()).unwrap_or_default().as_u128().saturated_into()
+Heretotal_reward=1,add_amount=1andinitial_total_shares=2. So the result is calculated to0; so inflation is0.
+After this step, theinitial_total_sharesis updated to 3. Now the user can deposit 2 wei of shares without changing the inflation amount. Next iteration, they can deposit 4 shares. This way, the user can deposit2**nshares each iteration, and inflate theinitial_total_shareswithout affecting the reward inflation. This leads to the situation where thetotal_shareskeeps growing according to the deposit, but the entire reward inflation mechanism is broken. This lets users steal reward tokens from other users, and is a high severity issue.
+In fact, whenever thetotal_rewardvalue is less than thetotal_shares, this issue can be triggered. This is because in those conditions, users can create deposits and have thereward_inflationevaluate to0.0reward_inflationbasically means later users can steal rewards of earlier users, as is outlined in the docs. However, this donation attack is more effective the lower thetotal_sharesin the system.
+Proof of Concept
+The situation can be created via the following steps:
+Since there is no minimum deposit, we can create a situation where thetotal_reward < total_shares, andtotal_shares=2. This also works for higher values oftotal_share, but is most potent in this stage.User deposits 1 share, or any number of shares as long asdeposit*total_reward/total_sharesis less than 1.reward_inflationwill be0, while the user gets their shares accounted for.Sincetotal_shareshas now increased, the user can deposit more shares now, and still have thereward_inflationbe0. This way, the user can keep depositing shares and increasing thetotal_shareswithout affecting the reward inflation.Sincereward_inflationand thustotal_rewardhas not increased, but thetotal_shareshave increased, users will lose rewards, since the rewards are calculated astotal_reward * user_shares / total_shares. This means older users lose shares.
+While this vector is generally applicable and can lead to small losses when there’s a lot of liquidity, this becomes more potent when there is very low liquidity in the pool. This was the method of attack for the Wise Lending hack and is a high severity issue. More details can be found in the blog postherewhich outlines the attack scenario with more numbers and examples.
+Tools Used
+Substrate
+Recommended Mitigation Steps
+Add a minimum liquidity limit. This will ensure the pool never reaches a liquidity amount so low that rounding errors become significant.
+xlc (Acala) confirmed and commented:
+It is actually almost impossible to trigger this in production because anyone can deposit into the incentives pool at any time. I.E. before rewards starts accumulates.Fixed bythis PR.

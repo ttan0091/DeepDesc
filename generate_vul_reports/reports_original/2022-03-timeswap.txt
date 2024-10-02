@@ -1,0 +1,18 @@
+[H-01] Wrong timing of check allows users to withdraw collateral without paying for the debt
+Submitted by WatchPug, also found by IllIllI
+TimeswapPair.sol#L459-L490
+functionpay(PayParamcalldataparam)externaloverridelockreturns(uint128assetIn,uint128collateralOut){require(block.timestamp<param.maturity,'E202');require(param.owner!=address(0),'E201');require(param.to!=address(0),'E201');require(param.to!=address(this),'E204');require(param.ids.length==param.assetsIn.length,'E205');require(param.ids.length==param.collateralsOut.length,'E205');Poolstoragepool=pools[param.maturity];Due[]storagedues=pool.dues[param.owner];require(dues.length>=param.ids.length,'E205');for(uint256i;i<param.ids.length;) {Duestoragedue=dues[param.ids[i]];require(due.startBlock!=BlockNumber.get(),'E207');if(param.owner!=msg.sender)require(param.collateralsOut[i] ==0,'E213');require(uint256(assetIn) *due.collateral>=uint256(collateralOut) *due.debt,'E303');due.debt-=param.assetsIn[i];due.collateral-=param.collateralsOut[i];assetIn+=param.assetsIn[i];collateralOut+=param.collateralsOut[i];unchecked{ ++i; }}...
+At L484, if there is only oneid, and for the first and only time of the for loop,assetInandcollateralOutwill be0, thereforerequire(uint256(assetIn) * due.collateral >= uint256(collateralOut) * due.debt, 'E303');will pass.
+A attacker can callpay()withparam.assetsIn[0] == 0andparam.collateralsOut[i] == due.collateral.
+Proof of Concept
+The attacker can:
+borrow()10,000 USDCwith1 BTCascollateral;pay()with0 USDCasassetsInand1 BTCascollateralsOut.
+As a result, the attacker effectively stole10,000 USDC.
+Recommended Mitigation Steps
+Change to:
+for(uint256i;i<param.ids.length;) {Duestoragedue=dues[param.ids[i]];require(due.startBlock!=BlockNumber.get(),'E207');if(param.owner!=msg.sender)require(param.collateralsOut[i] ==0,'E213');due.debt-=param.assetsIn[i];due.collateral-=param.collateralsOut[i];assetIn+=param.assetsIn[i];collateralOut+=param.collateralsOut[i];unchecked{ ++i; }}require(uint256(assetIn) *due.collateral>=uint256(collateralOut) *due.debt,'E303');...
+Mathepreneur (Timeswap) resolved and commented:
+Timeswap-Labs/Timeswap-V1-Core@b23b44a
+0xleastwood (judge) commented:
+This is an interesting find. It appears thatassetInandcollateralOutare not checked properly during the first iteration of the for loop. As a result, this functionality of this function is inherently broken as therequirestatement will always be satisfied. Nice job!
+

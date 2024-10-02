@@ -1,0 +1,15 @@
+Type of vulnerability: Reward Distribution Miscomputation
+Cause of vulnerability: Reward distribution occurs before updating the cumulative supply/borrow indexes and user-specific indexes, leading to incorrect calculations of user rewards based on outdated total supply values.
+Execution process: When a user calls `accrueAccount`, the function first distributes rewards based on the current total supply and user balance. Subsequently, it updates the accrual state, which includes minting additional tokens for the user due to lending rates. This sequence of operations results in the user receiving rewards based on an outdated total supply, leading to an inflated reward percentage.
+Vulnerable code: 
+```solidity
+function accrueAccount(address _account) public {
+    // distributes before updating accrual state
+    _distributeReward(_account);
+    accrue();
+    _accrueAccountInterest(_account);
+    if (_account != feeRecipient()) {
+        _accrueAccountInterest(feeRecipient());
+    }
+}
+```

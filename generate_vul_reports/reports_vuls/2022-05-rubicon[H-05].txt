@@ -1,0 +1,16 @@
+[H-05] BathToken LPs Unable To Receive Bonus Token Due To Lack Of Wallet Setter Method
+Submitted by xiaoming90, also found by 0xNoah, PP1004, sseefried, reassor, hubble, pauliax, sashiketh, and shenwilly_
+BathBuddy is a Vesting Wallet that payout withdrawers anybonusTokensthey may have accrued while staking in the Bath Token (e.g. network incentives/governance tokens).
+BathBuddy Vesting Wallet releases a user their relative share of the pool’s total vested bonus token during the withdraw call on BathToken.sol. This vesting occurs linearly over Unix time.
+It was observed that the BathToken LPs are unable to receive any bonus tokens from the BathBuddy Vesting Wallet during withdraw and the bonus tokens are struck in the BathBuddy Vesting Wallet.
+Proof of Concept
+The following shows that the address of the BathBuddy Vesting Wallet is stored in therewardsVestingWalletstate variable and it is used to call thereleasefunction to distribute bonus to the BathToken withdrawers.
+https://github.com/code-423n4/2022-05-rubicon/blob/8c312a63a91193c6a192a9aab44ff980fbfd7741/contracts/rubiconPools/BathToken.sol#L629
+functiondistributeBonusTokenRewards(addressreceiver,uint256sharesWithdrawn,uint256initialTotalSupply)internal{if(bonusTokens.length>0) {for(uint256index=0;index<bonusTokens.length;index++) {IERC20token=IERC20(bonusTokens[index]);// Note: Shares already burned in Bath Token _withdraw// Pair each bonus token with a lightly adapted OZ Vesting wallet. Each time a user withdraws, they//  are released their relative share of this pool, of vested BathBuddy rewards// The BathBuddy pool should accrue ERC-20 rewards just like OZ VestingWallet and simply just release the withdrawer's relative share of releaseable() tokensif(rewardsVestingWallet!=IBathBuddy(0)) {rewardsVestingWallet.release((token),receiver,sharesWithdrawn,initialTotalSupply,feeBPS);}}}}
+However, there is no setter method to initialise the value of therewardsVestingWalletstate variable in the contracts. Therefore, the value ofrewardsVestingWalletwill always be zero. Note that Solidity only create a default getter for public state variable, but does not create a default setter.
+SincerewardsVestingWalletis always zero, the conditionif (rewardsVestingWallet != IBathBuddy(0))will always be evaluated asfalse. Thus, the code blockrewardsVestingWallet.releasewill never be reached.
+Impact
+Loss of Fund for the users. BathToken LPs are not able to receive theirbonusToken.
+Recommended Mitigation Steps
+Implement a setter method for therewardsVestingWalletstate variable in the contracts so that it can be initialised with BathBuddy Vesting Wallet address.
+bghughes (Rubicon) confirmed

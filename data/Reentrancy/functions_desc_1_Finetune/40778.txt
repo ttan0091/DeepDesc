@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Lack of reentrancy guard in `Router.sol` and the use of `transfer` method without `require` statement, which forwards 2300 gas to untrusted contracts.
+Exploitation scenario: 
+1. Deploy `ReentranceExploit` contract.
+2. Call the `deposit` function of `ReentranceExploit` with the WEX WETH Router address and an ETH value of 0.005.
+3. In the `receive()` fallback function of `EGGe.sol`, "transfer" 0.00424 BNB to the Router address using a flash loan.
+4. Router uses gasless capabilities of the token to flash swap.
+5. Flash swap tokens worth the 0.00424 BNB, then fall into "sumTokenInPeg" which transfers 0.00212 BNB to EGGe.
+6. Market Maker of SafeSwap pool between WBNB/EGGe rewards, updates the price (buy 0.00425% more) and gives 0.00909 amountEGGe# to Router.
+7. Router will deposit 0.00767124 EGGe and 0.00108731 bonusEGGe# (0.00909-0.00767124)] (0.59006% of 59 vouchers).
+8. Repeats from step 2.GREEN前执行step2, step8.

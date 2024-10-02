@@ -1,0 +1,27 @@
+This code defines an external view function named investedAssets, which is designed to return the total value of invested assets. This function overrides a method from a base contract, likely named BaseStrategy. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Modifiers:
+    external: This keyword indicates that the function can only be called from outside the contract.
+    view: This keyword indicates that the function does not modify the state of the blockchain; it only reads data.
+    override(BaseStrategy): This indicates that the function overrides a method with the same name in the BaseStrategy contract.
+
+2. Variable Initialization:
+    uint256 underlyingBalance = _getUnderlyingBalance();: This line calls an internal function _getUnderlyingBalance() to retrieve the balance of the underlying asset held directly by the contract.
+    uint256 aUstBalance = _getAUstBalance() + pendingRedeems;: This line retrieves the balance of a token (likely aUST, an interestbearing token on the Anchor protocol) held by the contract by calling _getAUstBalance() and adds any pending redemptions (pendingRedeems).
+
+3. Calculating the Value of aUST in UST:
+    uint256 ustAssets = ((exchangeRateFeeder.exchangeRateOf(address(aUstToken), true)  aUstBalance) / 1e18) + pendingDeposits;: This line calculates the value of the aUST balance in terms of the underlying stablecoin (UST). It does this by:
+      Fetching the current exchange rate of aUST to UST using exchangeRateFeeder.exchangeRateOf(address(aUstToken), true).
+      Multiplying this exchange rate by the aUST balance to get the equivalent UST value.
+      Dividing by 1e18 to normalize the result (assuming the exchange rate is in wei).
+      Adding any pending deposits (pendingDeposits).
+
+4. Final Calculation and Return Statement:
+    return underlyingBalance + curvePool.get_dy_underlying(ustI, underlyingI, ustAssets);: This line calculates the total value of invested assets by:
+      Adding the direct underlying balance (underlyingBalance).
+      Adding the value of UST obtained from the aUST balance, converted through a Curve pool (curvePool.get_dy_underlying(ustI, underlyingI, ustAssets)). This function call estimates the amount of underlying asset that can be obtained by swapping the calculated UST amount through the Curve pool.
+
+5. Function Return:
+    The function returns the sum of the direct underlying balance and the estimated underlying asset value from the Curve pool swap, providing a comprehensive view of the total invested assets.
+
+This function is crucial for providing a realtime snapshot of the total value of assets managed by the strategy, which is essential for transparency and financial calculations within the DeFi ecosystem.

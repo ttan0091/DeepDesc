@@ -1,0 +1,19 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The contract transfers fractional tokens before updating the base token balance, allowing an attacker to repeatedly call the buy function using an ERC777 token without updating the base token balance.
+Execution process: An attacker calls the buy function with specific parameters, implementing a hook that executes multiple times during the transfer, each time calling the buy function again. After several iterations, the attacker calls the sell function to convert the accumulated fractional tokens back into base tokens at a significant profit.
+Vulnerable code: 
+```solidity
+function buy(uint256 outputAmount, uint256 maxInputAmount) public payable returns (uint256 inputAmount) {
+    require(baseToken == address(0) ? msg.value == maxInputAmount : msg.value == 0, "Invalid ether input");
+    inputAmount = buyQuote(outputAmount);
+    require(inputAmount <= maxInputAmount, "Slippage: amount in");
+    _transferFrom(address(this), msg.sender, outputAmount);
+    if (baseToken == address(0)) {
+        uint256 refundAmount = maxInputAmount - inputAmount;
+        if (refundAmount > 0) msg.sender.safeTransferETH(refundAmount);
+    } else {
+        ERC20(baseToken).safeTransferFrom(msg.sender, address(this), inputAmount);
+    }
+    emit Buy(inputAmount, outputAmount);
+}
+```

@@ -1,0 +1,48 @@
+This code defines an internal function named _getPrice, which retrieves the price of a given asset in a specified denomination. The function is designed to handle various conditions and errors, ensuring that the price data is valid and uptodate before returning it. Here’s a detailed explanation of how this function works:
+
+### Function Signature and Parameters
+ Parameters:
+   asset_: The address of the asset whose price is being queried.
+   denomination_: The address of the denomination in which the price is to be expressed (e.g., USD, ETH).
+   revert_: A boolean flag indicating whether the function should revert the transaction if an error occurs.
+ Returns:
+   uint256: The price of the asset in the specified denomination.
+
+### Function Logic
+1. TryCatch Block:
+    The function attempts to fetch the latest round data from a feed registry (_feedRegistry) for the specified asset and denomination.
+    If the call to latestRoundData is successful, it returns several values including price_, timeStamp_, and answeredInRound_.
+
+2. Validation Checks:
+    Round Completion: Ensures that the timestamp (timeStamp_) is not zero, indicating that the round data is complete.
+    Stale Price: Checks if the current block timestamp is within the acceptable delay (stalePriceDelay) from the timestamp of the price data.
+    NonNegative Price: Ensures that the price (price_) is not zero, which would indicate a negative price.
+    Stale Price in Round: Verifies that the round in which the answer was provided (answeredInRound_) is not older than the current round (roundID_).
+
+3. Price Scaling:
+    If all checks pass, the function scales the price from the feed registry's decimals to the appropriate scale and returns it.
+
+4. Error Handling:
+    If an error occurs during the try block, the function catches it and proceeds based on the revert_ flag.
+    If revert_ is true, the function reverts the transaction with the error reason.
+    If revert_ is false, the function attempts to calculate the price using alternative methods:
+      If the denomination is USD, it calculates the price by converting the asset price to ETH and then to USD.
+      Otherwise, it calculates the price by converting the asset price to USD and then to the desired denomination.
+
+### Detailed Steps
+ Try Block:
+   Calls _feedRegistry.latestRoundData to get the latest price data.
+   Performs multiple require checks to ensure the data is valid and uptodate.
+   Scales the price using the scaleFrom function based on the decimals of the feed registry.
+
+ Catch Block:
+   Catches errors and handles them based on the revert_ flag.
+   If revert_ is true, it reverts the transaction with the error reason.
+   If revert_ is false, it uses recursive calls to _getPrice to calculate the price using alternative paths (ETH or USD).
+
+### Potential Vulnerabilities
+ Logic Errors: The function relies on multiple checks to ensure the validity of the price data. Any misconfiguration or incorrect handling of these checks could lead to incorrect price calculations or stale price issues.
+ Recursive Calls: The use of recursive calls to calculate prices in the catch block could lead to excessive gas consumption or potential stack overflow errors if not properly managed.
+
+### Conclusion
+The _getPrice function is designed to robustly fetch and validate price data from a feed registry, handling errors and ensuring the data is uptodate and accurate. It uses a combination of direct price fetching and recursive calculations to provide reliable price information in various denominations.

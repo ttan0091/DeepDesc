@@ -1,0 +1,36 @@
+Type of vulnerability: Claimability of Voting Power
+
+Cause of vulnerability: The contract can be configured in a way that the claim functionality breaks, specifically when the `minContribution`, `maxContribution`, `minTotalContributions`, and `maxTotalContributions` variables are set in such a way that the claim functionality is not possible due to constraints on the voting power distribution.
+
+Execution process: A user contributes funds to the crowdfund, but due to the configuration of the contract parameters, the user is unable to claim their voting power. This can occur if the calculated contribution (based on the voting power and exchange rate) exceeds the `maxContribution` or falls below the `minContribution`, preventing the claim function from executing successfully.
+
+Vulnerable code:
+```solidity
+function claim(uint256 tokenId, address contributor) public {
+    // Check crowdfund lifecycle.
+    {
+        CrowdfundLifecycle lc = getCrowdfundLifecycle();
+        if (lc != CrowdfundLifecycle.Finalized) {
+            revert WrongLifecycleError(lc);
+        }
+    }
+    uint96 votingPower = pendingVotingPower[contributor];
+    if (votingPower == 0) return;
+    {
+        uint96 contribution = (votingPower * 1e4) / exchangeRateBps;
+        uint96 maxContribution_ = maxContribution;
+        // Check that the contribution equivalent of total pending voting
+        // power is not above the max contribution range. This can happen
+        // for contributors who contributed multiple times In this case, the
+        // `claimMultiple` function should be called instead. This is done
+        // so parties may use the minimum and maximum contribution values to
+        // limit the voting power of each card (e.g.  a party desiring a "1
+        // card = 1 vote"-like governance system where each card has equal
+        // voting power).
+        if (contribution > maxContribution_) {
+            revert AboveMaximumContributionsError(contribution, maxContribution_);
+        }
+    }
+}
+```
+This code snippet shows the `claim` function where the vulnerability occurs if the calculated `contribution` exceeds `maxContribution`.

@@ -1,0 +1,16 @@
+[H-15] User loses remaining rewards inGiantMevAndFeesPoolwhen new deposits happen because_onDepositETH()setclaimed[][]to max without transferring user remaining rewards
+Submitted byunforgiven
+https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/GiantMevAndFeesPool.sol#L195-L204https://github.com/code-423n4/2022-11-stakehouse/blob/4b6828e9c807f2f7c569e6d721ca1289f7cf7112/contracts/liquid-staking/GiantPoolBase.sol#L33-L48
+WhendepositETH()is called in giant pool it calls_onDepositETH()which calls_setClaimedToMax()to make sure new ETH stakers are not entitled to ETH earned by but this can cause users to lose their remaining rewards when they deposits. code should first transfer user remaining rewards when deposit happens.
+Proof of Concept
+This isdepositETH()code inGiantPoolBase:
+/// @notice Add ETH to the ETH LP pool at a rate of 1:1. LPs can always pull out at same rate.function depositETH(uint256 _amount) public payable {require(msg.value >= MIN_STAKING_AMOUNT, "Minimum not supplied");require(msg.value == _amount, "Value equal to amount");// The ETH capital has not yet been deployed to a liquid staking networkidleETH += msg.value;// Mint giant LP at ratio of 1:1lpTokenETH.mint(msg.sender, msg.value);// If anything extra needs to be done_onDepositETH();emit ETHDeposited(msg.sender, msg.value);}
+As you can see it increase userlpTokenETHbalance and then calls_onDepositETH(). This is_onDepositETH()and_setClaimedToMax()code inGiantMevAndFeesPoolcontract:
+/// @dev On depositing on ETH set claimed to max claim so the new depositor cannot claim ETH that they have not accruedfunction _onDepositETH() internal override {_setClaimedToMax(msg.sender);}/// @dev Internal re-usable method for setting claimed to max for msg.senderfunction _setClaimedToMax(address _user) internal {// New ETH stakers are not entitled to ETH earned byclaimed[_user][address(lpTokenETH)] = (accumulatedETHPerLPShare * lpTokenETH.balanceOf(_user)) / PRECISION;}
+As you can see the code setclaimed[msg.sender][address(lpTokenETH]to maximum value so the user wouldn’t be entitled to previous rewards but if user had some remaining rewards in contract he would lose those rewards can’t withdraw them. these are the steps:
+user1deposit10ETH to giant pool andaccumulatedETHPerLPSharevalue is2andclaimed[user1][lpTokenETH]would be10 * 2 = 20.some time passes andaccumulatedETHPerLPShareset to4anduser1has10 * 4 - 20 = 20unclaimed ETH rewards (the formula in the code:balance * rewardPerShare - claimed).userdeposit5ETH to giant pool andaccumulatedETHPerLPShareis4so the code would call_onDepositETH()which calls_setClaimedToMaxwhich setsclaimed[user1][lpTokenETH]to15 * 4 = 60.user1new remaining ETH reward would be15 * 4 - 60 = 0. anduser1won’t receive his rewards because when he deposits contract don’t transfer remaining rewards and set claim to max so user loses his funds.
+Tools Used
+VIM
+Recommended Mitigation Steps
+When deposit happens, contract should first send remaining rewards, then increase the user’s balance and then set the user claim to max.
+vince0656 (Stakehouse) confirmed

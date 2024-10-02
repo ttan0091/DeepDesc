@@ -1,0 +1,22 @@
+Type of vulnerability: Incorrect Asset Distribution
+
+Cause of vulnerability: The contract incorrectly assumes that users should receive exactly their original contribution back, without accounting for changes in asset distribution due to interactions with the buyout.
+
+Execution process:
+1. A user contributes ETH and tokens to a proposal.
+2. The proposal is committed, and other users interact with the buyout, altering the amount of ETH and tokens in the pool.
+3. When the proposal fails, the contract attempts to return the original contribution to the user, but the pool has fewer assets than expected.
+4. The user's withdrawal either transfers assets belonging to other users or reverts due to insufficient balance.
+
+Vulnerable code:
+```solidity
+// Saving user's contribution
+userProposalEth[_proposalId][msg.sender] += msg.value;
+userProposalFractions[_proposalId][msg.sender] += _amount;
+
+// Attempting to withdraw user's contribution
+uint256 userFractions = userProposalFractions[_proposalId][msg.sender];
+IFERC1155(token).safeTransferFrom(address(this), msg.sender, id, userFractions, "");
+uint256 userEth = userProposalEth[_proposalId][msg.sender];
+payable(msg.sender).transfer(userEth);
+```

@@ -1,0 +1,43 @@
+[H-01] Updating a pool’s total points doesn’t affect existing stake positions for rewards calculation
+Submitted byadriro, also found bykutugu,joestakey,Madalad,rbserver,minhquanym,minhquanym,auditor0517,sinarette,ast3ros,ABA,Haipls,J4de, andDug
+Staking rewards are calculated based on the user’s share of total points in the corresponding asset pool, this is the sum of the points associated to the staker’s positions divided by the total points from all positions in the pool. We can see this calculation in thegetPoolRewardfunction:
+NeoTokyoStaker.sol#L1386-L1393
+// Return final shares.unchecked{uint256share=points*_PRECISION/pool.totalPoints*totalReward;uint256daoShare=share*pool.daoTax/ (100*_DIVISOR);share/=_PRECISION;daoShare/=_PRECISION;return((share-daoShare),daoShare);}
+However, note thatpool.totalPointsis the current value of the pool’s total point at the time the functiongetPoolRewardis called. It isn’t related to the time the user staked their position, or isn’t affected in any way by other stake/unstake actions from potentially other users.
+This means that any action that modifies the pool’s total points (stake or unstake) won’t affect current staking positions, as previously opened staking positions won’t accrue their rewards correctly. For stake actions, it will cause rewards from existing staking positions to be reduced, as their calculation of the shares now divided by a higherpool.totalPointsvalue. From unstake actions, it will cause rewards from existing staking positions to be incorrectly increased, as the calculation of the shares is now divided by a lowerpool.totalPointsvalue. See section “Proof of Concept” for a more detailed walkthrough.
+In a similar way, this could also be used by a griefer to intentionally harm another user. As thegetRewardfunction present in theBYTES2contract is permissionless (anyone can call this on behalf of an arbitrary account), a bad actor can call this when the pool’s total points is high, which will have the effect of reducing the user rewards.
+Proof of Concept
+Let’s assume the pool is empty. Alice stakes att1an asset worth 100 points and Bob stakes att2another asset worth 100 points. In order to simplify the examples, let’s also consider that all periods fall in the same window, thus having a constant reward rate.
+Alice claims after Bob stakes
+In this scenario, Alice claims her rewards int3after Bob stakes. She will get less rewards from the[t1, t2]period, as the calculation will consider the entire period[t1, t3]and calculate the shares using 200 points. Here the correct way would be to calculate the period[t1, t2]using 100 total points, and the period[t2, t3]using 100 total points.
+Alice stakes att1and gets 100 points. Total points is 100.Bob stakes att2and gets 100 points. Total points is 200.Alice claims rewards att3. She will get less rewards since the calculation will be done using 200 points.
+Alice and Bob stake at same time
+Here,t1 == t2and Bob and Alice stake at the same time. Alice unstakes att3and Bob claims rewards att4. In this case, Bob will get more rewards, as the calculation will consider the entire period[t1, t4]and calculate the shares using 100 points. Here the correct way would be to calculate the period[t1, t3]using 200 total points, and the period[t3, t4]using 100 total points.
+Alice and Bob stake att1 == t2and each one gets 100 points. Total points is 200.Alice unstakes att3. Total points is 100.Bob claims rewards att4. He will get more rewards since the calculation will be done using 100 points.
+Griefer intentionally claims rewards of Alice
+As described in the previous section, a bad actor can intentionally claim the rewards of another user at a time the pool has a high value for total points, since this call as this is a permissionless action.
+Alice stakes att1and gets 100 points. Total points is 100.Bob stakes att2and gets 100 points. Total points is 200.Bad actor claims rewards of Alice att3. She will get less rewards since the calculation will be done using 200 points.
+Recommendation
+Rewards calculation should track reward rate according to modifications in the pool’s total points caused by stake or unstake actions.
+My recommendation for a performant solution would be to followthis staking exampleorthe full Staking contract from Synthetix. The principal idea here is that every action that affects rewards triggers theupdateRewardmodifier, which updates therewardPerTokenStoredvariable that tracks the reward amount per staked token. A similar idea could be adapted to track the reward per point for the current contract. Stake and unstake actions should update this variable before modifying the pool’s total points.
+TimTinkers (Neo Tokyo) confirmed and commented:
+Excellent catch, good write-up.
+
+[H-02] Underflow oflpPosition.pointsduring withdrawLP causes huge reward minting
+Submitted byrokso, also found by0xnev,BPZ,Toshii,Josiah,ak1,ulqiorra,rbserver,juancito,juancito,minhquanym,auditor0517,auditor0517,Jeiwan,cccz,RaymondFam,rokso,MadWookie,kaden,0x52,carlitox477,DadeKuma,Krace,Haipls,Krace,UdarTeam,kenzo,DadeKuma,ABA,jekapi,J4de,anodaram,LegendFenGuin,aashar,nobody2018,Ruhum, andLirios
+NeoTokyoStaking allows to stake and withdraw LPs. User can stake multiple times on same position which simply results in extended lock time and user can withdraw all of these LPs once lock time is passed.
+There is a scenario when withdrawing LPs results in overflow oflpPosition.points. After withdraw if attacker callsgetRewards()then attacker will get more than 1e64 BYTES tokens as reward.
+Proof of Concept
+Affected code block:NeoTokyoStaker.sol#L1622-L1631
+Affected line:L1627
+From below POC, you can see that Alice is staking twice and some specific amounts which will trigger underflow when Alice withdraw LP. Once staked LPs are unlocked, Alice can withdraw her LPs and callgetReward()to trigger minting of more than 1e64 BYTES tokens.
+Below test can be added inNeoTokyoStaker.test.jstest file.
+it('Unexpected rewards minting due to underflow of "points"',asyncfunction() {// Configure the LP token contract address on the staker.awaitNTStaking.connect(owner.signer).configureLP(LPToken.address);constamount1=ethers.utils.parseEther('10.009')constamount2=ethers.utils.parseEther('11.009')constlockingDays=30// Alice stake amount1 LPs for 30 days.awaitNTStaking.connect(alice.signer).stake(ASSETS.LP.id,TIMELOCK_OPTION_IDS[lockingDays],amount1,0,0);// Alice stake amount2 LPs for 30 days.awaitNTStaking.connect(alice.signer).stake(ASSETS.LP.id,TIMELOCK_OPTION_IDS[lockingDays],amount2,0,0);constpriorBlockNumber=awaitethers.provider.getBlockNumber();constpriorBlock=awaitethers.provider.getBlock(priorBlockNumber);letaliceStakeTime=priorBlock.timestamp;// Bob stake 10 LPs for 30 daysawaitNTStaking.connect(bob.signer).stake(ASSETS.LP.id,TIMELOCK_OPTION_IDS[lockingDays],ethers.utils.parseEther('10'),0,0);// Set time to unlock staked lpawaitethers.provider.send('evm_setNextBlockTimestamp', [aliceStakeTime+ (60*60*24*lockingDays)]);// Alice withdraw LP// This transaction will cause underflow of `lpPosition.points`awaitNTStaking.connect(alice.signer).withdraw(ASSETS.LP.id,amount1.add(amount2));// Before exploit:: Verify Alice's Bytes balance is less than 10000 BYTESexpect(awaitNTBytes2_0.balanceOf(alice.address)).lt(ethers.utils.parseUnits('10000',18))// Get rewards for Alice. It will mint HUGE rewards due to underflow happened on withdraw transaction.awaitNTBytes2_0.getReward(alice.address)// After exploit:: Verify Alice's Bytes balance is greater than 3e64expect(awaitNTBytes2_0.balanceOf(alice.address)).gt(ethers.utils.parseUnits('3',64))});
+Recommended Mitigation Steps
+Consider adding proper precision forpointsandtotalPointsand also consider checking for under/overflows.
+TimTinkers (Neo Tokyo) commented:
+@hansfriese - this attack is a different way of abusing the same rounding bug from#348; duplicates?I agree with the severity of the underlying issue and really appreciate the test case demonstrating this.
+hansfriese (judge) commented:
+Totally, there are 3 kinds of rounding issues.Users can get infinite points by depositing5e15twice and withdrawing1e16. So0 * 2 - 1 = -1 = type(uint256).maxUsers can get free points by depositing 1e16 and withdrawing 5e15 twice. So1 - 0 * 2 = 1Users would lose some LP(or staking reward) due to the rounding.After discussing with other judges, I will merge 1 and 2 into one high and mark 3 as QA as it contains a lower impact.
+TimTinkers (Neo Tokyo) confirmed
+

@@ -1,0 +1,20 @@
+Type of vulnerability: Reentrancy and Slippage Manipulation
+Cause of vulnerability: The contract uses `BPT_IN_FOR_EXACT_TOKENS_OUT` which allows an attacker to manipulate the withdrawal process to cause a total loss of all tokens by exploiting slippage.
+Execution process: An attacker deposits BPTs into the strategy, manipulates the pool to create an imbalance, and then withdraws, causing the strategy to burn more BPTs than necessary, leading to a loss for all depositors.
+Vulnerable code: 
+```solidity
+uint256[] memory minAmountsOut = new uint256[](poolTokens.length);
+for (uint256 i = 0; i < poolTokens.length; i++) {
+    if (poolTokens[i] == address(wrappedNative)) {
+        minAmountsOut[i] = amount;
+        index = int256(i);
+    } else {
+        minAmountsOut[i] = 0;
+    }
+}
+IBalancerVault.ExitPoolRequest memory exitRequest;
+exitRequest.assets = poolTokens;
+exitRequest.minAmountsOut = minAmountsOut;
+exitRequest.toInternalBalance = false;
+exitRequest.userData = abi.encode(2, exitRequest.minAmountsOut, pool.balanceOf(address(this)));
+```

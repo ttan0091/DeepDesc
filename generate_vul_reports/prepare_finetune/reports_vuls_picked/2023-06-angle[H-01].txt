@@ -1,0 +1,28 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Lack of reentrancy protection during the transfer of collaterals
+Execution process: An attacker can exploit the reentrancy vulnerability by calling the `_redeem` function multiple times within a single transaction, particularly when dealing with ERC777 tokens that have hooks. This allows the attacker to receive more collaterals than they should.
+Vulnerable code: 
+```solidity
+function _redeem(uint256 amount, address to, uint256 deadline, uint256[] memory minAmountOuts, address[] memory forfeitTokens) internal returns (address[] memory tokens, uint256[] memory amounts) {
+    TransmuterStorage storage ts = s.transmuterStorage();
+    if (ts.isRedemptionLive == 0) revert Paused();
+    if (block.timestamp > deadline) revert TooLate();
+    uint256[] memory subCollateralsTracker;
+    (tokens, amounts, subCollateralsTracker) = _quoteRedemptionCurve(amount);
+    _updateNormalizer(amount, false);
+    IAgToken(ts.agToken).burnSelf(amount, msg.sender); //@audit-info burn agToken
+    address[] memory collateralListMem = ts.collateralList;
+    uint256 indexCollateral;
+    for (uint256 i; i < amounts.length; ++i) {
+        if (amounts[i] < minAmountOuts[i]) revert TooSmallAmountOut();
+        if (amounts[i] > 0 && LibHelpers.checkList(tokens[i], forfeitTokens) < 0) {
+            Collateral storage collatInfo = ts.collaterals[collateralListMem[indexCollateral]];
+            if (collatInfo.onlyWhitelisted > 0 && !LibWhitelist.checkWhitelist(collatInfo.whitelistData, to)) revert NotWhitelisted();
+            if (collatInfo.isManaged > 0) LibManager.release(tokens[i], to, amounts[i], collatInfo.managerData.config);
+            else IERC20(tokens[i]).safeTransfer(to, amounts[i]); //@audit reentrancy
+        }
+        if (subCollateralsTracker[indexCollateral] - 1 <= i) ++indexCollateral;
+    }
+    emit Redeemed(amount, tokens, amounts, forfeitTokens, msg.sender, to);
+}
+```

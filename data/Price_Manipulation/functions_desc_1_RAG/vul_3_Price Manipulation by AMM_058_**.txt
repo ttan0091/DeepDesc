@@ -1,0 +1,32 @@
+This code defines an external function named trackMaltPrice, which is designed to track and update the price of a token named "Malt" based on the reserves of a liquidity pool. The function is restricted to be called only by an account with the UPDATER_ROLE, ensuring that only authorized entities can update the price.
+
+Here’s a detailed explanation of how this function works:
+
+1. RoleBased Access Control:
+    The function is decorated with onlyRole(UPDATER_ROLE, "Must have updater role"), which means it can only be executed by an account that has been granted the UPDATER_ROLE. This is a security measure to prevent unauthorized updates to the price.
+
+2. Fetching Reserves:
+    The function starts by calling stakeToken.getReserves(), which retrieves the reserves of two tokens in a liquidity pool. These reserves are stored in variables reserve0 and reserve1.
+
+3. Token Sorting:
+    The function then uses UniswapV2Library.sortTokens(address(malt), address(rewardToken)) to determine which of the two tokens is token0. This is important for correctly interpreting the reserves.
+
+4. Decimal Adjustment:
+    The function retrieves the decimals of the rewardToken using rewardToken.decimals(). This value is used later to normalize the price calculation.
+
+5. Price Calculation:
+    Depending on whether token0 is the rewardToken or not, the function calculates the price using the _normalizedPrice function. This function takes two reserves and the decimals of the rewardToken to compute a normalized price.
+    If token0 is the rewardToken, the price is calculated as _normalizedPrice(reserve0, reserve1, rewardDecimals).
+    Otherwise, the price is calculated as _normalizedPrice(reserve1, reserve0, rewardDecimals).
+
+6. Updating the Moving Average:
+    The calculated price is then used to update a moving average price (maltPriceMA.update(price)). This helps in smoothing out shortterm fluctuations and providing a more stable price indicator.
+
+7. Event Emission:
+    Finally, the function emits an event TrackMaltPrice(price) to notify external observers that the Malt price has been updated. This is useful for logging and offchain monitoring.
+
+Security Considerations:
+ The use of onlyRole ensures that only authorized accounts can execute this function, mitigating the risk of unauthorized price manipulation.
+ The function does not directly handle any state changes that could lead to privilege escalation, unlike the referenced vulnerability in the TimelockController's _executeBatch function.
+
+In summary, the trackMaltPrice function is a wellstructured and secure method for updating the price of the Malt token based on liquidity pool reserves, ensuring that only authorized entities can perform this action.

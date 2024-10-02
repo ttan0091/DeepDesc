@@ -1,0 +1,13 @@
+[H-18]  Vault rewards can be gamed
+The_depositfunction increases the member’sweightby_weight = iUTILS(UTILS()).calcValueInBase(iSYNTH(_synth).TOKEN(), _amount);which is the swap output amount when trading the deposited underlying synth amount.
+Notice that anyone can create synths of custom tokens by callingPools.deploySynth(customToken).
+Therefore an attacker can deposit valueless custom tokens and inflate their member weight as follows:
+Create a custom token and issue lots of tokens to the attackerCreate synth of this tokenAdd liquidity for theTOKEN <> BASEpair by providing a single wei ofTOKENand10^18BASE tokens. This makes theTOKENprice very expensive.Mint some synths by paying BASE to the poolDeposit the fake synth,_weightwill be very high because the token pool price is so high.
+Callharvest(realSynth)with a synth with actual value. This will increase the synth balance and it can be withdrawn later.
+Anyone can inflate their member weight through depositing a custom synth and earn almost all vault rewards by callingharvest(realSynth)with a valuable “real” synth.
+The rewards are distributed pro rata to the member weight which is independent of the actual synth deposited.
+ThecalcRewardfunction completely disregards thesynthparameter which seems odd.
+Recommend thinking about making the rewards based on the actual synths deposited instead of a “global” weight tracker.
+Alternatively, whitelist certain synths that count toward the weight, or don’t let anyone create synths.
+strictly-scarce (vader) confirmed:
+This is a valid attack path.The counter is two fold:In the vault,require(isCurated(token))this will only allow synths of curated tokens to be deposited for rewards.The curation logicdoes a check for liquidity depth, so only deep pools can become synths. Thus an attacker would need to deposit a lot of BASE.In the vaults, use_weight = iUTILS(UTILS()).calcSwapValueInBase(iSYNTH(_synth).TOKEN(), _amount);, which computes the weight with respect to slip, so a small manipulated pool cannot be eligible. The pool would need to be deep.The Vault converts all synths back to common accounting asset - USDV, so member weight can be tracked.strictly-scarce (vader) commented:Disagree with severity, since the daily rewards can be claimed by anyone in a fee-bidding war but no actual extra inflation occurs.Severity: 2

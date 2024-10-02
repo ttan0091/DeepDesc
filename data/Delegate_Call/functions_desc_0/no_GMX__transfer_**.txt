@@ -1,0 +1,54 @@
+This code defines a private function named _transfer, which is used to handle the transfer of tokens between two addresses within a smart contract. The function is designed to ensure that the transfer is valid and to update the state of the contract accordingly. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    The function _transfer takes three parameters: _sender (the address from which tokens are being transferred), _recipient (the address to which tokens are being transferred), and _amount (the amount of tokens to be transferred).
+    The function is marked as private, meaning it can only be called from within the smart contract itself.
+
+2. Address Validation:
+    The function starts by checking that neither the _sender nor the _recipient is the zero address (address(0)). This is to prevent transfers from or to an invalid address, which could lead to loss of tokens.
+     solidity
+     require(_sender != address(0), "BaseToken: transfer from the zero address");
+     require(_recipient != address(0), "BaseToken: transfer to the zero address");
+     
+
+3. Private Transfer Mode Check:
+    If the contract is in inPrivateTransferMode, the function checks whether the msg.sender (the caller of the function) is whitelisted as a handler. This is to ensure that only authorized addresses can perform transfers when the contract is in private transfer mode.
+     solidity
+     if (inPrivateTransferMode) {
+         require(isHandler[msg.sender], "BaseToken: msg.sender not whitelisted");
+     }
+     
+
+4. Update Rewards:
+    The function calls _updateRewards for both the _sender and _recipient. This is likely to update any rewards or balances related to these addresses before the transfer.
+     solidity
+     _updateRewards(_sender);
+     _updateRewards(_recipient);
+     
+
+5. Balance Adjustments:
+    The function then adjusts the balances of the _sender and _recipient using the sub and add functions from a library (likely SafeMath to prevent overflow/underflow).
+     solidity
+     balances[_sender] = balances[_sender].sub(_amount, "BaseToken: transfer amount exceeds balance");
+     balances[_recipient] = balances[_recipient].add(_amount);
+     
+
+6. NonStaking Supply Adjustment:
+    If the _sender is marked as a nonstaking account, the nonstaking supply is decreased by the transferred amount.
+    Similarly, if the _recipient is marked as a nonstaking account, the nonstaking supply is increased by the transferred amount.
+     solidity
+     if (nonStakingAccounts[_sender]) {
+         nonStakingSupply = nonStakingSupply.sub(_amount);
+     }
+     if (nonStakingAccounts[_recipient]) {
+         nonStakingSupply = nonStakingSupply.add(_amount);
+     }
+     
+
+7. Event Emission:
+    Finally, the function emits a Transfer event to log the transfer of tokens from _sender to _recipient for the amount _amount.
+     solidity
+     emit Transfer(_sender, _recipient, _amount);
+     
+
+This function ensures that all transfers are valid and updates the contract state appropriately, including handling special cases like private transfer mode and nonstaking accounts.

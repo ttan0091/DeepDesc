@@ -1,0 +1,13 @@
+[H-02]FeePoolV0.sol#distributeMochi()will unexpectedly flushtreasuryShare, causing the protocol fee cannot be properly accounted for and collected
+Submitted by WatchPug
+distributeMochi()will call_buyMochi()to convertmochiShareto Mochi token and call_shareMochi()to send Mochi to vMochi Vault and veCRV Holders. It wont touch thetreasuryShare.
+However, in the current implementation,treasurySharewill be reset to0. This is unexpected and will cause the protocol fee can not be properly accounted for and collected.
+FeePoolV0.sol#L79L95
+function_shareMochi()internal{IMochimochi=engine.mochi();uint256mochiBalance=mochi.balanceOf(address(this));// send Mochi to vMochi Vaultmochi.transfer(address(engine.vMochi()),(mochiBalance*vMochiRatio) /1e18);// send Mochi to veCRV Holdersmochi.transfer(crvVoterRewardPool,(mochiBalance* (1e18-vMochiRatio)) /1e18);// flush mochiSharemochiShare=0;treasuryShare=0;}
+Impact
+Anyone can calldistributeMochi()and resettreasuryShareto0, and then callupdateReserve()to allocate part of the wrongfuly resettedtreasurySharetomochiShareand calldistributeMochi().
+Repeat the steps above and thetreasurySharewill be consumed to near zero, profits the vMochi Vault holders and veCRV Holders. The protocol suffers the loss of funds.
+Recommendation
+Change to:
+function_buyMochi()internal{IUSDMusdm=engine.usdm();address[]memorypath=newaddress[](2);path[0] =address(usdm);path[1] =address(engine.mochi());usdm.approve(address(uniswapRouter),mochiShare);uniswapRouter.swapExactTokensForTokens(mochiShare,1,path,address(this),type(uint256).max);// flush mochiSharemochiShare=0;}function_shareMochi()internal{IMochimochi=engine.mochi();uint256mochiBalance=mochi.balanceOf(address(this));// send Mochi to vMochi Vaultmochi.transfer(address(engine.vMochi()),(mochiBalance*vMochiRatio) /1e18);// send Mochi to veCRV Holdersmochi.transfer(crvVoterRewardPool,(mochiBalance* (1e18-vMochiRatio)) /1e18);}
+ryuheimat (Mochi) confirmed

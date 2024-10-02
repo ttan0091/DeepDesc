@@ -1,0 +1,25 @@
+Type of vulnerability: Improper Authorization
+Cause of vulnerability: The `params.coinbase` variable can be set to any arbitrary address by the proposer, allowing them to force another address to pay the prover's fee.
+Execution process: 
+1. Proposer A approves the `AssignmentHook` contract to spend a portion of their tokens, setting the allowance higher than the actual fee they will be paying.
+2. Proposer A proposes a block, and a fee is charged and paid to the assigned prover, leaving remaining allowance for the `AssignmentHook` contract to use.
+3. Proposer B proposes a block and sets `params.coinbase` to Proposer A's address.
+4. Proposer A's address becomes the payee for the fee of the assigned prover for the block proposed by Proposer B.
+Vulnerable code: 
+```solidity
+if (params.coinbase == address(0)) {
+    params.coinbase = msg.sender;
+}
+```
+```solidity
+IHook(params.hookCalls[i].hook).onBlockProposed{ value: address(this).balance }(blk, meta_, params.hookCalls[i].data);
+```
+```solidity
+if (assignment.feeToken == address(0)) {
+    // Paying Ether
+    _blk.assignedProver.sendEther(proverFee, MAX_GAS_PAYING_PROVER);
+} else {
+    // Paying ERC20 tokens
+    IERC20(assignment.feeToken).safeTransferFrom(_meta.coinbase, _blk.assignedProver, proverFee);
+}
+```

@@ -1,0 +1,16 @@
+[H-02] Existing user’s locked JPEG could be overwritten by new user, causing permanent loss of JPEG funds
+Submitted by hickuphh3, also found by 0x1f8b, AuditsAreUS, Foundation, Kthere, Meta0xNull, rayn, and WatchPug
+NFTVault.sol#L375JPEGLock.sol#L54-L62
+A user’s JPEG lock schedule can be overwritten by another user’s if he (the other user) submits and finalizes a proposal to change the same NFT index’s value.
+The existing user will be unable to withdraw his locked JPEGs, resulting in permanent lock up of JPEG in the locker contract.
+Proof of Concept
+usersuccessfully proposes and finalizes a proposal to change his NFT’s collateral valueAnother user (owner) does the same for the same NFT indexuserwill be unable to withdraw his locked JPEG because schedule has been overwritten
+Insert this test case intoNFTVault.ts.
+it.only("will overwrite existing user's JPEG lock schedule",async()=>{// 0. setupconstindex=7000;awaiterc721.mint(user.address,index);awaitnftVault.connect(dao).setPendingNFTValueETH(index,units(50));awaitjpeg.transfer(user.address,units(150000));awaitjpeg.connect(user).approve(locker.address,units(500000));awaitjpeg.connect(owner).approve(locker.address,units(500000));// 1. user has JPEG locked for finalizationawaitnftVault.connect(user).finalizePendingNFTValueETH(index);// 2. owner submit proposal to further increase NFT valueawaitnftVault.connect(dao).setPendingNFTValueETH(index,units(100));// 3. owner finalizes, has JPEG lockedawaitnftVault.connect(owner).finalizePendingNFTValueETH(index);// user schedule has been overwrittenletschedule=awaitlocker.positions(index);expect(schedule.owner).to.equal(owner.address);// user tries to unstake// wont be able to because schedule was overwrittenawaittimeTravel(days(366));awaitexpect(locker.connect(user).unlock(index)).to.be.revertedWith("unauthorized");});
+Recommended Mitigation Steps
+Release the tokens of the existing schedule. Simple and elegant.
+// in JPEGLock#lockFor()LockPositionmemoryexistingPosition=positions[_nftIndex];if(existingPosition.owner!=address(0)) {// release jpegs to existing ownerjpeg.safeTransfer(existingPosition.owner,existingPosition.lockAmount);}
+Revert infinalizePendingNFTValueETH()there is an existing lock schedule. This is less desirable IMO, as there is a use-case for increasing / decreasing the NFT value.
+spaghettieth (JPEG’d) confirmed
+spaghettieth (JPEG’d) resolved and commented:
+Fixed injpegd/core#3.

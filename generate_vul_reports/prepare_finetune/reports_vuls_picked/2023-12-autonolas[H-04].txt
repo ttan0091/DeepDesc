@@ -1,0 +1,32 @@
+Type of vulnerability: Inflation Control and Silent Revert
+Cause of vulnerability: Incorrect accounting of bond amounts due to epoch crossing year boundaries and silent failures in minting operations.
+Execution process: When an epoch spans across year boundaries, the calculated bond amount includes tokens that should be minted in different years. However, due to year-wise inflation control, not all tokens can be minted in the current year, leading to silent failures in minting. This results in users depositing for bonds but not receiving the full payout due to insufficient tokens being minted.
+Vulnerable code: 
+```solidity
+function reserveAmountForBondProgram(uint256 amount) external returns (bool success) {
+    ...
+    // Effective bond must be bigger than the requested amount
+    uint256 eBond = effectiveBond;
+    if (eBond >= amount) {
+        eBond -= amount;
+        effectiveBond = uint96(eBond);
+        success = true;
+        emit EffectiveBondUpdated(eBond);
+    }
+}
+
+function checkpoint() external returns (bool) {
+    ...
+    // Update effectiveBond with the current or updated maxBond value
+    curMaxBond += effectiveBond;
+    effectiveBond = uint96(curMaxBond);
+}
+
+function mint(address account, uint256 amount) external {
+    ...
+    // Check the inflation schedule and mint
+    if (inflationControl(amount)) {
+        _mint(account, amount);
+    }
+}
+```

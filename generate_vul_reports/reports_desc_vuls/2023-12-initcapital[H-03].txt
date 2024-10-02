@@ -1,0 +1,17 @@
+Type of vulnerability: Token Stuck Vulnerability
+Cause of vulnerability: The `_handleRepay` function does not verify the actual debt shares of the position in the `InitCore` and `PosManager`, leading to potential over-repayment.
+Execution process: A user initiates a repayment operation via `MoneyMarketHook`, providing parameters in `repayParams`. The `_handleRepay` function calculates the `repayAmt` based on the shares provided by the user and transfers the corresponding amount of tokens from the sender to the hook. If the actual debt shares of the position are less than the provided shares, the excess tokens become stuck in the `MoneyMarketHook` contract.
+Vulnerable code: 
+```solidity
+function _handleRepay(uint _offset, bytes[] memory _data, uint _initPosId, RepayParams[] memory _params) internal returns (uint, bytes[] memory) {
+    for (uint i; i < _params.length; i = i.uinc()) {
+        address uToken = ILendingPool(_params[i].pool).underlyingToken();
+        uint repayAmt = ILendingPool(_params[i].pool).debtShareToAmtCurrent(_params[i].shares);
+        _ensureApprove(uToken, repayAmt);
+        IERC20(uToken).safeTransferFrom(msg.sender, address(this), repayAmt);
+        _data[_offset] = abi.encodeWithSelector(IInitCore.repay.selector, _params[i].pool, _params[i].shares, _initPosId);
+        _offset = _offset.uinc();
+    }
+    return (_offset, _data);
+}
+```

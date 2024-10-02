@@ -1,0 +1,17 @@
+This code defines a smart contract named TelcoinSaleCapEscrow, which manages deposits from participants in a token sale and includes a function to reject a participant's deposit, returning the deposited Ether back to the participant.
+
+Here’s a detailed explanation of how this contract and its function work:
+
+1. Contract Structure and State Variables:
+    The contract TelcoinSaleCapEscrow contains a single state variable deposited, which is a mapping that associates Ethereum addresses with unsigned integer values (uint256). This mapping is used to keep track of the amount of Ether deposited by each participant. The public visibility of the mapping automatically generates a getter function to allow external contracts and accounts to query the deposited amount for any address.
+
+2. Function reject:
+    The function reject is a public function, meaning it can be called by any external account or contract. It takes one parameter, _participant, which is an Ethereum address representing the participant whose deposit is being rejected.
+    Inside the function, the first line uint256 weiAmount = deposited[_participant]; retrieves the amount of Ether deposited by the participant and stores it in the variable weiAmount.
+    The require statement require(_participant.call.value(weiAmount)()); is used to send Ether back to the participant. This line performs a lowlevel call to the participant's address, attaching the amount of Ether stored in weiAmount. The require function ensures that this call either succeeds or the transaction is reverted with an error message. This is a common pattern to prevent reentrancy attacks and ensure that the Ether transfer is successful.
+    Finally, deposited[_participant] = 0; sets the deposited amount for the participant to zero, effectively clearing their deposit record after the Ether has been returned.
+
+3. Security Considerations:
+    The use of _participant.call.value(weiAmount)() is a potential security risk due to the possibility of reentrancy attacks. If the participant's address is a contract that implements a fallback function designed to reenter the reject function before deposited[_participant] = 0; is executed, it could lead to multiple withdrawals of the same funds. To mitigate this risk, consider using a reentrancy guard or updating the state before making the external call.
+
+In summary, the TelcoinSaleCapEscrow contract manages participant deposits in a token sale and provides a mechanism to reject a participant's deposit, returning the deposited Ether to them. The function reject is designed to handle this process by retrieving the deposited amount, attempting to send the Ether back to the participant, and then clearing the deposit record. However, it should be reviewed for potential security vulnerabilities, particularly around reentrancy attacks.

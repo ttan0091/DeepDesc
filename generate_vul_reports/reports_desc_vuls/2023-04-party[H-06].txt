@@ -1,0 +1,25 @@
+Type of vulnerability: Voting Power Miscalculation
+Cause of vulnerability: The total voting power is increased based on the total contributions without subtracting the funding fees, leading to an inflated total voting power.
+Execution process: When a user contributes to the crowdfund, the contribution amount is added to `totalContributions` before subtracting the funding fees. During the finalization process, the `increaseTotalVotingPower` function is called with the total contributions (including fees), resulting in an overestimation of the total voting power.
+Vulnerable code: 
+```solidity
+uint96 newTotalContributions = totalContributions + amount;
+uint96 maxTotalContributions_ = maxTotalContributions;
+if (newTotalContributions >= maxTotalContributions_) {
+    totalContributions = maxTotalContributions_;
+    // Finalize the crowdfund.
+    _finalize(maxTotalContributions_);
+    // Refund excess contribution.
+    uint96 refundAmount = newTotalContributions - maxTotalContributions;
+    if (refundAmount > 0) {
+        amount -= refundAmount;
+        payable(msg.sender).transferEth(refundAmount);
+    }
+} else {
+    totalContributions = newTotalContributions;
+}
+
+// In the _finalize function:
+uint96 newVotingPower = (totalContributions_ * exchangeRateBps) / 1e4;
+party.increaseTotalVotingPower(newVotingPower);
+```

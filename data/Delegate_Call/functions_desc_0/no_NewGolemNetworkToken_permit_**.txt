@@ -1,0 +1,29 @@
+This code defines an external function named permit, which is designed to handle a specific type of approval for token transfers in Ethereum smart contracts. This function leverages ECDSA (Elliptic Curve Digital Signature Algorithm) for signature verification to allow a spender to spend tokens on behalf of a holder without the need for the holder to directly interact with the contract.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    holder: The address of the token owner who is granting the approval.
+    spender: The address that is being granted approval to spend the holder's tokens.
+    nonce: A unique value associated with the holder to prevent replay attacks.
+    expiry: The timestamp after which this permit is no longer valid.
+    allowed: A boolean indicating whether the spender is allowed to spend an unlimited amount of tokens (true) or none (false).
+    v, r, s: Components of the ECDSA signature provided by the holder.
+
+2. Digest Calculation:
+    The function first calculates a hash (digest) using the keccak256 hashing function. This hash is constructed by concatenating several elements:
+      "\x19\x01": A prefix defined by the EIP712 standard for typed structured data hashing.
+      DOMAIN_SEPARATOR: A unique identifier for the contract, typically defined in the contract itself, used to prevent crosscontract replay attacks.
+      Another keccak256 hash of the encoded parameters of the permit function, including PERMIT_TYPEHASH (a constant hash defining the structure of the permit), holder, spender, nonce, expiry, and allowed.
+
+3. Validation Checks:
+    The function checks that the holder address is not the zero address (address(0)), which is considered invalid.
+    It then verifies the signature by using the ecrecover function, which recovers the address of the signer from the digest, v, r, and s parameters. This recovered address must match the holder address, ensuring that the permit was indeed signed by the holder.
+    It checks if the permit has expired by comparing the current block timestamp (now) with the expiry timestamp. If expiry is 0, it means the permit does not expire.
+    It verifies the nonce against the stored nonce for the holder in the nonces mapping, ensuring that each permit is unique and cannot be replayed.
+
+4. Approval Setting:
+    Depending on the allowed boolean, the function sets the approval amount (wad) to either uint(1) (maximum possible value, representing unlimited approval) or 0.
+    Finally, it calls the internal _approve function to set the approval for the holder to the spender with the specified amount (wad).
+
+This function is crucial for enhancing the usability of token contracts by allowing offchain approvals that can be verified onchain, reducing the number of transactions required for approvals and improving the user experience, especially in decentralized applications.

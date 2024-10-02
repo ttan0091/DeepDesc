@@ -1,0 +1,15 @@
+Type of vulnerability: Arithmetic Underflow/Overflow
+Cause of vulnerability: The `_calculateRefundAmount` function might return a refund amount greater than the original contribution due to improper handling of fees and rounding errors.
+Execution process: A user contributes ETH to the crowdfund, which subtracts a fee from the contribution amount. When the user requests a refund, the `_calculateRefundAmount` function calculates a refund amount that might exceed the contract's ETH balance, causing the refund transfer to revert.
+Vulnerable code: 
+```solidity
+function _calculateRefundAmount(uint96 votingPower) internal view returns (uint96 amount) {
+    amount = (votingPower * 1e4) / exchangeRateBps;
+    // Add back fee to contribution amount if applicable.
+    address payable fundingSplitRecipient_ = fundingSplitRecipient;
+    uint16 fundingSplitBps_ = fundingSplitBps;
+    if (fundingSplitRecipient_ != address(0) && fundingSplitBps_ > 0) {
+        amount = (amount * 1e4) / (1e4 - fundingSplitBps_); // @audit might be greater than original contribution
+    }
+}
+```

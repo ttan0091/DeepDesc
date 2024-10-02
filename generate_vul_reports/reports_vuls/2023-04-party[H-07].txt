@@ -1,0 +1,37 @@
+[H-07]InitialETHCrowdfund+ReraiseETHCrowdfund:batchContributeForfunction may not refund ETH which leads to loss of funds
+Submitted byHollaDieWaldfee, also found byevanandhansfriese
+https://github.com/code-423n4/2023-04-party/blob/440aafacb0f15d037594cebc85fd471729bcb6d9/contracts/crowdfund/InitialETHCrowdfund.sol#L235-L268
+https://github.com/code-423n4/2023-04-party/blob/440aafacb0f15d037594cebc85fd471729bcb6d9/contracts/crowdfund/ReraiseETHCrowdfund.sol#L174-L202
+This vulnerability exists in both theInitialETHCrowdfundandReraiseETHCrowdfundcontracts in exactly the same way.
+I will continue this report by explaining the issue in only one contract. The mitigation section however contains the fix for both instances.
+ThebatchContributeForfunction is a wrapper that allows to make multiple calls tocontributeForwithin one function call.
+It is possible to specify that this function should not revert when one individual call tocontributeForfails by settingargs.revertOnFailure=false.
+The issue is that in this case the ETH for a failed contribution is not refunded which leads a loss of funds for the user calling the function.
+Note:This issue also exists in theCrowdfund.batchContributeForfunction which is out of scope. The sponsor knows about this and will fix it.
+Proof of Concept
+Let’s look at thebatchContributeForfunction:
+Link
+functionbatchContributeFor(BatchContributeForArgscalldataargs)externalpayableonlyDelegateCallreturns(uint96[]memoryvotingPowers) {uint256numContributions=args.recipients.length;votingPowers=newuint96[](numContributions);uint256ethAvailable=msg.value;for(uint256i;i<numContributions; ++i) {ethAvailable-=args.values[i];(bools,bytesmemoryr) =address(this).call{ value:args.values[i] }(abi.encodeCall(this.contributeFor,(args.tokenIds[i],args.recipients[i],args.initialDelegates[i],args.gateDatas[i])));if(!s) {if(args.revertOnFailure) {r.rawRevert();}}else{votingPowers[i] =abi.decode(r, (uint96));}}// Refund any unused ETH.if(ethAvailable>0)payable(msg.sender).transfer(ethAvailable);}
+We can see thatethAvailableis reduced before every call tocontributeFor:
+ethAvailable-=args.values[i];
+But it is only checked later if the call was successful:
+if(!s) {if(args.revertOnFailure) {r.rawRevert();}
+And ifargs.revertOnFailure=falsethere is no revert andethAvailableis not increased again.
+Therefore the user has to pay for failed contributions.
+Add the following test to theInitialETHCrowdfund.t.soltest file:
+functiontest_batchContributeFor_noETHRefund()public{InitialETHCrowdfundcrowdfund=_createCrowdfund({initialContribution:0,initialContributor:payable(address(0)),initialDelegate:address(0),minContributions:1ether,maxContributions:type(uint96).max,disableContributingForExistingCard:false,minTotalContributions:3ether,maxTotalContributions:5ether,duration:7days,fundingSplitBps:0,fundingSplitRecipient:payable(address(0))});Partyparty=crowdfund.party();addresssender=_randomAddress();vm.deal(sender,2.5ether);// Batch contribute forvm.prank(sender);uint256[]memorytokenIds=newuint256[](3);addresspayable[]memoryrecipients=newaddresspayable[](3);address[]memorydelegates=newaddress[](3);uint96[]memoryvalues=newuint96[](3);bytes[]memorygateDatas=newbytes[](3);for(uint256i;i<3; ++i) {recipients[i] =_randomAddress();delegates[i] =_randomAddress();values[i] =1ether;}// @audit-info set values[2] = 0.5 ether such that contribution fails (minContribution = 1 ether)values[2] =0.5ether;uint96[]memoryvotingPowers=crowdfund.batchContributeFor{ value:2.5ether}(InitialETHCrowdfund.BatchContributeForArgs({tokenIds:tokenIds,recipients:recipients,initialDelegates:delegates,values:values,gateDatas:gateDatas,revertOnFailure:false}));// @audit-info balance of sender is 0 ETH even though 0.5 ETH of the 2.5 ETH should have been refundedassertEq(address(sender).balance,0ether);}
+Thesendersends 2.5 ETH and 1 of the 3 contributions fails sinceminContributionis above the amount thesenderwants to contribute (Note that in practice there are more ways for the contribution to fail).
+The sender’s balance in the end is 0 ETH which shows that there is no refund.
+Tools Used
+VSCode,Foundry
+Recommended Mitigation Steps
+The following changes need to be made to theInitialETHCrowdfundandReraiseETHCrowdfundcontracts:
+diff --git a/contracts/crowdfund/InitialETHCrowdfund.sol b/contracts/crowdfund/InitialETHCrowdfund.solindex 8ab3b5c..19e09ac 100644--- a/contracts/crowdfund/InitialETHCrowdfund.sol+++ b/contracts/crowdfund/InitialETHCrowdfund.sol@@ -240,8 +240,6 @@ contract InitialETHCrowdfund is ETHCrowdfundBase {uint256 ethAvailable = msg.value;for (uint256 i; i < numContributions; ++i) {-            ethAvailable -= args.values[i];-(bool s, bytes memory r) = address(this).call{ value: args.values[i] }(abi.encodeCall(this.contributeFor,@@ -260,6 +258,7 @@ contract InitialETHCrowdfund is ETHCrowdfundBase {}} else {votingPowers[i] = abi.decode(r, (uint96));+                ethAvailable -= args.values[i];}}
+diff --git a/contracts/crowdfund/ReraiseETHCrowdfund.sol b/contracts/crowdfund/ReraiseETHCrowdfund.solindex 580623d..ad70b27 100644--- a/contracts/crowdfund/ReraiseETHCrowdfund.sol+++ b/contracts/crowdfund/ReraiseETHCrowdfund.sol@@ -179,8 +179,6 @@ contract ReraiseETHCrowdfund is ETHCrowdfundBase, CrowdfundNFT {uint256 ethAvailable = msg.value;for (uint256 i; i < numContributions; ++i) {-            ethAvailable -= args.values[i];-(bool s, bytes memory r) = address(this).call{ value: args.values[i] }(abi.encodeCall(this.contributeFor,@@ -194,6 +192,7 @@ contract ReraiseETHCrowdfund is ETHCrowdfundBase, CrowdfundNFT {}} else {votingPowers[i] = abi.decode(r, (uint96));+                ethAvailable -= args.values[i];}}
+NowethAvailableis only reduced when the call tocontributeForwas successful.
+0xean (judge) commented:
+Would welcome comment on this issue.  AFAICT, this leads to a direct loss of user funds, which makes me think that a High severity is warranted.  There is no external pre-condition(s) required for this to happen.
+HollaDieWaldfee (warden) commented:
+@0xean - Yeah you are right, it leads to a direct loss of funds and there are no preconditions. Should have set it to “High” probably.
+0xble (Party) confirmed
+0xean (judge) increased severity to High

@@ -1,0 +1,21 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Violation of the Checks-Effects-Interactions (CEI) pattern, allowing for reentrancy attacks.
+Execution process: An attacker exploits the `expressReceiveTokenWithData` function by front-running a call to `AxelarGateway::execute` with a call to a third party providing `expressReceiveTokenWithData`. This results in the third party (victim) transferring tokens to the `destinationAddress` contract. The attacker then uses a reentrancy call to perform a second transfer from the `TokenManager` to the `destinationAddress`, effectively doubling their funds and stealing from the victim.
+Vulnerable code: 
+```solidity
+function expressReceiveTokenWithData(
+    // ... params
+) external {
+    if (gateway.isCommandExecuted(commandId)) revert AlreadyExecuted(commandId);
+
+    address caller = msg.sender;
+    ITokenManager tokenManager = ITokenManager(getValidTokenManagerAddress(tokenId));
+    IERC20 token = IERC20(tokenManager.tokenAddress());
+
+    SafeTokenTransferFrom.safeTransferFrom(token, caller, destinationAddress, amount);
+
+    _expressExecuteWithInterchainToken(tokenId, destinationAddress, sourceChain, sourceAddress, data, amount);
+
+    _setExpressReceiveTokenWithData(tokenId, sourceChain, sourceAddress, destinationAddress, amount, data, commandId, caller);
+}
+```

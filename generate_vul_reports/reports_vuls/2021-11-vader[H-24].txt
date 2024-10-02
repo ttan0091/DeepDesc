@@ -1,0 +1,18 @@
+[H-24] Wrong design/implementation ofaddLiquidity()allows attacker to steal funds from the liquidity pool
+Submitted by WatchPug
+The current design/implementation of Vader pool allows users toaddLiquidityusing arbitrary amounts instead of a fixed ratio of amounts in comparison to Uni v2.
+We believe this design is flawed and it essentially allows anyone to manipulate the price of the pool easily and create an arbitrage opportunity at the cost of all other liquidity providers.
+An attacker can exploit this by adding liquidity in extreme amounts and drain the funds from the pool.
+https://github.com/code-423n4/2021-11-vader/blob/429970427b4dc65e37808d7116b9de27e395ce0c/contracts/dex-v2/pool/VaderPoolV2.sol#L284-L335
+functionmintFungible(IERC20foreignAsset,uint256nativeDeposit,uint256foreignDeposit,addressfrom,addressto)externaloverridenonReentrantreturns(uint256liquidity) {IERC20Extendedlp=wrapper.tokens(foreignAsset);require(lp!=IERC20Extended(_ZERO_ADDRESS),"VaderPoolV2::mintFungible: Unsupported Token");(uint112reserveNative,uint112reserveForeign, ) =getReserves(foreignAsset);// gas savingsnativeAsset.safeTransferFrom(from,address(this),nativeDeposit);foreignAsset.safeTransferFrom(from,address(this),foreignDeposit);PairInfostoragepair=pairInfo[foreignAsset];uint256totalLiquidityUnits=pair.totalSupply;if(totalLiquidityUnits==0)liquidity=nativeDeposit;elseliquidity=VaderMath.calculateLiquidityUnits(nativeDeposit,reserveNative,foreignDeposit,reserveForeign,totalLiquidityUnits);require(liquidity>0,"VaderPoolV2::mintFungible: Insufficient Liquidity Provided");pair.totalSupply=totalLiquidityUnits+liquidity;_update(foreignAsset,reserveNative+nativeDeposit,reserveForeign+foreignDeposit,reserveNative,reserveForeign);lp.mint(to,liquidity);emitMint(from,to,nativeDeposit,foreignDeposit);}
+Proof of Concept
+Given:
+A Vader pool with100,000 USDVand1 BTC;ThetotalPoolUnitsis100.
+The attacker can do the following in one transaction:
+Add liquidity with100,000 USDVand 0 BTC, get50 liquidityUnits, representing 1/3 shares of the pool;Swap0.1 BTCto USDV, repeat for 5 times; spent0.5 BTCand got62163.36 USDV;Remove liquidity, get back45945.54 USDVand0.5 BTC; profit for: 62163.36 + 45945.54 - 100000 = 8108.9 USDV.
+SamSteinGG (Vader) disputed:
+This is the intended design of the Thorchain CLP model. Can the warden provide a tangible attack vector in the form of a test?
+alcueca (judge) commented:
+Sponsor is acknowledging the issue.
+SamSteinGG (Vader) commented:
+@alcueca We do not acknowledge the issue. This is the intended design of the CLP model and the amount supplied for a trade is meant to be safeguarded off-chain. It is an inherent trait of the model.

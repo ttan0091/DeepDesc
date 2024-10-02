@@ -1,0 +1,38 @@
+[H-04] Wrong calculation in functionLBRouter._getAmountsInmake user lose a lot of tokens when swap through JoePair (most of them will gifted to JoePair freely)
+Submitted byKIntern_NA, also found byhansfriese,Jeiwan, andcccz
+FunctionLBRouter._getAmountsInis a helper function to return the amounts in with givenamountOut. This function will check the pair of_tokenand_tokenNextisJoePairorLBPairusing_binStep.
+If_binStep == 0, it will be aJoePairotherwise it will be anLBPair.
+if(_binStep==0) {(uint256_reserveIn,uint256_reserveOut, ) =IJoePair(_pair).getReserves();if(_token>_tokenPath[i]) {(_reserveIn,_reserveOut) = (_reserveOut,_reserveIn);}uint256amountOut_=amountsIn[i];// Legacy uniswap way of roundingamountsIn[i-1] = (_reserveIn*amountOut_*1_000) / (_reserveOut-amountOut_*997) +1;}else{(amountsIn[i-1], ) =getSwapIn(ILBPair(_pair),amountsIn[i],ILBPair(_pair).tokenX() ==_token);}
+As we can see when_binStep == 0and_token < _tokenPath[i](in another word  we swap throughJoePairand pair’stoken0is_tokenandtoken1is_tokenPath[i]), it will
+Get the reserve of pair (reserveIn,reserveOut)Calculate the_amountInby using the formula
+amountsIn[i - 1] = (_reserveIn * amountOut_ * 1_000) / (_reserveOut - amountOut_ * 997) + 1
+But unfortunately the denominator_reserveOut - amountOut_ * 997seem incorrect. It should be(_reserveOut - amountOut_) * 997.We will do some math calculations here to prove the expression above is wrong.
+Input:
+_reserveIn (rIn): reserve of_tokenin pair_reserveOut (rOut): reserve of_tokenPath[i]in pairamountOut_: the amount of_tokenPaththe user wants to gain
+Output:
+rAmountIn: the actual amount of_tokenwe need to transfer to the pair.
+Generate Formula:
+CauseJoePairtakes 0.3%ofamountInas fee, we get
+amountInDeductFee = amountIn' * 0.997
+Following theconstant product formula, we have
+rIn * rOut = (rIn + amountInDeductFee) * (rOut - amountOut_)==> rIn + amountInDeductFee = rIn * rOut / (rOut - amountOut_) + 1<=> amountInDeductFee = (rIn * rOut) / (rOut - amountOut_) - rIn + 1<=> rAmountIn * 0.997 = rIn * amountOut / (rOut - amountOut_) + 1<=> rAmountIn = (rIn * amountOut * 1000) / ((rOut - amountOut_) * 997) + 1<=>
+As we can seerAmountInis different fromamountsIn[i - 1], the denominator ofrAmountInis(rOut - amountOut_) * 997when the denominator ofamountsIn[i - 1]is_reserveOut - amountOut_ * 997(Missing one bracket)
+Impact
+Loss of fund: User will send a lot of tokenIn (much more than expected) but just gain exact amountOut in return.
+Let dive in the functionswapTokensForExactTokens()to figure out why this scenario happens. I will assume I just swap through only one pool fromJoePairand 0 pool fromLBPair.
+Firstly function will get the listamountsInfrom function_getAmountsIn. SoamountsInwill be [incorrectAmountIn,userDesireAmount].amountsIn=_getAmountsIn(_pairBinSteps,_pairs,_tokenPath,_amountOut);Then it transfersincorrectAmountInto_pairs[0]to prepare for the swap._tokenPath[0].safeTransferFrom(msg.sender,_pairs[0],amountsIn[0]);Finally it calls function_swapTokensForExactTokento execute the swap.uint256_amountOutReal=_swapTokensForExactTokens(_pairs,_pairBinSteps,_tokenPath,amountsIn,_to);In this step it will reach toline 841which will set the expectedamountOut = amountsIn[i+1] = amountsIn[1] = userDesireAmount.amountOut=_amountsIn[i+1];So after callingIJoePair(_pair).swap(), the user just gets exactlyamountOutand wastes a lot of tokenIn that (s)he transfers to the pool.
+Proof of concept
+Here is our test script to describe the impacts
+https://gist.github.com/huuducst/6e34a7bdf37bb29f4b84d2faead94dc4
+You can place this file into/testfolder and run it using
+forge test --match-test testBugSwapJoeV1PairWithLBRouter --fork-url https://rpc.ankr.com/avalanche --fork-block-number 21437560 -vv
+Explanation of test script: (For more detail you can read the comments from test script above)
+Firstly we get the Joe v1 pair WAVAX/USDC from JoeFactory.At the forked block, priceWAVAX/USDCwas around 15.57. We try to use LBRouter functionswapTokensForExactTokensto swap10$WAVAX (10e18 wei) to1$USDC (1e6 wei). But it reverts with the errorLBRouter__MaxAmountInExceeded. But when we swap directly to JoePair, it swap successfully10$AVAX (10e18 wei) to155$USDC (155e6 wei).We use LBRouter functionswapTokensForExactTokensagain with very largeamountInMaxto swap1$USDC (1e6 wei). It swaps successfully but needs to pay a very large amount WAVAX (much more than price).
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Modify functionLBRouter._getAmountsInas follow
+if(_binStep==0) {(uint256_reserveIn,uint256_reserveOut, ) =IJoePair(_pair).getReserves();if(_token>_tokenPath[i]) {(_reserveIn,_reserveOut) = (_reserveOut,_reserveIn);}uint256amountOut_=amountsIn[i];// Legacy uniswap way of rounding// Fix hereamountsIn[i-1] = (_reserveIn*amountOut_*1_000) / ((_reserveOut-amountOut_) *997) +1;}else{(amountsIn[i-1], ) =getSwapIn(ILBPair(_pair),amountsIn[i],ILBPair(_pair).tokenX() ==_token);}
+0x0Louis (Trader Joe) confirmed
+Alex the Entreprenerd (judge) commented:
+The warden has shown how, due to an incorrect order of operation, the math for the router will be incorrect.While the error could be considered a typo, the router is the designated proper way of performing a swap, and due to this finding, the math will be off.Because the impact shows an incorrect logic, and a broken invariant (the router uses incorrect amounts, sometimes reverting, sometimes costing the end user more tokens than necessary), I believe High Severity to be appropriate.Mitigation will require refactoring and may be aided by the test case offered in this report.

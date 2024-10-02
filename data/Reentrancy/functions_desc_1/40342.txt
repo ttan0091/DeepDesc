@@ -1,0 +1,52 @@
+This code defines two smart contracts: AmIOnTheFork and Ethsplit. Here’s a detailed explanation of how these contracts work:
+
+### Contract AmIOnTheFork
+
+solidity
+contract AmIOnTheFork {
+    function forked() constant returns(bool);
+}
+
+
+1. Purpose: This contract is designed to check if the Ethereum network has forked.
+2. Function forked:
+    Access Modifier: constant indicates that this function does not modify the state of the blockchain.
+    Return Type: bool, which means it returns a boolean value (true or false).
+    Behavior: The function is expected to return true if the network has forked and false otherwise.
+
+### Contract Ethsplit
+
+solidity
+contract Ethsplit {
+
+    AmIOnTheFork amIOnTheFork = AmIOnTheFork(0x2bd2326c993dfaef84f696526064ff22eba5b362);
+    address fees = 0xdE17a240b031a4607a575FE13122d5195B43d6fC;
+
+    function split(address etcAddress) {
+        if (amIOnTheFork.forked()) {
+            uint fee = msg.value / 100;
+            fees.send(fee);
+            etcAddress.call.value(msg.value)();
+        }
+    }
+}
+
+
+1. Purpose: This contract is designed to handle the splitting of Ether based on whether the network has forked.
+2. State Variables:
+    AmIOnTheFork amIOnTheFork: This is an instance of the AmIOnTheFork contract, initialized with the address 0x2bd2326c993dfaef84f696526064ff22eba5b362.
+    address fees: This is an address where fees will be sent, initialized with the address 0xdE17a240b031a4607a575FE13122d5195B43d6fC.
+3. Function split:
+    Parameters: address etcAddress  This is the address where the remaining Ether will be sent after deducting the fee.
+    Behavior:
+      Condition Check: The function first checks if the network has forked by calling amIOnTheFork.forked().
+      Fee Calculation: If the network has forked (amIOnTheFork.forked() returns true), it calculates a fee equal to 1% of the msg.value (the amount of Ether sent to the function).
+      Fee Transfer: The calculated fee is then sent to the fees address using the send function.
+      Ether Transfer: The remaining Ether (after deducting the fee) is sent to the etcAddress using the call.value function. This is a lowlevel call that sends the specified amount of Ether to the target address.
+
+### Summary
+
+ AmIOnTheFork Contract: Provides a function to check if the Ethereum network has forked.
+ Ethsplit Contract: Uses the AmIOnTheFork contract to determine if the network has forked and, if so, splits the incoming Ether by sending a fee to a specified address and the remaining Ether to another specified address.
+
+This design ensures that the Ether is split conditionally based on the network's fork status, with a fee deducted and sent to a predefined address.

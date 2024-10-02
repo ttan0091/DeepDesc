@@ -1,0 +1,30 @@
+[H-04] Users may be liquidated right after taking maximal debt
+Submitted byJeiwan
+https://github.com/with-backed/papr/blob/9528f2711ff0c1522076b9f93fba13f88d5bd5e6/src/PaprController.sol#L471
+https://github.com/with-backed/papr/blob/9528f2711ff0c1522076b9f93fba13f88d5bd5e6/src/PaprController.sol#L317
+Impact
+Since there’s no gap between the maximal LTV and the liquidation LTV, user positions may be liquidated as soon as maximal debt is taken, without leaving room for collateral and Papr token prices fluctuations. Users have no chance to add more collateral or reduce debt before being liquidated. This may eventually create more uncovered and bad debt for the protocol.
+Proof of Concept
+The protocol allows users to take debt up to the maximal debt, including it (PaprController.sol#L471):
+if(newDebt>max)revertIPaprController.ExceedsMaxDebt(newDebt,max);
+However, a position becomes liquidable as soon as user’s debt reaches user’s maximal debt (PaprController.sol#L317):
+if(info.debt<_maxDebt(oraclePrice*info.count,cachedTarget)) {revertIPaprController.NotLiquidatable();}
+Moreover, the same maximal debt calculation is used during borrowing and liquidating, with the same maximal LTV (PaprController.sol#L556-L559):
+function_maxDebt(uint256totalCollateraValue,uint256cachedTarget)internalviewreturns(uint256) {uint256maxLoanUnderlying=totalCollateraValue*maxLTV;returnmaxLoanUnderlying/cachedTarget;}
+Even though different price kinds are used during borrowing and liquidations (LOWER during borrowing,TWAP during liquidations), the price can in fact match (ReservoirOracleUnderwriter.sol#L11):
+/// @dev LOWER is the minimum of SPOT and TWAP
+Which means that the difference in prices doesn’t always create a gap in maximal and liquidation LTVs.
+The combination of these factors allows users to take maximal debts and be liquidated immediately, in the same block. Since liquidations are not beneficial for lending protocols, such heavy penalizing of users may harm the protocol and increase total uncovered debt, and potentially lead to a high bad debt.
+// test/paprController/IncreaseDebt.t.soleventRemoveCollateral(addressindexedaccount,ERC721indexedcollateralAddress,uint256indexedtokenId);functiontestIncreaseDebtAndBeLiquidated_AUDIT()public{vm.startPrank(borrower);nft.approve(address(controller),collateralId);IPaprController.Collateral[]memoryc=newIPaprController.Collateral[](1);c[0] =collateral;controller.addCollateral(c);// Calculating the max debt for the borrower.uint256maxDebt=controller.maxDebt(1*oraclePrice);// Taking the maximal debt.vm.expectEmit(true,true,false,true);emitIncreaseDebt(borrower,collateral.addr,maxDebt);controller.increaseDebt(borrower,collateral.addr,maxDebt,oracleInfo);vm.stopPrank();// Making a TWAP price that's identical to the LOWER one.priceKind=ReservoirOracleUnderwriter.PriceKind.TWAP;ReservoirOracleUnderwriter.OracleInfomemorytwapOracleInfo=_getOracleInfoForCollateral(nft,underlying);// The borrower is liquidated in the same block.vm.expectEmit(true,true,false,false);emitRemoveCollateral(borrower,collateral.addr,collateral.id);controller.startLiquidationAuction(borrower,collateral,twapOracleInfo);}
+Recommended Mitigation Steps
+Consider adding a liquidation LTV that’s bigger than the maximal borrow LTV; positions can only be liquidated after reaching the liquidation LTV. This will create a room for price fluctuations and let users increase their collateral or decrease debt before being liquidating.
+Alternatively, consider liquidating positions only after their debt has increased the maximal one:
+--- a/src/PaprController.sol+++ b/src/PaprController.sol@@ -314,7 +314,7 @@ contract PaprController isuint256 oraclePrice =underwritePriceForCollateral(collateral.addr, ReservoirOracleUnderwriter.PriceKind.TWAP, oracleInfo);-        if (info.debt < _maxDebt(oraclePrice * info.count, cachedTarget)) {+        if (info.debt <= _maxDebt(oraclePrice * info.count, cachedTarget)) {revert IPaprController.NotLiquidatable();}
+wilsoncusack (Backed) disagreed with severity and commented:
+I agree we should change this to a<PaprController.sol#L471. But I do not see this as High severity, I don’t think.Even with that changed, it is possible to be liquidated in the same block due to Target changing or a new oracle price. I think this is the norm for other lending protocols, e.g. I believe with Compound or Maker you could be liquidated in the same block if you max borrow and the oracle price is updated in the same block?
+Jeiwan (warden) commented:
+Other lending protocols, like Compound, Maker, and Aave, have different LTV thresholds. For example,AAVEMax LTV is the maximal debt and Liquidation threshold is the liquidation LTV. Users may borrow until max LTV but they’re liquidated only after reaching the liquidation LTV. In the case of ETH, max LTV on AAVE is 82.50% and Liquidation threshold is 86.00%. The difference allows price and collateral value fluctuations, and it depends on the risk profile of an asset. For example, it’s 13% forLINKThis difference protects users from liquidations caused by high volatility.This is a high finding because users lose funds during liquidations and every liquidation may create bad debt for the protocol. Liquidations are harmful for both protocols and users, so lending protocols shouldn’t allow users to borrow themselves right into liquidations.
+wilsoncusack (Backed) commented:
+Thanks! TIL. My main reference was squeeth and there you can borrow right up to max (unless I miss something, again). Will consider making this change!
+trust1995 (judge) commented:
+Because warden has demonstrated there is potentially no gap between liquidation LTV and borrow LTV, will treat this as HIGH impact. If the gap was even 1 wei I believe it would be a MEDIUM find, but the current code incentivizes MEV bots liquidating max debt positions in the same block.

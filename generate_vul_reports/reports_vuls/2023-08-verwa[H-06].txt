@@ -1,0 +1,18 @@
+[H-06] Users may be forced into long lock times to be able to undelegate back to themselves
+Submitted byADM, also found by lsaudit (1,2),QiuhaoLi, Jorgect (1,2),SpicyMeatball, bart1e (1,2),Yanchuan,3docSec,MrPotatoMagic, nemveer (1,2),Yuki,kaden, nonseodion (1,2),Watermelon,RandomUser, BenRai (1,2),cducrest,Topmark,Tendency,0xDING99YA, andKow
+Due to a check requiring users only be able to delegate to others or themselves with longer lock times and verwa’s restrictions of all changes increasing lock times by 5 years users may be forced to remain delegated to someone they do not wish to be or extend their lock much longer than they wish.
+Proof of Concept
+If a user does not delegate to another user who started their lock during the same epoch they will be unable to undelegate back to themselves without extending their own lock. This is not much of an issue if they wish to do so early in the lock period but can become a problem if they wish to delegate to themselves after a longer period of time. i.e.
+Bob creates lock in week 1.Dave create lock in week 2 & Bob delegates to Dave.3 years pass and Bob decides he wishes to undelegate his votes back to himself and calls delegate(msg.sender) but the call will fail due to the check in VotingEscrow#L384:
+require(toLocked.end>=fromLocked.end,"Only delegate to longer lock");
+In the original FiatDAO contracts a user would be able to just extend their lock by one week to get around this however any changes in the verwa contract results in an extension of 5 years which the user may not want extend their lock by such a long time just to be able to undelegate.
+The undelegate fail can be shown by modifying the test testSuccessDelegate to:
+functiontestSuccessDelegate()public{// successful delegatetestSuccessCreateLock();vm.warp(8days);// warp more than 1 week so both users are not locking in same epochvm.prank(user2);ve.createLock{value:LOCK_AMT}(LOCK_AMT);vm.prank(user1);ve.delegate(user2);(, , ,addressdelegatee) =ve.locked(user1);assertEq(delegatee,user2);(, ,int128delegated, ) =ve.locked(user2);assertEq(delegated,2000000000000000000);}
+and running:forge test--match testSuccessUnDelegate
+Recommended Mitigation Steps
+Modify VotingEscrow#L384 to:
+require(toLocked.end>=locked_.end,"Only delegate to self or longer lock");
+which will allow users to delegate either to longer locks or undelegate back to themselves.
+alcueca (Judge) increased severity to High and commented:
+I’m merging#245into this one as the root cause and general mechanics are the same, only that in the 245 group the intent was malicious and in this group is not.At the same time, I’m upgrading the severity to High. Locking CANTO for an additional 5 years, considering that this is by nature a volatile environment, has an extremely high chance of resulting in losses due to market movements or other factors.
+OpenCoreCH (veRWA) confirmed on duplicate 178

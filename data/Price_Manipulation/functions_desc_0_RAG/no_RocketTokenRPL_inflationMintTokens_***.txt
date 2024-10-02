@@ -1,0 +1,27 @@
+[Execution Flow]:
+This code defines an external function named inflationMintTokens, which is responsible for minting new tokens based on an inflation rate. The function is designed to run only if at least one interval has passed since the last minting event. Here’s a detailed explanation of how this function works:
+
+1. Check Interval Condition:
+    The function starts by retrieving the last inflation calculation time using getInflationCalcTime().
+    It then calculates the number of intervals that have passed since the last mint using _getInflationIntervalsPassed(inflationLastCalcTime).
+    If no intervals have passed (intervalsSinceLastMint == 0), the function returns 0 immediately, indicating no new tokens were minted.
+
+2. Retrieve Vault Address:
+    The function retrieves the address of the Rocket Vault using getContractAddress("rocketVault").
+    It checks if the Rocket Vault address is set and not zero, using require(rocketVaultAddress != address(0x0), "rocketVault address not set").
+
+3. Calculate New Tokens:
+    The function calculates the amount of new tokens to be minted based on the inflation rate and the number of intervals passed using _inflationCalculate(intervalsSinceLastMint).
+
+4. Update Last Calculation Time:
+    The function updates the last inflation calculation timestamp by adding the product of the inflation interval and the number of intervals passed to the last calculation time.
+
+5. Mint and Transfer Tokens:
+    If the calculated amount of new tokens (newTokens) is greater than 0, the function proceeds to mint these tokens to itself using _mint(address(this), newTokens).
+    It then approves the Rocket Vault to spend these newly minted tokens by calling rplInflationContract.approve(rocketVaultAddress, vaultAllowance.add(newTokens)).
+    Finally, it instructs the Rocket Vault to deposit these tokens into the Rocket Rewards Pool using rocketVaultContract.depositToken("rocketRewardsPool", IERC20(address(this)), newTokens).
+
+6. Log and Return:
+    The function emits an event RPLInflationLog to log the minting of new tokens.
+    It returns the number of newly minted tokens.
+

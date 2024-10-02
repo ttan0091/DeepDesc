@@ -1,0 +1,19 @@
+Type of vulnerability: Gas Underpayment Vulnerability
+
+Cause of vulnerability: The `MIN_FALBACK_RESERVE` in the `BranchBridgeAgent` contract does not account for the actual gas consumption in `AnyCall` contracts, leading to users underpaying the actual cost when replenishing the execution budget.
+
+Execution process: When the `anyFallback` method is called by the `Anycall Executor` on the source chain due to a failure of the `anyExecute` function on the root chain, the user is required to pay for the execution gas cost. If there is insufficient `depositedGas`, the `anyFallback` method will revert, causing the execution budget to decrease over time and eventually leading to the failure of `anyExecute` calls.
+
+Vulnerable code:
+```solidity
+// Save gas
+uint256 gasLeft = gasleft();
+// Get Branch Environment Execution Cost
+uint256 minExecCost = tx.gasprice * (MIN_FALLBACK_RESERVE + _initialGas - gasLeft);
+// Check if sufficient balance
+if (minExecCost > getDeposit[_depositNonce].depositedGas) {
+    _forceRevert();
+    return;
+}
+```
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L1063-L1072

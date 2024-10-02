@@ -1,0 +1,28 @@
+[H-04]UniV3LiquidityAMO::recoverERC721will causeERC721tokens to be permanently locked inrdpxV2Core
+Submitted bybart1e, also found byrokinot,gkrastenov,HHK,bin2chen,jasonxiale,Aymen0909,josephdara,pep7siup,peakbolt,Inspex,kodyvim,tapir,0x3b,0xCiphky,rvierdiiev, andchaduke
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/amo/UniV3LiquidityAmo.sol#L324-L334
+https://github.com/code-423n4/2023-08-dopex/blob/eb4d4a201b3a75dd4bddc74a34e9c42c71d0d12f/contracts/core/RdpxV2Core.sol#L1-L1308
+UniV3LiquidityAMO::recoverERC721is a function created in order to be able to recoverERC721tokens from theUniV3LiquidityAMOcontract. It can only be called by admin and will transfer allERC721tokens to theRdpxV2Corecontract. The problem is, that it won’t be possible to do anything with these tokens after they are transferred tordpxV2Core.
+Indeed,RdpxV2Coreinherits from the following contracts:
+AccessControl,ContractWhitelist,ERC721Holder,Pausable
+and no contract from this list implement any logic allowing the NFT transfer (onlyERC721Holderhas something to do with NFTs, but it only allows to receive them, not to approve or transfer).
+Moreover,rdpxV2Corealso doesn’t have any logic allowing transfer or approval of NFTs:
+there is no genericexecutefunction thereno function implemented is related toERC721tokens (except foronERC721Receivedinherited fromERC721Holder)it may seem possible to do a dirty hack and try to useapproveContractToSpendin order to approveERC721token. Theoretically, one would have to specifyERC721tokenIdinstead ofERC20token amount, so thatIERC20WithBurn(_token).approve(_spender, _amount);in fact approvesERC721token withtokenId == _amount, but it fails with[FAIL. Reason: EvmError: Revert]and even if it didn’t, it still wouldn’t be possible to transferERC721token withtokenId == 0since there is_validate(_amount > 0, 17);insideapproveContractToSpend
+Impact
+UniV3LiquidityAMO::recoverERC721instead of recoveringERC721, locks all tokens inrdpxV2Coreand it won’t be possible to recover them from that contract.
+Any use ofrecoverERC721will imply an irrecoverable loss for the protocoland this function was implemented in order to be used at some point after all (even if only on emergency situations). Because of that, I’m submitting this issue as High.
+Proof of Concept
+This PoC only shows thatERC721token recovery will not be possible by callingRdpxV2Core::approveContractToSpend. Lack of functions doingtransferorapproveor any otherERC721related functions inRdpxV2Coremay just be observed by looking at the contract’s code.
+Please create theMockERC721.solfile inmocksdirectory and with the following code:
+pragmasolidity^0.8.19;import"@openzeppelin/contracts/token/ERC721/ERC721.sol";contractMockERC721isERC721{constructor()ERC721("...","..."){}functiongiveNFT()public{_mint(msg.sender,1);}}
+It will just mint anERC721token withtokenId = 1.
+Please also run the following test:
+functiontestNFT()public{// needed `import "../../contracts/mocks/MockERC721.sol";` at the beginning of the fileMockERC721mockERC721=newMockERC721();mockERC721.giveNFT();mockERC721.transferFrom(address(this),address(rdpxV2Core),1);// approveContractToSpend won't be possible to usevm.expectRevert();rdpxV2Core.approveContractToSpend(address(mockERC721),address(this),1);}
+Tools Used
+VS Code
+Recommended Mitigation Steps
+Either implement additionalERC721recovery function inRdpxV2Coreor changeUniV3LiquidityAMO::recoverERC721so that it transfers all NFTs tomsg.senderinstead ofRdpxV2Corecontract.
+psytama (Dopex) confirmed and commented:
+Change recover ERC721 function in uni v3 AMO.
+Alex the Entreprenerd (Judge) commented:
+The Warden has shown an incorrect hardcoded address in therecoverERC721if used it would cause an irrevocable loss of fundsTechnically speaking the Sponsor could useexecuteas a replacement, however the default function causes a loss so I’m inclined to agree with High Severity

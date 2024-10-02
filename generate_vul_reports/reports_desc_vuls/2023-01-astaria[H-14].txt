@@ -1,0 +1,25 @@
+Type of vulnerability: Predictable Contract Address Exploit
+
+Cause of vulnerability: The address of the public vault can be predicted before its creation, allowing a malicious private vault to transfer lien tokens to the predicted address in advance, which prevents the borrower from repaying the loan due to an overflow in the `decreaseEpochLienCount` function.
+
+Execution process:
+1. A malicious private vault predicts the future address of a public vault using the `create` opcode.
+2. The malicious vault transfers lien tokens to the predicted public vault address.
+3. The public vault is created with a `liensOpenForEpoch` of 0.
+4. The borrower attempts to repay the loan via `LienToken.makePayment`, but the `decreaseEpochLienCount` function fails due to overflow, leading to the liquidation of the borrower’s collateral.
+
+Vulnerable code:
+```solidity
+function transferFrom(address from, address to, uint256 id) public override(ERC721, IERC721) {
+    LienStorage storage s = _loadLienStorageSlot();
+    if (_isPublicVault(s, to)) {
+        revert InvalidState(InvalidStates.PUBLIC_VAULT_RECIPIENT);
+    }
+    if (s.lienMeta[id].atLiquidation) {
+        revert InvalidState(InvalidStates.COLLATERAL_AUCTION);
+    }
+    delete s.lienMeta[id].payee;
+    emit PayeeChanged(id, address(0));
+    super.transferFrom(from, to, id);
+}
+```

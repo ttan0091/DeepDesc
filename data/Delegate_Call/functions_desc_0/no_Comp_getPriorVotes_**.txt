@@ -1,0 +1,75 @@
+This code defines a public view function named getPriorVotes, which is used to retrieve the number of votes an account had at a specific block number in the past. This function is typically used in governance systems or voting mechanisms within smart contracts, where the voting power of an account can change over time.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    The function getPriorVotes takes two parameters:
+      address account: The Ethereum address of the account whose prior votes are being queried.
+      uint blockNumber: The block number at which the votes are to be determined.
+    The function is marked as public and view, meaning it can be called externally and does not modify the state of the blockchain.
+
+2. Precondition Check:
+    The function starts with a require statement:
+     solidity
+     require(blockNumber < block.number, "Comp::getPriorVotes: not yet determined");
+     
+     This ensures that the requested block number is in the past and has already been mined. If the block number is not less than the current block number (block.number), the function will revert with the error message "Comp::getPriorVotes: not yet determined".
+
+3. Checkpoint Count:
+    The function retrieves the number of checkpoints for the given account:
+     solidity
+     uint32 nCheckpoints = numCheckpoints[account];
+     
+     Checkpoints are records that store the voting power of an account at specific blocks. numCheckpoints[account] holds the count of checkpoints for the account.
+
+4. Initial Check for No Checkpoints:
+    If there are no checkpoints for the account (nCheckpoints == 0), the function immediately returns 0:
+     solidity
+     if (nCheckpoints == 0) {
+         return 0;
+     }
+     
+
+5. Check Most Recent Balance:
+    The function then checks the most recent checkpoint:
+     solidity
+     if (checkpoints[account][nCheckpoints  1].fromBlock <= blockNumber) {
+         return checkpoints[account][nCheckpoints  1].votes;
+     }
+     
+     If the block number of the most recent checkpoint is less than or equal to the requested block number, the function returns the votes recorded in that checkpoint.
+
+6. Check Implicit Zero Balance:
+    If the block number of the first checkpoint is greater than the requested block number:
+     solidity
+     if (checkpoints[account][0].fromBlock > blockNumber) {
+         return 0;
+     }
+     
+     This means the account had no voting power at the requested block number, so the function returns 0.
+
+7. Binary Search for Checkpoint:
+    If neither of the above conditions is met, the function performs a binary search to find the correct checkpoint:
+     solidity
+     uint32 lower = 0;
+     uint32 upper = nCheckpoints  1;
+     while (upper > lower) {
+         uint32 center = upper  (upper  lower) / 2; // ceil, avoiding overflow
+         Checkpoint memory cp = checkpoints[account][center];
+         if (cp.fromBlock == blockNumber) {
+             return cp.votes;
+         } else if (cp.fromBlock < blockNumber) {
+             lower = center;
+         } else {
+             upper = center  1;
+         }
+     }
+     return checkpoints[account][lower].votes;
+     
+      The binary search narrows down the range of checkpoints by comparing the block numbers.
+      If the block number of the current checkpoint (cp.fromBlock) matches the requested block number, the function returns the votes from that checkpoint.
+      If the block number of the current checkpoint is less than the requested block number, the search continues in the upper half.
+      If the block number of the current checkpoint is greater than the requested block number, the search continues in the lower half.
+      The loop continues until the range is narrowed down to a single checkpoint, at which point the function returns the votes from that checkpoint.
+
+This function efficiently retrieves the voting power of an account at a specific block number by leveraging checkpoints and a binary search algorithm, ensuring both accuracy and performance.

@@ -1,0 +1,38 @@
+Type of vulnerability: Reentrancy and Logic Error
+
+Cause of vulnerability: The `addCollateral` method allows the `share` parameter to be passed as `0`, which bypasses the `allowedBorrow` modifier check. This allows an attacker to add collateral without proper authorization, leading to unauthorized access to funds and infinite collateral share inflation.
+
+Execution process:
+1. An attacker calls the `addCollateral` method with `share` set to `0`.
+2. The `allowedBorrow` modifier is bypassed because it checks the `share` value before it is recalculated.
+3. The `share` value is recalculated using the `yieldBox.toShare` method, allowing the attacker to add collateral without proper authorization.
+4. The attacker can repeatedly call `addCollateral` to inflate their collateral share infinitely, leading to unauthorized borrowing and potential fund theft.
+
+Vulnerable code:
+```solidity
+// MarketERC20.sol
+function _allowedBorrow(address from, uint share) internal {
+    if (from != msg.sender) {
+        if (allowanceBorrow[from][msg.sender] < share) {
+            revert NotApproved(from, msg.sender);
+        }
+        allowanceBorrow[from][msg.sender] -= share;
+    }
+}
+
+// BigBang.sol
+function addCollateral(address from, address to, bool skim, uint256 amount, uint256 share // @audit share is calculated afterwords the modifier) public allowedBorrow(from, share) notPaused {
+    _addCollateral(from, to, skim, amount, share);
+}
+
+function _addCollateral(address from, address to, bool skim, uint256 amount, uint256 share) internal {
+    if (share == 0) {
+        share = yieldBox.toShare(collateralId, amount, false);
+    }
+    userCollateralShare[to] += share;
+    uint256 oldTotalCollateralShare = totalCollateralShare;
+    totalCollateralShare = oldTotalCollateralShare + share;
+    _addTokens(from, to, collateralId, share, oldTotalCollateralShare, skim);
+    emit LogAddCollateral(skim ? address(yieldBox) : from, to, share);
+}
+```

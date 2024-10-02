@@ -1,0 +1,22 @@
+Type of vulnerability: Authorization/Access Control
+Cause of vulnerability: The `offerWithETH` function sets the `offer.owner` to the RubiconRouter contract address, allowing any user to cancel the offer through the `cancelForETH` function.
+Execution process: A user creates an offer using the `offerWithETH` function, which sets the offer's owner to the RubiconRouter contract address. Any other user can then call the `cancelForETH` function to cancel this offer and retrieve the ether.
+Vulnerable code:
+```solidity
+function offerWithETH(
+    uint256 pay_amt,
+    ERC20 buy_gem,
+    uint256 buy_amt
+) external payable returns (uint256) {
+    require(msg.value == pay_amt, "msg.value doesn't match pay_amt");
+    ERC20(weth).deposit{value: msg.value}();
+    return RubiconMarket(market).offer(pay_amt, ERC20(weth), buy_gem, buy_amt);
+}
+
+function cancelForETH(uint256 id) public returns (bool) {
+    require(RubiconMarket(market).cancel(id), "cancel failed");
+    ERC20(weth).withdraw(RubiconMarket(market).getOffer(id).pay_amt);
+    msg.sender.transfer(RubiconMarket(market).getOffer(id).pay_amt);
+    return true;
+}
+```

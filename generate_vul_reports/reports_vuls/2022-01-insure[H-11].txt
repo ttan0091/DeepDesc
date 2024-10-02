@@ -1,0 +1,22 @@
+[H-11]PoolTemplate.sol#resume()Wrong implementation ofresume()will compensate overmuch redeem amount from index pools
+Submitted by WatchPug, also found by danb
+Wrong arithmetic.
+
+https://github.com/code-423n4/2022-01-insure/blob/19d1a7819fe7ce795e6d4814e7ddf8b8e1323df3/contracts/PoolTemplate.sol#L700-L717
+uint256_deductionFromIndex= (_debt*_totalCredit*MAGIC_SCALE_1E6) /totalLiquidity();uint256_actualDeduction;for(uint256i=0;i<indexList.length;i++) {address_index=indexList[i];uint256_credit=indicies[_index].credit;if(_credit>0) {uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);_actualDeduction+=IIndexTemplate(_index).compensate(_redeemAmount);}}
+Proof of Concept
+totalLiquidity = 200,000* 10**18;totalCredit = 100,000 * 10**18;debt = 10,000 * 10**18;[Index Pool 1] Credit = 20,000 * 10**18;[Index Pool 2] Credit = 30,000 * 10**18;
+uint256 _deductionFromIndex = (_debt * _totalCredit * MAGIC_SCALE_1E6) /totalLiquidity();// _deductionFromIndex = 10,000 * 10**6 * 10**18;
+[Index Pool 1]:
+uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;//  _shareOfIndex = 200000uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);// _redeemAmount = 25,000 * 10**18;
+[Index Pool 2]:
+uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;//  _shareOfIndex = 300000uint256_redeemAmount=_divCeil(_deductionFromIndex,_shareOfIndex);// _redeemAmount = 16666666666666666666667 (~ 16,666 * 10**18)
+In most cases, the transaction will revet on underflow at:
+uint256_shortage=_deductionFromIndex/MAGIC_SCALE_1E6-_actualDeduction;
+In some cases, specific pools will be liable for unfair compensation:
+If the CSD is empty,Index Pool 1only have6,000 * 10**18andIndex Pool 2only have4,000 * 10**18, the_actualDeductionwill be10,000 * 10**18,_deductionFromPoolwill be0.
+Index Pool 1should only pay1,000 * 10**18, but actually paid6,000 * 10**18, the LPs ofIndex Pool 1now suffer funds loss.
+Recommendation
+Change to:
+uint256_deductionFromIndex= (_debt*_totalCredit*MAGIC_SCALE_1E6) /totalLiquidity();uint256_actualDeduction;for(uint256i=0;i<indexList.length;i++) {address_index=indexList[i];uint256_credit=indicies[_index].credit;if(_credit>0) {uint256_shareOfIndex= (_credit*MAGIC_SCALE_1E6) /_totalCredit;uint256_redeemAmount=_divCeil(_deductionFromIndex*_shareOfIndex,MAGIC_SCALE_1E6*MAGIC_SCALE_1E6);_actualDeduction+=IIndexTemplate(_index).compensate(_redeemAmount);}}
+oishun1112 (Insure) confirmed and resolved

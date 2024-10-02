@@ -1,0 +1,40 @@
+Type of vulnerability: Reentrancy and Score Manipulation
+
+Cause of vulnerability: The vulnerability arises from the ability of a malicious user to manipulate the `pendingScoreUpdates` variable, which controls the score update process. By strategically minting and burning tokens, the attacker can avoid unfavorable score updates after changes to alpha or multipliers, thereby accruing disproportionately large rewards.
+
+Execution process:
+1. The attacker identifies a time when the contract's alpha or multipliers are about to be updated.
+2. The attacker backruns the transaction updating alpha/multipliers by minting and burning a Prime token, which decrements `pendingScoreUpdates`.
+3. The attacker ensures that only other users' scores are updated by calling `updateScores()` selectively or through Denial of Service (DoS) attacks.
+4. Once `pendingScoreUpdates` reaches zero, further calls to `updateScores()` will revert, preventing the attacker's score from being updated.
+5. The attacker's score remains at a higher value, allowing them to accrue increased rewards at the expense of other users.
+
+Vulnerable code:
+```solidity
+function _burn(address user) internal {
+    ...
+    _updateRoundAfterTokenBurned(user);
+    emit Burn(user);
+}
+
+function _updateRoundAfterTokenBurned(address user) internal {
+    if (totalScoreUpdatesRequired > 0) totalScoreUpdatesRequired--;
+    if (pendingScoreUpdates > 0 && !isScoreUpdated[nextScoreUpdateRoundId][user]) {
+        pendingScoreUpdates--;
+    }
+}
+
+function updateScores(address[] memory users) external {
+    if (pendingScoreUpdates == 0) revert NoScoreUpdatesRequired();
+    if (nextScoreUpdateRoundId == 0) revert NoScoreUpdatesRequired();
+    for (uint256 i = 0; i < users.length; ) {
+        ...
+        pendingScoreUpdates--;
+        isScoreUpdated[nextScoreUpdateRoundId][user] = true;
+        unchecked {
+            i++;
+        }
+        emit UserScoreUpdated(user);
+    }
+}
+```

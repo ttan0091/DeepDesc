@@ -1,0 +1,33 @@
+This code defines a public view function named valueOfAsset, which calculates the value of a given asset in BNB and USD. The function takes two parameters: an address representing the asset and a uint representing the amount of the asset. It returns two uint values: valueInBNB and valueInUSD.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Declaration and Parameters:
+    function valueOfAsset(address asset, uint amount) public view override returns (uint valueInBNB, uint valueInUSD)
+    The function is marked as public, meaning it can be called from any contract or externally.
+    The function is marked as view, indicating it does not modify the state of the blockchain.
+    The function is marked as override, suggesting it overrides a function from a base contract or interface.
+
+2. Initial Checks and Direct Calculations:
+    if (asset == address(0) || asset == WBNB) {
+      If the asset is the zero address (address(0)) or the wrapped BNB address (WBNB), the value in BNB is directly set to the amount (valueInBNB = amount).
+      The value in USD is calculated by multiplying the amount by the price of BNB (priceOfBNB()) and dividing by 1e18 to normalize the result (valueInUSD = amount.mul(priceOfBNB()).div(1e18)).
+
+3. Handling PancakeSwap Liquidity Pools:
+    else if (keccak256(abi.encodePacked(IPancakePair(asset).symbol())) == keccak256("CakeLP")) {
+      If the asset is a PancakeSwap liquidity pool token (identified by its symbol "CakeLP"), the function checks if the total supply of the pool is zero. If so, it returns (0, 0).
+      If the pool contains BNB (IPancakePair(asset).token0() == WBNB || IPancakePair(asset).token1() == WBNB), the value in BNB is calculated by multiplying the amount by the balance of BNB in the pool, multiplying by 2 (since it's a pool), and dividing by the total supply of the pool.
+      The value in USD is then calculated similarly to the direct BNB case.
+      If the pool does not contain BNB, the function recursively calls itself to get the value of the other token in the pool in BNB and then calculates the value in BNB and USD accordingly.
+
+4. Handling Other Assets:
+    else {
+      For other assets, the function looks up the pair token (either BNB or another token) and finds the corresponding pair address using a factory.
+      If the balance of the asset in the pair is zero, it returns (0, 0).
+      The value in BNB is calculated based on the balance of the pair token in the pair and the balance of the asset in the pair.
+      If the pair token is not BNB, the function recursively calls itself to get the value of the pair token in BNB and then calculates the value in BNB and USD accordingly.
+
+5. Return Values:
+    The function returns two uint values: valueInBNB and valueInUSD, which represent the value of the asset in BNB and USD, respectively.
+
+This function is designed to handle various types of assets, including direct BNB, PancakeSwap liquidity pool tokens, and other tokens, by recursively calculating their values in BNB and then converting those values to USD using the price of BNB.

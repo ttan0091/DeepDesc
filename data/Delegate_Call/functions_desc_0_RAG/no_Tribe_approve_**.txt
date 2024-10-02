@@ -1,0 +1,32 @@
+This code defines an external function named approve, which is typically used in the context of ERC20 token contracts to allow an spender to withdraw tokens from the caller's account, up to the specified rawAmount.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    approve(address spender, uint rawAmount) external returns (bool): This function takes two parameters:
+      spender: The address of the account that is being authorized to spend tokens from the caller's account.
+      rawAmount: The maximum amount of tokens that the spender is allowed to withdraw.
+
+2. Variable Declaration and Initialization:
+    uint96 amount;: A variable amount of type uint96 is declared to store the amount of tokens to be approved. The use of uint96 suggests that the contract is designed to handle token amounts within a specific range, likely to optimize gas usage and storage.
+
+3. Conditional Check for Maximum Amount:
+    if (rawAmount == uint(1)) { amount = uint96(1); }: This condition checks if the rawAmount is equal to the maximum value that can be stored in a uint (which is 2^256  1). If true, it sets amount to the maximum value that can be stored in a uint96 (which is 2^96  1). This is a common pattern used to allow an infinite (or maximum possible) approval.
+
+4. Safe Conversion of Amount:
+    else { amount = safe96(rawAmount, "Tribe: amount exceeds 96 bits"); }: If the rawAmount is not the maximum uint value, the function calls safe96 to convert rawAmount to uint96. The safe96 function likely includes a check to ensure that the conversion does not overflow, and it throws an error with the message "Tribe: amount exceeds 96 bits" if the rawAmount is too large to fit into a uint96.
+
+5. Updating Allowances:
+    allowances[msg.sender][spender] = amount;: The function updates the allowances mapping to record that spender is allowed to spend up to amount tokens from the account of msg.sender. The allowances mapping is a twodimensional mapping that keeps track of the approved token amounts for each token ownerspender pair.
+
+6. Emitting an Event:
+    emit Approval(msg.sender, spender, amount);: This line emits an Approval event, which is a standard in ERC20 token contracts. This event logs the approval transaction, recording the owner (msg.sender), the spender (spender), and the amount (amount). This event is useful for offchain services and interfaces to track token approvals.
+
+7. Return Value:
+    return true;: The function returns true to indicate that the approval was successful.
+
+Security Considerations:
+ The function does not include any access control checks, meaning any address can call this function to approve any other address to spend tokens from their account. This is standard for ERC20 tokens but should be noted, especially in the context of privileged operations or in contracts where additional security measures might be necessary.
+ The use of safe96 ensures that the amount does not exceed the 96bit limit, preventing overflow vulnerabilities.
+
+This function is a typical implementation of the approve function in ERC20 tokens, focusing on handling token allowances securely and efficiently within the specified numerical limits.

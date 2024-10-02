@@ -1,0 +1,23 @@
+[H-01]RewardThrottle.checkRewardUnderflow()might track the cumulativeAPRs wrongly.
+Submitted byhansfriese
+https://github.com/code-423n4/2023-02-malt/blob/main/contracts/RewardSystem/RewardThrottle.sol#L445-L455
+https://github.com/code-423n4/2023-02-malt/blob/main/contracts/RewardSystem/RewardThrottle.sol#L576
+Impact
+RewardThrottle.checkRewardUnderflow()might calculate the cumulativeAPRs for epochs wrongly.
+As a result,cashflowAverageAprwill be calculated incorrectly inupdateDesiredAPR(), andtargetAPRwould be changed unexpectedly.
+Proof of Concept
+IncheckRewardUnderflow(), it calls a_sendToDistributor()function to update cumulativeAPRs after requesting some capitals from the overflow pool.
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol445:if(epoch>_activeEpoch) {446:for(uint256i=_activeEpoch;i<epoch; ++i) {447:uint256underflow=_getRewardUnderflow(i);448:449:if(underflow>0) {450:uint256balance=overflowPool.requestCapital(underflow);451:452:_sendToDistributor(balance,i);//@audit cumulative apr will be tracked wrongly when epoch > _activeEpoch + 1453:         }454:       }455:     }
+The main reason for this issue is that_sendToDistributor()doesn’t update the cumulativeAPRs whenamount == 0and the below scenario would be possible.
+Let’s assumeactiveEpoch = 100andepoch = 103. It’s possible if the active epoch wasn’t updated for 2 epochs.After that, thecheckRewardUnderflow()function will call_fillInEpochGaps()and the cumulativeAPRs will be settled accordingly.And it will try to request capitals from theoverflowPooland increase the rewards for epochs.At epoch 100, it requests some positivebalancefromoverflowPooland increases the cumulativeAPRs for epoch 101 correctly in_sendToDistributor().
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol611:state[epoch].rewarded=state[epoch].rewarded+rewarded;612:state[epoch+1].cumulativeCashflowApr=613:state[epoch].cumulativeCashflowApr+614:epochCashflowAPR(epoch);615:state[epoch+1].cumulativeApr=616:state[epoch].cumulativeApr+617:epochAPR(epoch);618:state[epoch].bondedValue=bonding.averageBondedValue(epoch);
+After that, theoverflowPooldoesn’t have any remaining funds and thebalance(At L450)will be 0 for epochs 101, 102.So_sendToDistributor()will be terminated right away and won’t increase the cumulativeAPRs of epoch 102 according to epoch 101 and this value won’t be changed anymore because theactiveEpochis 103 already.
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol575:function_sendToDistributor(uint256amount,uint256epoch)internal{576:if(amount==0) {577:return;578:     }
+As a result, the cumulativeAPRs will save smaller values from epoch 102 andcashflowAverageAprwill be smaller also if thesmoothingPeriodcontains such epochs inupdateDesiredAPR().
+File:2023-02-malt\contracts\RewardSystem\RewardThrottle.sol139:uint256cashflowAverageApr=averageCashflowAPR(smoothingPeriod);
+So theupdateDesiredAPR()function will change thetargetAPRusing the smaller average value and the smoothing logic wouldn’t work as expected.
+Recommended Mitigation Steps
+I think_sendToDistributor()should update the cumulativeAPRs as well whenamount == 0.
+function_sendToDistributor(uint256amount,uint256epoch)internal{if(amount==0) {state[epoch+1].cumulativeCashflowApr=state[epoch].cumulativeCashflowApr+epochCashflowAPR(epoch);state[epoch+1].cumulativeApr=state[epoch].cumulativeApr+epochAPR(epoch);state[epoch].bondedValue=bonding.averageBondedValue(epoch);return;}
+0xScotch (Malt) confirmed and commented:
+Interesting finding. It’s valid but the bug would actually result in the protocol retaining more capital due to reporting lower APRs than it should.

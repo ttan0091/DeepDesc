@@ -1,0 +1,68 @@
+[H-01] CBEthCollateral and AnkrStakedEthCollateral _underlyingRefPerTok is incorrect
+Submitted byronnyx2017, also found by0xA5DF
+Lines of Code
+https://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/plugins/assets/cbeth/CBETHCollateral.sol#L67-L69https://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/plugins/assets/ankr/AnkrStakedEthCollateral.sol#L58-L61
+TheCBEthCollateral._underlyingRefPerTok()function just usesCBEth.exchangeRate()to get the ref/tok rate. TheCBEth.exchangeRate()can only get the conversion rate from cbETH to staked ETH2 on the coinbase. However as the docshttps://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/2023-07-reserve/protocol/contracts/plugins/assets/cbeth/README.mdthe ref unit should be ETH. The staked ETH2 must take a few days to unstake, which leads to a premium between ETH and cbETH.
+And theAnkrStakedEthCollateralandRethCollateralhas the same problem. According to the ankr docs, unstake eth by Flash unstake have to pay a fee, 0.5% of the unstaked amount.https://www.ankr.com/docs/liquid-staking/eth/unstake/
+Impact
+The_underlyingRefPerTokwill return a higher ref/tok rate than the truth. And the premium is positively correlated with the unstake delay of eth2. When the unstake queue suddenly increases, the attacker can uses cbeth to issue more rtokens. Even if the cbETH has defaulted, the CBEthCollateral will never mark the state as DISABLED because theCBEth.exchangeRate()is updated by coinbase manager and it only represents the cbETH / staked eth2 rate instead of the cbETH/ETH rate.
+Proof of Concept
+For example, Now it’s about 17819370 block high on the mainnet, and theCBEth.exchangeRate()(https://etherscan.io/token/0xbe9895146f7af43049ca1c1ae358b0541ea49704#readProxyContract#F12) is 1.045264058480813188, but the chainlink price feed for cbETH/ETH(https://data.chain.link/ethereum/mainnet/crypto-eth/cbeth-eth) is 1.0438.
+Recommended Mitigation Steps
+Use thecbETH/ETHoracle to get thecbETH/ETHrate.
+Or, the ref unit for the collateral should be the staked eth2.
+Assessed type
+Context
+tbrent (Reserve) commented:
+This feels like a duplicate of#32. The root cause is an incorrect reference unit. The reference unit should be staked eth2, as indicated here.
+pmckelvy1 (Reserve) confirmed
+ronnyx2017 (warden) commented:
+This issue and32explain the misuse of tar unit and ref unit in staked eth related assets from different perspectives. The root cause is same, that 1 staked eth2 != 1 eth. This issue assumes that the ref token and target is all eth, which is referred to inthe docs. So the error should be in the function_underlyingRefPerTok. But issue 32 assumes that the ref unit should be staked eth2 and the target unit is eth. So it needs to modify functiontargetPerRef. I also have mentioned this mitigation in theRecommended Mitigation Stepssection of the current issue:Or, the ref unit for the collateral should be the staked eth2.
+cccz (judge) increased severity to High
+Reserve Mitigated:
+Fixes units and price calculations in cbETH, rETH, ankrETH collateral plugins.PR:https://github.com/reserve-protocol/protocol/pull/899
+Status: Mitigation confirmed. Full details in reports fromronnyx2017,bin2chenandRaymondFam.
+
+[H-02] CurveVolatileCollateral Collateral status can be manipulated by flashloan attack
+Submitted byronnyx2017
+Attacker can make the CurveVolatileCollateral enter the status of IFFY/DISABLED. It will cause the basket to rebalance and sell off all the CurveVolatileCollateral.
+Proof of Concept
+TheCurveVolatileCollateraloverrides the_anyDepeggedInPoolfunction to check if the distribution of capital is balanced. If the any part of underlying token exceeds the expected more than_defaultThreshold, return true, which means the volatile pool has been depeg:
+uint192expected=FIX_ONE.divu(nTokens);// {1}for(uint8i=0;i<nTokens;i++) {uint192observed=divuu(vals[i],valSum);// {1}if(observed>expected) {if(observed-expected>_defaultThreshold)returntrue;}}
+And the coll status will be updated in the super classCurveStableCollateral.refresh():
+if (low == 0 || _anyDepeggedInPool() || _anyDepeggedOutsidePool()) {markStatus(CollateralStatus.IFFY);}
+The attack process is as follows:
+Assumption: There is a CurveVolatileCollateral bases on a TriCrypto ETH/WBTC/USDT, and the value of them should be 1:1:1, and the_defaultThresholdof the CurveVolatileCollateral is 5%. And at first, there are 1000 USDT in the pool and the pool is balanced.The attacker uses flash loan to deposit 500 USDT to the pool. Now, the USDT distribution is1500/(1500+1000+1000) = 42.86%.Attacker refresh the CurveVolatileCollateral. Because the USDT distribution - expected = 42.86% - 33.33% = 9.53% > 5% _defaultThreshold. So CurveVolatileCollateral will be marked as IFFY.The attacker withdraw from the pool and repay the USDT.Just waitdelayUntilDefault, the collateral will be marked as defaulted by thealreadyDefaultedfunction.function alreadyDefaulted() internal view returns (bool) {return _whenDefault <= block.timestamp;}
+Recommended Mitigation Steps
+I think the de-pegged status in the volatile pool may be unimportant. It will be temporary and have little impact on the price of outside lp tokens. After all, override the_anyDepeggedOutsidePoolto check the lp price might be a good idea.
+Assessed type
+Context
+tbrent (Reserve) confirmed
+Reserve Mitigated:
+RemovesCurveVolatileCollateral.PR:https://github.com/reserve-protocol/protocol/pull/896
+Status:Mitigation confirmed. Full details in reports fromronnyx2017,RaymondFamandbin2chen.
+
+[H-03] ConvexStakingWrapper.sol after shutdown，rewards can be stolen
+Submitted bybin2chen
+After shutdown, checkpoints are stopped, leading to possible theft of rewards.
+Proof of Concept
+ConvexStakingWrapperNo morecheckpointsaftershutdown, i.e. no updatesreward.reward_integral_for[user]
+function_beforeTokenTransfer(address_from,address_to,uint256)internaloverride{@>_checkpoint([_from,_to]);}function_checkpoint(address[2]memory_accounts)internalnonReentrant{//if shutdown, no longer checkpoint in case there are problems@>if(isShutdown())return;uint256supply=_getTotalSupply();uint256[2]memorydepositedBalance;depositedBalance[0] =_getDepositedBalance(_accounts[0]);depositedBalance[1] =_getDepositedBalance(_accounts[1]);IRewardStaking(convexPool).getReward(address(this),true);_claimExtras();uint256rewardCount=rewards.length;for(uint256i=0;i<rewardCount;i++) {_calcRewardIntegral(i,_accounts,depositedBalance,supply,false);}}
+This would result in, aftershutdown, being able to stealrewardsby transferringtokensto new users.
+Example:Suppose the currentreward.reward_integral = 1000
+When ashutdownoccurs:
+Alice transfers 100 to the new user, Bob.
+Since Bob is the new user and_beforeTokenTransfer()->_checkpoint()is not actually executed.Result:balanceOf[bob] = 100reward.reward_integral_for[bob] = 0
+Bob executesclaimRewards()to steal the reward.
+reward amount = balanceOf[bob] * (reward.reward_integral - reward.reward_integral_for[bob])= 100 * (1000-0)
+Bob transfers the balance to other new users, looping steps 1-2 and stealing all rewards.
+Recommended Mitigation Steps
+Still execute\_checkpoint
+function_checkpoint(address[2]memory_accounts)internalnonReentrant{//if shutdown, no longer checkpoint in case there are problems-if(isShutdown())return;uint256supply=_getTotalSupply();uint256[2]memorydepositedBalance;depositedBalance[0] =_getDepositedBalance(_accounts[0]);depositedBalance[1] =_getDepositedBalance(_accounts[1]);IRewardStaking(convexPool).getReward(address(this),true);_claimExtras();uint256rewardCount=rewards.length;for(uint256i=0;i<rewardCount;i++) {_calcRewardIntegral(i,_accounts,depositedBalance,supply,false);}}
+Assessed type
+Context
+pmckelvy1 (Reserve) acknowledged
+Reserve Mitigated:
+Skip reward claim in_checkpointif shutdown.PR:https://github.com/reserve-protocol/protocol/pull/930
+Status:Mitigation confirmed. Full details in reports fromronnyx2017,bin2chenandRaymondFam.
+

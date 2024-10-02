@@ -1,0 +1,28 @@
+[H-03] AfEth deposits could use price data from an invalid Chainlink response
+Submitted byadriro, also found byd3e4,MiloTruck, andrvierdiiev
+The current price implementation for the VotiumStrategy token uses a potentially invalid Chainlink response. This price is then used to calculate the price of AfEth and, subsequently, the amount of tokens to mint while depositing.
+Impact
+The price of VotiumStrategy tokens are determined by taking the amount of deposited CVX in the strategy, and multiplied by the current price of CVX in terms of ETH. This price is fetched using Chainlink in theethPerCvx()function:
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/strategies/votium/VotiumStrategyCore.sol#L156-L186
+156:functionethPerCvx(bool_validate)publicviewreturns(uint256) {157:ChainlinkResponsememorycl;158:trychainlinkCvxEthFeed.latestRoundData()returns(159:uint80roundId,160:int256answer,161:uint256/* startedAt */,162:uint256updatedAt,163:uint80/* answeredInRound */164:         ) {165:cl.success=true;166:cl.roundId=roundId;167:cl.answer=answer;168:cl.updatedAt=updatedAt;169:         }catch{170:cl.success=false;171:         }172:// verify chainlink response173:if(174:             (!_validate||175:                 (cl.success==true&&176:cl.roundId!=0&&177:cl.answer>=0&&178:cl.updatedAt!=0&&179:cl.updatedAt<=block.timestamp&&180:block.timestamp-cl.updatedAt<=25hours))181:         ) {182:returnuint256(cl.answer);183:         }else{184:revertChainlinkFailed();185:         }186:     }
+As we can see from the previous snippet of code, if the_validateflag is off, thenno validationis done, it can even return an uninitialized response from a failed call given the usage of thetry/catchstructure. This means that it can invalid price, stale price, or even zero when the call fails.
+The VotiumStrategyprice()function callsethPerCvx(false), which means it carries forward any invalid CVX/ETH price.
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/strategies/votium/VotiumStrategy.sol#L31-L33
+31:functionprice()externalviewoverridereturns(uint256) {32:return(cvxPerVotium() *ethPerCvx(false)) /1e18;33:     }
+The price of VotiumStrategy is then used in the AfEth contract to calculate its price and determine the amount of tokens to mint indeposit()
+https://github.com/code-423n4/2023-09-asymmetry/blob/main/contracts/AfEth.sol#L133-L169
+133:functionprice()publicviewreturns(uint256) {134:if(totalSupply() ==0)return1e18;135:AbstractStrategyvEthStrategy=AbstractStrategy(vEthAddress);136:uint256safEthValueInEth= (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *137:safEthBalanceMinusPending()) /1e18;138:uint256vEthValueInEth= (vEthStrategy.price() *139:vEthStrategy.balanceOf(address(this))) /1e18;140:return((vEthValueInEth+safEthValueInEth) *1e18) /totalSupply();141:     }148:functiondeposit(uint256_minout)externalpayablevirtual{149:if(pauseDeposit)revertPaused();150:uint256amount=msg.value;151:uint256priceBeforeDeposit=price();152:uint256totalValue;153:154:AbstractStrategyvStrategy=AbstractStrategy(vEthAddress);155:156:uint256sValue= (amount*ratio) /1e18;157:uint256sMinted=sValue>0158:             ?ISafEth(SAF_ETH_ADDRESS).stake{value:sValue}(0)159:             :0;160:uint256vValue= (amount* (1e18-ratio)) /1e18;161:uint256vMinted=vValue>0?vStrategy.deposit{value:vValue}() :0;162:totalValue+=163:             (sMinted*ISafEth(SAF_ETH_ADDRESS).approxPrice(true)) +164:             (vMinted*vStrategy.price());165:if(totalValue==0)revertFailedToDeposit();166:uint256amountToMint=totalValue/priceBeforeDeposit;167:if(amountToMint<_minout)revertBelowMinOut();168:_mint(msg.sender,amountToMint);169:     }
+The VotiumStrategy price is first used in line 138 to calculate its TVL (vEthValueInEth). Any invalid price here will also mean an invalid price for AfEth.
+Then both the AfEth price (line 151) and again the VotiumStrategy price (line 164) are used indeposit()to calculate the number of minted tokens. Depending on the direction of the wrong price, this means that the user will be minted more or less tokens than it should.
+Proof of Concept
+Let’s suppose the Chainlink feed is stale and the current price of CVX/ETH has increased since then.
+A user callsdeposit()to create a new position in AfEth.The function calculates the current price (priceBeforeDeposit) in order to know how many tokens should be minted.Theprice()implementation will calculate the Votium strategy TVL usingethPerCvx(false), which will successfully return the stale price.The price of AfEth will then be calculated using the old data, which will result in a lower value than the actual “real” price.The user is minted tokens based on the incorrectly calculatedpriceBeforeDeposit, since this price is lower than the expected “real” price the user will be minted more tokens than expected.
+Recommendation
+Change theethPerCvx()argument totrueto make sure prices coming from Chainlink are correctly validated.
+function price() external view override returns (uint256) {-     return (cvxPerVotium() * ethPerCvx(false)) / 1e18;+     return (cvxPerVotium() * ethPerCvx(true)) / 1e18;}
+elmutt (Asymmetry) confirmed:
+0xleastwood (Judge) commented:
+Should we not be prioritising liveness here over validating chainlink results?It seems important to avoid using stale price data which can be readily arbitraged. Severity seems correct.
+Asymmetry mitigated:
+Validate Chainlink price data.
+Status: Mitigation confirmed. Full details in reports fromm_Rassska,d3e4, andadriro.

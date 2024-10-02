@@ -1,0 +1,21 @@
+Type of vulnerability: Unfair Liquidation
+Cause of vulnerability: Lack of safety buffer between liquidation threshold and LTV ratio
+Execution process: Borrowers can be immediately liquidated due to minor market movements when taking a loan at max LTV, and the loan can be repeatedly liquidated as it remains undercollateralized after the first liquidation.
+Vulnerable code: 
+```solidity
+function _isSolvent(address user, uint256 _exchangeRate) internal view returns (bool) {
+    // accrue must have already been called!
+    uint256 borrowPart = userBorrowPart[user];
+    if (borrowPart == 0) return true;
+    uint256 collateralShare = userCollateralShare[user];
+    if (collateralShare == 0) return false;
+    Rebase memory _totalBorrow = totalBorrow;
+    return yieldBox.toAmount(
+        collateralId,
+        collateralShare * (EXCHANGE_RATE_PRECISION / FEE_PRECISION) * collateralizationRate,
+        false
+    ) >= (borrowPart * _totalBorrow.elastic * _exchangeRate) / _totalBorrow.base;
+}
+
+uint256 liquidationStartsAt = (collateralPartInAssetScaled * collateralizationRate) / (10**ratesPrecision);
+```

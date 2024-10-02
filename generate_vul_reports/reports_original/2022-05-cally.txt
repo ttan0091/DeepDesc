@@ -1,0 +1,70 @@
+[H-01] no-revert-on-transfer ERC20 tokens can be drained
+Submitted by Ruhum, also found by oyc109 and smilingheretic
+https://github.com/code-423n4/2022-05-cally/blob/main/contracts/src/Cally.sol#L198-L200
+Impact
+Some ERC20 tokens don’t throw but just return false when a transfer fails. This can be abused to trick thecreateVault()function to initialize the vault without providing any tokens. A good example of such a token isZRX:Etherscan code
+When such a vault is initialized, another user can both buy and exercise the option without ever receiving any funds. The creator of the vault does receive the buyer’s Ether tho. So it can cause a loss of funds.
+Proof of Concept
+The trick is to create a vault with an ERC20 token but use ERC721 as the vault’s type. Then, instead of callingsafeTransferFrom()the function callstransferFrom()which won’t catch the token returning false.
+Here’s a test that showcases the issue:
+// CreateVault.t.solfunctiontestStealFunds()public{// address of 0x on mainnetaddresst=address(0xE41d2489571d322189246DaFA5ebDe1F4699F498);vm.startPrank(babe);require(ERC20(t).balanceOf(babe) ==0);uintvaultId=c.createVault(100,t,1,1,1,0,Cally.TokenType.ERC721);// check that neither the Cally contract nor the vault creator// had any 0x tokensrequire(ERC20(t).balanceOf(babe) ==0);require(ERC20(t).balanceOf(address(c)) ==0);// check whether vault was created properlyCally.Vaultmemoryv=c.vaults(vaultId);require(v.token==t);require(v.tokenIdOrAmount==100);vm.stopPrank();// So now there's a vault for 100 0x tokens although the Cally contract doesn't// have any.// If someone buys & exercises the option they won't receive any tokens.uintpremium=0.025ether;uintstrike=2ether;require(address(c).balance==0,"shouldn't have any balance at the beginning");require(payable(address(this)).balance>0,"not enough balance");uintoptionId=c.buyOption{value:premium}(vaultId);c.exercise{value:strike}(optionId);// buyer of option (`address(this)`) got zero 0x tokens// But buyer lost their Etherrequire(ERC20(t).balanceOf(address(this)) ==0);require(address(c).balance>0,"got some money");}
+To run it, you need to use forge’s forking mode:forge test --fork-url <alchemy/infura URL> --match testStealFunds
+Recommended Mitigation Steps
+I think the easiest solution is to usesafeTransferFrom()when the token is of type ERC721. Since the transfer is at the end of the function there shouldn’t be any risk of reentrancy. If someone passes an ERC20 address with type ERC721, thesafeTransferFrom()call would simply fail since that function signature shouldn’t exist on ERC20 tokens.
+outdoteth (Cally) confirmed and resolved:
+the fix for this issue is here;https://github.com/outdoteth/cally/pull/4
+HardlyDifficult (judge) commented:
+This is a great report. I appreciate the clear test showcasing the issue well, and using a real token example.
+
+[H-02] Inefficiency in the Dutch Auction due to lower duration
+Submitted by hubble, also found by Hawkeye and sseefried
+The vulnerability or bug is in the implementation of the function getDutchAuctionStrike()
+The AUCTION_DURATION is defined as 24 hours, and consider that the dutchAuctionReserveStrike (or reserveStrike) will never be set to 0 by user.
+Now if a vault is created with startingStrike value of 55 and reserveStrike of 13.5 , the auction price will drop from 55 to 13.5 midway at ~12 hours.
+So, after 12 hours from start of auction, the rate will be constant at reserveStrike of 13.5, and remaining time of 12 hours of auction is a waste.
+Some other examples :
+startStrike, reserveStrike, time-to-reach-reserveStrike55 , 13.5  , ~12 hours55 , 5     , ~16.7 hours55 , 1.5   , ~20 hours5  , 1.5   , ~11 hours
+Impact
+The impact is high wrt Usability, where users have reduced available time to participate in the auction (when price is expected to change).
+The vault-Creators or the option-Buyers may or may not be aware of this inefficiency, i.e., how much effective time is available for auction.
+Proof of Concept
+Contract : Cally.sol
+Function : getDutchAuctionStrike ()
+Recommended Mitigation Steps
+The function getDutchAuctionStrike() can be modified such that price drops to the reserveStrike exactly at 24 hours from start of auction.
+/*delta = max(auctionEnd - currentTimestamp, 0)progress = delta / auctionDurationauctionStrike = progress^2 * (startingStrike - reserveStrike)             << Changes herestrike = auctionStrike + reserveStrike                                    << Changes here*/uint256 delta = auctionEndTimestamp > block.timestamp ? auctionEndTimestamp - block.timestamp : 0;uint256 progress = (1e18 * delta) / AUCTION_DURATION;uint256 auctionStrike = (progress * progress * (startingStrike-reserveStrike)) / (1e18 * 1e18);strike = auctionStrike + reserveStrike;
+outdoteth (Cally) confirmed, disagreed with severity and commented:
+We think this should be bumped to high severity. It would be easy for a user to create an auction that declines significantly faster than what they would have assumed - even over 1 or 2 blocks. It makes no sense for the auction to ever behave in this way and would result in options getting filled at very bad prices for the creator of the vault.
+outdoteth (Cally) resolved:
+The fix for this issue is here:https://github.com/outdoteth/cally/pull/2
+HardlyDifficult (judge) increased severity to High and commented:
+The sponsor comment here makes sense. Agree with (1) High since this can potentially be very detrimental to the promise of this protocol.
+
+[H-03] [WP-H0] Fake balances can be created for not-yet-existing ERC20 tokens, which allows attackers to set traps to steal funds from future users
+Submitted by WatchPug, also found by 0xsanson, BondiPestControl, and IllIllI
+https://github.com/code-423n4/2022-05-cally/blob/1849f9ee12434038aa80753266ce6a2f2b082c59/contracts/src/Cally.sol#L158-L201
+functioncreateVault(uint256tokenIdOrAmount,addresstoken,...)externalreturns(uint256vaultId) {...Vaultmemoryvault=Vault({...});// vault index should always be oddvaultIndex+=2;vaultId=vaultIndex;_vaults[vaultId] =vault;// give msg.sender vault token_mint(msg.sender,vaultId);emitNewVault(vaultId,msg.sender,token);// transfer the NFTs or ERC20s to the contractvault.tokenType==TokenType.ERC721?ERC721(vault.token).transferFrom(msg.sender,address(this),vault.tokenIdOrAmount):ERC20(vault.token).safeTransferFrom(msg.sender,address(this),vault.tokenIdOrAmount);}
+https://github.com/code-423n4/2022-05-cally/blob/1849f9ee12434038aa80753266ce6a2f2b082c59/contracts/src/Cally.sol#L23-L34
+import"solmate/utils/SafeTransferLib.sol";...contractCallyisCallyNft,ReentrancyGuard,Ownable{usingSafeTransferLibforERC20;...
+When creating a new vault, solmate’sSafeTransferLibis used for pullingvault.tokenfrom the caller’s account, this issue won’t exist if OpenZeppelin’s SafeERC20 is used instead.
+That’s because there is a subtle difference between the implementation of solmate’sSafeTransferLiband OZ’sSafeERC20:
+OZ’sSafeERC20checks if the token is a contract or not, solmate’sSafeTransferLibdoes not.
+See:https://github.com/Rari-Capital/solmate/blob/main/src/utils/SafeTransferLib.sol#L9
+Note that none of the functions in this library check that a token has code at all! That responsibility is delegated to the caller.
+As a result, when the token’s address has no code, the transaction will just succeed with no error.
+This attack vector was made well-known by the qBridge hack back in Jan 2022.
+For our project, this alone still won’t be a problem, a vault created and wrongfully accounted for a certain amount of balance for a non-existing token won’t be much of a problem, there will be no fund loss as long as the token stays that way (being non-existing).
+However, it’s becoming popular for protocols to deploy their token across multiple networks and when they do so, a common practice is to deploy the token contract from the same deployer address and with the same nonce so that the token address can be the same for all the networks.
+For example: $1INCH is using the same token address for both Ethereum and BSC; Gelato's$GEL token is using the same token address for Ethereum, Fantom and Polygon.
+A sophisticated attacker can exploit it by taking advantage of that and setting traps on multiple potential tokens to steal from the future users that deposits with such tokens.
+Proof of Concept
+Given:
+ProjectA has TokenA on another network;ProjectB has TokenB on another network;ProjectC has TokenC on another network;The attackercreateVault()forTokenA,TokenB, andTokenCwith10000e18astokenIdOrAmounteach;A few months later, ProjectB lunchedTokenBon the local network at the same address;Alice created a vault with11000e18 TokenB;The attacker calledinitiateWithdraw()and thenwithdraw()to receive10000e18 TokenB.
+In summary, one of the traps set by the attacker was activated by the deployment ofTokenBand Alice was the victim. As a result,10000e18 TokenBwas stolen by the attacker.
+Recommendation
+Consider using OZ’sSafeERC20instead.
+outdoteth (Cally) confirmed and resolved:
+this issue has been fixed here:https://github.com/outdoteth/cally/pull/5
+HardlyDifficult (judge) commented:
+Great catch and the potential attack is very clearly explained. Although the window for an attack like this would not be common, it’s an easy trap to setup and likely would occur as some point if Cally is planning to support multiple networks.
+

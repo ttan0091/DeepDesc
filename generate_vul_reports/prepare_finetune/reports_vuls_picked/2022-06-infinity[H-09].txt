@@ -1,0 +1,33 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect handling of token vesting and staking durations in the `_updateUserStakedAmounts()` function.
+Execution process: When a user calls `unstake(X)` to withdraw tokens that have vested, the function incorrectly resets the staked amounts for other durations to zero, causing unvested tokens to be locked.
+Vulnerable code: 
+```solidity
+if(amount > noVesting) {
+    userstakedAmounts[user][Duration.NONE].amount = 0;
+    userstakedAmounts[user][Duration.NONE].timestamp = 0;
+    amount = amount - noVesting;
+    if(amount > vestedThreeMonths) {
+        userstakedAmounts[user][Duration.THREE_MONTHS].amount = 0;
+        userstakedAmounts[user][Duration.THREE_MONTHS].timestamp = 0;
+        amount = amount - vestedThreeMonths;
+        if(amount > vestedSixMonths) {
+            userstakedAmounts[user][Duration.SIX_MONTHS].amount = 0;
+            userstakedAmounts[user][Duration.SIX_MONTHS].timestamp = 0;
+            amount = amount - vestedSixMonths;
+            if(amount > vestedTwelveMonths) {
+                userstakedAmounts[user][Duration.TWELVE_MONTHS].amount = 0;
+                userstakedAmounts[user][Duration.TWELVE_MONTHS].timestamp = 0;
+            } else {
+                userstakedAmounts[user][Duration.TWELVE_MONTHS].amount -= amount;
+            }
+        } else {
+            userstakedAmounts[user][Duration.SIX_MONTHS].amount -= amount;
+        }
+    } else {
+        userstakedAmounts[user][Duration.THREE_MONTHS].amount -= amount;
+    }
+} else {
+    userstakedAmounts[user][Duration.NONE].amount -= amount;
+}
+```

@@ -1,0 +1,14 @@
+Type of vulnerability: Reentrancy Attack
+Cause of vulnerability: Lack of reentrancy guard in the `_deposit` function, allowing an attacker to re-enter the function using a hookable token like ERC777 to manipulate the deposit amount and mint more shares than the actual transferred assets.
+Execution process: An attacker uses the `tokensToSend` hook of an ERC777 token to re-enter the `_deposit` function multiple times before the balances are updated, inflating the calculated deposit amount and minting more shares than the actual transferred assets.
+Vulnerable code: 
+```solidity
+function _deposit(uint256 assets, address receiver) internal returns (uint256 shares) {
+    uint256 _pool = underlyingBalance();
+    uint256 _before = underlyingToken.balanceOf(address(this));
+    // **Assume caller is depositor**
+    underlyingToken.transferFrom(msg.sender, address(this), assets);
+    uint256 _after = underlyingToken.balanceOf(address(this));
+    assets = _after.sub(_before); // Additional check for deflationary tokens...
+}
+```

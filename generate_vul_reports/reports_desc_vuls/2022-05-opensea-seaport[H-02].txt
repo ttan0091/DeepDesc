@@ -1,0 +1,21 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: The `errorBuffer` can be set to an unhandled value (3) due to the combination of a zero amount and an overflow, which is considered as a "success" and does not trigger a revert.
+Execution process: An attacker crafts an order containing both a zero amount and an overflow. When `matchOrders()` is called, it triggers a series of internal calls including `_aggregateValidFulfillmentOfferItems()`. The `errorBuffer` is set to 3, which is not detected, leading to the execution of the order with malformed values.
+Vulnerable code: 
+```solidity
+// Update error buffer (1 = zero amount, 2 = overflow).
+errorBuffer := or(errorBuffer, or(shl(1, lt(newAmount, amount)), iszero(mload(amountPtr))))
+
+// Determine if an error code is contained in the error buffer.
+switch errorBuffer
+case 1 {
+    // Store the MissingItemAmount error signature.
+    mstore(0, MissingItemAmount_error_signature)
+    // Return, supplying MissingItemAmount signature.
+    revert(0, MissingItemAmount_error_len)
+}
+case 2 {
+    // If the sum overflowed, panic.
+    throwOverflow()
+}
+```

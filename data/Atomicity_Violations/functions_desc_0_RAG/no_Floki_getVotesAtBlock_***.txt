@@ -1,0 +1,20 @@
+[Execution Flow]:
+This code defines a public view function named getVotesAtBlock, which retrieves the number of votes an account had at a specific block number. The function accepts two parameters: an address (account) and a block number (blockNumber). Here’s a detailed explanation of how this function works:
+
+The function signature includes the parameters account and blockNumber. getVotesAtBlock is a public view function, meaning it can be called from outside the contract and does not modify the state of the blockchain. The function accepts two parameters: account (the address of the account whose votes are being queried) and blockNumber (the block number at which the votes are to be queried). The function returns a uint224 variable, which represents the number of votes.
+
+The function starts with a require statement that checks if the provided blockNumber is less than the current block number (block.number). If the blockNumber is in the future, the function will revert with an error message: "FLOKI:getVotesAtBlock:FUTURE_BLOCK: Cannot get votes at a block in the future."
+
+Next, the function retrieves the number of checkpoints for the given account from the numCheckpoints mapping and stores it in the variable nCheckpoints. If nCheckpoints is 0, it means there are no checkpoints for this account, and the function returns 0.
+
+The function then checks the most recent checkpoint for the account. If the block number of the most recent checkpoint (checkpoints[account][nCheckpoints  1].blockNumber) is less than or equal to the provided blockNumber, the function returns the votes from that most recent checkpoint (checkpoints[account][nCheckpoints  1].votes).
+
+If the most recent checkpoint's block number is not within the desired range, the function checks if the first checkpoint's block number is greater than the provided blockNumber. If so, it means the account had zero votes at that block number, and the function returns 0.
+
+If neither of the above conditions is met, the function performs a binary search to find the correct checkpoint. The binary search is initialized with lowerBound set to 0 and upperBound set to nCheckpoints  1. The search iteratively narrows down the range by adjusting lowerBound and upperBound based on the comparison of the checkpoint's block number with the provided blockNumber.
+
+During each iteration of the binary search, the function calculates the center index (center) and retrieves the checkpoint at that index (checkpoint). If the checkpoint's block number matches the provided blockNumber, the function returns the votes from that checkpoint. If the checkpoint's block number is less than the provided blockNumber, the lowerBound is updated to center. Otherwise, the upperBound is updated to center  1.
+
+If the binary search does not find an exact match, the function returns the votes from the last known checkpoint before the provided blockNumber (checkpoints[account][lowerBound].votes).
+
+This function efficiently retrieves the number of votes an account had at a specific block number by leveraging checkpoints and a binary search, ensuring that the query is performed in logarithmic time relative to the number of checkpoints.

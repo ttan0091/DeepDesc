@@ -1,0 +1,66 @@
+This code defines an external view function named facetAddresses, which is designed to return an array of unique facet addresses associated with the selectors in a Diamond Proxy contract. The Diamond Proxy pattern is a way to manage multiple contracts within a single contract instance, allowing for modularity and upgradability.
+
+Here’s a detailed explanation of how this function works:
+
+1. Storage Layout Retrieval:
+   solidity
+   DiamondBaseStorage.Layout storage l = DiamondBaseStorage.layout();
+   
+   This line retrieves the storage layout of the Diamond Proxy contract. The DiamondBaseStorage.layout() function likely returns a struct that contains the necessary storage variables for managing the facets and selectors.
+
+2. Initialization of Address Array:
+   solidity
+   addresses = new address[](l.selectorCount);
+   
+   This line initializes an array of addresses with a length equal to the total number of selectors (l.selectorCount). This array will eventually hold the unique facet addresses.
+
+3. Loop Through Selector Slots:
+   solidity
+   for (uint256 slotIndex; selectorIndex < l.selectorCount; slotIndex++) {
+     bytes32 slot = l.selectorSlots[slotIndex];
+   
+   This outer loop iterates over the selector slots. Each slot contains multiple selectors, typically 8 selectors per slot. The loop continues until all selectors are processed.
+
+4. Loop Through Selectors in a Slot:
+   solidity
+   for (uint256 selectorSlotIndex; selectorSlotIndex < 8; selectorSlotIndex++) {
+     selectorIndex++;
+   
+   This inner loop iterates over the selectors within a single slot. Each iteration processes one selector.
+
+5. Extract and Process Selector:
+   solidity
+   bytes4 selector = bytes4(slot << (selectorSlotIndex << 5));
+   address facet = address(bytes20(l.facets[selector]));
+   
+   This line extracts the selector from the slot and retrieves the corresponding facet address from the l.facets mapping. The selector is shifted and cast to bytes4 to get the actual selector value.
+
+6. Check for Duplicate Facet Addresses:
+   solidity
+   bool continueLoop;
+   for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
+     if (facet == addresses[facetIndex]) {
+       continueLoop = true;
+       break;
+     }
+   }
+   if (continueLoop) {
+     continue;
+   }
+   
+   This block checks if the facet address is already in the addresses array. If it is, the loop continues to the next selector. If not, the facet address is added to the array.
+
+7. Add Unique Facet Address to Array:
+   solidity
+   addresses[numFacets] = facet;
+   numFacets++;
+   
+   If the facet address is unique, it is added to the addresses array, and the numFacets counter is incremented.
+
+8. Adjust Array Length:
+   solidity
+   assembly { mstore(addresses, numFacets) }
+   
+   Finally, the length of the addresses array is adjusted to the actual number of unique facet addresses using inline assembly. This ensures that the array returned by the function contains only the necessary elements.
+
+In summary, the facetAddresses function iterates through the selectors stored in the Diamond Proxy contract, extracts the corresponding facet addresses, and returns an array of unique facet addresses. This function is crucial for managing and querying the facets associated with the Diamond Proxy contract.

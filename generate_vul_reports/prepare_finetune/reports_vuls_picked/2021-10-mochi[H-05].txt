@@ -1,0 +1,18 @@
+Type of vulnerability: Inconsistent Debt Calculation
+Cause of vulnerability: The global variable `debts` in the contract `MochiVault.sol` is calculated inconsistently, with `borrow()` increasing `debts` by an amount excluding the fee, while `repay()` and `liquidate()` decrease `debts` by the same amount as `details[_id].debt`, which includes the fee.
+Execution process: When a user borrows, `debts` is increased by the amount borrowed excluding the fee. When repaying or liquidating, `debts` is decreased by the full amount including the fee, leading to an inaccurate `debts` value over time.
+Vulnerable code: 
+```solidity
+function borrow(...) {
+    details[_id].debt = totalDebt; // includes the fee
+    debts += _amount; // excludes the fee
+}
+function repay(...) {
+    debts -= _amount;
+    details[_id].debt -= _amount;
+}
+function liquidate(...) {
+    debts -= _usdm;
+    details[_id].debt -= _usdm;
+}
+```

@@ -1,0 +1,59 @@
+[H-01]PostAuctionLauncher.sol#finalize()Adding liquidity to an existing pool may allows the attacker to steal most of the tokens
+Submitted by WatchPug, also found by 0xRajeev and cmichel.
+PostAuctionLauncher.finalize()can be called by anyone, and it sends tokens directly to the pair pool to mint liquidity, even when the pair pool exists.
+An attacker may control the LP price by creating the pool and then callfinalize()to mint LP token with unfair price (pay huge amounts of tokens and get few amounts of LP token), and then remove the initial liquidity they acquired when creating the pool and take out huge amounts of tokens.
+https://github.com/sushiswap/miso/blob/2cdb1486a55ded55c81898b7be8811cb68cfda9e/contracts/Liquidity/PostAuctionLauncher.sol#L257
+/***@noticeFinalizes Token sale and launches LP.*@returnliquidity Number of LPs.*/functionfinalize()externalnonReentrantreturns(uint256liquidity) {// GP: Can we remove admin, let anyone can finalise and launch?// require(hasAdminRole(msg.sender) || hasOperatorRole(msg.sender), "PostAuction: Sender must be operator");require(marketConnected(),"PostAuction: Auction must have this launcher address set as the destination wallet");require(!launcherInfo.launched);if(!market.finalized()) {market.finalize();}require(market.finalized());launcherInfo.launched=true;if(!market.auctionSuccessful() ) {return0;}/// @dev if the auction is settled in weth, wrap any contract balanceuint256launcherBalance=address(this).balance;if(launcherBalance>0) {IWETH(weth).deposit{value :launcherBalance}();}(uint256token1Amount,uint256token2Amount) =getTokenAmounts();/// @dev cannot start a liquidity pool with no tokens on either sideif(token1Amount==0||token2Amount==0) {return0;}addresspair=factory.getPair(address(token1),address(token2));if(pair==address(0)) {createPool();}/// @dev add liquidity to pool via the pair directly_safeTransfer(address(token1),tokenPair,token1Amount);_safeTransfer(address(token2),tokenPair,token2Amount);liquidity=IUniswapV2Pair(tokenPair).mint(address(this));launcherInfo.liquidityAdded=BoringMath.to128(uint256(launcherInfo.liquidityAdded).add(liquidity));/// @dev if unlock time not yet set, add it.if(launcherInfo.unlock==0) {launcherInfo.unlock=BoringMath.to64(block.timestamp+uint256(launcherInfo.locktime));}emitLiquidityAdded(liquidity);}
+In line 257,PostAuctionLauncherwill mint LP withtoken1Amountandtoken2Amount. The amounts (token1Amountandtoken2Amount) are computed according to the auction result, without considering the current price (reserves) of the existingtokenPair.
+SeePostAuctionLauncher.getTokenAmounts()
+PostAuctionLauncherwill receive an unfairly low amount of lp token because the amounts sent totokenPairdidn’t match the current price of the pair.
+SeeUniswapV2Pair.mint(…)
+liquidity=MathUniswap.min(amount0.mul(_totalSupply) /_reserve0,amount1.mul(_totalSupply) /_reserve1);
+Impact
+Lose a majority share of the tokens.
+Proof of Concept
+The attacker creates LP with 0.0000001 token1 and 1000 token2, receives 0.01 LP token;CallPostAuctionLauncher.finalize(). PostAuctionLauncher will mint liquidity with 2000 token1 and 1000 token2 for example, receives only  0.01 LP token;The attacker removes all his LP, receives 1000 token1 (most of which come fromPostAuctionLauncher).
+Recommended Mitigation Steps
+To only support tokenPair created byPostAuctionLauncheror check for the token price before mint liquidity.
+Clearwood (Sushi Miso) confirmed and patched:
+https://github.com/sushiswap/miso/pull/21
+[H-02] SushiToken transfers are broken due to wrong delegates accounting on transfers
+Submitted by cmichel.
+When minting / transferring / burning tokens, theSushiToken._beforeTokenTransferfunction is called and supposed to correctly shift the voting power due to the increase/decrease in tokens for thefromandtoaccounts.
+However, it does not correctly do that, it tries to shift the votes from thefromaccount, instead of the_delegates[from]account.
+This can lead to transfers reverting.
+Proof Of Concept
+Imagine the following transactions on theSushiTokencontract.
+We’ll illustrate the corresponding_moveDelegatescalls and written checkpoints for each.
+mint(A, 1000) = transfer(0, A, 1000)=>_moveDelegates(0, delegates[A]=0)=> no checkpoints are written to anyone because delegatees are still zeroA delegates to A’ =>_moveDelegates(0, A')=>writeCheckpoint(A', 1000)B delegates to B’ => no checkpoints are written as B has a zero balancetransfer(A, B, 1000)=>_moveDelegates(A, delegates[B] = B')=> underflows when subtractingamount=1000from A’s non-existent checkpoint (defaults to 0 votes)
+It should subtract from A’s delegateeA'’s checkpoint instead.
+Impact
+Users that delegated votes will be unable to transfer any of their tokens.
+Recommended Mitigation Steps
+InSushiToken._beforeTokenTransfer, change the_moveDelegatescall to be from_delegates[from]instead:
+function_beforeTokenTransfer(addressfrom,addressto,uint256amount)internaloverride{_moveDelegates(_delegates[from],_delegates[to],amount);super._beforeTokenTransfer(from,to,amount);}
+This is also how theoriginal code from Compounddoes it.
+maxsam4 (Sushi Miso) acknowledged:
+This is a known issue in Sushi token but was kept unchanged in MISO for “preservation of history :)“. That was not necessarily a wise choice lol. I think 1 severity should be fine for this as this was an intentional thing. The delegate feature is not supposed to be used in these tokens. We might create a new token type with this bug fixed.
+ghoul-sol (judge) commented:
+We have crazy wallets on the blockchain that will call every possible function available to them and that’s why I’m keeping this as is. Even intentional, the issue stands so the warden should get credit for it.
+[H-03] Last person to withdraw his tokens might not be able to do this, in Crowdsale (edge case)
+Submitted by gpersoon.
+Impact
+Suppose a Crowdsale is successful and enough commitments are made before themarketInfo.endTime.
+Suppose marketStatus.commitmentsTotal  == marketInfo.totalTokens -1      // note this is an edge case, but can be constructed by an attacker
+Then the functionauctionEnded()returns true
+AssumeauctionSuccessful()is also true (might depend on the config ofmarketPrice.goalandmarketInfo.totalTokens)
+Then an admin can callfinalize()to finalize the Crowdsale.
+The function finalize distributes the funds and the unsold tokens and setsstatus.finalized = trueso that finalized cannot be called again.
+Now we have “marketInfo.totalTokens -1” tokens left in the contract
+HowevercommitEth()orcommitTokens()can still be called (they give no error message that the auction has ended)
+Then functions callcalculateCommitment, which luckily prevent from buying too much, however 1 token can still be bought
+These functions also call\_addCommitment(), which only checks formarketInfo.endTime, which hasn’t passed yet.
+Now an extra token is sold and the contract has 1 token short. So the last person to withdraw his tokens cannot withdraw them (because you cannot specify how much you want to withdraw)
+Also the revenues for the last token cannot be retrieved asfinalize()cannot be called again.
+Proof of Concept
+https://github.com/sushiswap/miso/blob/master/contracts/Auctions/Crowdsale.sol#L374
+functionfinalize()publicnonReentrant{require(hasAdminRole(msg.sender) ||wallet==msg.sender||hasSmartContractRole(msg.sender) ||finalizeTimeExpired(),"Crowdsale: sender must be an admin");// can be called by adminMarketStatusstoragestatus=marketStatus;require(!status.finalized,"Crowdsale: already finalized");MarketInfostorageinfo=marketInfo;require(auctionEnded(),"Crowdsale: Has not finished yet");// is true if enough sold, even if this is before marketInfo.endTimeif(auctionSuccessful()) {/// @dev Transfer contributed tokens to wallet./// @dev Transfer unsold tokens to wallet.}else{/// @dev Return auction tokens back to wallet.}status.finalized=true;functionauctionEnded()publicviewreturns(bool) {returnblock.timestamp>uint256(marketInfo.endTime) ||_getTokenAmount(uint256(marketStatus.commitmentsTotal) +1) >=uint256(marketInfo.totalTokens);// is true if enough sold, even if this is before marketInfo.endTime}functionauctionSuccessful()publicviewreturns(bool) {returnuint256(marketStatus.commitmentsTotal) >=uint256(marketPrice.goal);}functioncommitEth(addresspayable_beneficiary,boolreadAndAgreedToMarketParticipationAgreement)publicpayablenonReentrant{...uint256ethToTransfer=calculateCommitment(msg.value);..._addCommitment(_beneficiary,ethToTransfer);functioncalculateCommitment(uint256_commitment)publicviewreturns(uint256committed) {// this prevents buying too muchuint256tokens=_getTokenAmount(_commitment);uint256tokensCommited=_getTokenAmount(uint256(marketStatus.commitmentsTotal));if(tokensCommited.add(tokens) >uint256(marketInfo.totalTokens)) {return_getTokenPrice(uint256(marketInfo.totalTokens).sub(tokensCommited));}return_commitment;}function_addCommitment(address_addr,uint256_commitment)internal{require(block.timestamp>=uint256(marketInfo.startTime) &&block.timestamp<=uint256(marketInfo.endTime),"Crowdsale: outside auction hours");// doesn't check auctionEnded() nor status.finalized...uint256newCommitment=commitments[_addr].add(_commitment);...commitments[_addr] =newCommitment;functionwithdrawTokens(addresspayablebeneficiary)publicnonReentrant{if(auctionSuccessful()) {...uint256tokensToClaim=tokensClaimable(beneficiary);...claimed[beneficiary] =claimed[beneficiary].add(tokensToClaim);_safeTokenPayment(auctionToken,beneficiary,tokensToClaim);// will fail is last token is missing}else{##ToolsUsed##RecommendedMitigationStepsInthefunction_addCommitment,addacheckonauctionEnded()orstatus.finalized
+Clearwood (Sushi Miso) confirmed and patched:
+https://github.com/sushiswap/miso/pull/20

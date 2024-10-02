@@ -1,0 +1,24 @@
+[H-05] Reduction gate in binop operation is unsafe
+Submitted byxuwinnie
+The range check in the binop’s reduction gate is insufficient. After decomposing thecomposite_result,and_resultandor_resultcould be arbitrary integer less than 128 andxor_resultcould overflow. Attacker can forge arbitrary result for opcodeandandor; as forxor, an overflowedUInt8will stay in the circuit, which can lead to unexpected behavior.
+Proof of Concept
+There are three main steps in functionget_binop_subresults:
+let mut composite_result = [Variable::placeholder(); 32];for ((a, b), dst) in a.iter().zip(b.iter()).zip(composite_result.iter_mut()) {let [result] = cs.perform_lookup::<2, 1>(table_id, &[a.get_variable(), b.get_variable()]);*dst = result;}
+At first, we perform a lookup to get the composite result forand,orandxor.
+for (src, decomposition) in composite_result.iter().zip(all_results.array_chunks::<3>()) {if cs.gate_is_allowed::<ReductionGate<F, 4>>() {let mut gate = ReductionGate::<F, 4>::empty();gate.params = ReductionGateParams {reduction_constants: [F::SHIFTS[0], F::SHIFTS[16], F::SHIFTS[32], F::ZERO],};gate.reduction_result = *src;gate.terms = [decomposition[0],decomposition[1],decomposition[2],zero_var,];gate.add_to_cs(cs);}
+Then, we decomposite it into a larger arrayall_results.
+for (((and, or), xor), src) in and_results.iter_mut().zip(or_results.iter_mut()).zip(xor_results.iter_mut()).zip(all_results.array_chunks::<3>()){*and = src[0];*or = src[1];*xor = src[2];}let and_results = and_results.map(|el| unsafe { UInt8::from_variable_unchecked(el) });let or_results = or_results.map(|el| unsafe { UInt8::from_variable_unchecked(el) });let xor_results = xor_results.map(|el| unsafe { UInt8::from_variable_unchecked(el) });
+Finally, we get three separate results fromall_results.
+In reduction gate, the type we are handling is Variable, which means they can be any element in the prime field.
+we enforce thatcomposit_value = (xor_result as u64) << 32 | (or_result as u64) << 16 | (and_result as u64). To ensure the decomposited result is indeed what we expected, we also need to make sure all of them are less than 128. So we do a range check here:
+for source_set in all_results.array_chunks::<3>() {// value is irrelevant, it's just a range checklet _: [Variable; 1] = cs.perform_lookup::<2, 1>(table_id, &[source_set[0], source_set[1]]);}
+However, the check only ensuresand_resultandor_resultare less than 128. In a prime field, for any givenand_resultandor_result, there will always be axor_resultsuch thatcomposit_value = (xor_result as u64) << 32 | (or_result as u64) << 16 | (and_result as u64), though thexor_resultmay overflow (uint8).
+let xor_results = xor_results.map(|el| unsafe { UInt8::from_variable_unchecked(el) });
+In the last step, when we wrap the variable into aUInt8, we are usingfrom_variable_unchecked, which means there is no overflow check. As a result, if an attacker provides incorrect result forand_resultandor_result, an overflowedUInt8xor_resultwill stay in our circuit and unexpected behavior may happen in the future.
+Recommended Mitigation Steps
+// check all threefor source_set in all_results.array_chunks::<3>() {// value is irrelevant, it's just a range checklet _: [Variable; 1] = cs.perform_lookup::<2, 1>(table_id, &[source_set[0], source_set[1]]);let _: [Variable; 1] = cs.perform_lookup::<2, 1>(table_id, &[source_set[1], source_set[2]]);}
+Assessed type
+Math
+miladpiri (zkSync) confirmed
+Alex the Entreprenerd (judge) commented:
+The Warden has found a missing constraint forbinop, due to a lack in an overflow check, malicious parameters could be passed in the circuit.

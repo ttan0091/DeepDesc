@@ -1,0 +1,9 @@
+[H-04] Logic error inburnFlashGovernanceAssetcan cause locked assets to be stolen
+Submitted by shw
+A logic error in theburnFlashGovernanceAssetfunction that resets a user’spendingFlashDecisionallows that user to steal other user’s assets locked in future flash governance decisions. As a result, attackers can get their funds back even if they execute a malicious flash decision and the community burns their assets.
+Proof of Concept
+An attacker Alice executes a malicious flash governance decision, and her assets are locked in theFlashGovernanceArbitercontract.The community disagrees with Alice’s flash governance decision and callsburnFlashGovernanceAssetto burn her locked assets. However, theburnFlashGovernanceAssetfunction resets Alice’spendingFlashDecisionto the default config (see line 134).A benign user, Bob executes another flash governance decision, and his assets are locked in the contract.Now, Alice callswithdrawGovernanceAssetto withdraw Bob’s locked asset, effectively the same as stealing Bob’s assets. Since Alice’spendingFlashDecisionis reset to the default, theunlockTime < block.timestampcondition is fulfilled, and the withdrawal succeeds.
+Referenced code:DAO/FlashGovernanceArbiter.sol#L134DAO/FlashGovernanceArbiter.sol#L146
+Recommended Mitigation Steps
+Change line 134 todelete pendingFlashDecision[targetContract][user]instead of setting thependingFlashDecisionto the default.
+gititGoro (Behodler) confirmed

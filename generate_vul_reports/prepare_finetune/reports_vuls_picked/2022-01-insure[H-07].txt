@@ -1,0 +1,32 @@
+Type of vulnerability: Improper Access Control
+Cause of vulnerability: The design allows a market address, which can be arbitrarily set by the Registry or Factory admin, to transfer tokens from any user's address to a specified beneficiary without proper checks.
+Execution process: A malicious or compromised Registry or Factory admin can register a malicious market address, call `Vault#addValue()` to transfer tokens from a victim's address to the attacker's address, and then withdraw those tokens using `Vault#withdrawAllAttribution()`.
+Vulnerable code: 
+```solidity
+modifier onlyMarket() {
+    require(IRegistry(registry).isListed(msg.sender), "ERROR_ONLY_MARKET");
+    _;
+}
+
+function addValue(uint256 _amount, address _from, address _beneficiary) external override onlyMarket returns (uint256 _attributions) {
+    if (totalAttributions == 0) {
+        _attributions = _amount;
+    } else {
+        uint256 _pool = valueAll();
+        _attributions = (_amount * totalAttributions) / _pool;
+    }
+    IERC20(token).safeTransferFrom(_from, address(this), _amount);
+    balance += _amount;
+    totalAttributions += _attributions;
+    attributions[_beneficiary] += _attributions;
+}
+
+function supportMarket(address _market) external override {
+    require(!markets[_market], "ERROR: ALREADY_REGISTERED");
+    require(msg.sender == factory || msg.sender == ownership.owner(), "ERROR: UNAUTHORIZED_CALLER");
+    require(_market != address(0), "ERROR: ZERO_ADDRESS");
+    allMarkets.push(_market);
+    markets[_market] = true;
+    emit NewMarketRegistered(_market);
+}
+```

@@ -1,0 +1,16 @@
+Type of vulnerability: Front-running and share price manipulation
+Cause of vulnerability: The deposit function mints shares based on the current VUSD balance, allowing an attacker to manipulate the share price by transferring additional VUSD to the contract before other deposits are made.
+Execution process:
+1. The attacker deposits the smallest unit of VUSD, minting 1 share.
+2. The attacker directly transfers a large amount of VUSD to the InsuranceFund contract.
+3. Subsequent deposits of smaller amounts result in minting zero shares due to the manipulated share price.
+4. The attacker withdraws their single share, receiving the entire pool balance.
+Vulnerable code:
+```solidity
+function deposit(uint256 _amount) public {
+    uint256 shares = _amount * _totalSupply / _pool;
+    _mint(msg.sender, shares);
+    _pool += _amount;
+    vusd.transferFrom(msg.sender, address(this), _amount);
+}
+```

@@ -1,0 +1,26 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect handling of balance updates when transferring tokens to oneself
+Execution process: When a user transfers tokens to themselves, the balance update logic incorrectly adds the transferred amount to the user's balance instead of keeping it the same.
+Vulnerable code: 
+```solidity
+function _transfer(address from, address to, uint256 amount) internal override {
+    if (from == address(0)) { revert Errors.ERC20_TRANSFER_FROM_THE_ZERO_ADDRESS(); }
+    if (to == address(0)) { revert Errors.ERC20_TRANSER_TO_THE_ZERO_ADDRESS(); }
+    _refreshCumulativeYield();
+    _refreshYield();
+    uint256 startingFromBalance = this.balanceOf(from);
+    if (startingFromBalance < amount) { revert Errors.ERC20_TRANSFER_AMOUNT_EXCEEDS_BALANCE(); }
+    uint256 newFromBalance = startingFromBalance - amount;
+    uint256 newToBalance = this.balanceOf(to) + amount;
+    uint256 previousEpochCumulativeYield_ = _previousEpochCumulativeYield;
+    uint256 newFromBaseBalance = WadRayMath.wadToRay(newFromBalance).rayDiv(previousEpochCumulativeYield_);
+    uint256 newToBaseBalance = WadRayMath.wadToRay(newToBalance).rayDiv(previousEpochCumulativeYield_);
+    if (amount > 0) {
+        _totalBaseSupply -= (_baseBalances[from] - newFromBaseBalance);
+        _totalBaseSupply += (newToBaseBalance - _baseBalances[to]);
+        _baseBalances[from] = newFromBaseBalance;
+        _baseBalances[to] = newToBaseBalance; // <-------- if from==to, this place Will overwrite the reduction above
+    }
+    emit Transfer(from, to, amount);
+}
+```

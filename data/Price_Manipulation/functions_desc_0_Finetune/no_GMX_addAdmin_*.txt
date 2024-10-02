@@ -1,0 +1,9 @@
+Type of vulnerability: FrontRunning and Economic Manipulation
+Cause of vulnerability: Lack of access control (admin privilege) on the web3.js function used to update the price, allowing anyone to call it, resulting in the loss of the treasury funds.
+Working process of the vulnerability:
+1. An attacker monitors the blockchain for transactions involving the V1Valuer contract, specifically focusing on the write function.
+2. When a transaction is detected, the attacker quickly creates a new transaction using the write function, setting treasuryBalancePeg to tokenBalancesPeg[_tokenCrank] and calling backing.transfer(treasuryAddress, treasuryBalancePeg).
+3. This new transaction is constructed to ensure the total Treasury Balance remains constant, diverting all tokens to treasuryAddress except for a small amount sent to the volatility pool.
+4. The attacker sends a large amount of a token to the contract, triggering the executed transaction to siphon these funds to treasuryAddress.
+5. The previous victim of this attack can then execute the rescue function rescueLostFundsFromOldV1Valuer, which will add the peg total to crankCountPeg and pegPool.
+6. The appended peg total is then stolen by the attacker along with the Crank tokens, using a similar frontrunning strategy.

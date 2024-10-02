@@ -1,0 +1,9 @@
+Type of vulnerability: Reentrancy
+
+Cause of vulnerability:
+The contract is vulnerable to reentrancy attacks due to its use of `call.value()` without the required `nonReentrant` modifier or a check against Ether storage balance manipulations, allowing an attacker to exploit the skim invariant logic.
+
+Working process of the vulnerability:
+1. The contract mimics Uniswap's skim invariant by not allowing accounts to subtract from the amount of tokens they are holding if the balance of token and ether for an account is equal before and after an operation (except for `TokenMint` and `TokenBurn`).
+2. By using `call.value()` in `CashOut()`, the `msg.sender` can modify its own balance by manipulating the storage of the Ether tracker.
+3. An attacker can call `CashOut()` recursively, reducing the Ether tracker storage value after every call to ensure that the attacker contract fetches the Ether each time, causing the invariant to break. This allows the attacker to drain the Ether balance of the contract through repeated reentrant calls to `CashOut()`.

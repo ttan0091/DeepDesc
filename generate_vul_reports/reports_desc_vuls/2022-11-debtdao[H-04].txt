@@ -1,0 +1,44 @@
+Type of vulnerability: Unauthorized Credit Closure
+Cause of vulnerability: Lack of validation for the existence of a credit before closing it.
+Execution process: A borrower can call the `close` function with a non-existent credit ID, causing the `count` variable to be decreased and the overall Line of Credit facility to be declared 'repaid' without actual repayment.
+Vulnerable code: 
+```solidity
+function close(bytes32 id) external payable override returns (bool) {
+    Credit memory credit = credits[id];
+    address b = borrower; // gas savings
+    if (msg.sender != credit.lender && msg.sender != b) {
+        revert CallerAccessDenied();
+    }
+    // ensure all money owed is accounted for. Accrue facility fee since prinicpal was paid off
+    credit = _accrue(credit, id);
+    uint256 facilityFee = credit.interestAccrued;
+    if (facilityFee > 0) {
+        // only allow repaying interest since they are skipping repayment queue.
+        // If principal still owed, _close() MUST fail
+        LineLib.receiveTokenOrETH(credit.token, b, facilityFee);
+        credit = _repay(credit, id, facilityFee);
+    }
+    _close(credit, id); // deleted; no need to save to storage
+    return true;
+}
+
+function _close(Credit memory credit, bytes32 id) internal virtual returns (bool) {
+    if (credit.principal > 0) {
+        revert CloseFailedWithPrincipal();
+    }
+    // return the Lender's funds that are being repaid
+    if (credit.deposit + credit.interestRepaid > 0) {
+        LineLib.sendOutTokenOrETH(credit.token, credit.lender, credit.deposit + credit.interestRepaid);
+    }
+    delete credits[id]; // gas refunds
+    // remove from active list
+    ids.removePosition(id);
+    unchecked { --count; }
+    // If all credit lines are closed the the overall Line of Credit facility is declared 'repaid'.
+    if (count == 0) {
+        _updateStatus(LineLib.STATUS.REPAID);
+    }
+    emit CloseCreditPosition(id);
+    return true;
+}
+```

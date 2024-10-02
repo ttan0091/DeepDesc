@@ -1,0 +1,25 @@
+[H-02] Protocol mints less rsETH on deposit than intended
+Submitted byT1MOH, also found by0xepley,SBSecurity,cryptothemex,adriro,AlexCzm,trachev,adam-idarrha,Aymen0909,deepplus,xAriextz,ast3ros,Weed0607,DanielArmstrong,rouhsamad,osmanozdemir1,GREY-HAWK-REACH,0x1337,zhaojie,Jiamin,crunch,Varun_05,7siech,QiuhaoLi,circlelooper,HChang26,Juntao,ayden,Aamir,rvierdiiev,max10afternoon,crack-the-kelp,Ruhum,0xluckhu,0xNaN,mahdirostami, and0xmystery
+Price of rsETH is calculated astotalLockedETH / rsETHSupply. rsETH price is used to calculate rsETH amount to mint when user deposits. Formulas are following:
+rsethAmountToMint = amount * assetPrice / rsEthPricersEthPrice = totalEthLocked / rsETHSupply
+Problem is that it transfers deposit amount before calculation ofrsethAmountToMint. It increasestotalEthLocked. As a result rsethAmountToMint is less than intended because rsEthPrice is higher.
+For example:
+SupposetotalEthLocked= 10e18, assetPrice = 1e18, rsETHSupply = 10e18User deposits 30e18. He expects to receive 30e18 rsETHHowever actual received amount will be30e18 * 1e18 / ((30e18 * 1e18 + 10e18 * 1e18) / 10e18) = 7.5e18
+Proof of Concept
+Here you can see that it firstly transfers asset toaddress(this), then calculates amount to mint:
+functiondepositAsset(addressasset,uint256depositAmount)externalwhenNotPausednonReentrantonlySupportedAsset(asset){...if(!IERC20(asset).transferFrom(msg.sender,address(this),depositAmount)) {revertTokenTransferFailed();}// interactionsuint256rsethAmountMinted=_mintRsETH(asset,depositAmount);emitAssetDeposit(asset,depositAmount,rsethAmountMinted);}
+There is long chain of calls:
+_mintRsETH()getRsETHAmountToMint()LRTOracle().getRSETHPrice()getTotalAssetDeposits()getTotalAssetDeposits()
+FinallygetTotalAssetDeposits()uses currentbalanceOf(), which was increased before by transferring deposit amount:
+functiongetAssetDistributionData(addressasset)publicviewoverrideonlySupportedAsset(asset)returns(uint256assetLyingInDepositPool,uint256assetLyingInNDCs,uint256assetStakedInEigenLayer){// Question: is here the right place to have this? Could it be in LRTConfig?@>assetLyingInDepositPool=IERC20(asset).balanceOf(address(this));uint256ndcsCount=nodeDelegatorQueue.length;for(uint256i;i<ndcsCount;) {assetLyingInNDCs+=IERC20(asset).balanceOf(nodeDelegatorQueue[i]);assetStakedInEigenLayer+=INodeDelegator(nodeDelegatorQueue[i]).getAssetBalance(asset);unchecked{++i;}}}
+Recommended Mitigation Steps
+Transfer tokens in the end:
+function depositAsset(address asset,uint256 depositAmount)externalwhenNotPausednonReentrantonlySupportedAsset(asset){...+       uint256 rsethAmountMinted = _mintRsETH(asset, depositAmount);if (!IERC20(asset).transferFrom(msg.sender, address(this), depositAmount)) {revert TokenTransferFailed();}-       // interactions-       uint256 rsethAmountMinted = _mintRsETH(asset, depositAmount);-emit AssetDeposit(asset, depositAmount, rsethAmountMinted);}
+Assessed type
+Oracle
+RaymondFam (lookout) commented:
+This vulnerability is worse than a donation attack.
+gus (Kelp) confirmed and commented:
+This is a legitimate issue and has been fixed in commit 3b4e36c740013b32b78e93b00438b25f848e5f76 to separately have rsETH price calculators and read value from state variables, which also helped reduce gas cost to a great extent as well. We thank the warden for alerting us to this issue.
+0xDjango (judge) commented:
+This is a High severity issue. The miscalculation causes direct fund loss to users.

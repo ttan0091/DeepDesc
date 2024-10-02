@@ -1,0 +1,23 @@
+Type of vulnerability: ETH-Transfer
+Cause of vulnerability: Excess msg.value is not refunded in certain scenarios, leading to stuck native gas tokens in the contract.
+Execution process: 
+1. On successful transfer within Canto chain: 0 of msg.value is used, and any remaining value becomes stuck.
+2. On successful transfer to other chain: _payload._feeForSend of msg.value is used, and the remaining value becomes stuck.
+Vulnerable code: 
+```solidity
+function _sendASD(bytes32 _guid, OftComposeMessage memory _payload, uint _amount) internal {
+    if (_payload._dstLzEid == cantoLzEID) {
+        ASDOFT(_payload._cantoAsdAddress).transfer(_payload._dstReceiver, _amount);
+    } else {
+        if (msg.value < _payload._feeForSend) {
+            _refundToken(_guid, _payload._cantoAsdAddress, _payload._cantoRefundAddress, _amount, msg.value, "insufficient msg.value for send fee");
+            return;
+        }
+        (bool successfulSend, bytes memory data) = payable(_payload._cantoAsdAddress).call{value: _payload._feeForSend}(abi.encodeWithSelector(IOFT.send.selector, sendParams, fee, _payload._cantoRefundAddress));
+        if (!successfulSend) {
+            _refundToken(_guid, _payload._cantoAsdAddress, _payload._cantoRefundAddress, _amount, msg.value, string(data));
+            return;
+        }
+    }
+}
+```

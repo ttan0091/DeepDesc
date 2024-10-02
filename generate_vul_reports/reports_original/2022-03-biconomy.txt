@@ -1,0 +1,97 @@
+[H-01] Can deposit native token for free and steal funds
+Submitted by cmichel, also found by CertoraInc
+LiquidityPool.sol#L151
+ThedepositErc20function allows settingtokenAddress = NATIVEand does not throw an error.No matter theamountchosen, theSafeERC20Upgradeable.safeTransferFrom(IERC20Upgradeable(tokenAddress), sender, address(this), amount);call will not revert because it performs a low-level call toNATIVE = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE, which is an EOA, and the low-level calls to EOAs always succeed.Because thesafe*version is used, the EOA not returning any data does not revert either.
+This allows an attacker to deposit infinite native tokens by not paying anything.The contract will emit the sameDepositevent as a realdepositNativecall and the attacker receives the native funds on the other chain.
+Recommended Mitigation Steps
+ChecktokenAddress != NATIVEindepositErc20.
+ankurdubey521 (Biconomy) confirmed and commented:
+HP-25: C4 Audit Fixes, Dynamic Fee Changes bcnmy/hyphen-contract#42
+pauliax (judge) commented:
+Great find, definitely deserves a severity of high.
+
+[H-02]LiquidityProviders.solThe share price of the LP can be manipulated and making future liquidityProviders unable toremoveLiquidity()
+Submitted by WatchPug
+LiquidityProviders.sol#L345-L362
+functionremoveLiquidity(uint256_nftId,uint256_amount)externalnonReentrantonlyValidLpToken(_nftId,_msgSender())whenNotPaused{(address_tokenAddress,uint256nftSuppliedLiquidity,uint256totalNFTShares) =lpToken.tokenMetadata(_nftId);require(_isSupportedToken(_tokenAddress),"ERR__TOKEN_NOT_SUPPORTED");require(_amount!=0,"ERR__INVALID_AMOUNT");require(nftSuppliedLiquidity>=_amount,"ERR__INSUFFICIENT_LIQUIDITY");whiteListPeriodManager.beforeLiquidityRemoval(_msgSender(),_tokenAddress,_amount);// Claculate how much shares represent input amountuint256lpSharesForInputAmount=_amount*getTokenPriceInLPShares(_tokenAddress);// Calculate rewards accumulateduint256eligibleLiquidity=sharesToTokenAmount(totalNFTShares,_tokenAddress);
+LiquidityProviders.sol#L192-L194
+functionsharesToTokenAmount(uint256_shares,address_tokenAddress)publicviewreturns(uint256) {return(_shares*totalReserve[_tokenAddress]) /totalSharesMinted[_tokenAddress];}
+The share price of the liquidity can be manipulated to an extremely low value (1 underlying token worth a huge amount of shares), making it possible forsharesToTokenAmount(totalNFTShares, _tokenAddress)to overflow inremoveLiquidity()and therefore freeze users’ funds.
+Proof of Concept
+AliceaddTokenLiquidity()with1e8 * 1e18XYZ on B-Chain, totalSharesMinted ==1e44;AlicesendFundsToUser()and bridge1e8 * 1e18XYZ from B-Chain to A-Chain;AlicedepositErc20()and bridge1e8 * 1e18XYZ from A-Chain to B-Chain;AliceremoveLiquidity()and withdraw1e8 * 1e18 - 1XYZ, then:totalReserve==1 weiXYZ, andtotalSharesMinted==1e26;BobaddTokenLiquidity()with3.4e7 * 1e18XYZ;Bob tries toremoveLiquidity().
+Expected Results: Bob to get back the deposits;
+Actual Results: The tx reverted due to overflow atsharesToTokenAmount().
+Recommended Mitigation Steps
+LiquidityProviders.sol#L280-L292
+function_increaseLiquidity(uint256_nftId,uint256_amount)internalonlyValidLpToken(_nftId,_msgSender()) {(addresstoken,uint256totalSuppliedLiquidity,uint256totalShares) =lpToken.tokenMetadata(_nftId);require(_amount>0,"ERR__AMOUNT_IS_0");whiteListPeriodManager.beforeLiquidityAddition(_msgSender(),token,_amount);uint256mintedSharesAmount;// Adding liquidity in the pool for the first timeif(totalReserve[token] ==0) {mintedSharesAmount=BASE_DIVISOR*_amount;}else{mintedSharesAmount= (_amount*totalSharesMinted[token]) /totalReserve[token];}...
+Consider locking part of the first mint’s liquidity to maintain a minimum amount oftotalReserve[token], so that the share price can not be easily manipulated.
+ankurdubey521 (Biconomy) confirmed
+pauliax (judge) commented:
+Great find, with a PoC, deserves a severity of high because it is a valid attack path that does not have hand-wavy hypotheticals.
+
+[H-03] Wrong formula when add feeincentivePoolcan lead to loss of funds.
+Submitted by minhquanym, also found by cmichel, hickuphh3, and WatchPug
+LiquidityPool.sol#L319-L322
+ThegetAmountToTransferfunction ofLiquidityPoolupdatesincentivePool[tokenAddress]by adding some fee to it but the formula is wrong and the value ofincentivePool[tokenAddress]will be divided byBASE_DIVISOR(10000000000) each time.
+After just a few time, the value ofincentivePool[tokenAddress]will become zero and that amount oftokenAddresstoken will be locked in contract.
+Proof of concept
+Line 319-322
+incentivePool[tokenAddress] = (incentivePool[tokenAddress] + (amount * (transferFeePerc - tokenManager.getTokensInfo(tokenAddress).equilibriumFee))) / BASE_DIVISOR;
+Letx = incentivePool[tokenAddress],y = amount,z = transferFeePercandt = tokenManager.getTokensInfo(tokenAddress).equilibriumFee. Then that be written as
+x = (x + (y * (z - t))) / BASE_DIVISOR;x = x / BASE_DIVISOR + (y * (z - t)) / BASE_DIVISOR;
+Recommended Mitigation Steps
+Fix the bug by changing lines 319-322 to:
+incentivePool[tokenAddress] += (amount * (transferFeePerc - tokenManager.getTokensInfo(tokenAddress).equilibriumFee)) / BASE_DIVISOR;
+ankurdubey521 (Biconomy) confirmed
+pauliax (judge) commented:
+Great find, the wrong order of arithmetic operations deserves a severity of high as it would have serious negative consequences.
+
+[H-04] Deletingnft Infocan cause users’nft.unpaidRewardsto be permanently erased
+Submitted by WatchPug, also found by 0xDjango and hyh
+LiquidityFarming.sol#L229-L253
+functionwithdraw(uint256_nftId,addresspayable_to)externalwhenNotPausednonReentrant{addressmsgSender=_msgSender();uint256nftsStakedLength=nftIdsStaked[msgSender].length;uint256index;for(index=0;index<nftsStakedLength; ++index) {if(nftIdsStaked[msgSender][index] ==_nftId) {break;}}require(index!=nftsStakedLength,"ERR__NFT_NOT_STAKED");nftIdsStaked[msgSender][index] =nftIdsStaked[msgSender][nftIdsStaked[msgSender].length-1];nftIdsStaked[msgSender].pop();_sendRewardsForNft(_nftId,_to);deletenftInfo[_nftId];(addressbaseToken, ,uint256amount) =lpToken.tokenMetadata(_nftId);amount/=liquidityProviders.BASE_DIVISOR();totalSharesStaked[baseToken] -=amount;lpToken.safeTransferFrom(address(this),msgSender,_nftId);emitLogWithdraw(msgSender,baseToken,_nftId,_to);}
+LiquidityFarming.sol#L122-L165
+function_sendRewardsForNft(uint256_nftId,addresspayable_to)internal{NFTInfostoragenft=nftInfo[_nftId];require(nft.isStaked,"ERR__NFT_NOT_STAKED");(addressbaseToken, ,uint256amount) =lpToken.tokenMetadata(_nftId);amount/=liquidityProviders.BASE_DIVISOR();PoolInfomemorypool=updatePool(baseToken);uint256pending;uint256amountSent;if(amount>0) {pending= ((amount*pool.accTokenPerShare) /ACC_TOKEN_PRECISION) -nft.rewardDebt+nft.unpaidRewards;if(rewardTokens[baseToken] ==NATIVE) {uint256balance=address(this).balance;if(pending>balance) {unchecked{nft.unpaidRewards=pending-balance;}(boolsuccess, ) =_to.call{value:balance}("");require(success,"ERR__NATIVE_TRANSFER_FAILED");amountSent=balance;}else{nft.unpaidRewards=0;(boolsuccess, ) =_to.call{value:pending}("");require(success,"ERR__NATIVE_TRANSFER_FAILED");amountSent=pending;}}else{IERC20UpgradeablerewardToken=IERC20Upgradeable(rewardTokens[baseToken]);uint256balance=rewardToken.balanceOf(address(this));if(pending>balance) {unchecked{nft.unpaidRewards=pending-balance;}amountSent=_sendErc20AndGetSentAmount(rewardToken,balance,_to);}else{nft.unpaidRewards=0;amountSent=_sendErc20AndGetSentAmount(rewardToken,pending,_to);}}}nft.rewardDebt= (amount*pool.accTokenPerShare) /ACC_TOKEN_PRECISION;emitLogOnReward(_msgSender(),baseToken,amountSent,_to);}
+Whenwithdraw()is called,_sendRewardsForNft(_nftId, _to)will be called to send the rewards.
+In_sendRewardsForNft(), whenaddress(this).balanceis insufficient at the moment,nft.unpaidRewards = pending - balancewill be recorded and the user can get it back at the next time.
+However, at L244, the wholenftInfois being deleted, so thatnft.unpaidRewardswill also get erased.
+There is no way for the user to get back thisunpaidRewardsanymore.
+Recommended Mitigation Steps
+Consider adding a new parameter namedforceforwithdraw(),require(force || unpaidRewards == 0)before deleting nftInfo.
+ankurdubey521 (Biconomy) confirmed and commented:
+Great catch! Thanks a lot for bringing these up.HP-25: C4 Audit Fixes, Dynamic Fee Changes bcnmy/hyphen-contract#42
+pauliax (judge) commented:
+Great find, deserves a severity of high as it may incur in funds lost for the users.
+KenzoAgada (warden) commented:
+Shouldn’t this be medium severity, as only rewards are lost and not original user funds?
+As the risk TLDR says -2 — Med: Assets not at direct risk, but the function of the protocol or its availability could be impacted, or leak value with a hypothetical attack path with stated assumptions, but external requirements.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).There are other lost-rewards issues that have been classified as high, this questions pertains to them as well.
+0xleastwood (warden) commented:
+I would be inclined to keep this as high risk as it is less about the protocol leaking value and more about rewards being completely wiped and lost forever. I would argue, the user’s assets at this point in time DO include all unpaid rewards, so it is perfectly reasonable to treat this as high risk.
+pauliax (judge) commented:
+Agree that the boundaries are not very clear, this issue might fall somewhere between Medium and High severities. But my initial thought was similar to that of @0xleastwood, the rewards already belong to the user, and losing them will make the user lose on time and other opportunities. Also, this is not a hypothetical attack scenario, but a very real valid execution path, thus I think a high severity is fine here.
+
+[H-05] Users will lose a majority or even all of the rewards when the amount of total shares is too large, due to precision loss
+Submitted by WatchPug, also found by hyh
+LiquidityFarming.sol#L265-L291
+functiongetUpdatedAccTokenPerShare(address_baseToken)publicviewreturns(uint256) {uint256accumulator=0;uint256lastUpdatedTime=poolInfo[_baseToken].lastRewardTime;uint256counter=block.timestamp;uint256i=rewardRateLog[_baseToken].length-1;while(true) {if(lastUpdatedTime>=counter) {break;}unchecked{accumulator+=rewardRateLog[_baseToken][i].rewardsPerSecond*(counter-max(lastUpdatedTime,rewardRateLog[_baseToken][i].timestamp));}counter=rewardRateLog[_baseToken][i].timestamp;if(i==0) {break;}--i;}// We know that during all the periods that were included in the current iterations,// the value of totalSharesStaked[_baseToken] would not have changed, as we only consider the// updates to the pool that happened after the lastUpdatedTime.accumulator= (accumulator*ACC_TOKEN_PRECISION) /totalSharesStaked[_baseToken];returnaccumulator+poolInfo[_baseToken].accTokenPerShare;}
+LiquidityProviders.sol#L286-L292
+uint256mintedSharesAmount;// Adding liquidity in the pool for the first timeif(totalReserve[token] ==0) {mintedSharesAmount=BASE_DIVISOR*_amount;}else{mintedSharesAmount= (_amount*totalSharesMinted[token]) /totalReserve[token];}
+InHyphenLiquidityFarming, theaccTokenPerShareis calculated based on the total staked shares.
+However, as themintedSharesAmountcan easily become very large onLiquidityProviders.sol, all the users can lose their rewards due to precision loss.
+Proof of Concept
+Given:
+rewardsPerSecond is10e18;lastRewardTime is 24 hrs ago;
+Then:
+AliceaddTokenLiquidity()with1e8 * 1e18XYZ on B-Chain, totalSharesMinted ==1e44;Alicedeposit()to HyphenLiquidityFarming, totalSharesStaked ==1e44;24 hrs later, Alice tries to claim the rewards.
+accumulator = rewardsPerSecond * 24 hours== 864000e18 == 8.64e23
+Expected Results: As the sole staker, Alice should get all the864000e18rewards.
+Actual Results: Alice received 0 rewards.
+That’s because whentotalSharesStaked > 1e36,accumulator = (accumulator * ACC_TOKEN_PRECISION) / totalSharesStaked[_baseToken];will be round down to0.
+When thetotalSharesStakedis large enough, all users will lose their rewards due to precision loss.
+Recommended Mitigation Steps
+Consider lowering theBASE_DIVISORso that the initial share price can be higher;Consider makingACC_TOKEN_PRECISIONlarger to prevent precision loss;
+See also the Recommendation onIssue #139.
+ankurdubey521 (Biconomy) confirmed
+pauliax (judge) commented:
+Great find, probably deserves a severity of high.
+

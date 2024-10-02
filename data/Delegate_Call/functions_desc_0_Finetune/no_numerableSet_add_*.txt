@@ -1,0 +1,10 @@
+Type of vulnerability: Reentrancy or Thrown Value?
+Cause of vulnerability: The failsafe mechanism in the UintSet library incorrectly assumes that reentrancy is not possible, leading to the value checking mechanism being bypassed.
+Working process of the failsafe mechanism: 
+  1. The sumTokensInPeg function calls set.addDuplicateWithMaxCurrentHoldings(tokenAmount) to prevent the strategy from exceeding the maximum holdings of the token.
+  2. The addDuplicateWithMaxCurrentHoldings function in UintSet.sol is invoked, which internally calls add.
+  3. The add function checks if the value is less than UINT256_MAX  set._duplicates[duplicateId]. If this check fails (which should trigger an error in a wellfunctioning behavior), it attempts to add the value to the set.
+  4. If the value is greater than or equal to UINT256_MAX, the function returns false, indicating that it is not safe to add.
+  5. If the value is less than UINT256_MAX, the function attempts to add the value to the set and returns true if successful.
+  6. However, because the checked value is always MAX_VALUE due to the reentrancy precaution, the function always returns false, preventing the value from being added to the set as intended.
+  7. This results in the modified totalAccumulatedTokens not being stored, leading to the strategy being vulnerable to continuously issuing tokens due to failing tokens being forced into the strategy.

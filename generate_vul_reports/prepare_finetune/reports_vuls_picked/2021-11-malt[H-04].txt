@@ -1,0 +1,19 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect calculation of `getPegDeltaFrequency()` when `count < auctionAverageLookback`
+Execution process: When `count` is less than `auctionAverageLookback`, the function incorrectly divides the total by `auctionAverageLookback` instead of `count`, leading to an underestimated value of `getPegDeltaFrequency()`. This underestimated value is then used to calculate `realBurnBudget`, potentially depleting the Liquidity Extension balance improperly.
+Vulnerable code: 
+```solidity
+function getPegDeltaFrequency() public view returns (uint256) {
+    uint256 initialIndex = 0;
+    uint256 index;
+    if (count > auctionAverageLookback) {
+        initialIndex = count - auctionAverageLookback;
+    }
+    uint256 total = 0;
+    for (uint256 i = initialIndex; i < count; ++i) {
+        index = _getIndexOfObservation(i);
+        total = total + pegObservations[index];
+    }
+    return total * 10000 / auctionAverageLookback; // Vulnerable line
+}
+```

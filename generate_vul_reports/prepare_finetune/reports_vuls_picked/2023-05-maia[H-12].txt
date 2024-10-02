@@ -1,0 +1,13 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The vulnerability arises from insufficient input validation and unsafe type casting, specifically the unchecked conversion of the length of `hTokens` to `uint8`, which can overflow and lead to incorrect data processing.
+Execution process: An attacker exploits this by constructing a `DepositMultipleInput` with an `hTokens` array length exceeding 256, causing an overflow in the length encoding. This misrepresentation of data length allows the attacker to bypass checks and manipulate the system to mint an arbitrary amount of hTokens on the RootChain.
+Vulnerable code: 
+```solidity
+function callOutSignedAndBridgeMultiple(bytes calldata _params, DepositMultipleInput memory _dParams, uint128 _remoteExecutionGas) external payable lock requiresFallbackGas {
+    // Encode Data for cross-chain call.
+    bytes memory packedData = abi.encodePacked(bytes1(0x06), msg.sender, uint8(_dParams.hTokens.length), depositNonce, _dParams.hTokens, _dParams.tokens, _dParams.amounts, _deposits, _dParams.toChain, _params, msg.value.toUint128(), _remoteExecutionGas);
+    // code ...
+    _depositAndCallMultiple(...);
+}
+```
+This code snippet demonstrates the unsafe casting of `_dParams.hTokens.length` to `uint8`, which is the primary cause of the overflow vulnerability.

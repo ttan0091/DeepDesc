@@ -1,0 +1,54 @@
+[H-01] Liquidations can be prevented by frontrunning and liquidating 1 debt (or more) due to wrong assumption in POS_MANAGER
+Submitted by0x73696d616f
+Users can avoid being liquidated if they frontrun liquidation calls with a liquidate call with 1 wei. Or, they may do a partial liquidation and avoid being liquidated before the interest reaches the value of the debt pre liquidation. The total interest stored in__posBorrInfos[_posId].borrExtraInfos[_pool].totalInterestwould also be wrong.
+Proof of Concept
+ThePOS_MANAGERstores the total interest in__posBorrInfos[_posId].borrExtraInfos[_pool].totalInterest. FunctionupdatePosDebtShares()assumesthatILendingPool(_pool).debtShareToAmtCurrent(currDebtShares)is always increasing, but this is not the case, as a liquidation may happen that reduces the current debt amount. This leads to calls toupdatePosDebtShares()reverting.
+The most relevant is when liquidating, such that users could liquidate themselves for small amounts (1) and prevent liqudiations in the same block. This is because the debt accrual happens over time, so if the block.timestamp is the same, no debt accrual will happen. Thus, if a liquidate call with 1 amount frontruns a liquidate call with any amount, the second call will revert.
+A user could still stop liquidations for as long as the accrued interest doesn’t reach the last debt value before liquidation, if the user liquidated a bigger part of the debt.
+Add the following test toTestInitCore.sol:
+functiontest_POC_Liquidate_reverts_frontrunning_PosManager_WrongAssumption()public{addresspoolUSDT=address(lendingPools[USDT]);addresspoolWBTC=address(lendingPools[WBTC]);_setTargetHealthAfterLiquidation_e18(1,type(uint64).max);// by pass max health after liquidate capped_setFixedRateIRM(poolWBTC,0.1e18);// 10% per secuintcollAmt;uintborrAmt;{uintcollUSD=100_000;uintborrUSDMax=80_000;collAmt=_priceToTokenAmt(USDT,collUSD);borrAmt=_priceToTokenAmt(WBTC,borrUSDMax);}addressliquidator=BOB;deal(USDT,ALICE,collAmt);deal(WBTC,liquidator,borrAmt*2);// provides liquidity for borrow_fundPool(poolWBTC,borrAmt);// create position and collateralizeuintposId=_createPos(ALICE,ALICE,1);_collateralizePosition(ALICE,posId,poolUSDT,collAmt,bytes(''));// borrow_borrow(ALICE,posId,poolWBTC,borrAmt,bytes(''));// fast forward time and accrue interestvm.warp(block.timestamp+1seconds);ILendingPool(poolWBTC).accrueInterest();uintdebtShares=positionManager.getPosDebtShares(posId,poolWBTC);_liquidate(liquidator,posId,1,poolWBTC,poolUSDT,false,bytes(''));// liquidate all debtShares_liquidate(liquidator,posId,1000,poolWBTC,poolUSDT,false,bytes('panic'));}
+Tools Used
+Vscode, Foundry
+Recommended Mitigation Steps
+Update the user’s last debt position__posBorrInfos[_posId].borrExtraInfos[_pool].totalIntereston_repay().
+fez-init (INIT) confirmed
+hansfriese (Judge) commented:
+After discussing internally with the sponsor/warden, we’ve confirmed the issue.
+Here is a part of the discussion:“When it frontruns the liquidation with 1 share, it removes 1 share and 2 debt.When it calculates the amount again in the following liquidation, the shares will be worth 1 less and it reverts.”As a mitigation, we can updateextraInfo.totalInterestonly whendebtAmtCurrent > extraInfo.lastDebtAmt.High is appropriate as the main invariant might be broken temporarily while repaying.
+
+[H-02] wLp tokens could be stolen
+Submitted bysashik_eth, also found bysaid
+PosManager#removeCollateralWLpTofunction allows users to remove collateral wrapped in a wLp token that was previously supplied to the protocol:
+File:PosManager.sol249:functionremoveCollateralWLpTo(uint_posId,address_wLp,uint_tokenId,uint_amt,address_receiver)250:external251:onlyCore252:returns(uint)253:     {254:PosCollInfostorageposCollInfo=__posCollInfos[_posId];255:// NOTE: balanceOfLp should be 1:1 with amt256:uintnewWLpAmt=IBaseWrapLp(_wLp).balanceOfLp(_tokenId) -_amt;257:if(newWLpAmt==0) {258:_require(posCollInfo.ids[_wLp].remove(_tokenId),Errors.NOT_CONTAIN);259:posCollInfo.collCount-=1;260:if(posCollInfo.ids[_wLp].length() ==0) {261:posCollInfo.wLps.remove(_wLp);262:             }263:isCollateralized[_wLp][_tokenId] =false;264:         }265:_harvest(_posId,_wLp,_tokenId);266:IBaseWrapLp(_wLp).unwrap(_tokenId,_amt,_receiver);267:return_amt;268:     }
+This function could be called only from the core contract using thedecollateralizeWLpandliquidateWLpfunctions. However, it fails to check if the specifiedtokenIdbelongs to the current position, this check would take place only if removing is full - meaning no lp tokens remain wrapped in the wLp (line 257).
+This would allow anyone to drain any other positions with supplied wLp tokens. The attacker only needs to create its own position, supply dust amount in wLp to it, and calldecollateralizeWLpwith the desired ‘tokenId’, also withdrawn amount should be less than the full wLp balance to prevent check on line 257. An attacker would receive almost all lp tokens and accrued rewards from the victim’s wLp.
+A similar attack for harvesting the victim’s rewards could be done through theliquidateWLpfunction.
+Impact
+Attacker could drain any wLp token and harvest all accrued rewards for this token.
+Proof of Concept
+The next test added to thetests/wrapper/TestWLp.solfile could show an exploit scenario:
+functiontestExploitStealWlp()public{uintvictimAmt=100000000;// Bob open position with 'tokenId' 1uintbobPosId=_openPositionWithLp(BOB,victimAmt);// Alice open position with 'tokenId' 2 and dust amountuintalicePosId=_openPositionWithLp(ALICE,1);// Alice successfully de-collateralizes her own position using Bob's 'tokenId' and amounts less than Bob's position by 1 to prevent a revertvm.startPrank(ALICE,ALICE);initCore.decollateralizeWLp(alicePosId,address(mockWLpUniV2),1,victimAmt-1,ALICE);vm.stopPrank();emitlog_uint(positionManager.getCollWLpAmt(bobPosId,address(mockWLpUniV2),1));emitlog_uint(IERC20(lp).balanceOf(ALICE));}
+Recommended Mitigation Steps
+Consider adding a check that position holds the specified token into theremoveCollateralWLpTofunction:
+_require(__posCollInfos[_posId].ids[_wlp].contains(_tokenId),Errors.NOT_CONTAIN);
+fez-init (INIT) confirmed
+
+[H-03]_handleRepayofMoneyMarketHookdoes not consider the actual debt shares of theposIdinside the position manager and could lead to a user’s tokens getting stuck inside the hook
+Submitted bysaid
+When users construct repay operations viaMoneyMarketHook, it doesn’t consider the actual debt shares of the position inside theInitCoreandPosManager. This could lead to users’ tokens getting stuck inside theMoneyMarketHookcontract.
+Proof of Concept
+When users want to repay his positions inMoneyMarketHook, they can provide the parameters insiderepayParams, andMoneyMarketHookwill construct the operation via_handleRepayfunction.
+https://github.com/code-423n4/2023-12-initcapital/blob/main/contracts/hook/MoneyMarketHook.sol#L145-L159
+function_handleRepay(uint_offset,bytes[]memory_data,uint_initPosId,RepayParams[]memory_params)internalreturns(uint,bytes[]memory){for(uinti;i<_params.length;i=i.uinc()) {addressuToken=ILendingPool(_params[i].pool).underlyingToken();>>>uintrepayAmt=ILendingPool(_params[i].pool).debtShareToAmtCurrent(_params[i].shares);_ensureApprove(uToken,repayAmt);>>>IERC20(uToken).safeTransferFrom(msg.sender,address(this),repayAmt);_data[_offset] =abi.encodeWithSelector(IInitCore.repay.selector,_params[i].pool,_params[i].shares,_initPosId);_offset=_offset.uinc();}return(_offset,_data);}
+It can be observed that it calculates therepayAmtbased on the shares provided by the users and transfers the corresponding amount of tokens from the sender to the hook. However, the actual debt shares of the position can be less than the_params[i].sharesprovided by users. This means that the actual repay amount of tokens needed could be less than the calculatedrepayAmt.
+https://github.com/code-423n4/2023-12-initcapital/blob/main/contracts/core/InitCore.sol#L530-L551
+function_repay(IConfig_config,uint16_mode,uint_posId,address_pool,uint_shares)internalreturns(addresstokenToRepay,uintamt){// check status_require(_config.getPoolConfig(_pool).canRepay&&_config.getModeStatus(_mode).canRepay,Errors.REPAY_PAUSED);// get position debt share>>>uintpositionDebtShares=IPosManager(POS_MANAGER).getPosDebtShares(_posId,_pool);>>>uintsharesToRepay=_shares<positionDebtShares?_shares:positionDebtShares;// get amtToRepay (accrue interest)>>>uintamtToRepay=ILendingPool(_pool).debtShareToAmtCurrent(sharesToRepay);// take token from msg.sender to pooltokenToRepay=ILendingPool(_pool).underlyingToken();>>>IERC20(tokenToRepay).safeTransferFrom(msg.sender,_pool,amtToRepay);// update debt on the positionIPosManager(POS_MANAGER).updatePosDebtShares(_posId,_pool, -sharesToRepay.toInt256());// call repay on the poolamt=ILendingPool(_pool).repay(sharesToRepay);// update debt on modeIRiskManager(riskManager).updateModeDebtShares(_mode,_pool, -sharesToRepay.toInt256());emitRepay(_pool,_posId,msg.sender,_shares,amt);}
+Consider a scenario where the user’s positions are currently liquidatable, and the user wishes to repay all of the position’s debt inside theMoneyMarketHook. However, a liquidator front-runs the operation by liquidating the user’s position. Now, when the repayment operation executes fromMoneyMarketHook, it transfers therepayAmtto theMoneyMarketHookbut the amount is not used/fully utilized and becomes stuck inside the contract.
+Recommended Mitigation Steps
+Consider to also check the provided shares against the actual debt shares inside theInitCore/PosManager.
+fez-init (INIT) confirmed, but disagreed with severity and commented:
+The issue should be medium, since the funds cannot be retrieved by someone else. The hook will be upgradeable, so if funds actually get stuck, it is still retrievable.
+hansfriese (Judge) commented:
+I agree that this issue is in the middle of Medium and High.
+Users might face a temporary lock on their funds, and the hook should be upgraded every time to unlock them.Given the high probability of this scenario occurring, I will keep this issue as a valid High.
+

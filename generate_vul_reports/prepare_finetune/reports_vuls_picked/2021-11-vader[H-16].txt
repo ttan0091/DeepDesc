@@ -1,0 +1,25 @@
+Type of vulnerability: Incorrect Calculation of Swap Output
+Cause of vulnerability: Misplacement of pool reserves in the calculation function
+Execution process: The function incorrectly calculates the swap output by first performing a swap in pool1 instead of pool0, leading to incorrect results for 3-path swaps.
+Vulnerable code: 
+```solidity
+function calculateOutGivenIn(uint256 amountIn, address[] calldata path) external view returns (uint256 amountOut) {
+    if(...) {} else {
+        return VaderMath.calculateSwap(
+            VaderMath.calculateSwap(
+                // @audit the inner trade should not be in pool1 for a forward swap.
+                amountIn, nativeReserve1, foreignReserve1
+            ),
+            foreignReserve0, nativeReserve0
+        );
+    }
+    /** @audit instead should first be trading in pool0!
+    VaderMath.calculateSwap(
+        VaderMath.calculateSwap(
+            amountIn, foreignReserve0, nativeReserve0
+        ),
+        nativeReserve1, foreignReserve1
+    );
+    */
+}
+```

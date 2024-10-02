@@ -1,0 +1,54 @@
+The code provided consists of two Solidity contracts: Delegate and Delegation. Below, I will explain the working process of each contract in detail.
+
+### Delegate Contract
+
+solidity
+contract Delegate {
+    address public owner;
+
+    function addOwner() {
+        owner = msg.sender;
+    }
+}
+
+
+Explanation:
+
+1. State Variable:
+    address public owner;: This line declares a public state variable owner of type address. The public keyword automatically generates a getter function for this variable, allowing other contracts or external entities to read its value.
+
+2. Function:
+    function addOwner() { owner = msg.sender; }: This function sets the owner variable to the address of the caller (msg.sender). It does not have any access modifiers (like public or private), which means it defaults to public. This function can be called by anyone, and it will change the owner to the caller's address.
+
+### Delegation Contract
+
+solidity
+contract Delegation {
+    Delegate delegate;
+
+    function delegation() {
+        if (msg.data.length > 0)
+            delegate.delegatecall(msg.data);
+    }
+}
+
+
+Explanation:
+
+1. State Variable:
+    Delegate delegate;: This line declares a state variable delegate of type Delegate. This variable is used to hold the address of a Delegate contract instance.
+
+2. Function:
+    function delegation() { if (msg.data.length > 0) delegate.delegatecall(msg.data); }: This function checks if the calldata (msg.data) has a length greater than 0. If it does, it performs a delegatecall to the delegate contract with the calldata.
+      delegatecall is a lowlevel function similar to call, but it executes the called contract's code in the context of the calling contract. This means that the state variables of the Delegation contract can be modified as if the code were executed directly in the Delegation contract.
+      The delegatecall function is dangerous if not used carefully, as it can lead to unexpected behavior, especially if the called contract modifies state variables that are not expected to be modified.
+
+### Potential Vulnerabilities
+
+Based on the reference vulnerability report provided, there is a potential vulnerability in the Delegation contract due to the use of delegatecall. If the calldata sent to the Delegation contract includes a function call to addOwner in the Delegate contract, the owner state variable in the Delegation contract could be changed, even though the intention might be to change the owner in the Delegate contract. This is because delegatecall executes the code in the context of the Delegation contract, not the Delegate contract.
+
+### Summary
+
+ The Delegate contract has a state variable owner and a function addOwner that sets this variable to the caller's address.
+ The Delegation contract has a state variable delegate and a function delegation that performs a delegatecall to the delegate contract if there is any calldata.
+ The use of delegatecall in the Delegation contract can lead to unexpected state changes in the Delegation contract, potentially allowing unauthorized changes to the owner variable.

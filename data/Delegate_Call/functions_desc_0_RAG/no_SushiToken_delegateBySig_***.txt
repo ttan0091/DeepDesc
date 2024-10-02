@@ -1,0 +1,26 @@
+This code defines an external function named delegateBySig, which allows a user to delegate their voting rights to another address using a signature instead of directly calling the function. This is particularly useful for offchain signing scenarios where the user doesn't need to interact directly with the blockchain to perform the delegation.
+
+Here’s a detailed explanation of how this function works:
+
+1. Domain Separator Calculation:
+    The function starts by calculating the domainSeparator, which is a hash of the domain typehash, the contract's name (retrieved by calling name()), the chain ID (retrieved by calling getChainId()), and the contract's address. This is used to prevent replay attacks across different contracts and chains.
+
+2. Struct Hash Calculation:
+    Next, the function calculates the structHash, which is a hash of the delegation typehash, the delegatee's address, the nonce (a value that must be unique per signatory to prevent replay attacks), and the expiry timestamp (after which the signature is no longer valid).
+
+3. Digest Calculation:
+    The digest is then calculated by hashing the EIP712 prefix (\x19\x01), the domainSeparator, and the structHash. This digest is what the signatory signs to create the signature components (v, r, and s).
+
+4. Signature Recovery:
+    The function uses the ecrecover function to recover the address of the signatory from the signature components (v, r, and s). This recovered address is stored in the signatory variable.
+
+5. Validation Checks:
+    The function performs several validation checks:
+      It ensures that the recovered signatory address is not the zero address, which would indicate an invalid signature.
+      It checks that the provided nonce matches the current nonce for the signatory and then increments the nonce to prevent replay attacks.
+      It verifies that the current timestamp is less than or equal to the expiry timestamp, ensuring that the signature has not expired.
+
+6. Delegation Execution:
+    If all the validation checks pass, the function calls the internal _delegate function, passing the signatory and the delegatee addresses. This function is responsible for actually performing the delegation of voting rights.
+
+This function is a standard implementation of EIP712, which allows for typed structured data signing and is widely used in DeFi and other Ethereumbased applications for secure and flexible offchain interactions.

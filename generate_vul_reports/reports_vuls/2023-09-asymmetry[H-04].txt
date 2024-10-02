@@ -1,0 +1,39 @@
+[H-04]price()inAfEth.soldoesn’t take afEth held for pending withdrawals into account
+Submitted byMiloTruck, also found by d3e4 (1,2),adriro, andrvierdiiev
+InAfEth.sol, theprice()function returns the current price of afEth:
+AfEth.sol#L133-L141
+functionprice()publicviewreturns(uint256) {if(totalSupply() ==0)return1e18;AbstractStrategyvEthStrategy=AbstractStrategy(vEthAddress);uint256safEthValueInEth= (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *safEthBalanceMinusPending()) /1e18;uint256vEthValueInEth= (vEthStrategy.price() *vEthStrategy.balanceOf(address(this))) /1e18;return((vEthValueInEth+safEthValueInEth) *1e18) /totalSupply();}
+As seen from above, the price of afEth is calculated by the TVL of both safEth and vAfEth divided bytotalSupply(). However, this calculation does not take into account afEth that is transferred to the contract whenrequestWithdraw()is called:
+AfEth.sol#L183-L187
+uint256afEthBalance=balanceOf(address(this));uint256withdrawRatio= (_amount*1e18) /(totalSupply() -afEthBalance);_transfer(msg.sender,address(this),_amount);
+When a user callsrequestWithdraw()to initiate a withdrawal, his afEth is transferred to theAfEthcontract as shown above. Afterwards, an amount ofvAfEth proportional to his withdrawal amount is burned, andpendingSafEthWithdrawsis increased.
+Whenprice()is called afterwards,safEthBalanceMinusPending()andvEthStrategy.balanceOf(address(this))will be decreased. However, since the user’s afEth is only transferred and not burnt,totalSupply()remains the same. This causes the value returned byprice()to be lower than what it should be, sincetotalSupply()is larger than the actual circulating supply of afEth.
+This is an issue asdeposit()relies onprice()to determine how much afEth to mint to a depositor:
+AfEth.sol#L166-L168
+uint256amountToMint=totalValue/priceBeforeDeposit;if(amountToMint<_minout)revertBelowMinOut();_mint(msg.sender,amountToMint);
+Where:
+totalValueis the ETH value of the caller’s deposit.priceBeforeDepositis the cached value ofprice().
+If anyone has initiated a withdrawal usingrequestWithdraw()but hasn’t calledwithdraw()to withdraw his funds,price()will be lower than what it should be. Subsequently, whendeposit()is called, the depositor will receive more afEth than he should sincepriceBeforeDepositis smaller.
+Furthermore, a first depositor can callrequestWithdraw()with all his afEth immediately after staking to makeprice()return 0, thereby permanently DOSing all future deposits asdeposit()will always revert with a division by zero error.
+Impact
+When there are pending withdrawals,price()will return a value smaller than its actual value. This causes depositors to receive more afEth than intended when callingdeposit(), resulting in a loss of funds for previous depositors.
+Additionally, a first depositor can abuse this to forcedeposit()to always revert, permanently bricking the protocol forever.
+Proof of Concept
+Assume that the protocol is newly deployed and Alice is the only depositor.
+This means that Alice’s afEth balance equals tototalSupply().
+Alice callsrequestWithdraw()with_amountas all her afEth:
+Since_amount == totalSupply(),withdrawRatiois1e18(100%).Therefore, all of the protocol’s vAfEth is burnt andpendingSafEthWithdrawsis increased to the protocol’s safEth balance.Alice’s afEth is transferred to the protocol.
+Bob callsdeposit()to deposit some ETH into the protocol:
+Whenprice()is called:SincependingSafEthWithdrawsis equal to the protocol’s safEth balance,safEthBalanceMinusPending()is 0, thereforesafEthValueInEthis also 0.SincevEthStrategy.balanceOf(address(this))(the protocol’s vAfEth balance) is 0,vEthValueInEthis also 0.totalSupply()is non-zero.Therefore,price()returns 0 as:
+((vEthValueInEth + safEthValueInEth) * 1e18) / totalSupply() = ((0 + 0) * 1e18) / x = 0
+AspriceBeforeDepositis 0,this linereverts with a division by zero error.
+As demonstrated above,deposit()will always revert as long as Alice does not callwithdraw()to burn her afEth, thereby bricking the protocol’s core functionality.
+Recommended Mitigation
+Inprice(), consider subtracting the amount of afEth held in the contract fromtotalSupply():
+AfEth.sol#L133-L141
+function price() public view returns (uint256) {-       if (totalSupply() == 0) return 1e18;+       uint256 circulatingSupply = totalSupply() - balanceOf(address(this));+       if (circulatingSupply == 0) return 1e18;AbstractStrategy vEthStrategy = AbstractStrategy(vEthAddress);uint256 safEthValueInEth = (ISafEth(SAF_ETH_ADDRESS).approxPrice(true) *safEthBalanceMinusPending()) / 1e18;uint256 vEthValueInEth = (vEthStrategy.price() *vEthStrategy.balanceOf(address(this))) / 1e18;-       return ((vEthValueInEth + safEthValueInEth) * 1e18) / totalSupply();+       return ((vEthValueInEth + safEthValueInEth) * 1e18) / circulatingSupply;}
+elmutt (Asymmetry) confirmed and commented:
+@toshiSat - I think we can solve this by burning the tokens in requestWithdraw.
+Asymmetry mitigated:
+For this one we made afEth just burn on requestWithdraw.
+Status: Mitigation confirmed. Full details in reports fromm_Rassska,d3e4, andadriro.

@@ -1,0 +1,25 @@
+This code defines a public function named withdraw, which is designed to allow users to withdraw a specified amount of tokens from a staking pool. The function is marked as override to indicate that it is overriding a function from a base contract, and nonReentrant to prevent reentrancy attacks. It also calls an updateReward modifier to ensure the user's rewards are updated before the withdrawal.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    function withdraw(uint256 amount) public override nonReentrant updateReward(msg.sender): This line declares the function withdraw which takes a single parameter amount of type uint256. The function is marked as public, meaning it can be called from any contract or externally. The override keyword indicates that this function is overriding a function from a base contract. The nonReentrant modifier is used to prevent reentrancy attacks, ensuring that the function cannot be recursively called while it is still executing. The updateReward(msg.sender) modifier updates the reward for the caller before proceeding with the withdrawal.
+
+2. Input Validation:
+    require(amount > 0, "Cannot withdraw 0");: This line checks if the amount is greater than 0. If not, it reverts the transaction with the message "Cannot withdraw 0". This ensures that users cannot withdraw an amount of 0 tokens.
+
+3. Updating Balances:
+    _unlocked_balances[msg.sender] = _unlocked_balances[msg.sender].sub(amount);: This line subtracts the amount from the caller's unlocked balance. The sub function is typically a safe subtraction function that reverts if the subtraction results in a negative value (which should not happen here due to the require check).
+    _boosted_balances[msg.sender] = _boosted_balances[msg.sender].sub(amount);: Similarly, this line subtracts the amount from the caller's boosted balance.
+
+4. Updating Total Supplies:
+    _staking_token_supply = _staking_token_supply.sub(amount);: This line subtracts the amount from the total supply of staking tokens.
+    _staking_token_boosted_supply = _staking_token_boosted_supply.sub(amount);: This line subtracts the amount from the total boosted supply of staking tokens.
+
+5. Transferring Tokens:
+    stakingToken.safeTransfer(msg.sender, amount);: This line transfers the specified amount of tokens to the caller using the safeTransfer function, which is a safe method to transfer ERC20 tokens, ensuring that the transfer is successful and reverting the transaction if it fails.
+
+6. Emitting Event:
+    emit Withdrawn(msg.sender, amount);: This line emits an event Withdrawn with the caller's address and the withdrawn amount. This event can be used to track withdrawals offchain.
+
+In summary, the withdraw function allows a user to withdraw a specified amount of tokens from a staking pool, updating their balances and the total supply, transferring the tokens to the user, and emitting an event to log the withdrawal. The function includes several safeguards to ensure that the operation is valid and secure.

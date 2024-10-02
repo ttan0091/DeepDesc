@@ -1,0 +1,25 @@
+This code defines a private pure function named _verifyCallResult, which is designed to handle the results of an external call in a smart contract. The function takes three parameters: a boolean success indicating whether the external call was successful, a bytes memory returndata containing the data returned by the external call, and a string memory errorMessage that provides a custom error message to revert with if the call was unsuccessful and no return data is available.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters and Return Type:
+    bool success: This boolean indicates whether the external call was successful.
+    bytes memory returndata: This is the data returned by the external call. It is used to propagate any error data back to the caller if the call was unsuccessful.
+    string memory errorMessage: This is a custom error message that will be used if the call was unsuccessful and there is no return data.
+    The function returns bytes memory, which is the return data from the external call if it was successful.
+
+2. Function Logic:
+    The function first checks the success boolean.
+      If success is true, it simply returns the returndata as the external call was successful.
+      If success is false, the function checks the length of returndata.
+        If returndata.length is greater than 0, it means there is some error data returned by the failed call. The function uses inline assembly to handle this:
+          let returndata_size := mload(returndata): This loads the size of the return data.
+          revert(add(32, returndata), returndata_size): This reverts the transaction, propagating the error data back to the caller. The add(32, returndata) calculates the starting point of the actual data (since the first 32 bytes in returndata store its size).
+        If returndata.length is 0, it means there is no error data to propagate. In this case, the function reverts the transaction with the provided errorMessage.
+
+3. Inline Assembly Usage:
+    The inline assembly block is used to directly manipulate the EVM (Ethereum Virtual Machine) state. This is necessary here to handle the lowlevel details of reverting with the return data.
+    mload(returndata) reads the first 32 bytes of returndata, which contains the size of the return data.
+    revert(add(32, returndata), returndata_size) is used to revert the transaction and return the error data to the caller. The add(32, returndata) ensures that the revert starts from the actual data part of returndata, skipping the size field.
+
+This function is crucial for error handling in smart contracts, especially when dealing with external calls, as it ensures that any error data from failed calls is properly propagated back to the caller, enhancing the robustness and reliability of the contract.

@@ -1,0 +1,48 @@
+Type of contract: Solidity Smart Contract
+Language/Version: Solidity 0.8.3
+
+Purpose of the contract:
+1. Allow users to deposit LP tokens to receive stake shares (sLPs) on Sushiswap.
+2. Users can restake, withdraw, or claim rewards based on their sLP balance.
+3. When a user claims rewards, they receive additional LP tokens according to the peg of the pool relative to masterchef's sETH pool.
+4. The vesting function has guards to prevent users with large stakes from draining the vault by activating the vesting function many times.
+5. The vesting function also has a check to prevent users from vesting into pools that have a higher peg than the sETH pool.
+6. The rounding for deposit, withdraw, and restake functions is fixed to avoid farming sats briefly to bypass vesting restrictions.
+7. Tokens in the pendulum pools and sETH pool cannot be emergency withdrawn.
+
+Key structural components and their interaction:
+ constructor(): Initializes the SushiSchoolingVault with the MasterChef and SushiswapRouter addresses.
+ addPeg(): Allows the MasterChef to add a new pendulum pool with a reference pool on Sushiswap.
+ Users can call this using createPendulumPool which fills the parameters.
+ Stores the peg for the MasterChef.
+ Stores whether the ReferencePool's lpEquivalentTotal / pendulum.lpEquivalentTotal < poolPegThreshold.
+ Stores the exact amount of allTokens on MasterChef.
+ Stores poolPegThreshold for the pending pools.
+ setReferencePool(): Allows the SushiSchoolingVault to set a new ReferencePool.
+ The pool must have enough liquidity according to the peg threshold.
+ Must call priceAndPegSort on new pong tokens.
+ createPendulumPool(): Allows the MasterChef to add a new reference pendulum pool.
+ PG integration: TargetPegProxy creates another pendulum pool since SushiSchoolingVault has low utilisation.
+ changePegParameters(): Allows the MasterChef to manipulate global pegParams.
+ changePoolPegParameters(): Allows the MasterChef to manipulate perPoolParams.
+ changeReferencePoolPegThreshold(): Allows the MasterChef to change the reference pool state threshold.
+ referencePoolSortedIndex(): Checks whether a ReferencePool is contained in our statesorted reference pool.
+ priceAndPegSort(): Sort tokens by price and set their references.
+ Calculates current total value in LP of pendulum pool in ETH (swap against a reference pool) and saves it to storage.
+ Modifies sort params and stores it also in storage.
+
+Workflow of the key methods/functions:
+1. findUpperBound(): Determines the upper bound index of an element in a sorted array.
+2. findPoolIndex(): Returns the pool index or 0 if not found.
+3. priceAndPegSort(): Sorts tokens by their behavior in a botresilience attack and stores sorted parameters.
+4. referencePoolSortedIndex(): Checks if a pool may be used as a reference.
+5. sumTokensInETH() and sumTokensInPeg(): Sum tokens in the pool.
+6. supplyAmount(): Calculates the exact amount of deposit to be made.
+7. _calcUnderlyingLPToPeg(): Calculate the peg value of n shares in the pool.
+8. vestingBoundAmount(): Calculate amount of shares with vesting considerations.
+9. vestingSharesToPeg(): Calculate the peg value of given shares and returns shares.
+10. vestingAmount(): Calculate shares from peg with vesting.
+11. vest(): Performs the vesting and updates parameters.
+12. unvest(): Performs the unvesting function.
+13. referencePoolUpdate(): Reference pool for restaking and to allow showing staked shares as values.
+14. emergencyUnstake(): Withdraws all stakes due to emergency to MasterChef and deletes the vault.

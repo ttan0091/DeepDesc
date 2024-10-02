@@ -1,0 +1,18 @@
+Type of vulnerability: Incorrect Reference Unit Calculation
+
+Cause of vulnerability: The `_underlyingRefPerTok` function in `CBEthCollateral` and `AnkrStakedEthCollateral` incorrectly uses the `CBEth.exchangeRate()` to determine the reference/token rate, which only provides the conversion rate from cbETH to staked ETH2. This rate does not account for the premium caused by the delay in unstaking ETH2, leading to an overestimation of the actual cbETH/ETH rate.
+
+Execution process: An attacker can exploit this vulnerability by using cbETH to issue more rTokens than they should be able to, especially when the unstake queue for ETH2 increases. This is because the overestimated rate allows for more rTokens to be issued based on the inflated value of cbETH.
+
+Vulnerable code: 
+```solidity
+// CBEthCollateral.sol
+function _underlyingRefPerTok() internal view override returns (uint256) {
+    return CBEth.exchangeRate();
+}
+
+// AnkrStakedEthCollateral.sol
+function _underlyingRefPerTok() internal view override returns (uint256) {
+    return AnkrStakedEth.exchangeRate();
+}
+```

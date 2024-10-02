@@ -1,0 +1,26 @@
+This code defines an external function named deposit, which allows users to deposit a specified amount of tokens into the contract and receive a corresponding amount of LP tokens in return. Here’s a detailed explanation of how this function works:
+
+1. Input Validation:
+    The function starts by checking if the contract is paused using require(paused == false, "ERROR: PAUSED");. If the contract is paused, the transaction is reverted with the message "ERROR: PAUSED".
+    It then checks if the deposited amount is greater than zero using require(_amount > 0, "ERROR: DEPOSIT_ZERO");. If the amount is zero, the transaction is reverted with the message "ERROR: DEPOSIT_ZERO".
+
+2. Fetching Balances:
+    The function retrieves the current liquidity attributed to the crowd pool using uint256 _liquidity = vault.attributionValue(crowdPool);. This gives the USDC balance attributed to the crowd pool.
+    It also retrieves the total supply of LP tokens using uint256 _supply = totalSupply();.
+
+3. Updating Attribution:
+    The function updates the crowd pool's attribution by adding the deposited amount to it using crowdPool += vault.addValue(_amount, msg.sender, address(this));. This increases the attribution of the crowd pool by the deposited amount.
+
+4. Calculating Mint Amount:
+    The function calculates the amount of LP tokens to mint based on the deposited amount and the current state of the contract:
+      If there is an existing supply of LP tokens and liquidity (_supply > 0 && _liquidity > 0), it calculates the mint amount as _mintAmount = (_amount  _supply) / _liquidity;. This ensures that the minted LP tokens are proportional to the deposited amount relative to the existing liquidity.
+      If there is an existing supply of LP tokens but no liquidity (_supply > 0 && _liquidity == 0), it calculates the mint amount as _mintAmount = _amount  _supply;. This scenario is triggered when the vault loses all underwritten assets, effectively diluting the value of the LP tokens and starting the CDS (Credit Default Swap) mechanism again.
+      If there is no existing supply of LP tokens (_supply == 0), it sets the mint amount equal to the deposited amount (_mintAmount = _amount;). This means that the first depositor gets LP tokens equal to their deposited amount.
+
+5. Event Emission:
+    The function emits a Deposit event to log the deposit transaction, including the sender's address, the deposited amount, and the minted amount using emit Deposit(msg.sender, _amount, _mintAmount);.
+
+6. Minting LP Tokens:
+    Finally, the function mints the calculated amount of LP tokens to the sender's address using _mint(msg.sender, _mintAmount);.
+
+This function ensures that users can deposit tokens and receive LP tokens proportionally, taking into account the current state of the contract's liquidity and supply. It also handles edge cases where the vault might lose all underwritten assets or when there is no existing supply of LP tokens.

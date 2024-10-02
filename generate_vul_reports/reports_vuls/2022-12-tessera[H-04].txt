@@ -1,0 +1,16 @@
+[H-04] OptimisticListingSeaport.propose sets pendingBalances of newly added proposer instead of previous one
+Submitted byLambda, also found byTrust
+InOptimisticListingSeaport.propose,pendingBalancesis set to the collateral. The purpose of this is that the proposer of a previous proposal can withdraw his collateral afterwards. However, this is done on the storage variableproposedListingafter the new listing is already set:
+_setListing(proposedListing,msg.sender,_collateral,_pricePerToken,block.timestamp);// Sets collateral amount to pending balances for withdrawalpendingBalances[_vault][proposedListing.proposer] +=proposedListing.collateral;
+Because of that, it will actually setpendingBalancesof the new proposer. Therefore, the old proposer loses his collateral and the new one can make proposals for free.
+Proof Of Concept
+--- a/test/seaport/OptimisticListingSeaport.t.sol+++ b/test/seaport/OptimisticListingSeaport.t.sol@@ -379,8 +379,11 @@ contract OptimisticListingSeaportTest is SeaportTestUtil {/// ===== LIST =====/// ================function testList(uint256 _collateral, uint256 _price) public {// setuptestPropose(_collateral, _price);+        assertEq(optimistic.pendingBalances(vault, bob), 0);_increaseTime(PROPOSAL_PERIOD);_collateral = _boundCollateral(_collateral, bobTokenBalance);_price = _boundPrice(_price);
+This test fails andoptimistic.pendingBalances(vault, bob)is equal to_collateral.
+Recommended Mitigation Steps
+RunpendingBalances[_vault][proposedListing.proposer] += proposedListing.collateral;before the_setListingcall, in which case the above PoC no longer works.
+HickupHH3 (judge) commented:
+Because of that, it will actually set pendingBalances of the new proposer. Therefore, the old proposer loses his collateral and the new one can make proposals for free.Seems like intended behaviour to me (actually set pendingBalances of the new proposer). The old proposer wouldn’t be losing his collateral because his pendingBalances would’ve been set when he calledpropose().
+mehtaculous (Tessera) confirmed and commented:
+Agree with severity. The suggested solution makes sense.
+stevennevins (Tessera) mitigated:
+https://github.com/fractional-company/modular-fractional/pull/202Status:Mitigation confirmed bygzeon,IllIllI, andLambda.

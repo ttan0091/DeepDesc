@@ -1,0 +1,12 @@
+Type of vulnerability: DoS (Denial of Service)
+Cause of vulnerability: The tick tracking array length can be purposely increased, leading to excessive gas consumption and function reversion.
+Execution process: An attacker can manipulate the tick tracking array by performing small swaps that cross tick boundaries, increasing the array length and causing gas limits to be reached during iterations in functions like `accrueConcentratedPositionTimeWeightedLiquidity`.
+Vulnerable code: 
+```solidity
+function crossTicks(bytes32 poolIdx, int24 exitTick, int24 entryTick) internal {
+    uint256 numElementsExit = tickTracking_[poolIdx][exitTick].length;
+    tickTracking_[poolIdx][exitTick][numElementsExit - 1].exitTimestamp = uint32(block.timestamp);
+    StorageLayout.TickTracking memory tickTrackingData = StorageLayout.TickTracking(uint32(block.timestamp), 0);
+    tickTracking_[poolIdx][entryTick].push(tickTrackingData);
+}
+```

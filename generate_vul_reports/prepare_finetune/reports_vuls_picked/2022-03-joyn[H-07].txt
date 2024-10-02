@@ -1,0 +1,14 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: Lack of reentrancy protection and improper use of the checks-effects-interactions pattern
+Execution process: A user mints a token and pays the `payableToken` fee. If the `payableToken` has a callback, the user can reenter the `mintToken()` function before the `totalSupply()` is updated. This allows the user to bypass the `totalSupply() + amount <= maxSupply` check and mint duplicate NFTs.
+Vulnerable code: 
+```solidity
+function mintToken() {
+    // Transfer payableToken fee
+    payableToken.transferFrom(msg.sender, address(this), fee);
+    // Mint token
+    uint256 tokenId = ((startingIndex + totalSupply()) % maxSupply) + 1;
+    _mint(msg.sender, tokenId);
+    totalSupply += 1;
+}
+```

@@ -1,0 +1,38 @@
+[H-01] Too many rewards are distributed when a draw is closed
+Submitted bydirk_y
+https://github.com/GenerationSoftware/pt-v5-draw-auction/blob/f1c6d14a1772d6609de1870f8713fb79977d51c1/src/RngRelayAuction.sol#L178-L184https://github.com/GenerationSoftware/pt-v5-draw-auction/blob/f1c6d14a1772d6609de1870f8713fb79977d51c1/src/RngRelayAuction.sol#L154-L157https://github.com/GenerationSoftware/pt-v5-prize-pool/blob/26557afa439934afc080eca6165fe3ce5d4b63cd/src/PrizePool.sol#L366https://github.com/GenerationSoftware/pt-v5-prize-pool/blob/26557afa439934afc080eca6165fe3ce5d4b63cd/src/abstract/TieredLiquidityDistributor.sol#L374
+A relayer completes a prize pool draw by callingrngCompleteinRngRelayAuction.sol. This method closes the prize pool draw with the relayed random number and distributes the rewards to the RNG auction recipient and the RNG relay auction recipient. These rewards are calculated based on a fraction of the prize pool reserve rather than an actual value.
+However, the current reward calculation mistakenly includes an extrareserveForOpenDrawamount just after the draw has been closed. Therefore the fraction over which the rewards are being calculated includes tokens that have not been added to the reserve and will actually only be added to the reserve when the next draw is finalised. As a result, the reward recipients are rewarded too many tokens.
+Proof of Concept
+Before deciding whether or not to relay an auction result, a bot can callcomputeRewardsto calculate how many rewards they’ll be getting based on the size of the reserve, the state of the auction and the reward fraction of the RNG auction recipient:
+function computeRewards(AuctionResult[] calldata __auctionResults) external returns (uint256[] memory) {uint256 totalReserve = prizePool.reserve() + prizePool.reserveForOpenDraw();return _computeRewards(__auctionResults, totalReserve);}
+Here, the total reserve is calculated as the sum of the current reserve and and amount of new tokens that will be added to the reserve once the currently open draw is closed. This method is correct and correctly calculates how many rewards should be distributed when a draw is closed.
+A bot can choose to close the draw by callingrngComplete(via a relayer), at which point the rewards are calculated and distributed. Below is the interesting part of this method:
+uint32 drawId = prizePool.closeDraw(_randomNumber);uint256 futureReserve = prizePool.reserve() + prizePool.reserveForOpenDraw();uint256[] memory _rewards = RewardLib.rewards(auctionResults, futureReserve);
+As you can see, the draw is first closed and then the future reserve is used to calculate the rewards that should be distributed. However, whencloseDrawis called on the pool, thereserveForOpenDrawfor the previously open draw is added to the existing reserves. Soreserve()is now equal to thetotalReservevalue in the earlier call tocomputeRewards. By includingreserveForOpenDraw()when computing the actual reward to be distributed we’ve accidentally counted the tokens that are only going to be added in when the next draw is closed. So now the rewards distribution calculation includes the pending reserves for 2 draws rather than 1.
+Recommended Mitigation Steps
+When distributing rewards in the call torngComplete, the rewards should not be calculated with the new value ofreserveForOpenDrawbecause the previousreserveForOpenDrawvalue has already been added to the reserves whencloseDrawis called on the prize pool. Below is a suggested diff:
+diff --git a/src/RngRelayAuction.sol b/src/RngRelayAuction.solindex 8085169..cf3c210 100644--- a/src/RngRelayAuction.sol+++ b/src/RngRelayAuction.sol@@ -153,8 +153,8 @@ contract RngRelayAuction is IRngAuctionRelayListener, IAuction {uint32 drawId = prizePool.closeDraw(_randomNumber);-    uint256 futureReserve = prizePool.reserve() + prizePool.reserveForOpenDraw();-    uint256[] memory _rewards = RewardLib.rewards(auctionResults, futureReserve);+    uint256 reserve = prizePool.reserve();+    uint256[] memory _rewards = RewardLib.rewards(auctionResults, reserve);emit RngSequenceCompleted(_sequenceId,
+Assessed type
+Math
+asselstine (PoolTogether) confirmed and commented:
+Nice catch!
+hickuphh3 (judge) commented:
+Great find!
+
+[H-02]rngCompletefunction should only be called byrngAuctionRelayer
+Submitted byAymen0909, also found byjosephdara,trachev,Arz, seerether (1,2),D_Auditor,shirochan,dirk_y,0xbepresent,Jorgect,bin2chen,0xStalin,ptsanev,T1MOH, andrvierdiiev
+TherngCompletefunction is supposed to be called by the relayer to complete the Rng relay auction and send auction rewards to the recipient, but because the function doesn’t have any access control it can be called by anyone, an attacker can call the function before the relayer and give a different_rewardRecipientand thus he can collect all the rewards and the true auction reward recipient will not get any.
+Proof of Concept
+The issue occurs in therngCompletefunction below:
+functionrngComplete(uint256_randomNumber,uint256_rngCompletedAt,address_rewardRecipient,// @audit can set any addressuint32_sequenceId,AuctionResultcalldata_rngAuctionResult)externalreturns(bytes32) {// @audit should only be callable by rngAuctionRelayerif(_sequenceHasCompleted(_sequenceId))revertSequenceAlreadyCompleted();uint64_auctionElapsedSeconds=uint64(block.timestamp<_rngCompletedAt?0:block.timestamp-_rngCompletedAt);if(_auctionElapsedSeconds> (_auctionDurationSeconds-1))revertAuctionExpired();// Calculate the reward fraction and set the draw auction resultsUD2x18rewardFraction=_fractionalReward(_auctionElapsedSeconds);_auctionResults.rewardFraction=rewardFraction;_auctionResults.recipient=_rewardRecipient;_lastSequenceId=_sequenceId;AuctionResult[]memoryauctionResults=newAuctionResult[](2);auctionResults[0] =_rngAuctionResult;auctionResults[1] =AuctionResult({rewardFraction:rewardFraction,recipient:_rewardRecipient});uint32drawId=prizePool.closeDraw(_randomNumber);uint256futureReserve=prizePool.reserve() +prizePool.reserveForOpenDraw();uint256[]memory_rewards=RewardLib.rewards(auctionResults,futureReserve);emitRngSequenceCompleted(_sequenceId,drawId,_rewardRecipient,_auctionElapsedSeconds,rewardFraction);for(uint8i=0;i<_rewards.length;i++) {uint104_reward=uint104(_rewards[i]);if(_reward>0) {prizePool.withdrawReserve(auctionResults[i].recipient,_reward);emitAuctionRewardDistributed(_sequenceId,auctionResults[i].recipient,i,_reward);}}returnbytes32(uint(drawId));}
+As we can see the function does not have any access control (modifier or check on the msg.sender), so any user can call it and you can also notice that the_rewardRecipient(the address that receives the rewards) is given as argument to the function and there is no check to verify that it is the correct auction reward receiver.
+Hence an attacker can call the function before the relayer does, he can thus complete the auction and give another address for_rewardRecipientwhich will receive all the rewards.
+The result is in the end that the true auction reward recipient will get his reward stolen by other users.
+Recommended Mitigation Steps
+Add a check in therngCompletefunction to make sure that only the relayer can call it, the function can be modified as follows:
+functionrngComplete(uint256_randomNumber,uint256_rngCompletedAt,address_rewardRecipient,uint32_sequenceId,AuctionResultcalldata_rngAuctionResult)externalreturns(bytes32) {// @audit only called by rngAuctionRelayerif(msg.sender!=rngAuctionRelayer)revertNotRelayer();...}
+Assessed type
+Access Control
+asselstine (PoolTogether) confirmed
+

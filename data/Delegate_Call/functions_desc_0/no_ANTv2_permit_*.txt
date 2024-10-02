@@ -1,0 +1,30 @@
+This code defines an external function named permit, which is commonly used in ERC20 token contracts to allow users to approve token transfers using offchain signatures instead of onchain transactions. This method is particularly useful for reducing gas costs and improving user experience in decentralized applications.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting the approval.
+    spender: The address of the spender who is being granted approval to spend the owner's tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp until which the permit is valid.
+    v, r, s: These are components of an ECDSA signature that the owner generates offchain to authorize this permit.
+
+2. Validation of Deadline:
+    The function starts by checking if the deadline is greater than or equal to the current block timestamp (block.timestamp). If the deadline has passed, the function reverts with the error message "ANTV2:AUTH_EXPIRED".
+
+3. Encoding Data:
+    The function then creates a hash of the encoded data using keccak256. The data being encoded includes:
+      PERMIT_TYPEHASH: A constant that defines the structure of the permit message.
+      owner: The address of the token owner.
+      spender: The address of the spender.
+      value: The amount of tokens.
+      nonces[owner]++: The current nonce for the owner, which is incremented after being used to prevent replay attacks.
+      deadline: The timestamp until which the permit is valid.
+
+4. Signature Validation:
+    The function calls _validateSignedData with the owner's address, the encoded data hash, and the signature components (v, r, s). This internal function verifies that the signature corresponds to the owner's address and that it matches the encoded data, ensuring that the permit was indeed authorized by the owner.
+
+5. Approval of Tokens:
+    If the signature is valid, the function proceeds to call _approve, an internal function that updates the allowance mapping to grant the spender the right to spend value amount of tokens on behalf of the owner.
+
+This permit function streamlines the approval process by allowing users to sign messages offchain and submit them onchain, reducing the number of transactions required and thus saving gas fees. It is a common feature in modern ERC20 token contracts, enhancing both security and usability.

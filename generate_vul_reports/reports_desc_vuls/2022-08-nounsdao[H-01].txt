@@ -1,0 +1,23 @@
+Type of vulnerability: Logical Error
+
+Cause of vulnerability: Lack of validation for the delegatee address in the `delegateBySig` function, allowing the delegatee to be address(0).
+
+Execution process:
+1. A user signs a message to delegate their votes to address(0) using the `delegateBySig` function.
+2. The function processes the signature and sets the user's delegate to address(0).
+3. The `delegates` function returns the user's own address as the delegate, but `getCurrentVotes` returns 0 for the user.
+4. Any attempt to move votes or transfer NFTs by the user fails due to an overflow in the `_moveDelegates` function.
+
+Vulnerable code:
+```solidity
+function delegateBySig(address delegatee, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) public {
+    bytes32 domainSeparator = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), getChainId(), address(this)));
+    bytes32 structHash = keccak256(abi.encode(DELEGATION_TYPEHASH, delegatee, nonce, expiry));
+    bytes32 digest = keccak256(abi.encodePacked('\x19\x01', domainSeparator, structHash));
+    address signatory = ecrecover(digest, v, r, s);
+    require(signatory != address(0), 'ERC721Checkpointable::delegateBySig: invalid signature');
+    require(nonce == nonces[signatory]++, 'ERC721Checkpointable::delegateBySig: invalid nonce');
+    require(block.timestamp <= expiry, 'ERC721Checkpointable::delegateBySig: signature expired');
+    return _delegate(signatory, delegatee);
+}
+```

@@ -1,0 +1,14 @@
+Type of vulnerability: Incorrect Reward Distribution
+Cause of vulnerability: The `masterChef` contract incorrectly associates deposits and withdrawals with the address of the `ConvexStakingWrapper` or `StakingRewards` contract, rather than the end-user's address.
+Execution process: When a user deposits or withdraws through the `ConvexStakingWrapper` or `StakingRewards` contract, the `masterChef` contract records the transaction under the contract's address instead of the user's address. This leads to all subsequent rewards being calculated and sent to the last user who interacted with the contract, rather than the original depositor.
+Vulnerable code: 
+```solidity
+UserInfo storage user = userInfo[_pid][_msgSender()];
+updatePool(_pid);
+if (user.amount > 0) {
+    uint pending = user.amount * pool.accConcurPerShare / _concurShareMultiplier - user.rewardDebt;
+    if (pending > 0) {
+        safeConcurTransfer(_recipient, pending);
+    }
+}
+```

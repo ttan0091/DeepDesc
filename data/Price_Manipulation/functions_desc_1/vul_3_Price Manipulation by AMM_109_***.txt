@@ -1,0 +1,31 @@
+This code defines an internal function named _executeTrade, which is designed to facilitate a trade between two ERC20 tokens on behalf of a SetToken. The function takes several parameters including trade details, tokens involved, and additional data for the trade. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    _actionInfo: A memory struct containing details about the trade, including the SetToken instance, the quantity of tokens to send, and the minimum quantity of tokens to receive.
+    _sendToken: An instance of the ERC20 token that will be sent in the trade.
+    _receiveToken: An instance of the ERC20 token that will be received in the trade.
+    _data: Additional data required for the trade, possibly including specific parameters or configurations for the exchange adapter.
+
+2. Initialization:
+    The function starts by extracting the setToken and notionalSendQuantity (the amount of tokens to be sent) from the _actionInfo struct.
+
+3. Approval for Token Transfer:
+    The function calls setToken.invokeApprove, which is likely a method to approve the transfer of _sendToken tokens. This approval is necessary for the exchange adapter to spend the tokens on behalf of the SetToken. The approval is set to the spender address obtained from _actionInfo.exchangeAdapter.getSpender() and the amount is notionalSendQuantity.
+
+4. Preparing Trade Call Data:
+    The function then retrieves the necessary details to execute the trade from the exchange adapter:
+      targetExchange: The address of the exchange where the trade will be executed.
+      callValue: The amount of Ether (if any) to be sent with the call.
+      methodData: The encoded data for the trade execution, including the method to call and its parameters.
+
+5. Executing the Trade:
+    The function calls setToken.invoke with the targetExchange, callValue, and methodData to execute the trade on the specified exchange.
+
+6. PostTrade Token Balance Check:
+    After the trade, the function calculates the actual amount of _receiveToken received by subtracting the preTradeReceiveTokenBalance (recorded before the trade) from the current balance of _receiveToken held by the SetToken.
+    It then checks if the received quantity meets the minimum required quantity (minNotionalReceiveQuantity). If not, it reverts the transaction with an error message indicating "Slippage too high".
+
+7. Return Value:
+    Finally, the function returns the quantity of _receiveToken received from the trade.
+
+This function is crucial for automated trading within a decentralized finance (DeFi) context, ensuring that trades are executed according to predefined parameters and conditions, and handling the necessary approvals and interactions with external exchanges or adapters.

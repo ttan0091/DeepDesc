@@ -1,0 +1,23 @@
+[H-04] Deletingnft Infocan cause users’nft.unpaidRewardsto be permanently erased
+Submitted by WatchPug, also found by 0xDjango and hyh
+LiquidityFarming.sol#L229-L253
+functionwithdraw(uint256_nftId,addresspayable_to)externalwhenNotPausednonReentrant{addressmsgSender=_msgSender();uint256nftsStakedLength=nftIdsStaked[msgSender].length;uint256index;for(index=0;index<nftsStakedLength; ++index) {if(nftIdsStaked[msgSender][index] ==_nftId) {break;}}require(index!=nftsStakedLength,"ERR__NFT_NOT_STAKED");nftIdsStaked[msgSender][index] =nftIdsStaked[msgSender][nftIdsStaked[msgSender].length-1];nftIdsStaked[msgSender].pop();_sendRewardsForNft(_nftId,_to);deletenftInfo[_nftId];(addressbaseToken, ,uint256amount) =lpToken.tokenMetadata(_nftId);amount/=liquidityProviders.BASE_DIVISOR();totalSharesStaked[baseToken] -=amount;lpToken.safeTransferFrom(address(this),msgSender,_nftId);emitLogWithdraw(msgSender,baseToken,_nftId,_to);}
+LiquidityFarming.sol#L122-L165
+function_sendRewardsForNft(uint256_nftId,addresspayable_to)internal{NFTInfostoragenft=nftInfo[_nftId];require(nft.isStaked,"ERR__NFT_NOT_STAKED");(addressbaseToken, ,uint256amount) =lpToken.tokenMetadata(_nftId);amount/=liquidityProviders.BASE_DIVISOR();PoolInfomemorypool=updatePool(baseToken);uint256pending;uint256amountSent;if(amount>0) {pending= ((amount*pool.accTokenPerShare) /ACC_TOKEN_PRECISION) -nft.rewardDebt+nft.unpaidRewards;if(rewardTokens[baseToken] ==NATIVE) {uint256balance=address(this).balance;if(pending>balance) {unchecked{nft.unpaidRewards=pending-balance;}(boolsuccess, ) =_to.call{value:balance}("");require(success,"ERR__NATIVE_TRANSFER_FAILED");amountSent=balance;}else{nft.unpaidRewards=0;(boolsuccess, ) =_to.call{value:pending}("");require(success,"ERR__NATIVE_TRANSFER_FAILED");amountSent=pending;}}else{IERC20UpgradeablerewardToken=IERC20Upgradeable(rewardTokens[baseToken]);uint256balance=rewardToken.balanceOf(address(this));if(pending>balance) {unchecked{nft.unpaidRewards=pending-balance;}amountSent=_sendErc20AndGetSentAmount(rewardToken,balance,_to);}else{nft.unpaidRewards=0;amountSent=_sendErc20AndGetSentAmount(rewardToken,pending,_to);}}}nft.rewardDebt= (amount*pool.accTokenPerShare) /ACC_TOKEN_PRECISION;emitLogOnReward(_msgSender(),baseToken,amountSent,_to);}
+Whenwithdraw()is called,_sendRewardsForNft(_nftId, _to)will be called to send the rewards.
+In_sendRewardsForNft(), whenaddress(this).balanceis insufficient at the moment,nft.unpaidRewards = pending - balancewill be recorded and the user can get it back at the next time.
+However, at L244, the wholenftInfois being deleted, so thatnft.unpaidRewardswill also get erased.
+There is no way for the user to get back thisunpaidRewardsanymore.
+Recommended Mitigation Steps
+Consider adding a new parameter namedforceforwithdraw(),require(force || unpaidRewards == 0)before deleting nftInfo.
+ankurdubey521 (Biconomy) confirmed and commented:
+Great catch! Thanks a lot for bringing these up.HP-25: C4 Audit Fixes, Dynamic Fee Changes bcnmy/hyphen-contract#42
+pauliax (judge) commented:
+Great find, deserves a severity of high as it may incur in funds lost for the users.
+KenzoAgada (warden) commented:
+Shouldn’t this be medium severity, as only rewards are lost and not original user funds?
+As the risk TLDR says -2 — Med: Assets not at direct risk, but the function of the protocol or its availability could be impacted, or leak value with a hypothetical attack path with stated assumptions, but external requirements.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).There are other lost-rewards issues that have been classified as high, this questions pertains to them as well.
+0xleastwood (warden) commented:
+I would be inclined to keep this as high risk as it is less about the protocol leaking value and more about rewards being completely wiped and lost forever. I would argue, the user’s assets at this point in time DO include all unpaid rewards, so it is perfectly reasonable to treat this as high risk.
+pauliax (judge) commented:
+Agree that the boundaries are not very clear, this issue might fall somewhere between Medium and High severities. But my initial thought was similar to that of @0xleastwood, the rewards already belong to the user, and losing them will make the user lose on time and other opportunities. Also, this is not a hypothetical attack scenario, but a very real valid execution path, thus I think a high severity is fine here.

@@ -1,0 +1,14 @@
+Type of the contract: **Timed External Call Secret**
+Brief description: Allows the owner to make timed calls to external contracts with secrets.
+
+Detailed explanation of the working process:
+1. The contract `TimedExternalCall` has a method `receivePayload` that captures incoming Ether and stores it as a variable called `payload`.
+2. The owner constructs a `Store` that bundles the receiver address, value, and deadline along with a secret.
+3. The owner calls `address(this).send(value)`, attaching the `Store` data and the value in Ether.
+4. The fallback function is triggered, and `receivePayload` processes the incoming Ether, storing it as `payload`.
+5. After the required time has passed, the owner calls the function `executePayload` with the correct secret, extracting the data from `payload` and performing the external call.
+
+Potential vulnerabilities:
+1. Replay attacks: As the secret is passed as a function argument, if any externally owned account (EOA) can call the function with the same secret, the call will succeed.
+2. ETH vs WEI: The contract expects the value parameter to be in Ether, but the `msg.value` is in Wei. This mismatch can lead to failed external calls when setting the deadline appropriately for your payment.
+3. Reverted external calls: If the call to the external contract reverts, the funds will be lost, and `executePayload` will delete the transaction, missing critical information for recovery.

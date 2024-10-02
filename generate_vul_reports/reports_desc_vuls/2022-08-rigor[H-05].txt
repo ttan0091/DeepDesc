@@ -1,0 +1,14 @@
+Type of vulnerability: Signature Verification Bypass
+Cause of vulnerability: Lack of validation for the existence of the community and the community owner's address before signature verification.
+Execution process: An attacker can provide a _communityID that corresponds to a non-existent community, causing _community.owner to be address(0). The checkSignatureValidity function does not revert if the recovered signature address is address(0), allowing the attacker to bypass the signature check and add members to a community that hasn't been created yet.
+Vulnerable code: 
+```solidity
+// Compute hash from bytes
+bytes32 _hash = keccak256(_data);
+// Decode params from _data
+(uint256 _communityID, address _newMemberAddr, bytes memory _messageHash) = abi.decode(_data, (uint256, address, bytes));
+CommunityStruct storage _community = _communities[_communityID];
+// check signatures
+checkSignatureValidity(_community.owner, _hash, _signature, 0); // must be community owner
+checkSignatureValidity(_newMemberAddr, _hash, _signature, 1); // must be new member
+```

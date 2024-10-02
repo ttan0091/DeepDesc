@@ -1,0 +1,12 @@
+[H-01] Lack of access control onassertGovernanceApprovedcan cause funds to be locked
+Submitted by shw, also found by kirk-baird and pauliax
+Lack of access control on theassertGovernanceApprovedfunction ofFlashGovernanceArbiterallows anyone to lock other users’ funds in the contract as long as the users have approved the contract to transferflashGovernanceConfig.amountofflashGovernanceConfig.assetfrom them.
+Proof of Concept
+Alice wants to execute a flash governance decision (e.g., disable to the protocol), so she first callsapproveon theflashGovernanceConfig.assetto allowFlashGovernanceArbiterto transferflashGovernanceConfig.amountof assets from her.An attacker Bob, who listens to the mempool, notices Alice’sapprovetransaction and decides to front-run it. He callsassertGovernanceApprovedwithsenderbeing Alice,targetbeing any address, andemergencybeingtrue.As a result, Alice cannot execute her flash governance decision, and her funds are locked in the contract for theflashGovernanceConfig.unlockTimeperiod.
+Referenced code:DAO/FlashGovernanceArbiter.sol#L60-L81
+Recommended Mitigation Steps
+Only allow certain addresses to call theassertGovernanceApprovedfunction onFlashGovernanceArbiter.
+gititGoro (Behodler) confirmed, but disagreed with High severity and commented:
+The reason I stuck with medium risk is because the user’s funds can’t be lost in this scenario. Only temporarily locked. If the user unapproves FlashGovernanceArbiter on EYE then they simply have to wait until the unlock period has passed and can withdraw again.
+Jack the Pug (judge) commented:
+Agreed. This should be somewhere in between Med and High. If it’s just the users’ deposits being temporarily locked, then it’s definitely a Med. But this one is taking probably all the funds from users’ wallets and locking them against their will, easy to pull off by anyone, all at once for all potential victims.I tend to make it a High so that the future wardens and probably by extent the devs can be more careful with allowances. We have seen so many incidents caused by improper handling of users’ allowances.AtransferFrom()with from not being hard-coded asmsg.senderis evil.My fellow wardens, if you are reading this, do not go easy on atransferFrom()that takes an argument asfrom.

@@ -1,0 +1,27 @@
+This code defines an internal function named safePermit, which is designed to safely execute the permit function of an ERC20 token that supports the ERC20Permit extension. The ERC20Permit extension allows users to modify the allowance of a spender for their tokens by signing a message instead of executing an approve transaction. This function ensures that the permit operation is successful by verifying the nonce change.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    IERC20Permit token: The ERC20 token contract that supports the permit function.
+    address owner: The address of the token owner who is granting the allowance.
+    address spender: The address of the spender who is being granted the allowance.
+    uint256 value: The amount of tokens the spender is allowed to spend.
+    uint256 deadline: The timestamp after which the permit is no longer valid.
+    uint8 v: The recovery ID of the ECDSA signature.
+    bytes32 r: The R component of the ECDSA signature.
+    bytes32 s: The S component of the ECDSA signature.
+
+2. Nonce Check Before Permit:
+    uint256 nonceBefore = token.nonces(owner);: This line retrieves the current nonce of the token owner from the token contract. The nonce is a counter that ensures each permit is unique and can only be used once.
+
+3. Executing the Permit Function:
+    token.permit(owner, spender, value, deadline, v, r, s);: This line calls the permit function on the token contract. The permit function uses the provided signature components (v, r, s) to verify the owner's permission to allow the spender to spend the specified amount of tokens.
+
+4. Nonce Check After Permit:
+    uint256 nonceAfter = token.nonces(owner);: After executing the permit function, this line retrieves the updated nonce of the token owner.
+
+5. Verification of Nonce Change:
+    require(nonceAfter == nonceBefore + 1, "SafeERC20: permit did not succeed");: This line checks if the nonce has been incremented by 1, which indicates that the permit function was successfully executed. If the nonce has not been incremented correctly, the function will revert with the error message "SafeERC20: permit did not succeed".
+
+By ensuring that the nonce is incremented correctly, the safePermit function guarantees that the permit operation was successful and that the allowance was correctly set for the spender. This approach helps prevent issues where a permit might be incorrectly processed or ignored by the token contract.

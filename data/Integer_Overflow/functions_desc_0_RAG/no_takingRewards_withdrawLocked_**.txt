@@ -1,0 +1,39 @@
+[Execution Flow]:
+This code defines a public function named withdrawLocked, which allows a user to withdraw their locked staking tokens if the lock period has expired or if the global unlockedStakes flag is set to true. The function is marked as nonReentrant to prevent reentrancy attacks and includes an updateReward modifier to ensure the user's rewards are updated before the withdrawal. Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Modifiers:
+    The function withdrawLocked accepts a single parameter kek_id of type bytes32, which is used to identify the specific locked stake.
+    The function is marked as public, meaning it can be called from outside the contract as well as internally.
+    The nonReentrant modifier is used to prevent reentrancy attacks by ensuring that external contract calls cannot recursively call back into the withdrawLocked function.
+    The updateReward modifier is applied to update the rewards for the caller (msg.sender) before proceeding with the withdrawal.
+
+2. Initialization:
+    A LockedStake memory variable thisStake is initialized with amount set to 0. This variable will store the details of the stake identified by kek_id.
+    A uint variable theIndex is declared to store the index of the stake in the lockedStakes array.
+
+3. Finding the Stake:
+    A for loop iterates over the lockedStakes[msg.sender] array to find the stake with the matching kek_id.
+    If a matching kek_id is found, the corresponding LockedStake is assigned to thisStake, and the index is stored in theIndex. The loop is then exited using the break statement.
+
+4. Validation:
+    The function checks if thisStake.kek_id matches the provided kek_id to ensure a stake was found. If not, it reverts with the message "Stake not found".
+    It then checks if the current block timestamp is greater than or equal to the ending_timestamp of the stake or if unlockedStakes is true. If neither condition is met, it reverts with the message "Stake is still locked!".
+
+5. Calculating Amounts:
+    The theAmount variable is set to the amount of the stake.
+    The boostedAmount is calculated by multiplying theAmount by the multiplier of the stake and dividing by PRICE_PRECISION.
+
+6. Updating Balances and Supplies:
+    The locked balance and boosted balance of the caller are reduced by theAmount and boostedAmount, respectively.
+    The total staking token supply and boosted supply are also reduced by theAmount and boostedAmount, respectively.
+
+7. Removing the Stake:
+    The stake is removed from the lockedStakes array by deleting the element at theIndex.
+
+8. Transferring Tokens:
+    The staking tokens are transferred to the caller using stakingToken.safeTransfer.
+
+9. Event Emission:
+    An event WithdrawnLocked is emitted to log the withdrawal, including the caller's address, the amount withdrawn, and the kek_id.
+
+This function ensures that users can only withdraw their locked staking tokens after the lock period has expired or if the global unlock flag is set, while also updating their rewards and maintaining the integrity of the staking token balances and supplies.

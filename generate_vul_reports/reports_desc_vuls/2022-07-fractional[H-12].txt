@@ -1,0 +1,33 @@
+Type of vulnerability: Unrestricted Token Transfer
+
+Cause of vulnerability: The `BaseVault` contract allows any address to transfer tokens from an approved address to any other address, due to the residual allowance left after initial deposits.
+
+Execution process: 
+1. Alice approves the `BaseVault` contract to transfer her tokens.
+2. Alice deposits some of her tokens into the vault.
+3. An attacker notices the residual allowance and uses the `BaseVault` contract to transfer the remaining tokens from Alice's address to the attacker's address.
+
+Vulnerable code:
+```solidity
+function batchDepositERC20(address _from, address _to, address[] calldata _tokens, uint256[] calldata _amounts) external {
+    for (uint256 i = 0; i < _tokens.length; ) {
+        IERC20(_tokens[i]).transferFrom(_from, _to, _amounts[i]);
+        unchecked { ++i; }
+    }
+}
+
+function batchDepositERC721(address _from, address _to, address[] calldata _tokens, uint256[] calldata _ids) external {
+    for (uint256 i = 0; i < _tokens.length; ) {
+        IERC721(_tokens[i]).safeTransferFrom(_from, _to, _ids[i]);
+        unchecked { ++i; }
+    }
+}
+
+function batchDepositERC1155(address _from, address _to, address[] calldata _tokens, uint256[] calldata _ids, uint256[] calldata _amounts, bytes[] calldata _datas) external {
+    unchecked {
+        for (uint256 i = 0; i < _tokens.length; ++i) {
+            IERC1155(_tokens[i]).safeTransferFrom(_from, _to, _ids[i], _amounts[i], _datas[i]);
+        }
+    }
+}
+```

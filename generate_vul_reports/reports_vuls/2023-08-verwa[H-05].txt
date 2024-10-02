@@ -1,0 +1,49 @@
+[H-05] It is possible to DoS all the functions related to some gauge inGaugeController
+Submitted bybart1e, also found by0xDetermination
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L91-L114
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L142
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L180
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L189
+https://github.com/code-423n4/2023-08-verwa/blob/a693b4db05b9e202816346a6f9cada94f28a2698/src/GaugeController.sol#L247
+_get_weightfunction is used in order to return the total gauge’s weight and it also updates past values of thepoints_weightmapping, iftime_weight[_gauge_addr]is less or equal to theblock.timestamp. It contains the following loop:
+for(uint256i;i<500; ++i) {if(t>block.timestamp)break;t+=WEEK;uint256d_bias=pt.slope*WEEK;if(pt.bias>d_bias) {pt.bias-=d_bias;uint256d_slope=changes_weight[_gauge_addr][t];pt.slope-=d_slope;}else{pt.bias=0;pt.slope=0;}points_weight[_gauge_addr][t] =pt;if(t>block.timestamp)time_weight[_gauge_addr] =t;}
+There are two possible scenarios:
+pt.bias > d_biaspt.bias <= d_bias
+The first scenario will always happen naturally, sincept.biaswill be the total voting power allocated for some point and since slope is a sum of all users’ slopes and slopes are calculated in such a way that<SLOPE> * <TIME_TO_END_OF_STAKING_PERIOD> = <INITIAL_BIAS>.
+However, it is possible to artificially changepoints_weight[_gauge_addr][t].biasby callingchange_gauge_weight(which can be only called by the governance). It important to notice here, thatchange_gauge_weightdoesn’t modifypoints_weight[_gauge_addr][t].slope
+change_gauge_weightdoes permit to change the weight to a smaller number than its current value, so it’s both perfectly legal and possible that governance does this at some point (it could be changing the weight to0or any other value smaller than the current one).
+Then, at some point when_get_weightis called, we will enter theelseblock becausept.biaswill be less than the sum of all user’s biases (since originally these values were equal, butpt.biaswas lowered by the governance). It will setpt.biasandpt.slopeto0.
+After some time, the governance may realise that the gauge’s weight is0, but should be bigger and may change it to some bigger value.
+We will have the situation wherepoints_weight[_gauge_addr][t].slope = 0andpoints_weight[_gauge_addr][t].bias > 0.
+If this happens and there is any nonzerochanges_weight[_gauge_addr]not yet taken into account (for instance in the week after the governance update), then all the functions related to the gauge at_gauge_addrwill not work.
+It’s because, the following functions:
+checkpoint_gaugegauge_relative_weight_writegauge_relative_weight_change_gauge_weightchange_gauge_weightvote_for_gauge_weightsremove_gauge
+call_get_weightat some point.
+Let’s see what will happen in_get_weightwhen it’s called:
+uint256d_bias=pt.slope*WEEK;if(pt.bias>d_bias) {pt.bias-=d_bias;uint256d_slope=changes_weight[_gauge_addr][t];pt.slope-=d_slope;}else{
+We will enter theifstatement, becausept.biaswill be> 0andpt.slopewill be0(or some small value, if users give their voting power to gauge in the meantime), since it was previously set to0in theelsestatement and wasn’t touched when gauge’s weight was changed by the governance. We will:
+Subtractd_biasfrompt.biaswhich will succeedAttempt to subtractchanges_weight[_gauge_addr][t]fromd_slope
+However, there could be a user (or users) whose voting power allocation finishes attfor sometnot yet handled. It means thatchanges_weight[_gauge_addr][t] > 0(and ifpt.slopeis not0, thenchanges_weight[_gauge_addr][t]still may be greater than it).
+If this happens, then the integer underflow will happen inpt.slope -= d_slope;. It will now happen ineverycall to_get_weightand it won’t be possible to recover, because:
+vote_for_gauge_weightswill revertchange_gauge_weightwill revert
+as they call_get_weightinternally. So, it won’t be possible to modifypt.slopeandpt.biasfor any point in time, so therevertwill always happen for that gauge. It won’t even be possible to remove that gauge.
+So, in short, the scenario is as follows:
+Users allocate their voting power to a gaugeX.Governance at some point decreases the weight ofX.Users withdraw their voting power as the time passes, and finally the weight ofXdrops to0.Governance realises this and increases weight ofXsince it wants to incentivise users to provide liquidity inX.Voting power delegation of some user(s) ends some time after that and_get_weightattempts to subtractchanges_weight[_gauge_addr][t]from the current slope (which is either0or some small value) and it results in integer underflow.Xis unusable and it’s impossible to withdraw voting power from (so users cannot give their voting power somewhere else). The weight ofXcannot be changed anymore andXcannot be even removed.
+Note that it is also possible to frontrun the call tochange_gauge_weightwhen the weight is set to a lower value- user with a lot of capital can watch the mempool and if weight is lowered to some valuex, he can give a voting power ofxto that gauge. Then, right after weight is changed by the governance, he can withdraw his voting power, leaving the gauge with weight =0. Then, governance will manually increase the weight to recover and DoS will happen as described.So it is only needed that governance decreases gauge’s weight at some point.
+Impact
+As stated, above the impact is that the entire gauge is useless, voting powers are permanently locked there and its weight is impossible to change, so the impact is high.
+In order for this situation to succeed, governance has to decrease weight of some gauge, but I think it’s very likely, because:
+_get_weightchecks thatif (pt.bias > d_bias)and it handles the opposite situation, so it is anticipated that it may genuinely happen.It is definitely possible to decrease gauge’s weight and it’s even possible to zero it out (as in theremove_gauge).The situation whereold_biasis greater thanold_sum_bias + new_biasis handled invote_for_gauge_weights, but it may only happen when gauge’s weight was decreased by the governance.The situation whereold_slope.slopeis greater thanold_sum_slope + new_slope.slopeis also handled there, but it may only happen if we enter theelsestatement in_get_weight.
+So, it is predicted that gauge’s weight may be lowered and the protocol does its best to handle it properly, but as I showed, it fails to do so. Hence, I believe that this finding is of High severity, because although it requires governance to perform some action (decrease weight of some gauge), I believe that it’s likely that governance decides to decrease weight, especially that it is anticipated in the code and edge cases are handled there (and they wouldn’t be if we assumed that governance would never allowed them to happen).
+Proof of Concept
+Please run the test below. The test shows slightly simplified situation where governance just sets weight to0forgauge1, but as I’ve described above, it suffices that it’s just changed to a smaller value and it may drop to0naturally as users withdraw their voting power. The following import will also have to be added:import {Test, stdError} from "forge-std/Test.sol";.
+functiontestPoC1()public{// gauge is being set upvm.startPrank(gov);gc.add_gauge(gauge1);gc.change_gauge_weight(gauge1,0);vm.stopPrank();// `user1` pays some money and adds his power to `gauge1`vm.startPrank(user1);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);vm.warp(block.timestamp+10weeks);gc.checkpoint_gauge(gauge1);vm.stopPrank();// `user2` does the samevm.startPrank(user2);ve.createLock{value:1ether}(1ether);gc.vote_for_gauge_weights(gauge1,10000);vm.warp(block.timestamp+1weeks);gc.checkpoint_gauge(gauge1);vm.stopPrank();vm.warp(block.timestamp+1825days-14weeks);vm.startPrank(gov);// weight is changed to `0`, just to simplify// normally, weight would just be decreased here and then subsequently decreased by users when their// locking period is over until it finally drops to `0`// alternatively, some whale can frontrun a call to `change_gauge_weight` as described and then// withdraw his voting power leaving the gauge with `0` slope and `0` biasgc.change_gauge_weight(gauge1,0);vm.warp(block.timestamp+1weeks);// now, weight is changed to some bigger valuegc.change_gauge_weight(gauge1,1ether);vm.stopPrank();// some time passes so that user1's locking period endsvm.warp(block.timestamp+5weeks);// `user2` cannot change his weight although his `locked.end` is big enoughvm.prank(user2);vm.expectRevert(stdError.arithmeticError);gc.vote_for_gauge_weights(gauge1,0);// governance cannot change weightvm.startPrank(gov);vm.expectRevert(stdError.arithmeticError);gc.change_gauge_weight(gauge1,2ether);// governance cannot even remove the gauge// it's now impossible to do anything on gauge1vm.expectRevert(stdError.arithmeticError);gc.remove_gauge(gauge1);vm.stopPrank();}
+Tools Used
+VS Code
+Recommended Mitigation Steps
+Performpt.slope -= d_slopein_get_weightonly whenpt.slope >= d.slopeand otherwise zero it out.
+__141345__ (Lookout) commented:
+pt.slope -= d_slopeunderflow, DoS gauge operation.
+OpenCoreCH (veRWA) confirmed
+alcueca (Judge) commented:
+This finding does a great job at describing the vulnerability and its impact from a computational point of view, including an executable PoC. Its duplicate#386is also worthy of note since it explains the root cause from a mathematical point of view. Although this finding was selected as best, both findings should be read for their complementary points of view.

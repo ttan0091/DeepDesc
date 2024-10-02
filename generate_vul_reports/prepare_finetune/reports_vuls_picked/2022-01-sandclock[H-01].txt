@@ -1,0 +1,20 @@
+Type of vulnerability: Arithmetic Overflow/Underflow
+
+Cause of vulnerability: The contract allows the transfer of `totalUnderlying()` to `sponsorToTransfer` when `sponsorAmount > totalUnderlying()`, which can lead to a situation where `totalUnderlying()` is significantly reduced. This reduction, combined with a subsequent small deposit, can cause an arithmetic overflow in the calculation of `newShares`.
+
+Execution process:
+1. An attacker calls `forceUnsponsor()` with `sponsorAmount` greater than `totalUnderlying()`, causing the contract to transfer `totalUnderlying()` to `sponsorToTransfer`.
+2. The attacker then sends a small amount (e.g., 1 wei) of the underlying token to the contract.
+3. The attacker calls `deposit()` with a small amount (e.g., 0.1 * 1e18), causing `newShares` to be calculated as `(_amount * _totalShares) / _totalUnderlyingMinusSponsored`. Since `_totalUnderlyingMinusSponsored` is very small (1 wei), `newShares` becomes extremely large due to the division.
+4. This manipulation of `totalShares` can lead to the contract becoming unusable when certain deposit/withdraw amounts are reached, effectively freezing users' funds.
+
+Vulnerable code:
+```solidity
+if(_force && sponsorAmount > totalUnderlying()) {
+    sponsorToTransfer = totalUnderlying();
+} else if(!_force) {
+    require(sponsorToTransfer <= totalUnderlying(), "Vault: not enough funds to unsponsor");
+}
+totalSponsored -= sponsorAmount;
+underlying.safeTransfer(_to, sponsorToTransfer);
+```

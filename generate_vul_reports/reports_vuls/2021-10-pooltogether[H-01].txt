@@ -1,0 +1,37 @@
+[H-01] The formula of number of prizes for a degree is wrong
+Submitted by WatchPug, also found by cmichel.
+The formula of the number of prizes for a degree per the document:https://v4.docs.pooltogether.com/protocol/concepts/prize-distribution/#splitting-the-prizesis:
+Number of prizes for a degree = (2^bit range)^degree - (2^bit range)^(degree-1) - (2^bit range)^(degree-2) - ...
+Should be changed to:
+Number of prizes for a degree = (2^bit range)^degree - (2^bit range)^(degree-1)
+or
+Number of prizes for a degree = 2^(bit range * degree) - 2^(bit range * (degree-1))
+Impact
+Per the document:
+prize for a degree = total prize * degree percentage / number of prizes for a degree
+Due to the miscalculation ofnumber of prizes for a degree, it will be smaller than expected, as a result,prize for a degreewill be larger than expected. Making the protocol giving out more prizes than designed.
+Proof
+We will usef(bitRange, degree)to representnumberOfPrizesForDegree(bitRangeSize, degree).
+Proof: (method 1)
+2 ^ {bitRange \times n} = f(bitRange, n) + f(bitRange, n-1) + f(bitRange, n-2) + ... + f(bitRange, 1) + f(bitRange, 0)f(bitRange, n) = 2 ^ {bitRange \times n} - ( f(bitRange, n-1) + f(bitRange, n-2) + ... + f(bitRange, 1) + f(bitRange, 0) )f(bitRange, n) = 2 ^ {bitRange \times n} - f(bitRange, n-1) - ( f(bitRange, n-2) + ... + f(bitRange, 1) + f(bitRange, 0) )Because:2 ^ {bitRange \times (n-1)} = f(bitRange, n-1) + f(bitRange, n-2) + ... + f(bitRange, 1) + f(bitRange, 0)2 ^ {bitRange \times (n-1)} - f(bitRange, n-1) = f(bitRange, n-2) + ... + f(bitRange, 1) + f(bitRange, 0)Therefore:f(bitRange, n) = 2 ^ {bitRange \times n} - f(bitRange, n-1) - ( 2 ^ {bitRange \times (n-1)} - f(bitRange, n-1) )f(bitRange, n) = 2 ^ {bitRange \times n} - f(bitRange, n-1) - 2 ^ {bitRange \times (n-1)} + f(bitRange, n-1)f(bitRange, n) = 2 ^ {bitRange \times n} - 2 ^ {bitRange \times (n-1)}
+Because2^x = 1 << x
+Therefore, whenn > 0:
+f(bitRange, n) = ( 1 << bitRange * n ) - ( 1 << bitRange * (n - 1) )
+QED.
+Proof: (method 2)
+By definition,degree nis constructed by 3 chunks:
+The first N numbers, must equal the matching numbers. Number of possible values:1;The N-th number, must not equal the N-th matching number. Number of possible values:2^bitRange - 1From N (not include) until the end. Number of possible values:2 ^ (bitRange * (n-1))
+Therefore, totalnumberOfPrizesForDegreewill be:
+f(bitRange, n) = (2 ^ {bitRange} - 1) \times 2 ^ {bitRange \times (n - 1)}f(bitRange, n) = 2 ^ {bitRange} \times 2 ^ {bitRange \times (n - 1)} - 2 ^ {bitRange \times (n - 1)}f(bitRange, n) = 2 ^ {bitRange + bitRange \times (n - 1)} - 2 ^ {bitRange \times (n - 1)}f(bitRange, n) = 2 ^ {bitRange + bitRange \times n - bitRange} - 2 ^ {bitRange \times (n - 1)}f(bitRange, n) = 2 ^ {bitRange \times n} - 2 ^ {bitRange \times (n - 1)}
+QED.
+Recommendation
+https://github.com/pooltogether/v4-core/blob/055335bf9b09e3f4bbe11a788710dd04d827bf37/contracts/DrawCalculator.sol#L423-L431
+/***@noticeCalculates the number of prizes for a given prizeDistributionIndex*@param_bitRangeSizeBit range size for Draw*@param_prizeTierIndexIndex of the prize tier array to calculate*@returnreturns the fraction of the total prize (base 1e18)*/function_numberOfPrizesForIndex(uint8_bitRangeSize,uint256_prizeTierIndex)internalpurereturns(uint256){uint256bitRangeDecimal=2**uint256(_bitRangeSize);uint256numberOfPrizesForIndex=bitRangeDecimal**_prizeTierIndex;while(_prizeTierIndex>0) {numberOfPrizesForIndex-=bitRangeDecimal**(_prizeTierIndex-1);_prizeTierIndex--;}returnnumberOfPrizesForIndex;}
+L423-431 should change to:
+if(_prizeTierIndex>0) {return(1<<_bitRangeSize*_prizeTierIndex) - (1<<_bitRangeSize* (_prizeTierIndex-1) );}else{return1;}
+BTW, the comment on L416 is wrong:
+seems like it’s copied from\_calculatePrizeTierFraction()plus, it’s not base 1e18 but base 1e9
+PierrickGT (PoolTogether) confirmed and patched:
+PR:https://github.com/pooltogether/v4-core/pull/242
+Alex the Entreprenerd (judge) commented:
+The warden found the usage of an incorrect formula that would cause the protocol to give out larger prizes than expected, the sponsor has mitigated in a following PR

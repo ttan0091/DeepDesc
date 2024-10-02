@@ -1,0 +1,13 @@
+[H-01] NFT owner can create multiple auctions
+Submitted by 0xliumin, also found by leastwood
+NFTMarketReserveAuction.sol#L325-L349NFTMarketReserveAuction.sol#L596-L599
+NFT owner can permanently lock funds of bidders.
+Proof of Concept
+Alice (the attacker) callscreateReserveAuction, and creates one like normal. let this be auction id 1.
+Alice callscreateReserveAuctionagain, before any user has placed a bid (this is easy to guarantee with a deployed attacker contract). We’d expect that Alice wouldn’t be able to create another auction, but she can, because_transferToEscrowdoesn’t revert if there’s an existing auction. let this be Auction id 2.
+SincenftContractToTokenIdToAuctionId[nftContract][tokenId]will contain auction id 2, all bidders will see that auction as the one to bid on (unless they inspect contract events or data manually).
+Alice can now cancel auction id 1, then cancel auction id 2, locking up the funds of the last bidder on auction id 2 forever.
+Recommended Mitigation Steps
+Prevent NFT owners from creating multiple auctions.
+NickCuso (Foundation) confirmed and commented:
+This is a great find!The impact of this bug is:Bidder’s funds are stuck in escrow in an unrecoverable way without an upgrade, and even with an upgrade it would have been non-trivial to offer a migration path to recover the funds (but it would have been possible to recover correctly).It allows sellers to stop the clock and/or back out of an auction. Normally once a bid is received we do not allow the seller to cancel the auction. With this bug, they could have created a new auction and then cancel that in order to back out of the deal entirely. This violates trust with collectors.We have fixed this problem by adding the following code tocreateReserveAuction:// This check must be after _transferToEscrow in case auto-settle was requiredif(nftContractToTokenIdToAuctionId[nftContract][tokenId] !=0) {revertNFTMarketReserveAuction_Already_Listed(nftContractToTokenIdToAuctionId[nftContract][tokenId]);}

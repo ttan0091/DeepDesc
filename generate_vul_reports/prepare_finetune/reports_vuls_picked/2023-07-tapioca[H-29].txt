@@ -1,0 +1,13 @@
+Type of vulnerability: Argument Mismatch in Function Call
+Cause of vulnerability: The `exercise()` function in `BaseTOFTOptionsModule` expects an `address module` argument, but this argument is not included in the call from `_nonBlockingLzReceive()` in `BaseTOFT`, causing the function call to fail.
+Execution process: When a cross-chain message of type `PT_TAP_EXERCISE` is received in `lzReceive()`, it delegates the call to `BaseTOFTOptionsModule.exercise()`. However, due to the missing `address module` argument, the function call reverts, leading to lost funds on the source chain as they cannot be credited on the destination chain.
+Vulnerable code: 
+```solidity
+function _nonblockingLzReceive(uint16 _srcChainId, bytes memory _srcAddress, uint64 _nonce, bytes memory _payload) internal virtual override {
+    uint256 packetType = _payload.toUint256(0);
+    ...
+    } else if (packetType == PT_TAP_EXERCISE) {
+        _executeOnDestination(Module.Options, abi.encodeWithSelector(BaseTOFTOptionsModule.exercise.selector, _srcChainId, _srcAddress, _nonce, _payload), _srcChainId, _srcAddress, _nonce, _payload);
+    ...
+}
+```

@@ -1,0 +1,19 @@
+[H-04] Incorrect approval mechanism breaks all Magnetar functionality
+Submitted bycarrotsmuggler, also found byKIntern_NA
+The Magnetar contract hands out approvals to various contracts so that the target contracts can use any tokens held currently by the Magnetar contract.
+The issue is that at some point of time, all the target contracts were refactored to usepermitCto handle token transfers. However, this change wasn’t reflected in the Magnetar contracts. Thus, instead of handing outpermitCapprovals, Magnetar hands out normal ERC20 approvals or yieldbox approvals. This essentially breaks the whole system.
+There are numerous instances of this in the codebase. Essentially, almost every approval in the Magnetar contract is incorrect. Below are some examples, however the entire codebase needs to be checked for approvals and corrected.
+The_depositYBLendSGLfunction inMagnetarAssetCommonModule.solcontract gives approval to the singularity contract via yieldbox. However, if we check the_addTokensfunction in the singularity contract below, we see the token transfers actually take place viapearlmit/permitC.
+_setApprovalForYieldBox(singularityAddress,yieldBox_);
+https://github.com/Tapioca-DAO/Tapioca-bar/blob/9d76b2fc7e2752ca8a816af2d748a0259af5ea42/contracts/markets/singularity/SGLCommon.sol#L165-L177
+Since the Magnetar contract does not givepermitCapproval to the singularity contract, and instead only gives yieldbox approval, the singularity contract is unable to transfer tokens from the Magnetar contract.
+Similarly, in the_wrapSglReceiptfunction, the Magnetar gives approval to the TOFT contract vie ERC20 approval:
+IERC20(sgl).approve(tReceiptAddress,fraction);
+But if we check the TOFT contract, we see the tokens are transferred viapermitCand not with the raw tokens:
+https://github.com/Tapioca-DAO/TapiocaZ/blob/57750b7e997e5a1654651af9b413bbd5ea508f59/contracts/tOFT/BaseTOFT.sol#L73
+Since the Magnetar contract does not hand out thepermitCapprovals, most of the token transfers via Magnetar will fail.
+Proof of Concept
+The issue arises due to the target contracts usingpermitC, while Magnetar only giving approvals of the token itself or yieldbox. This can be verified by checking the Magnetar contract and the target contracts, as shown above.
+Recommended Mitigation Steps
+Refactor Magnetar to give approvals viapermitCthroughout.
+cryptotechmaker (Tapioca) confirmed

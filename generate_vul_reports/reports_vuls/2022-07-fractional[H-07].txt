@@ -1,0 +1,26 @@
+[H-07] Proposer canstarta perpetual buyout which can onlyendif the auction succeeds and is not rejected
+Submitted by sseefried, also found by TrungOre
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L39
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L66-L68
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L235
+Impact
+A user can start a perpetual buyout that cannot be stopped except by making the buyout succeed. This can be done by creating a malicious contract that will call back tostartwhen it receives ETH via itsreceivefunction. The user then starts the perpetual buyout by callingstartfrom the malicious contract.
+Assume the rejection period has passed and the auction pool is not large enough (i.e. < 50%). Ifendis called then the method_sendEthOrWethwill attempt to send ETH to the malicious contract. The contract will simply call back tostartsending the ETH it has just received.
+The impact is thatendcan never be called on this buyout proposal if the buyout auction has failed. Worse, no new buyout proposal can be made since the current one is still live, and it is never in a state where it is not live.
+The others users will either need to accept that assets are locked inside the vault, or that they will need tosellFractionsin order to make the buyout succeed.
+Proof of Concept
+Each vault can only have onebuyoutInfoassociated with it as can be seen online 39.A new buyout proposal cannot be made unless thebuyoutInfostate isState.INACTIVEas can be seen inlines 66-68A proposer makes a proposal by callingstart. They do this from a smart contract that simply callsstartagain when itsreceivefunction is called.If the proposer fails to get over 50% then, whenendis called,_sendEthOrWethis called using theproposervalue which is the smart contract that re-enters. Seeline 235._sendETHOrWethis cleverly written so that ifreceivewere to revert the reversion would not “bubble up”. However, it does not protect against re-entrancy.This means thatbuyoutInfo[vault]can never be overwritten. It is permanently stuck in stateState.LIVEmeaning thatstartcan never be called forvaultby anyone else.The only way out of this conundrum is for the other users of the vault tosellFractionsto make the auction succeed or to accept that assets are locked in the vault forever.
+Afoundry testexhibiting this attack has been written in a private fork of the contest repo.
+Note thatonERC1155Receivedneeds to be implemented in the malicious contract.
+Tools Used
+Manual inspection + Foundry
+Recommended Mitigation Steps
+Prevent re-entrancy in thestartfunction by using thenonReentrantmodifier provided by OpenZeppelin’sReentrancyGuardcontract, or use an equivalent custom solution.
+aklatham (Fractional) marked as duplicate and commented:
+Duplicate of#87
+sseefried (warden) commented:
+This exploit is a duplicate of the others in most respects but there is one key difference. In the other submissions there is at least a chance that someone else will get intheirbuyout bid after 4 days by carefully submitting a transaction at just the right moment. With the exploit I have outlined they cannot even do this. The call toendwill automatically create a new buyout with no chance of anyone else ever getting their transaction in. It is a truly perpetual buyout.To see an executable PoC of this (using a malicious contract to ensure the perpetual buyout)  apply the diff in thisgistand run$ forge test -m testPerpetualBuyoutBug
+stevennevins (Fractional) commented:
+Thanks for the reply @sseefried! We felt this was the same underlying issue as #87 and others labeled as duplicates while having a more certain path to griefing.
+HardlyDifficult (judge) commented:
+Starting a buyout can result in assets being stuck in a contract. This submission shows how reentrancy can be used to make this even worse resulting in locking the assets up forever. This combination of concerns raises the issue to High risk.Selecting this submission as the primary for identifying this potential impact and including a coded POC.

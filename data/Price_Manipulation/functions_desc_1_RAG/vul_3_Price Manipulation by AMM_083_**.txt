@@ -1,0 +1,46 @@
+This code defines an external function named withdraw, which allows users to withdraw a specified amount of tokens from their staking balance. Here’s a detailed explanation of how this function works:
+
+1. Accessing User Information:
+    The function starts by accessing the UserInfo struct for the caller (msg.sender) from the userInfo mapping and stores it in a local variable user.
+
+2. Balance Check:
+    The function then checks if the user's balance (user.amount) is greater than or equal to the amount they want to withdraw (_amount). If not, it reverts the transaction with the message "RocketJoeStaking: withdraw amount exceeds balance".
+
+3. Updating Pool Information:
+    The function calls updatePool(), which is assumed to be a function that updates the state of the staking pool, such as updating the accumulated rewards per share (accRJoePerShare).
+
+4. Calculating Pending Rewards:
+    The function calculates the pending rewards for the user by using the formula:
+     solidity
+     uint256 pending = (user.amount  accRJoePerShare) / PRECISION  user.rewardDebt;
+     
+      This formula calculates the total rewards the user has earned based on their staked amount and the accumulated rewards per share, then subtracts the amount of rewards they have already been accounted for (user.rewardDebt).
+
+5. Updating User's Staked Amount and Reward Debt:
+    The function updates the user's staked amount by subtracting the withdrawn amount:
+     solidity
+     user.amount = user.amount  _amount;
+     
+    It then recalculates the user's reward debt based on their new staked amount:
+     solidity
+     user.rewardDebt = (user.amount  accRJoePerShare) / PRECISION;
+     
+
+6. Transferring Rewards and Withdrawn Amount:
+    The function transfers the pending rewards to the user using the _safeRJoeTransfer function:
+     solidity
+     _safeRJoeTransfer(msg.sender, pending);
+     
+    It also transfers the withdrawn amount of tokens from the contract to the user using the joe.safeTransfer function:
+     solidity
+     joe.safeTransfer(address(msg.sender), _amount);
+     
+
+7. Emitting Event:
+    Finally, the function emits a Withdraw event to log the withdrawal transaction:
+     solidity
+     emit Withdraw(msg.sender, _amount);
+     
+
+### Summary
+The withdraw function allows users to withdraw a specified amount of tokens from their staking balance, updates their reward debt, transfers any pending rewards, and emits an event to log the transaction. The function ensures that the user has sufficient balance before proceeding and updates the pool state to reflect the changes.

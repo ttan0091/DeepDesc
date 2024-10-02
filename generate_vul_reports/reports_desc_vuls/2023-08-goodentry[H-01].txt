@@ -1,0 +1,17 @@
+Type of vulnerability: Fee Manipulation
+Cause of vulnerability: The vulnerability arises from the calculation of fees based on the current market price which can change during the transaction execution, leading to an excessive fee being charged if the price moves outside the range.
+Execution process: When a user deposits tokens into a TokenisableRange contract, the contract calculates fees based on the current market price. If the market price changes during the transaction execution (due to market fluctuations or malicious frontrunning), the calculated fee can be higher than intended, leading to a loss of funds for the user.
+Vulnerable code: 
+```solidity
+if ( fee0+fee1 > 0 && ( n0 > 0 || fee0 == 0) && ( n1 > 0 || fee1 == 0 ) ){
+    address pool = V3_FACTORY.getPool(address(TOKEN0.token), address(TOKEN1.token), feeTier * 100);
+    (uint160 sqrtPriceX96,,,,,,)  = IUniswapV3Pool(pool).slot0();
+    (uint256 token0Amount, uint256 token1Amount) = LiquidityAmounts.getAmountsForLiquidity( sqrtPriceX96, TickMath.getSqrtRatioAtTick(lowerTick), TickMath.getSqrtRatioAtTick(upperTick), liquidity);
+    if (token0Amount + fee0 > 0) newFee0 = n0 * fee0 / (token0Amount + fee0);
+    if (token1Amount + fee1 > 0) newFee1 = n1 * fee1 / (token1Amount + fee1);
+    fee0 += newFee0;
+    fee1 += newFee1;
+    n0   -= newFee0;
+    n1   -= newFee1;
+}
+```

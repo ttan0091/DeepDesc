@@ -1,0 +1,32 @@
+This code defines an external function named permit, which is commonly used in ERC20 token contracts to allow users to approve token transfers using offchain signatures instead of onchain transactions. This function is particularly useful for reducing gas costs and improving user experience in scenarios where multiple approvals are required.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting an approval.
+    spender: The address of the spender who is being granted the approval.
+    value: The amount of tokens that the spender is allowed to transfer.
+    deadline: The timestamp after which the permit is no longer valid.
+    v, r, s: These are components of the ECDSA signature generated offchain by the owner.
+
+2. Validation of Deadline:
+    The function starts by checking if the deadline is greater than or equal to the current block timestamp (block.timestamp). If the deadline has passed, the function reverts with the error message "ANTV2:AUTH_EXPIRED".
+
+3. Encoding Data:
+    The function then encodes the parameters owner, spender, value, the current nonce of the owner (nonces[owner]), and deadline into a hash using keccak256. This hash is stored in the variable encodeData.
+
+4. Signature Validation:
+    The function calls _validateSignedData with the owner address, the encoded data (encodeData), and the signature components v, r, and s. This internal function verifies that the signature is valid and was indeed created by the owner.
+
+5. Approval:
+    If the signature is valid, the function calls _approve(owner, spender, value), which updates the allowance mapping to allow the spender to transfer up to value tokens on behalf of the owner.
+
+6. Incrementing Nonce:
+    After successful approval, the nonce of the owner is incremented (nonces[owner]++). This ensures that each permit is only valid once and prevents replay attacks.
+
+### Security Considerations:
+ Deadline Check: Ensures that the permit cannot be used after its validity period, preventing longterm authorization risks.
+ Nonce Management: Incrementing the nonce ensures that each permit is unique and cannot be reused, which is crucial for security.
+ Signature Validation: Proper validation of the signature components (v, r, s) ensures that the permit is indeed authorized by the owner.
+
+This function is a standard implementation of the ERC20 permit functionality, which enhances the usability and efficiency of token approvals by leveraging offchain signatures.

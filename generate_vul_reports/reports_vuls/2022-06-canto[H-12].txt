@@ -1,0 +1,16 @@
+[H-12] InERC20,TotalSupplyis broken
+Submitted by Picodes, also found by cccz
+https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/ERC20.sol#L33https://github.com/Plex-Engineer/lending-market/blob/ab31a612be354e252d72faead63d86b844172761/contracts/ERC20.sol#L95
+For an obscure reason as it’s not commented,_totalSupplyis not initialized to 0, leading to an inaccurate total supply, which could easily break integrations, computations of market cap, etc.
+Proof of Concept
+If the constructor is called with_initialSupply = 1000, then1000tokens are minted. The total supply will be2000.
+Recommended Mitigation Steps
+Remove_initialSupply.
+tkkwon1998 (Canto) disputed and commented:
+The explanation is not clear. We can’t seem to reproduce this issue as we can’t find a scenario where thetotalSupplyfunction returns an incorrect value.
+Picodes (warden) commented:
+@tkkwon1998 to clarify:Deploy the ERC20 withtotalSupply_ = 1000.ThentotalSupply()returns 1000, which is incorrect.Then if someone mints 1000 tokens, there is 1000 tokens in the market but due to_totalSupply += amount;, totalSupply = 2000 which is still incorrect
+Alex the Entreprenerd (judge) commented:
+I believe the submission could have benefitted by:A coded POCRecognizing a revert due to the findingHowever the finding is ultimately true in that, becausetotalSupplyis a parameter passed in to the contract, and the ERC20 contract will not mint that amount, thetotalSupplywill end up not reflecting the total amounts of tokens minted.For this reason, I believe the finding to be valid and High Severity to be appropriate.I recommend the warden to err on the side of giving too much information to avoid getting their finding invalidated incorrectly.
+Alex the Entreprenerd (judge) commented:
+After further thinking, I still believe the finding is of high severity as the ERC20 standard is also broken. I do believe the submission could have been better developed, however, I think High is in place here.

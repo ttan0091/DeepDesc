@@ -1,0 +1,20 @@
+[H-11] Misuse of AMM model on mintingSynth(resubmit to add more detail)
+Submitted by jonah1005
+Poolcalculates the amount to be minted based ontoken_amountandsparta_amountof the Pool. However, sincetoken_amountin the pool would not decrease when users mintSynth, it’s always cheaper to mintsynththan swap the tokens.
+The synthetics would be really hard to be on peg. Or, there would be a flash-loan attacker to win all the arbitrage space.
+InPool’s mintsynth, Thesynthamount is calculated at L:232
+uintoutput=iUTILS(_DAO().UTILS()).calcSwapOutput(_actualInputBase,baseAmount,tokenAmount);
+which is the same as swapping base to token at L:287
+uint256_X=baseAmount;uint256_Y=tokenAmount;_y=iUTILS(_DAO().UTILS()).calcSwapOutput(_x,_X,_Y);// Calc TOKEN output
+However, while swapping tokens decrease pool’s token, mint just mint it out of the air.
+Here’s a POC:
+Swap sparta to token for ten times
+foriinrange(10):amount =10*10**18transfer_amount =int(amount/10)base.functions.transfer(token_pool.address, transfer_amount).transact()token_pool.functions.swapTo(token.address, user).transact()
+MintSynthfor ten times
+foriinrange(10):amount =10*10**18transfer_amount =int(amount/10)base.functions.transfer(token_pool.address, transfer_amount).transact()token_pool.functions.mintSynth(token_synth.address, user).transact()
+The Pool was initialized with 10000:10000 in both cases. While the first case(swap token) gets4744.4059and the second case gets6223.758.
+The debt should be considered in the AMM pool so I recommend to maintain a debt variable in the Pool and usetokenAmount - debtwhen the Pool calculates the token price. Here’s some idea of it:
+uint256publicdebt;function_tokenAmount()returns(uint256) {returntokenAmount-debt;}// Swap SPARTA for SynthsfunctionmintSynth(addresssynthOut,addressmember)externalreturns(uintoutputAmount,uintfee) {require(iSYNTHFACTORY(_DAO().SYNTHFACTORY()).isSynth(synthOut) ==true,"!synth");// Must be a valid Synthuint256_actualInputBase=_getAddedBaseAmount();// Get received SPARTA amount// Use tokenAmount - debt to calculate the valueuintoutput=iUTILS(_DAO().UTILS()).calcSwapOutput(_actualInputBase,baseAmount,_tokenAmount());// Calculate value of swapping SPARTA to the relevant underlying TOKEN// increment the debtdebt+=outputuint_liquidityUnits=iUTILS(_DAO().UTILS()).calcLiquidityUnitsAsym(_actualInputBase,address(this));// Calculate LP tokens to be minted_incrementPoolBalances(_actualInputBase,0);// Update recorded SPARTA amountuint_fee=iUTILS(_DAO().UTILS()).calcSwapFee(_actualInputBase,baseAmount,tokenAmount);// Calc slip fee in TOKENfee=iUTILS(_DAO().UTILS()).calcSpotValueInBase(TOKEN,_fee);// Convert TOKEN fee to SPARTA_mint(synthOut,_liquidityUnits);// Mint the LP tokens directly to the Synth contract to holdiSYNTH(synthOut).mintSynth(member,output);// Mint the Synth tokens directly to the user_addPoolMetrics(fee);// Add slip fee to the revenue metricsemitMintSynth(member,BASE,_actualInputBase,TOKEN,outputAmount);return(output,fee);}
+verifyfirst (Spartan) confirmed:
+We agree with the issue submitted, discussions are already in progress around ensuring the mint rate considers the floating debt.
+Potential high risk, however, hard to create a scenario to prove this.

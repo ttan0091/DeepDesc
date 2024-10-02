@@ -1,0 +1,56 @@
+[H-02] Users Receive Less Rewards Due To Miscalculations
+Submitted byxiaoming90, also found by__141345__
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L305
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L281
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L373
+Background
+The amount of rewards accrued by global and user states is computed by the following steps:
+Calculate seconds elapsed since the last update (block.timestamp - lastUpdate)Calculate the new rewards by multiplying seconds elapsed by the last supply ((block.timestamp - lastUpdate) * lastSupply)Append the new rewards to the existing rewards (rewards = rewards + (block.timestamp - lastUpdate) * lastSupply)
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L305
+/**@noticeUpdate global accrual state@paramglobalStateGlobalState  Global state of the producer token@paramproducerTokenERC20        Producer token contract*/function_globalAccrue(GlobalStatestorageglobalState,ERC20producerToken)internal{uint256totalSupply=producerToken.totalSupply();uint256lastUpdate=globalState.lastUpdate;uint256lastSupply=globalState.lastSupply;// Calculate rewards, the product of seconds elapsed and last supply// Only calculate and update states when neededif(block.timestamp!=lastUpdate||totalSupply!=lastSupply) {uint256rewards=globalState.rewards+(block.timestamp-lastUpdate) *lastSupply;globalState.lastUpdate=block.timestamp.safeCastTo32();globalState.lastSupply=totalSupply.safeCastTo224();globalState.rewards=rewards;..SNIP..}
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L281
+/**@noticeUpdate user rewards accrual state@paramproducerTokenERC20    Rewards-producing token@paramuseraddress  User address*/functionuserAccrue(ERC20producerToken,addressuser)public{if(address(producerToken) ==address(0))revertZeroAddress();if(user==address(0))revertZeroAddress();UserStatestorageu=producerTokens[producerToken].userStates[user];uint256balance=producerToken.balanceOf(user);// Calculate the amount of rewards accrued by the user up to this calluint256rewards=u.rewards+u.lastBalance*(block.timestamp-u.lastUpdate);u.lastUpdate=block.timestamp.safeCastTo32();u.lastBalance=balance.safeCastTo224();u.rewards=rewards;..SNIP..}
+When a user claims the rewards, the number of reward tokens the user is entitled to is equal to therewardStatescaled by the ratio of theuserRewardsto theglobalRewards. Refer to Line 403 below.
+TherewardStaterepresents the total number of a specific ERC20 reward token (e.g. WETH or esGMX) held by a producer (e.g. pxGMX or pxGPL).
+TherewardStateof each reward token (e.g. WETH or esGMX) will increase whenever the rewards are harvested by the producer (e.g.PirexRewards.harvestis called). On the other hand, therewardStatewill decrease if the users claim the rewards.
+https://github.com/code-423n4/2022-11-redactedcartel/blob/03b71a8d395c02324cb9fdaf92401357da5b19d1/src/PirexRewards.sol#L373
+File:PirexRewards.sol373:functionclaim(ERC20producerToken,addressuser)external{..SNIP..395:// Transfer the proportionate reward token amounts to the recipient396:for(uint256i;i<rLen; ++i) {397:ERC20rewardToken=rewardTokens[i];398:addressrewardRecipient=p.rewardRecipients[user][rewardToken];399:addressrecipient=rewardRecipient!=address(0)400:                     ?rewardRecipient401:                     :user;402:uint256rewardState=p.rewardStates[rewardToken];403:uint256amount= (rewardState*userRewards) /globalRewards;..SNIP..417:     }
+How reward tokens are distributed
+The Multiplier Point (MP) effect will be ignored for simplicity. Assume that the emission rate is constant throughout the entire period (from T80 to T84) and the emission rate is 1 esGMX per 1 GMX staked per second.
+The graph below represents the amount of GMX tokens Alice and Bob staked for each second during the period.
+A = Alice and B = Bob; each block represents 1 GMX token staked.
+
+Based on the above graph:
+Alice staked 1 GMX token from T80 to T84. Alice will earn five (5) esGMX tokens at the end of T84.Bob staked 4 GMX tokens from T83 to T84. Bob will earn eight (8) esGMX tokens at the end of T84.A total of 13 esGMX will be harvested byPirexRewardscontract at the end of T84
+The existing reward distribution design in thePirexRewardscontract will work perfectly if the emission rate is constant, similar to the example above.
+In this case, the state variable will be as follows at the end of T84, assuming both the global and all user states have been updated and rewards have been harvested.
+rewardState = 13 esGMX tokens (5 + 8)globalRewards = 13AccrueduserRewardsof Alice = 5AccrueduserRewardsof Bob = 8
+When Alice calls thePirexRewards.claimfunction to claim her rewards at the end of T84, she will get back five (5) esGMX tokens, which is correct.
+(rewardState*userRewards) /globalRewards(13*5) /13=5
+Proof of Concept
+However, the fact is that the emission rate of reward tokens (e.g. esGMX or WETH) is not constant. Instead, the emission rate is dynamic and depends on various factors, such as the following:
+The number of rewards tokens allocated by GMX governance for each month. Refer tohttps://gov.gmx.io/t/esgmx-emissions/272. In some months, the number of esGMX emissions will be higher.The number of GMX/GLP tokens staked by the community. The more tokens being staked by the community users, the more diluted the rewards will be.
+The graph below represents the amount of GMX tokens Alice and Bob staked for each second during the period.
+A = Alice and B = Bob; each block represents 1 GMX token staked.
+
+The Multiplier Point (MP) effect will be ignored for simplicity. Assume that the emission rate is as follows:
+From T80 to 82: 2 esGMX per 1 GMX staked per second (Higher emission rate)From T83 to 84: 1 esGMX per 1 GMX staked per second (Lower emission rate)
+By manually computing the amount of esGMX reward tokens that Alice is entitled to at the end of T84:
+[1stakedGMX* (T82-T80) * 2esGMX/sec] + [1stakedGMX* (T84-T83) * 1esGMX/sec][1stakedGMX*3secs* 2esGMX/sec] + [1stakedGMX* 2secs* 1esGMX/sec]6+2=8
+Alice will be entitled to 8 esGMX reward tokens at the end of T84.
+By manually computing the amount of esGMX reward tokens that Bob is entitled to at the end of T84:
+[4stakedGMX* 2secs* 1esGMX/sec] =8
+Bob will be entitled to 8 esGMX reward tokens at the end of T84.
+However, the existing reward distribution design in thePirexRewardscontract will cause Alice to get fewer reward tokens than she is entitled to and cause Bob to get more rewards than he is entitled to.
+The state variable will be as follows at the end of T84, assuming both the global and all user states have been updated and rewards have been harvested.
+rewardState = 16 esGMX tokens (8 + 8)globalRewards = 13AccrueduserRewardsof Alice = 5AccrueduserRewardsof Bob = 8
+When Alice calls thePirexRewards.claimfunction to claim her rewards at the end of T84, she will only get back six (6) esGMX tokens, which is less than eight (8) esGMX tokens she is entitled to or earned.
+(rewardState*userRewards) /globalRewards(16*5) /13=6.15=6
+When Bob calls thePirexRewards.claimfunction to claim his rewards at the end of T84, he will get back nine (9) esGMX tokens, which is more than eight (8) esGMX tokens he is entitled to or earned.
+(rewardState*userRewards) /globalRewards(16*8) /13=9.85=9
+Impact
+As shown in the PoC, some users will lose their reward tokens due to the miscalculation within the existing reward distribution design.
+Recommended Mitigation Steps
+Update the existing reward distribution design to handle the dynamic emission rate. Implement the RewardPerToken for users and global, as seen in many of the well-established reward contracts below, which are not vulnerable to this issue:
+https://github.com/fei-protocol/flywheel-v2/blob/dbe3cb81a3dc2e46536bb8af9c2bdc585f63425e/src/FlywheelCore.sol#L226https://github.com/Synthetixio/synthetix/blob/2cb4b23fe409af526de67dfbb84aae84b2b13747/contracts/StakingRewards.sol#L61
+kphed (Redacted Cartel) confirmed

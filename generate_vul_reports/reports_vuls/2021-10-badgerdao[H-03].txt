@@ -1,0 +1,17 @@
+[H-03]WrappedIbbtcEthcontract will use stalled price for mint/burn ifupdatePricePerSharewasn’t run properly
+Submitted by hyh, also found by cmichel, gpersoon, leastwood, hack3r-0m, kenzo, WatchPug, and loop
+Impact
+Malicious user can monitorSetPricePerShareevent and, if it was run long enough time ago and market moved, but, since there were noSetPricePerSharefired, the contract’spricePerShareis outdated, so a user canmint()withpricePerSharethat is current for contract, but outdated for market, then wait for price update andburn()with updatedpricePerShare, yielding risk-free profit at expense of contract holdings.
+Proof of Concept
+WrappedIbbtcEthupdatespricePerSharevariable by externally runupdatePricePerSharefunction. The variable is then used in mint/burn/transfer functions without any additional checks, even if outdated/stalled. This can happen if the external function wasn’t run for any reason.
+The variable is used viabalanceToSharesfunction:WrappedIbbtcEth.solL155
+This is feasible asupdatePricePerShareto be run by off-chain script being a part of the system, and malfunction of this script leads to contract exposure by stalling the price. The malfunction can happen both by internal reasons (bugs) and by external ones (any system-level dependencies, network outrages).updatePricePerSharefunction:WrappedIbbtcEth.solL72
+Recommended Mitigation Steps
+The risk comes with system design. Wrapping price updates with contract level variable for gas costs minimization is a viable approach, but it needs to be paired with corner cases handling. One of the ways to reduce the risk is as follows:
+Introduce a threshold variable for maximum time elapsed since lastpricePerShareupdate toWrappedIbbtcEthcontract.
+Then 2 variants oftransferFromandtransferfunctions can be introduced, both check condition {now - time since last price update < threshold}. If condition holds both variants, do the transfer. If it doesn’t, then the first variant reverts, while the second do costly price update.
+I.e. it will be cheap transfer (that works only if price is recent) and full transfer (that is similar to the first when price is recent, but do price update on its own when price is stalled). This way, this full transfer is guaranteed to run and is usually cheap, costing more if price is stalled and it does the update.
+After this, whenever scheduled price update malfunctions (for example because of network conditions), the risk will be limited by market volatility during threshold time at maximum, i.e. capped.
+Seeissue pagefor example code:
+dapp-whisperer (BadgerDAO) confirmed:
+Agreed, appreciate the thorough breakdown. We will add a “max staleness” to the ppfs update.I do see some merit in the idea of “updating when needed” at expense of the next user, but due to interface considerations we’d like to keep that consistent for users. In practice, we will run a bot to ensure timely updates.The pps updates are small and infrequent.

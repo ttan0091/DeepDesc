@@ -1,0 +1,341 @@
+[H-01]Exchange._liquidatefunction can cause liquidator to burn too muchpowerPerptokens
+Submitted byrbserver
+When calling the followingExchange._liquidatefunction,uint256 totalCollateralReturned = shortCollateral.liquidate(positionId, debtRepaying, msg.sender)is executed.
+function_liquidate(uint256positionId,uint256debtRepaying)internal{uint256maxDebtRepayment=shortCollateral.maxLiquidatableDebt(positionId);require(maxDebtRepayment>0);if(debtRepaying>maxDebtRepayment)debtRepaying=maxDebtRepayment;IShortToken.ShortPositionmemoryposition=shortToken.shortPositions(positionId);uint256totalCollateralReturned=shortCollateral.liquidate(positionId,debtRepaying,msg.sender);addressuser=shortToken.ownerOf(positionId);uint256finalPosition=position.shortAmount-debtRepaying;uint256finalCollateralAmount=position.collateralAmount-totalCollateralReturned;shortToken.adjustPosition(positionId,user,position.collateral,finalPosition,finalCollateralAmount);pool.liquidate(debtRepaying);powerPerp.burn(msg.sender,debtRepaying);...}
+In the followingShortCollateral.liquidatefunction, when executinguint256 collateralClaim = debt.mulDivDown(markPrice, collateralPrice), wheredebtisdebtRepaying,collateralClaimcan be high ifcollateralPricehas become much lower comparing tomarkPrice, such as due to a market sell-off that causes the collateral to be worth much less than before. In this case,totalCollateralReturnedcan be high as well, which can causetotalCollateralReturned > userCollateral.amountto be true. When such condition is true,totalCollateralReturned = userCollateral.amountis executed, and onlyuserCollateral.amountis transferred to the liquidator after executingERC20(userCollateral.collateral).safeTransfer(user, totalCollateralReturned).
+functionliquidate(uint256positionId,uint256debt,addressuser)externaloverrideonlyExchangenonReentrantreturns(uint256totalCollateralReturned){UserCollateralstorageuserCollateral=userCollaterals[positionId];bytes32currencyKey=synthetixAdapter.getCurrencyKey(userCollateral.collateral);Collateralmemorycoll=collaterals[currencyKey];(uint256markPrice,) =exchange.getMarkPrice();(uint256collateralPrice,) =synthetixAdapter.getAssetPrice(currencyKey);uint256collateralClaim=debt.mulDivDown(markPrice,collateralPrice);uint256liqBonus=collateralClaim.mulWadDown(coll.liqBonus);totalCollateralReturned=liqBonus+collateralClaim;if(totalCollateralReturned>userCollateral.amount)totalCollateralReturned=userCollateral.amount;userCollateral.amount-=totalCollateralReturned;ERC20(userCollateral.collateral).safeTransfer(user,totalCollateralReturned);...}
+Back in theExchange._liquidatefunction, the liquidator burnsdebtRepayingpowerPerptokens afterpowerPerp.burn(msg.sender, debtRepaying)is executed. However, in this situation, the liquidator only receivesuserCollateral.amountcollateral tokens that are less than the collateral token amount that should be equivalent todebtRepayingpowerPerptokens but this liquidator still burnsdebtRepayingpowerPerptokens. As a result, this liquidator loses the extrapowerPerptokens, which are burnt, that are equivalent to the difference betweendebtRepayingpowerPerptokens’ equivalent collateral token amount anduserCollateral.amountcollateral tokens.
+Proof of Concept
+The following steps can occur for the described scenario.
+Alice calls theExchange._liquidatefunction withdebtRepayingbeing 1000e18.When theShortCollateral.liquidatefunction is called,totalCollateralReturned > userCollateral.amountis true, anduserCollateral.amountcollateral tokens that are equivalent to 500e18powerPerptokens are transferred to Alice.WhenpowerPerp.burn(msg.sender, debtRepaying)is executed in theExchange._liquidatefunction, Alice burns 1000e18powerPerptokens.Because Alice only receivesuserCollateral.amountcollateral tokens that are equivalent to 500e18powerPerptokens, she loses 500e18powerPerptokens.
+Tools Used
+VSCode
+Recommended Mitigation Steps
+TheExchange._liquidatefunction can be updated to burn the number ofpowerPerptokens that are equivalent to the actual collateral token amount received by the liquidator instead of burningdebtRepayingpowerPerptokens.
+mubaris (Polynomial) confirmed
+
+[H-02] Hedging during liquidation is incorrect
+Submitted byKIntern_NA
+Hedging will not work as expected, and LiquidityPool will lose funds without expectation.
+Proof of concept
+When a short position is liquidated in contract Exchange, function_liquidatewill be triggered. It will burn the power perp tokens and reduce the short position amount accordingly.
+function_liquidate(uint256positionId,uint256debtRepaying)internal{...uint256finalPosition=position.shortAmount-debtRepaying;uint256finalCollateralAmount=position.collateralAmount-totalCollateralReturned;shortToken.adjustPosition(positionId,user,position.collateral,finalPosition,finalCollateralAmount);pool.liquidate(debtRepaying);powerPerp.burn(msg.sender,debtRepaying);...
+As you can see, it will decrease the size of short position bydebtRepaying, and burndebtRepayingpower perp tokens. Because of the same amount, the skew ofLiquidityPoolwill not change.Howerver,pool.liquidatewill be called, andLiquidityPoolwill be hedged withdebtRepayingamount.
+functionliquidate(uint256amount)externaloverrideonlyExchangenonReentrant{(uint256markPrice,boolisInvalid) =getMarkPrice();require(!isInvalid);uint256hedgingFees=_hedge(int256(amount),true);usedFunds+=int256(hedgingFees);emitLiquidate(markPrice,amount);}
+Therefore, LiquidityPool will be hedged more than it needs, and the position ofLiquidityPoolin the Perp Market will be incorrect (compared with what it should be for hedging).
+Recommended Mitigation Steps
+Should not hedge the LiquidityPool during liquidation.
+mubaris (Polynomial) confirmed
+
+[H-03] Short positions can be burned while holding collateral
+Submitted byMiloTruck, also found bybin2chen,chaduke,0x52,Bauer, and0xRobocop
+Users can permanently lose a portion of their collateral due to a malicious attacker or their own mistake.
+Vulnerability Details
+In theShortTokencontract,adjustPosition()is used to handle changes to a short position’s short or collateral amounts. The function also handles the burning of positions with the following logic:
+position.collateralAmount=collateralAmount;position.shortAmount=shortAmount;if(position.shortAmount==0) {_burn(positionId);}
+Where:
+collateralAmount- New amount of collateral in a position.shortAmount- New short amount of a position.positionId- ERC721ShortTokenof a short position.
+As seen from above, if a position’sshortAmountis set to 0, it will be burned. Furthermore, as the code does not ensurecollateralAmountis not 0 before burning, it is possible to burn a position while it still has collateral.
+If this occurs, the position’s owner will lose all remaining collateral in the position. This remaining amount will forever be stuck in the position as its correspondingShortTokenno longer has an owner.
+Proof of Concept
+In theExchangecontract, users can reduce a position’sshortAmountusingcloseTrade()(Exchange.sol#L100-L109) andliquidate()(Exchange.sol#L140-L148). With these two functions, there are three realistic scenarios where a position with collateral could be burned.
+1. User reduces his position’sshortAmountto 0
+A user might callcloseTrade()on a short position with the following parameters:
+params.amount- Set to the position’s short amount.params.collateralAmount- Set to any amount less than the position’s total collateral amount.
+This would reduce his position’sshortAmountto 0 without withdrawing all of its collateral, causing him to lose the remaining amount.
+Although this could be considered a user mistake, such a scenario could occur if a user does not want to hold a short position temporarily without fully withdrawing his collateral.
+2. Attacker fully liquidates a short position
+In certain situations, it is possible for a short position to have collateral remaining after a full liquidation (example in the coded PoC below). This collateral will be lost as full liquidations reduces a position’sshortAmountto 0, thereby burning the position.
+3. Attacker frontruns a user’scloseTrade()transaction with a liquidation
+Consider the following scenario:
+Alice has an unhealthy short position that is under the liquidation ratio and can be fully liquidated.To bring her position back above the liquidation ratio, Alice decides to partially reduce its short amount. She callscloseTrade()on her position with the following parameters:params.amount- Set to 40% of the position’s short amount.params.collateralAmount- Set to 0.A malicious attacker, Bob, sees hercloseTrade()transaction in the mempool.Bob frontruns the transaction, callingliquidate()with the following parameters:positionId- ID of Alice’s position.debtRepaying- Set to 60% of Alice’s position’s short amount.Bob’sliquidate()transaction executes first, reducing the short amount of Alice’s position to 40% of the original amount.Alice’scloseTrade()transaction executes, reducing her position’s short amount by 40% of the original amount, thus itsshortAmountbecomes 0.
+In the scenario above, Alice loses the remaining collateral in her short position as it is burned aftercloseTrade()executes.
+Note that this attack is possible as long as an attacker can liquidate the position’s remaining short amount. For example, if Alice callscloseTrade()with 70% of the position’s short amount, Bob only has to liquidate 30% of its short amount.
+Coded PoC
+The code below contains three tests that demonstrates the scenarios above:
+testCloseBurnsCollateral()testLiquidateBurnsCollateral()testAttackerFrontrunLiquidateBurnsCollateral()
+// SPDX-License-Identifier: MITpragmasolidity^0.8.9;import{TestSystem,Exchange,ShortToken,ShortCollateral,MockERC20Fail}from"./utils/TestSystem.sol";contractPositionWithCollateralBurnedisTestSystem{// Protocol contractsExchangeprivateexchange;ShortTokenprivateshortToken;ShortCollateralprivateshortCollateral;// sUSD token contractMockERC20FailprivateSUSD;// Intial base asset priceuint256privateconstantinitialBaseAssetPrice=1e18;// UsersaddressprivateUSER=user_1;addressprivateATTACKER=user_2;functionsetUp()public{// Deploy contractsdeployTestSystem();initPool();initExchange();preparePool();exchange=getExchange();shortToken=getShortToken();shortCollateral=getShortCollateral();SUSD=getSUSD();// Set initial price for base assetsetAssetPrice(initialBaseAssetPrice);// Mint sUSD for USERSUSD.mint(USER,1e20);// Mint powerPerp for ATTACKERvm.prank(address(exchange));getPowerPerp().mint(ATTACKER,1e20);}functiontestCloseBurnsCollateral()public{// Open short positionuint256shortAmount=1e18;uint256collateralAmount=1e15;uint256positionId=openShort(shortAmount,collateralAmount,USER);// Fully close position without withdrawing any collateralcloseShort(positionId,shortAmount,0,USER);// positionId still holds 1e15 sUSD as collateral(,,uint256remainingCollateralAmount, ) =shortToken.shortPositions(positionId);assertEq(remainingCollateralAmount,collateralAmount);// positionId is already burned (ie. ownerOf reverts with "NOT_MINTED")vm.expectRevert("NOT_MINTED");shortToken.ownerOf(positionId);}functiontestLiquidateBurnsCollateral()public{// USER opens short position with amount = 1e18, collateral amount = 1e15uint256shortAmount=1e18;uint256positionId=openShort(1e18,1e15,USER);// Base asset price rises by 35%setAssetPrice(initialBaseAssetPrice*135/100);// USER's entire short position is liquidatableassertEq(shortCollateral.maxLiquidatableDebt(positionId),shortAmount);// ATTACKER liquidates USER's entire short positionvm.prank(ATTACKER);exchange.liquidate(positionId,shortAmount);// positionId has no remaining debt, but still holds some collateral(,uint256remainingAmount,uint256remainingCollateralAmount, ) =shortToken.shortPositions(positionId);assertEq(remainingAmount,0);assertGt(remainingCollateralAmount,0);// positionId is already burned (ie. ownerOf reverts with "NOT_MINTED")vm.expectRevert("NOT_MINTED");shortToken.ownerOf(positionId);}functiontestAttackerFrontrunLiquidateBurnsCollateral()public{// USER opens short position with amount = 1e18, collateral amount = 1e15uint256shortAmount=1e18;uint256positionId=openShort(1e18,1e15,USER);// Base asset price rises by 40%setAssetPrice(initialBaseAssetPrice*140/100);// USER's short position is liquidatableassertEq(shortCollateral.maxLiquidatableDebt(positionId),shortAmount);// ATTACKER frontruns USER's closeTrade() transaction, liquidating 60% of USER's amountvm.prank(ATTACKER);exchange.liquidate(positionId,shortAmount*60/100);// USER's closeTrade() transaction executes, reducing shortAmount by the remaining 40%closeShort(positionId,shortAmount*40/100,0,USER);// positionId has no remaining debt, but still holds some collateral(,uint256remainingAmount,uint256remainingCollateralAmount, ) =shortToken.shortPositions(positionId);assertEq(remainingAmount,0);assertGt(remainingCollateralAmount,0);// positionId is already burned (ie. ownerOf reverts with "NOT_MINTED")vm.expectRevert("NOT_MINTED");shortToken.ownerOf(positionId);}functionopenShort(uint256amount,uint256collateralAmount,addressuser)internalreturns(uint256positionId) {Exchange.TradeParamsmemorytradeParams;tradeParams.amount=amount;tradeParams.collateral=address(SUSD);tradeParams.collateralAmount=collateralAmount;vm.startPrank(user);SUSD.approve(address(exchange),collateralAmount);(positionId, ) =exchange.openTrade(tradeParams);vm.stopPrank();}functioncloseShort(uint256positionId,uint256amount,uint256collateralAmount,addressuser)internal{Exchange.TradeParamsmemorytradeParams;tradeParams.amount=amount;tradeParams.collateral=address(SUSD);tradeParams.collateralAmount=collateralAmount;tradeParams.maxCost=100e18;tradeParams.positionId=positionId;vm.startPrank(user);SUSD.approve(address(getPool()),tradeParams.maxCost);exchange.closeTrade(tradeParams);vm.stopPrank();}}
+Recommended Mitigation
+Ensure that positions cannot be burned if they have any collateral:
+-            if (position.shortAmount == 0) {+            if (position.shortAmount == 0 && position.collateralAmount == 0) {_burn(positionId);}
+mubaris (Polynomial) confirmed via duplicate issue#65
+Dravee (judge) commented:
+The 3rd scenario isn’t likely due to frontrunning not being an issue on Optimism.This report still brings the most value and is the most well presented.
+
+[H-04]KangarooVault.removeCollateralupdates storage without actually removing collateral, resulting in lost collateral
+Submitted byjoestakey, also found byjuancito,auditor0517,bin2chen,KIntern_NA,chaduke,Bauer, and0x52
+The admin can callKangarooVault.addCollateralto add additional collateral to a Power Perp position.
+File:src/KangarooVault.sol424:functionaddCollateral(uint256additionalCollateral)externalrequiresAuthnonReentrant{425:SUSD.safeApprove(address(EXCHANGE),additionalCollateral);426:EXCHANGE.addCollateral(positionData.positionId,additionalCollateral);427:428:usedFunds+=additionalCollateral;429:positionData.totalCollateral+=additionalCollateral;430:431:emitAddCollateral(positionData.positionId,additionalCollateral);432:     }
+This transfersSUSDto theEXCHANGEand updates theusedFundsandpositionData.totalCollateral
+The functionKangarooVault.removeCollateralallows the admin to remove collateral if a position is healthy enough.
+File:src/KangarooVault.sol436:functionremoveCollateral(uint256collateralToRemove)externalrequiresAuthnonReentrant{437:         (uint256markPrice,) =LIQUIDITY_POOL.getMarkPrice();438:uint256minColl=positionData.shortAmount.mulWadDown(markPrice);439:minColl=minColl.mulWadDown(collRatio);440:441:require(positionData.totalCollateral>=minColl+collateralToRemove);442:443:usedFunds-=collateralToRemove;444:positionData.totalCollateral-=collateralToRemove;445:446:emitRemoveCollateral(positionData.positionId,collateralToRemove);447:     }
+The issue is that this function does not callEXCHANGE.removeCollateral.While it updates storage, it does not actually retrieve any collateral.
+Impact
+2 problems arising:
+processWithdrawalQueuewill revert unexpectedly, asusedFundswill be lower than it should, leading toavailableFundsbeing greater than the real balance ofSUSDavailable (KangarooVault.sol#L279).the main problem: the amount of collateral “removed” inremoveCollateralwill be lost :
+When closing a position inKangarooVault._closePosition, the amount of collateral to retrieve is written intradeParams.collateralAmount. As you can see below, it is capped bypositionData.totalCollateral, which was decremented inremoveCollateral.
+File:src/KangarooVault.sol687:if(amt>=positionData.shortAmount) {688:longPositionToClose=positionData.longPerp;689:690:tradeParams.amount=positionData.shortAmount;691:tradeParams.collateralAmount=positionData.totalCollateral;//@audit here692:         }else{693:longPositionToClose=amt.mulDivDown(positionData.longPerp,positionData.shortAmount);694:uint256collateralToRemove=amt.mulDivDown(positionData.totalCollateral,positionData.shortAmount);695:696:tradeParams.amount=amt;697:tradeParams.collateralAmount=collateralToRemove;698:         }699:700:SUSD.safeApprove(address(LIQUIDITY_POOL),maxCost);701:uint256totalCost=EXCHANGE.closeTrade(tradeParams);
+This is the amount of collateral that will be transferred back to the trader (here theKangarooVault)
+src/Exchange.sol_closeTrade()316:shortCollateral.sendCollateral(params.positionId,params.collateralAmount);
+File:src/ShortCollateral.sol106:functionsendCollateral(uint256positionId,uint256amount)externaloverrideonlyExchangenonReentrant{107:UserCollateralstorageuserCollateral=userCollaterals[positionId];108:109:userCollateral.amount-=amount;110:111:addressuser=shortToken.ownerOf(positionId);112:113:ERC20(userCollateral.collateral).safeTransfer(user,amount);//@audit capped by `positionData.totalCollateral`
+In conclusion, callingremoveCollateralwill result in that amount being lost.
+Proof of Concept
+Amend this test toKangarooVault.t.sol, which shows how collateral is not transferred upon callingremoveCollateral().
+429:     function testCollateralManagement() public {430:         uint256 amt = 1e18;431:         uint256 collDelta = 1000e18;432:433:         kangaroo.openPosition(amt, 0);434:         skip(100);435:         kangaroo.executePerpOrders(emptyData);436:         kangaroo.clearPendingOpenOrders(0);437:438:         (,,,,,,, uint256 initialColl,) = kangaroo.positionData();+439:         uint256 balanceBefore = susd.balanceOf(address(kangaroo));440:441:         kangaroo.addCollateral(collDelta);+442:         uint256 balanceAfter = susd.balanceOf(address(kangaroo));+443:         assertEq(collDelta, balanceBefore - balanceAfter);444:         (,,,,,,, uint256 finalColl,) = kangaroo.positionData();445:446:         assertEq(finalColl, initialColl + collDelta);447:+448:         uint256 balanceBefore2 = susd.balanceOf(address(kangaroo));449:         kangaroo.removeCollateral(collDelta);+450:         uint256 balanceAfter2 = susd.balanceOf(address(kangaroo));+451:         assertEq(0, balanceAfter2 - balanceBefore2); //@audit collateral not removed452:453:         (,,,,,,, uint256 newColl,) = kangaroo.positionData();454:455:         assertEq(newColl, initialColl);456:     }
+Tools Used
+Manual Analysis, Foundry
+Recommended Mitigation
+EnsureExchange.removeCollateralis called:
+File: src/KangarooVault.sol436:     function removeCollateral(uint256 collateralToRemove) external requiresAuth nonReentrant {437:         (uint256 markPrice,) = LIQUIDITY_POOL.getMarkPrice();438:         uint256 minColl = positionData.shortAmount.mulWadDown(markPrice);439:         minColl = minColl.mulWadDown(collRatio);440:441:         require(positionData.totalCollateral >= minColl + collateralToRemove);442:443:         usedFunds -= collateralToRemove;444:         positionData.totalCollateral -= collateralToRemove;445:+            EXCHANGE.removeCollateral(positionData.positionId, collateralToRemove)446:         emit RemoveCollateral(positionData.positionId, collateralToRemove);447:     }
+mubaris (Polynomial) confirmed via duplicate issue#111
+Dravee (judge) increased severity to High
+
+[H-05] Uneven deduction of performance fee causes some KangarooVault users to lose part of their token value
+Submitted bypeakbolt
+InKangarooVault._resetTrade(), aperformanceFeeis charged upon closing of all positions, on thepremiumCollected. This is inconsistent withgetTokenPrice()aspremiumCollectedis factored in the token price computation, while theperformanceFeeis not. This leads to an uneven distribution of theperformanceFeefor theKangarooVaultusers.
+Impact
+That means a user can evade theperformanceFeeand steal some of the funds from the rest by triggeringprocessWithdraw()before theperformanceFeeis deducted fromKangarooVault. The remaining users will be shortchanged and lose part of their token value as they bear the charges from the performance fee.
+Detailed Explanation
+When all positions inKangarooVaultare closed,_resetTrade()is triggered, which will proceed to deduct aperformanceFeefrom thepremiumCollected.
+function _resetTrade() internal {positionData.positionId = 0;(uint256 totalMargin,) = PERP_MARKET.remainingMargin(address(this));PERP_MARKET.transferMargin(-int256(totalMargin));usedFunds -= totalMargin;uint256 fees = positionData.premiumCollected.mulWadDown(performanceFee);if (fees > 0) SUSD.safeTransfer(feeReceipient, fees);totalFunds += positionData.premiumCollected - fees;totalFunds -= usedFunds;positionData.premiumCollected = 0;positionData.totalMargin = 0;usedFunds = 0;}
+KangarooVault.sol#L788-L789
+However, onlypremiumCollectedis factored in thegetTokenPrice()computation but not theperformanceFee. That means the premiums are distributed among the users via token price, while the performance fee is not.
+function getTokenPrice() public view returns (uint256) {if (totalFunds == 0) {return 1e18;}uint256 totalSupply = getTotalSupply();if (positionData.positionId == 0) {return totalFunds.divWadDown(totalSupply);}uint256 totalMargin;(uint256 markPrice, bool isInvalid) = EXCHANGE.getMarkPrice();require(!isInvalid);(totalMargin, isInvalid) = PERP_MARKET.remainingMargin(address(this));require(!isInvalid);uint256 totalValue = totalFunds + positionData.premiumCollected + totalMargin + positionData.totalCollateral;totalValue -= (usedFunds + markPrice.mulWadDown(positionData.shortAmount));return totalValue.divWadDown(totalSupply);}
+KangarooVault.sol#L358-L359
+Proof of Concept
+Add the following imports and test case totest/KangarooVault.t.sol
+import {IVaultToken} from "../src/interfaces/IVaultToken.sol";function testKangarooPerformanceFee() public {uint256 amt = 231e18;IVaultToken vaultToken = IVaultToken(kangaroo.VAULT_TOKEN());// deposit equal value for both user_2 and user 3 into KangarooVaultuint256 depositAmt = 10e18;susd.mint(user_2, depositAmt);vm.startPrank(user_2);susd.approve(address(kangaroo), depositAmt);kangaroo.initiateDeposit(user_2, depositAmt);assertEq((vaultToken.balanceOf(user_2) * kangaroo.getTokenPrice())/1e18, depositAmt);vm.stopPrank();susd.mint(user_3, depositAmt);vm.startPrank(user_3);susd.approve(address(kangaroo), depositAmt);kangaroo.initiateDeposit(user_3, depositAmt);assertEq((vaultToken.balanceOf(user_2) * kangaroo.getTokenPrice())/1e18, depositAmt);vm.stopPrank();skip(14500);kangaroo.processDepositQueue(2);// Open position at KangarooVault and execute the orderskangaroo.openPosition(amt, 0);skip(100);kangaroo.executePerpOrders(emptyData);kangaroo.clearPendingOpenOrders(0);// Simulate price drop to trigger profit from premium collectionsetAssetPrice(initialPrice - 100e18);// initiate withdrawal for both user_2 and user_3vm.prank(user_2);kangaroo.initiateWithdrawal(user_2, depositAmt);vm.prank(user_3);kangaroo.initiateWithdrawal(user_3, depositAmt);skip(14500);// close all position with gain from premium collectionkangaroo.closePosition(amt, 1000000e18);skip(100);kangaroo.executePerpOrders(emptyData);// user_2 frontrun clearPendingCloseOrders() to withdraw at higher token pricekangaroo.processWithdrawalQueue(1);assertEq(vaultToken.balanceOf(user_2), 0);assertEq(susd.balanceOf(user_2), 9693821343146274141);// This will trigger resetTrade and deduct performance Feekangaroo.clearPendingCloseOrders(0);// user_3's withdrawal was processed but at a lower token pricekangaroo.processWithdrawalQueue(1);assertEq(vaultToken.balanceOf(user_3), 0);assertEq(susd.balanceOf(user_3),9655768088211372841);// This shows that user_3 was shortchanged and lost part of token value,// despite starting with equal token balanceassertGt(susd.balanceOf(user_2), susd.balanceOf(user_3));}
+Recommended Mitigation Steps
+Consider changing the following inKangarooVault.sol#L359
+totalValue -= (usedFunds + markPrice.mulWadDown(positionData.shortAmount) );
+to
+totalValue -= (usedFunds + markPrice.mulWadDown(positionData.shortAmount) + positionData.premiumCollected.mulWadDown(performanceFee));
+mubaris (Polynomial) confirmed
+
+[H-06] Division by zero error causes KangarooVault to be DoS with funds locked inside
+Submitted bypeakbolt
+KangarooVaultcan be DoS with funds locked in the contract due to a division by zero error ingetTokenPrice()as it does not handle the scenario wheregetTotalSupply()is zero.
+Impact
+Funds will be locked within theKangarooVault(as shown in the PoC below) and it is not able to recover from the DoS.
+That is because, to recover from the DoS, it requires increasing total supply through minting of new tokens via deposits. However, that is not possible asinitiateDeposit()relies ongetTokenPrice().
+Also, we cannot withdraw the remaining funds as there are no moreVaultTokensleft to burn.
+Detailed Explanation
+getTokenPrice()will attempt to perform a division bygetTotalSupply()whentotalFunds != 0andpositionId == 0. This scenario is possible when there are remaining funds inKangarooVaultwhen all positions are closed and all vault token holders withdrawn their funds.
+function getTokenPrice() public view returns (uint256) {if (totalFunds == 0) {return 1e18;}uint256 totalSupply = getTotalSupply();if (positionData.positionId == 0) {return totalFunds.divWadDown(totalSupply);}
+Proof of Concept
+Add the following imports and test case totest/Kangaroo.Vault.t.sol
+function testKangarooDivisionByZero() public {uint256 amt = 231e18;// Open position to decrease availableFunds for withdrawals.kangaroo.openPosition(amt, 0);skip(100);kangaroo.executePerpOrders(emptyData);kangaroo.clearPendingOpenOrders(0);// initiate user withdrawal// this will be a partial withdrawal due to the open position.vm.prank(user_1);kangaroo.initiateWithdrawal(user_1, 5e23);kangaroo.processWithdrawalQueue(1);// close all positionkangaroo.closePosition(amt, 1000000e18);skip(100);kangaroo.executePerpOrders(emptyData);kangaroo.clearPendingCloseOrders(0);// Complete remaining withdrawals of funds.// this will reduce totalSupply to zero and later cause a division by zero error.kangaroo.processWithdrawalQueue(1);/// prepare for new depositvm.startPrank(user_1);susd.approve(address(kangaroo), 5e23);// This deposit will revert due to division by zero.vm.expectRevert();kangaroo.initiateDeposit(user_1, 5e23);vm.stopPrank();// KangarooVault is now DoS and some funds are locked in itassertEq(susd.balanceOf(address(kangaroo)), 168969);}
+Recommended Mitigation Steps
+FixgetTokenPrice()to handle the scenario whentotalSupply()is zero.
+Dravee (judge) commented:
+Feels extremely similar tohttps://github.com/code-423n4/2023-03-polynomial-findings/issues/157by the same warden, but the impact is on a different contract and requires a different POC.Won’t flag as a duplicate for now.
+mubaris (Polynomial) confirmed
+Dravee (judge) commented:
+Will keep as high due to the warden showing in this case a direct impact on assets.
+
+[H-07] Missing totalFunds update in LiquidityPool’sOpenShort(), causing LiquidityPool token holder to lose a portion of their token value
+Submitted bypeakbolt, also found byauditor0517,0xbepresent,kaden, and0xRobocop
+The functionopenShort()inLiquidityPool.solis missing an update tototalFunds, to increaseLiquidityPoolfunds by the collected net fees.
+Impact
+As a result of the missing increment tototalFunds, theavailableFundsin theLiquidityPoolwill be lower. This will impact the token price, causing a lower token price onopenShort()trades. This will result inLiquidityPooltoken holders to lose part of their token value.
+Detailed Explanation
+The functionopenShort()is supposed to increase thetotalFundsby(feesCollected - externalFee)as the trading fees is paid by the trader, via a deduction of thetradeCost.
+totalCost = tradeCost - fees;SUSD.safeTransfer(user, totalCost);
+Proof of Concept
+Add the following imports and test case totest/LiquidityPool.Trades.t.sol
+import {wadMul} from "solmate/utils/SignedWadMath.sol";import {IPerpsV2Market} from "../src/interfaces/synthetix/IPerpsV2Market.sol";function testLiquidityPoolOpenShort() public {uint256 amount = 1e18;(uint256 markPrice, bool isInvalid) = pool.getMarkPrice();uint256 tradeCost = amount.mulWadDown(markPrice);uint256 fees = pool.orderFee(int256(amount));uint256 delta = pool.getDelta();int256 hedgingSize = wadMul(int256(amount), int256(delta));IPerpsV2Market perp = pool.perpMarket();(uint256 hedgingFees, ) = perp.orderFee(hedgingSize, IPerpsV2MarketBaseTypes.OrderType.Delayed);uint256 feesCollected = fees - hedgingFees;uint256 externalFee = feesCollected.mulWadDown(pool.devFee());uint256 totalFundsBefore = pool.totalFunds();int256 usedFundsBefore = pool.usedFunds();// Open a Short tradeopenShort(amount, amount * 1000, user_1);// Calculated expected totalFunds and usedFundsuint256 expectedTotalFunds = totalFundsBefore + feesCollected - externalFee;uint256 marginRequired = tradeCost + hedgingFees;int256 expectedUsedFunds = usedFundsBefore + int256(tradeCost) - int256(hedgingFees) + int256(marginRequired);// This is incorrect as LiquidityPool's totalFunds is supposed to increase by net fee (feesCollected - externalFee)assertLt(pool.totalFunds(), expectedTotalFunds);// LiquidityPool's UsedFunds is also wrong and is higher than expected as it included hedgingFees.assertGt(pool.usedFunds(), expectedUsedFunds);uint256 poolAvailableFunds = pool.totalFunds() - uint256(pool.usedFunds());uint256 expectedAvailableFunds = expectedTotalFunds - uint256(expectedUsedFunds);// LiquidityPool's available funds is wrong and is less than expected, as totalFunds is not increased correctlyassertLt(poolAvailableFunds, expectedAvailableFunds);assertEq(poolAvailableFunds, expectedAvailableFunds - hedgingFees);// LiquidityPool's available funds is wrong and is also less than SUSD balanceassertLt(poolAvailableFunds, susd.balanceOf(address(pool)));// LiquidityPool's available fund is expected to be the same as Pool's SUSD balanceassertEq(expectedAvailableFunds, susd.balanceOf(address(pool)));// LiquidityPool Token price is less than expected.assertLt(pool.getTokenPrice(), getExpectedTokenPrice(expectedTotalFunds, expectedUsedFunds, perp));}function getExpectedTokenPrice(uint256 expectedTotalFunds, int256 expectedUsedFunds, IPerpsV2Market perp) public returns (uint256 expectedTokenPrice) {(uint256 markPrice,) = pool.getMarkPrice();uint256 totalValue = expectedTotalFunds;uint256 totalSupply = lqToken.totalSupply() + pool.totalQueuedWithdrawals();uint256 amountOwed = markPrice.mulWadDown(powerPerp.totalSupply());uint256 amountToCollect = markPrice.mulWadDown(shortToken.totalShorts());//uint256 totalMargin = _getTotalMargin();(uint256 totalMargin,) = perp.remainingMargin(address(pool));totalValue += totalMargin + amountToCollect;totalValue -= uint256((int256(amountOwed) + expectedUsedFunds));expectedTokenPrice = totalValue.divWadDown(totalSupply);}
+Recommended Mitigation Steps
+Add the following to updatetotalFundswith the net fee collection.
+totalFunds += feesCollected - externalFee;
+rivalq (Polynomial) disputed and commented:
+Fee part is included in usedFunds, At any time pool’s total funds is not just included intotalFunds, but some part of it is inusedFunds, note that usedFunds can be negative too.
+Dravee (judge) commented:
+As this issue was raised by several wardens, I’m willing to give this the benefit of the doubt and would like to ask the sponsor @rivalq to view it a second time. Perhaps looking through duplicated issues? They are mostly low quality and badly explained but might be on to something.https://github.com/code-423n4/2023-03-polynomial-findings/issues/46is the duplicate with the most arguments.I’d like to use this issue to bring attention to another issue,https://github.com/code-423n4/2023-03-polynomial-findings/issues/117, as it actually says the opposite (thatopenShortis done right butcloseLonghas an extra update that shouldn’t exist). So, this one, which I repeat isn’t a duplicate but actually an opposite finding, might be right.
+mubaris (Polynomial) confirmed and commented:
+I’m confirming this from our side, although I think it’s a Medium risk similar to#117.
+Dravee (judge) commented:
+As this is still considered a loss of funds for users, I’ll keep it as High.
+
+[H-08] Incorrect calculation ofusedFundsin LiquidityPool leads to lower than expected token price
+Submitted bypeakbolt, also found byauditor0517andKIntern_NA
+InLiquidityPool.sol, the functionsopenLong(),closeLong(),openShort()andcloseShort()do not deducthedgingFeesfromusedFundsto offset thehedgingFeesthat was added due to_hedge().
+Impact
+The missing deduction ofhedgingFeeswill increase theusedFundsinLiquidityPool, thus reducing theavailableFunds. This leads to a lower token price, causingLiquidityPooltoken holders to be shortchanged, losing a portion of their token value.
+Detailed Explanation
+Passive users can provide liquidity to the Liquidity Pool to earn exchange fees, while traders can take long or short position against the Exchange.
+The trade functionsopenLong(),closeLong(),openShort()andcloseShort()inLiquidityPool.solwill call_hedgeto hedge the liquidity pool’s exposure during a trade.
+Thehedge()will actually increaseusedFundsby the margin required, which includeshedgingFeesas these are transfered over to theperpMarketfor the hedging.
+uint256 marginRequired = _calculateMargin(hedgingSize) + hedgingFees;usedFunds += int256(marginRequired);require(usedFunds <= 0 || totalFunds >= uint256(usedFunds));perpMarket.transferMargin(int256(marginRequired));
+Using theOpenLong()trade as an example, the trader transfers thetradeCost + feestoLiquidityPool, which includes the premium,hedgingFees,feesCollectedandexternalFee.  That means thehedgingFeesthat was transfered in_hedge()is actually provided by the trader and not theLiquidityPool.
+Hence, theusedFundsshould be reduced byhedgingFeesto offset the addition in_hedge().
+uint256 fees = orderFee(int256(amount));totalCost = tradeCost + fees;SUSD.safeTransferFrom(user, address(this), totalCost);uint256 hedgingFees = _hedge(int256(amount), false);uint256 feesCollected = fees - hedgingFees;uint256 externalFee = feesCollected.mulWadDown(devFee);SUSD.safeTransfer(feeReceipient, externalFee);usedFunds -= int256(tradeCost);totalFunds += feesCollected - externalFee;
+Proof of Concept
+Then add the following imports and test case totest/LiquidityPool.Trades.t.sol
+import {wadMul} from "solmate/utils/SignedWadMath.sol";import {IPerpsV2Market} from "../src/interfaces/synthetix/IPerpsV2Market.sol";function testLiquidityPoolFundCalculation() public {uint256 longAmount = 1e18;(uint256 markPrice, bool isInvalid) = pool.getMarkPrice();uint256 tradeCost = longAmount.mulWadDown(markPrice);uint256 fees = pool.orderFee(int256(longAmount));uint256 delta = pool.getDelta();int256 hedgingSize = wadMul(int256(longAmount), int256(delta));IPerpsV2Market perp = pool.perpMarket();(uint256 hedgingFees, ) = perp.orderFee(hedgingSize, IPerpsV2MarketBaseTypes.OrderType.Delayed);uint256 feesCollected = fees - hedgingFees;uint256 externalFee = feesCollected.mulWadDown(pool.devFee());uint256 totalFundsBefore = pool.totalFunds();int256 usedFundsBefore = pool.usedFunds();// Open a Long tradeopenLong(longAmount, longAmount * 1000, user_1);// Calculated expected totalFunds and usedFundsuint256 expectedTotalFunds = totalFundsBefore + feesCollected - externalFee;uint256 marginRequired = tradeCost + hedgingFees;int256 expectedUsedFunds = usedFundsBefore - int256(tradeCost) - int256(hedgingFees) + int256(marginRequired);// This is correct as the pool will increase by net fee (feesCollected - externalFee)assertEq(pool.totalFunds(), expectedTotalFunds);// LiquidityPool's UsedFunds is wrong and is higher than expected as it included hedgingFees.assertGt(pool.usedFunds(), expectedUsedFunds);uint256 poolAvailableFunds = pool.totalFunds() - uint256(pool.usedFunds());uint256 expectedAvailableFunds = expectedTotalFunds - uint256(expectedUsedFunds);// LiquidityPool's available funds is wrong and is less than expected as it factored in hedgingFeesassertLt(poolAvailableFunds, expectedAvailableFunds);assertEq(poolAvailableFunds, expectedAvailableFunds - hedgingFees);// LiquidityPool's available funds is wrong and is also less than SUSD balanceassertLt(poolAvailableFunds, susd.balanceOf(address(pool)));// LiquidityPool's available fund is expected to be the same as Pool's SUSD balanceassertEq(expectedAvailableFunds, susd.balanceOf(address(pool)));// LiquidityPool Token price is less than expected.assertLt(pool.getTokenPrice(), getExpectedTokenPrice(expectedTotalFunds, expectedUsedFunds, perp));}function getExpectedTokenPrice(uint256 expectedTotalFunds, int256 expectedUsedFunds, IPerpsV2Market perp) public returns (uint256 expectedTokenPrice) {(uint256 markPrice,) = pool.getMarkPrice();uint256 totalValue = expectedTotalFunds;uint256 totalSupply = lqToken.totalSupply() + pool.totalQueuedWithdrawals();uint256 amountOwed = markPrice.mulWadDown(powerPerp.totalSupply());uint256 amountToCollect = markPrice.mulWadDown(shortToken.totalShorts());//uint256 totalMargin = _getTotalMargin();(uint256 totalMargin,) = perp.remainingMargin(address(pool));totalValue += totalMargin + amountToCollect;totalValue -= uint256((int256(amountOwed) + expectedUsedFunds));expectedTokenPrice = totalValue.divWadDown(totalSupply);}
+Recommended Mitigation Steps
+DeducthedgingFeesfromusedFundsto offset thehedgingFeesadded in_hedge().
+For example, in openLong change
+usedFunds -= int256(tradeCost);
+to
+usedFunds -= int256(tradeCost) - int256(hedgingFees);
+mubaris (Polynomial) confirmed
+
+[H-09] Excessive trading fees can result in 99.9% collateral loss for the trader
+Submitted bybytes032
+This issue can lead to traders losing all their collateral due to excessive fees when opening and closing larger trades.
+Proof of Concept
+When the exchange opens/closes trades, it defines the order fees to be paid by the user using theorderFeefunction. The function takes into account both the hedging fee, which covers the cost of managing the risk associated with holding the position, and the trading fee, which accounts for the costs incurred when executing the trade.
+The function works as follows:
+It first calculates thedelta, a factor representing the rate at which the position size changes.Then, it computes thefuturesSizeDeltaby multiplying the inputsizeDeltawith the calculateddelta.It calls theperpMarket.orderFeefunction to get thehedgingFeeand a boolean flag,isInvalid, which indicates if the trade is invalid.It checks if the trade is valid by ensuringisInvalidis not set totrue. If the trade is invalid, it will throw an exception.It retrieves themarkPricefrom theexchange.getMarkPricefunction, which represents the current market price of the asset.The function calculates thevalueExchangedby multiplying themarkPricewith the absolute value ofsizeDelta. This represents the total value of the trade.It computes thetradeFeeusing thegetSlippageFeefunction, which calculates the fee based on the size of the trade.ThetradingFeeis calculated by multiplying thetradeFeewithvalueExchanged.Finally, the function returns the sum of thehedgingFeeandtradingFeeas the total fee for the trade.
+By combining both the hedging fee and trading fee, theorderFeefunction comprehensively calculates the costs associated for the trade.
+The problem here lies in thegetSlippageFee(LiquidityPool.sol#L367-L374) function.  The purpose of thegetSlippageFeefunction is to calculate the slippage fee for a trade based on the change in position size, represented by the inputsizeDelta. The slippage fee is a cost associated with executing a trade that accounts for the potential price impact and liquidity changes due to the size of the order. It helps ensure that the trading platform can effectively manage the impact of large trades on the market.
+functiongetSlippageFee(int256sizeDelta)publicviewreturns(uint256) {// ceil(s/100) * baseFeeuint256size=sizeDelta.abs();uint256region=size/standardSize;if(size%standardSize!=0)region+=1;returnregion*baseTradingFee;}
+The function works as follows:
+It first calculates the absolute value ofsizeDeltato ensure the size is a positive value, regardless of whether the trade is a buy or sell.It then divides thesizebystandardSize(set by default to (LiquidityPool.sol#L142) 1e20), to determine the number of regions the trade occupies. This constant value represents the size of a “standard” trade, which is used to categorize trades into different regions based on their size.If there is a remainder after dividingsizeby the constant value, it increments theregionby 1. This ensures that even partial regions are taken into account when calculating the fee.Finally, the function calculates the slippage fee by multiplying theregionwithbaseTradingFee(currently set (TestSystem.sol#L202) to 6e15 in the test suite). This constant value represents the base fee for each region.
+By calculating the slippage fee based on the size of the trade, thegetSlippageFeefunction helps account for the potential impact of the trade on the market. The larger the trade, the more regions it occupies, resulting in a higher slippage fee. This approach incentivizes traders to be mindful of the size of their trades and the potential impact they may have on market liquidity and pricing.
+The issue is that region can get really big (depending on the trade) so that the openTrade/closeTradesorderFeecould >= 100% meaning all the collateral of the user will be used to pay taxes.
+While I completely understand the intent of higher taxes for bigger trades, I think there should be a limit where the trade won’t get opened if a certain threshold is passed.
+I’ve built a PoC with Foundry using the protocol test suite with a few comments here and there to represent the following cases:
+functiondepositToPool(addressuser,uint256sum)internal{susd.mint(user,sum);vm.startPrank(user);susd.approve(address(pool),sum);pool.deposit(sum,user);vm.stopPrank();}functionopenShort(uint256amount,uint256collateral,addressuser)internalreturns(uint256positionId, Exchange.TradeParamsmemorytradeParams){tradeParams.amount=amount;tradeParams.collateral=address(susd);tradeParams.collateralAmount=collateral;tradeParams.minCost=0;vm.startPrank(user);susd.approve(address(exchange),collateral);(positionId,) =exchange.openTrade(tradeParams);vm.stopPrank();}functiontestSimpleShortCloseTrade()public{depositToPool(user_2,1000e18*25000);uint256pricingConstant=exchange.PRICING_CONSTANT();uint256expectedPrice=initialPrice.mulDivDown(initialPrice,pricingConstant);uint256multiplier=165;uint256collateralAmount= (expectedPrice*2) *multiplier;// 200% Collateral ratiouint256shortAmount=multiplier*1e18;susd.mint(user_1,collateralAmount);console.log("CollateralAmount",collateralAmount/1e18);console.log("ShortAmount",shortAmount/1e18);console.log("User_1 sUSD balance",susd.balanceOf(user_1) /1e18);console.log("*** OPEN TAX ***");(uint256positionId,) =openShort(shortAmount,collateralAmount,user_1);console.log("*** OPEN TAX ***\n");console.log("*** CLOSE TAX ***");closeShort(positionId,shortAmount,type(uint256).max,collateralAmount,user_1);console.log("*** CLOSE TAX ***");console.log("User_1 sUSD balance",susd.balanceOf(user_1) /1e18);}
+I’m going to use the formula(orderFee * 2) / collateralAmountto calculate the tax percentage. For each case, I’ll just modify themultipliervariable.
+Case 1: (multiplier 165)CollateralAmount 237600ShortAmount 165The tax % is: 1,7996633
+Running the tests, yields the following results.
+
+Case 2: (multiplier 1650)CollateralAmount 2376000ShortAmount 1650The tax % is: 10,8
+Running the tests yields the following results.
+
+Case 3: (multiplier 16500)CollateralAmount 23760000ShortAmount 16500The tax % is: 99,6
+
+Case 3 proves the point that a user can potentially lose all his collateral just by paying taxes when opening/closing a trade.
+Tools Used
+Manual review, Foundry
+Recommended Mitigation Steps
+This invariant is heavily influenced by the calculation inLiquidityPool.sol#L371. In case 1 the region is 1, in case 2 is 16 and in case 3 is 165.
+To address this issue, a protocol-wide maximum amount of taxes to be paid in a trade (total of open + close) should be established. If the calculated fee exceeds this threshold, the transaction should be reverted instead of opening the trade for the user. This will help protect traders from losing all their collateral due to excessive trading fees.
+mubaris (Polynomial) confirmed
+
+[H-10] FunctionhedgePositionsis incorrect, because it missed thequeuedPerpSizein the calculation
+Submitted byKIntern_NA
+FunctionhedgePositionsis incorrect, leads to the hedging will not work as expected, andLiquidityPoolcan lose funds without expectation.
+Proof of concept
+Let’s see functionhedgePositionsinLiquidtyPoolcontract:
+functionhedgePositions()externaloverriderequiresAuthnonReentrant{int256currentPosition=_getTotalPerpPosition();int256skew=_getSkew();uint256delta=_getDelta();int256requiredPosition=wadMul(skew,int256(delta));int256newPosition=requiredPosition-currentPosition;int256marginDelta=int256(_calculateMargin(newPosition));if(requiredPosition.abs() <currentPosition.abs()) {marginDelta= -marginDelta;}usedFunds+=marginDelta;perpMarket.transferMargin(marginDelta);_placeDelayedOrder(newPosition,false);emitHedgePositions(currentPosition,requiredPosition,marginDelta);}
+currentPositionis the sum of: the current position size ofLiquidityPoolin Synthetix and the delta size of the current delayed order which was submitted into Synthetix perp market.
+function_getTotalPerpPosition()internalviewreturns(int256positionSize) {IPerpsV2MarketBaseTypes.Positionmemoryposition=perpMarket.positions(address(this));IPerpsV2MarketBaseTypes.DelayedOrdermemorydelayedOrder=perpMarket.delayedOrders(address(this));positionSize=position.size+delayedOrder.sizeDelta;}
+However,currentPositionmissed the variablequeuedPerpSize, is the total amount of pending size delta (waiting to be submitted).
+Then_placeDelayedOrderwill be called with the wrongnewPosition, leads to the position size of pool can get a large deviation. The hedging will not be safe anymore.
+Scenario:
+_getTotalPerpPosition= 0,requiredPosition= 1000,queuedPerpSize= 1000newPositionis calculated incorrectly to be 1000 (since it missedqueuedPerpSize)It calls_placeDelayedOrder(1000, false), thenqueuedPerpSizeincrease to be 2000After executing all delayed orders, position size of LiquidityPool = 2000 (incorrect hedging)newPositionshould be -1000 in this case
+Recommended Mitigation Steps
+currentPositionshould be_getTotalPerpPosition()+queuedPerpSizein functionhedgePositions.
+mubaris (Polynomial) confirmed
+
+[H-11] KangarooVaultQueuedWithdrawDenial of Service
+Submitted byLirios
+When theKangarooVaulthas an open position, any withdrawals that are initiated, are queued.
+QueuedWithdrawalswork in two steps.
+A user initialtes the Withdrawal viainitiateWithdrawal(KangarooVault.sol#L215). This burns theVaultTokenandif (positionData.positionId != 0)(KangarooVault.sol#L225) adds the request to thewithdrawalQueue.processWithdrawalQueue()can be called to process requests in thewithdrawalQueuethat have passedminWithdrawDelayto transfer the SUSD tokens to the user.
+If the processing of aQueuedWithdrawentry in thewithdrawalQueuereverts, thequeuedWithdrawalHead(KangarooVault.sol#L331) will never increase and further processing of the queue will be impossible.
+This means that any users that have placed a QueuedWithdraw after the reverting entry will have lost their vaultToken without receiving their SUSD.
+Proof of Concept
+When calling theinitiateWithdrawal()function, the user can provide an address of the receiver of funds.
+When processing the withdrawal queue, the contracts does all the required checks, and then transfers the SUSD (KangarooVault.sol#L322) to the provided user.
+If we look at theSynthetix sUSD tokenand it’starget implementationwe will find that the SUSD token transfer code is:
+sUSD MultiCollateralSynth:L723-L739
+function_internalTransfer(addressfrom,addressto,uintvalue)internalreturns(bool) {/* Disallow transfers to irretrievable-addresses. */require(to!=address(0) &&to!=address(this) &&to!=address(proxy),"Cannot transfer to this address");// Insufficient balance will be handled by the safe subtraction.tokenState.setBalanceOf(from,tokenState.balanceOf(from).sub(value));tokenState.setBalanceOf(to,tokenState.balanceOf(to).add(value));// Emit a standard ERC20 transfer eventemitTransfer(from,to,value);returntrue;}
+This means any SUSD transfer to the SUSD proxy or implementation contract, will result in a revert.
+An attacker can use this to make ainitiateWithdrawal()request withuser=sUSDproxyoruser=sUSD_MultiCollateralSynth. Any user that request a Withdrawal viainitiateWithdrawal()after this, will lose their vault tokens without receiving their SUSD.
+The attacker can do this at any time, or by frontrunning a specific (large)initiateWithdrawal()request.
+To test it, a check is added to the mock contract that is used for SUSD in the test scripts:
+diff --git a/src/test-helpers/MockERC20Fail.sol b/src/test-helpers/MockERC20Fail.solindex e987f04..1ce10ec 100644--- a/src/test-helpers/MockERC20Fail.sol+++ b/src/test-helpers/MockERC20Fail.sol@@ -18,6 +18,9 @@ contract MockERC20Fail is MockERC20 {}function transfer(address receiver, uint256 amount) public override returns (bool) {++        require(receiver != address(0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB) , "Cannot transfer to this address");+if (forceFail) {return false;}
+In theKangarooVault.t.soltest script, the following test was added to demonstrated the issue:
+// add to top of file:import{IVaultToken}from"../../src/interfaces/IVaultToken.sol";// add to KangarooTest Contract:functiontestWithdrawalDOS()public{IVaultTokenvault_token=kangaroo.VAULT_TOKEN();// make deposit for user_2susd.mint(user_2,2e23);vm.startPrank(user_2);susd.approve(address(kangaroo),2e23);kangaroo.initiateDeposit(user_2,2e23);assertEq(vault_token.balanceOf(user_2),2e23);vm.stopPrank();// have vault open a position to force queued wthdrawalstestOpen();// vault has  position opened, withdrawal will be queued, vault_token burned, no USDC receivedvm.startPrank(user_2);kangaroo.initiateWithdrawal(user_2,1e23);assertEq(susd.balanceOf(user_2),0);assertEq(vault_token.balanceOf(user_2),1e23);// process withdrawalqueue, withdrawam should passskip(kangaroo.minWithdrawDelay());kangaroo.processWithdrawalQueue(3);uint256user_2_balance=susd.balanceOf(user_2);assertGt(user_2_balance,0);vm.stopPrank();// user 3 frontruns with fake/reverting withdrawal request.// to 0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB (= SUSD MultiCollateralSynth contract address).// This will cause SUSD transfer to revert.vm.startPrank(user_3);kangaroo.initiateWithdrawal(0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB,0);vm.stopPrank();// user_2 adds another withdrawal request, after the attackers request, vault_token burned, no USDC receivedvm.startPrank(user_2);kangaroo.initiateWithdrawal(user_2,1e23);assertEq(vault_token.balanceOf(user_2),0);// processWithdrawalQueue now reverts and no funds receivedskip(kangaroo.minWithdrawDelay());vm.expectRevert(bytes("TRANSFER_FAILED"));kangaroo.processWithdrawalQueue(3);assertEq(susd.balanceOf(user_2),user_2_balance);assertEq(vault_token.balanceOf(user_2),0);vm.stopPrank();}
+Tools Used
+Manual review, forge
+Recommended Mitigation Steps
+The processing ofwithdrawalQueueshould have a mechanism to handle revertingQueuedWithdrawentries.
+Either by skipping them and/or moving them to anotherfailedWithdrawalsqueue.
+Dravee (judge) commented:
+Similar but different fromhttps://github.com/code-423n4/2023-03-polynomial-findings/issues/103Somehow the import should beimport {IVaultToken} from "../src/interfaces/IVaultToken.sol";(one step less), but the POC runs correctly after that.
+mubaris (Polynomial) confirmed
+
+[H-12] Denial of service of LiquiditypoolQueuedWithdrawals
+Submitted byLirios, also found bybin2chen
+The preferred way for withdrawals of the Liquiditypool is to do this via a withdrawal queue.
+According to Polynomial:
+Queuing will be the default deposit/withdraw mechanism (In the UI) and not planning to charge any fees for this mechanismInstant deposit / withdraw is mechanism is meant for external integrations in case if they don’t want to track status of the queued deposit or withdraw
+It is also stimulated to usequeueWithdraw()overwithdraw()by charging a withdrawalFee for direct withdrawals.
+QueuedWithdrawals work in two steps.
+A user initialtes the Withdrawal viaqueueWithdraw(). This burns theliquidityTokensand adds the request to thewithdrawalQueue.processWithdraws()can be called to process requests in thewithdrawalQueuethat have passedminWithdrawDelayto transfer the SUSD tokens to the user.
+If the processing of aQueuedWithdrawin thewithdrawalQueuereverts, thequeuedWithdrawalHead(LiquidityPool.sol#LL331C13-L331C33) will never increase and further processing of the queue will be impossible.
+This means that any users that have placed a QueuedWithdraw after the reverting entry will have lost their liquiditytokens without receiving their SUSD.
+Proof of Concept
+When calling thequeueWithdraw()function, the user can provide an address of the receiver of funds.
+When processing the withdrawal queue, the contracts does all the required checks, and then transfers the SUSD (LiquidityPool.sol#L311) to the provided user.
+If we look at theSynthetix sUSD tokenand it’starget implementationwe will find that the SUSD token transfer code is:
+sUSD MultiCollateralSynth:L723-L739
+function_internalTransfer(addressfrom,addressto,uintvalue)internalreturns(bool) {/* Disallow transfers to irretrievable-addresses. */require(to!=address(0) &&to!=address(this) &&to!=address(proxy),"Cannot transfer to this address");// Insufficient balance will be handled by the safe subtraction.tokenState.setBalanceOf(from,tokenState.balanceOf(from).sub(value));tokenState.setBalanceOf(to,tokenState.balanceOf(to).add(value));// Emit a standard ERC20 transfer eventemitTransfer(from,to,value);returntrue;}
+This means any transfer to the SUSD proxy or implementation contract, will result in a revert.
+An attacker can use this to makequeueWithdraw()request withuser=sUSDproxyoruser=sUSD_MultiCollateralSynth.   Any user that request a Withdrawal viaqueueWithdraw()after this, will lose their liquidity tokens without receiving their SUSD.
+The attacker can do this at any time, or by frontrunning a specific (large)queueWithdraw()request.
+To test it, a check is added to the mock contract that is used for SUSD in the test scripts to simulate the SUSD contract behaviour:
+diff --git a/src/test-helpers/MockERC20Fail.sol b/src/test-helpers/MockERC20Fail.solindex e987f04..1ce10ec 100644--- a/src/test-helpers/MockERC20Fail.sol+++ b/src/test-helpers/MockERC20Fail.sol@@ -18,6 +18,9 @@ contract MockERC20Fail is MockERC20 {}function transfer(address receiver, uint256 amount) public override returns (bool) {++        require(receiver != address(0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB) , "Cannot transfer to this address");+if (forceFail) {return false;}
+In the test/LiquidityPool.Deposits.t.sol test file, the following was added.This results in a revert of the processWithdraws function and failing the test
+iff --git a/test/LiquidityPool.Deposits.t.sol b/test/LiquidityPool.Deposits.t.solindex 0bb6f5f..8d70c60 100644--- a/test/LiquidityPool.Deposits.t.sol+++ b/test/LiquidityPool.Deposits.t.sol@@ -291,6 +291,9 @@ contract LiquidityPoolTest is TestSystem {// user_2 i-withdraw 20$// user_3 q-withdraw 13$+        // Frontrun all withdrawal requests, since amount =0, can be called by anyone+        pool.queueWithdraw(0, 0xDfA2d3a0d32F870D87f8A0d7AA6b9CdEB7bc5AdB);+vm.prank(user_1);pool.queueWithdraw(2e19, user_1);vm.prank(user_3);
+Tools Used
+Manual review, forge
+Recommended Mitigation Steps
+The processing of withdrawalQueue should have a mechanism to handle revertingQueuedWithdrawentries.
+Either by skipping them and/or moving them to anotherfailedWithdrawalsqueue.
+mubaris (Polynomial) confirmed
+Dravee (judge) commented:
+The frontrunning part isn’t an issue on Optimism, but the rest is valid.
+
+[H-13] Exchange:totalFundingcalculation should be done with a simple multiplication operation instead of awadMuloperation
+Submitted bycarlitox477, also found byKIntern_NA
+wadoperations are meant to be done with int/uint which represent numbers with 18 decimals.
+While the funding rate follows this representation, a simple time difference does not.
+InExchange.getMarkPriceas well as inExchange._updateFundingRateawadMuloperation is done to multiply the funding rate per second by a simple time difference, leading to wrong calculation ofnormalizationFactorand mark price, affecting critical parts of the protocol.
+Proof of Concept
+InExchange.getMarkPricefirst we get the funding rate per second:
+(int256fundingRate,) =getFundingRate();fundingRate=fundingRate/1days;// Funding rate per second
+Immediately after, the total funding since last update is calculated:
+int256currentTimeStamp=int256(block.timestamp);int256fundingLastUpdatedTimestamp=int256(fundingLastUpdated);// @audit funding rate X (time interval) / 1e18 = Number without decimalint256totalFunding=wadMul(fundingRate, (currentTimeStamp-fundingLastUpdatedTimestamp));
+int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));is the same that$TOTAL\_ FUNDING\_{t\_{1}; t\_{2}} = \frac{FUNDING\_ RATE\_{sec} \times (t\_{2} - t\_{1})}{10^{18}}$
+However, the division by $10^{18}$ should not happen, given that time difference does not represent a number with 18 decimals.
+This ends up in a miscalculation oftotalFundingvariable, and as a consequence, a miscalculation of mark price.
+The same issue happens in_updateFundingRatefunction.
+Impact
+Here a complete list of functions affected by this bug:
+Exchange.\_updateFundingRate(Exchange.sol#L416)Exchange.openTrade(Exchange.sol#L95)Exchange.closeTrade(Exchange.sol#L108)Exchange.addCollateral(Exchange.sol#L121)Exchange.removeCollateral(Exchange.sol#L134)Exchange.liquidate(Exchange.sol#L147)Exchange.getMarkPrice(Exchange.sol#L196):Exchange.\_addCollateral(Exchange.sol#L358)Exchange.\_removeCollateral(Exchange.sol#L384)KangarooVault.getTokenPrice(KangarooVault.sol#L353)ShortCollateral.liquidate(ShortCollateral.sol#L133)ShortCollateral.getMinCollateral(ShortCollateral.sol#L163)ShortCollateral.canLiquidate(ShortCollateral.sol#L193)ShortCollateral.maxLiquidatableDebt(ShortCollateral.sol#L216)LiquidityPool.orderFee(LiquidityPool.sol#L388)LiquidityPool.getMarkPrice(LiquidityPool.sol#L405)LiquidityPool.getTokenPrice(LiquidityPool.sol#L352)LiquidityPool.openLong(LiquidityPool.sol#L437)LiquidityPool.closeLong(LiquidityPool.sol#L469)LiquidityPool.openShort(LiquidityPool.sol#L501)LiquidityPool.closeShort(LiquidityPool.sol#L533)LiquidityPool.liquidate(LiquidityPool.sol#L558)KangarooVault.removeCollateral(KangarooVault.sol#L437)KangarooVault.\_openPosition(KangarooVault.sol#L568)
+As it can be seen, this bug affects multiple critical part of the protocol, calculating the correct mark price as well as updating the funding rate is essential for the protocol correct behavior.
+Recommended Mitigation steps
+Simply replace currentwadoperation for a simple multiplication.
+function getMarkPrice() public view override returns (uint256 markPrice, bool isInvalid) {// Get base asset price from oracles(uint256 baseAssetPrice, bool invalid) = pool.baseAssetPrice();isInvalid = invalid;// Get funding rate per second// max 1% or 1e16(int256 fundingRate,) = getFundingRate();fundingRate = fundingRate / 1 days;int256 currentTimeStamp = int256(block.timestamp);int256 fundingLastUpdatedTimestamp = int256(fundingLastUpdated);-       int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));+       int256 totalFunding = fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp);int256 normalizationUpdate = 1e18 - totalFunding;uint256 newNormalizationFactor = normalizationFactor.mulWadDown(uint256(normalizationUpdate));uint256 squarePrice = baseAssetPrice.mulDivDown(baseAssetPrice, PRICING_CONSTANT);markPrice = squarePrice.mulWadDown(newNormalizationFactor);}
+function _updateFundingRate() internal {(int256 fundingRate,) = getFundingRate();fundingRate = fundingRate / 1 days;int256 currentTimeStamp = int256(block.timestamp);int256 fundingLastUpdatedTimestamp = int256(fundingLastUpdated);-       int256 totalFunding = wadMul(fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp));+       int256 totalFunding = fundingRate, (currentTimeStamp - fundingLastUpdatedTimestamp);int256 normalizationUpdate = 1e18 - totalFunding;normalizationFactor = normalizationFactor.mulWadDown(uint256(normalizationUpdate));emit UpdateFundingRate(fundingLastUpdated, normalizationFactor);fundingLastUpdated = block.timestamp;}
+mubaris (Polynomial) confirmed
+
+[H-14] Inexpedient liquidatable logic that could have half liquidable position turns fully liquidable instantly
+Submitted byRaymondFam, also found byJosiah
+In ShortCollateral.sol, the slash logic ofmaxLiquidatableDebt()is specifically too harsh to the barely unhealthy positions becausemaxDebtwill be half of the position to be liquidated if0.95e18 <= safetyRatio <= 1e18.
+Additionally, once a position turns liquidatable, the position is deemed fully liquidatable atomically in two repeated transactions.
+Proof of Concept
+Supposing we resort to the following setup as denoted inShortCollateral.t.sol(#L21-L23):
+collRatio = 1.5e18liqRatio = 1.3e18liqBonus = 1e17
+Collateral ratio of a position,x = (position.collateralAmount * collateralPrice) / (position.shortAmount * markPrice)
+File:ShortCollateral.sol#L230-L239
+uint256safetyRatioNumerator=position.collateralAmount.mulWadDown(collateralPrice);uint256safetyRatioDenominator=position.shortAmount.mulWadDown(markPrice);safetyRatioDenominator=safetyRatioDenominator.mulWadDown(collateral.liqRatio);uint256safetyRatio=safetyRatioNumerator.divWadDown(safetyRatioDenominator);if(safetyRatio>1e18)returnmaxDebt;maxDebt=position.shortAmount/2;if(safetyRatio<WIPEOUT_CUTOFF)maxDebt=position.shortAmount;
+According to the code block above withliqRatiofactored in:
+In order to avoid being liquidated, a position will need to have a collateral ratio,x > 1.3e18so thatsafetyRatio > (1.3 / 1.3)e18which issafetyRatio > 1e18.
+The position will be half liquidated if its associated collateral ratio falls in the range of1.235e18 <= x <= 1.3e18. To avoid full liquidation, the condition at the lower end will need to besafetyRatio >= (1.235 / 1.3)e18which issafetyRatio >= 0.95e18.
+The position will be fully liquidated ifx < 1.235e18.
+Here is the unforgiving scenario:
+Bob has a short position whose collateral ratio happens to be 1.3e18.Bob’s position gets half liquidated the first round ending up with a collateral ratio, x (Note: The numerator is multiplied by 0.45 because of the additional 10%liqBonusadded to the one half collateral slashed:(1.3 * 0.45 / 0.5)e18 = 1.17e18Immediately, Bob’s position becomes fully liquidatable becausex < 1.235e18.
+Recommended Mitigation Steps
+Consider restructuring the slashing logic such that the position turns healthy after being partially liquidated, instead of making it spiral down to the drain.
+Dravee (judge) commented:
+Not a duplicate ofhttps://github.com/code-423n4/2023-03-polynomial-findings/issues/146
+mubaris (Polynomial) confirmed
+rivalq (Polynomial) confirmed and commented:
+Depending upon the collateral and its collateral ratio etc, that spiral of liquidation may happen.
+

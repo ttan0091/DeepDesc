@@ -1,0 +1,59 @@
+[H-01] Possible reentrancy during redemption/swap
+Submitted byauditor0517, also found byLambda
+Redeemers might charge more collaterals during redemption/swap by the reentrancy attack.
+Proof of Concept
+Redeemers can redeem the agToken for collaterals inRedeemercontract and_redeem()burns the agToken and transfers the collaterals.
+function_redeem(uint256amount,addressto,uint256deadline,uint256[]memoryminAmountOuts,address[]memoryforfeitTokens)internalreturns(address[]memorytokens,uint256[]memoryamounts) {TransmuterStoragestoragets=s.transmuterStorage();if(ts.isRedemptionLive==0)revertPaused();if(block.timestamp>deadline)revertTooLate();uint256[]memorysubCollateralsTracker;(tokens,amounts,subCollateralsTracker) =_quoteRedemptionCurve(amount);// Updating the normalizer enables to simultaneously and proportionally reduce the amount// of stablecoins issued from each collateral without having to loop through each of them_updateNormalizer(amount,false);IAgToken(ts.agToken).burnSelf(amount,msg.sender);//@audit-info burn agTokenaddress[]memorycollateralListMem=ts.collateralList;uint256indexCollateral;for(uint256i;i<amounts.length; ++i) {if(amounts[i] <minAmountOuts[i])revertTooSmallAmountOut();// If a token is in the `forfeitTokens` list, then it is not sent as part of the redemption processif(amounts[i] >0&&LibHelpers.checkList(tokens[i],forfeitTokens) <0) {CollateralstoragecollatInfo=ts.collaterals[collateralListMem[indexCollateral]];if(collatInfo.onlyWhitelisted>0&& !LibWhitelist.checkWhitelist(collatInfo.whitelistData,to))revertNotWhitelisted();if(collatInfo.isManaged>0)LibManager.release(tokens[i],to,amounts[i],collatInfo.managerData.config);elseIERC20(tokens[i]).safeTransfer(to,amounts[i]);//@audit reentrancy}if(subCollateralsTracker[indexCollateral] -1<=i) ++indexCollateral;}emitRedeemed(amount,tokens,amounts,forfeitTokens,msg.sender,to);}
+During the collateral transfers(direct transfer or inLibManager.release()), there might be a hook for the recipient in the case of ERC777 tokens.
+Then the recipient might charge more collaterals by reentrancy like this.
+Let’s suppose there are 2 collateralscolAandcolB. The transmuter contract contains 1000 amounts ofcolAandcolB. Alice has 20 amounts of agToken.At the first time, Alice callsredeem()with 10 amounts of agToken and she should receive 10 amounts ofcolAandcolB.AscolAis an ERC777 token, she callsredeem(10)again inside the hook after thecolA transfer.During the second redemption, total collaterals will becolA = 990, colB = 1000becausecolBisn’t transferred in the first redemption yet.After all, Alice will receive more collaterals in the second redemption fromthis calculation.
+I think a similar reentrancy attack might be possible during the swap as well.
+Recommended Mitigation Steps
+I think we should add thenonReentrantmodifier to the major functions likeredeem()/swap().
+Picodes (Angle) confirmed, but disagreed with severity and commented:
+Valid. We had this in mind but thought it was ok as we don’t plan to accept collaterals with callbacks. However better than sorry and we may add the modifier.
+hansfriese (Judge) commented:
+@Picodes -LibManager.release()is called during the redemption and it might have a callback although the governance doesn’t accept collaterals with hooks.Because the assumption is practical enough and the users can steal collaterals directly, will keep as High.
+Angle mitigated:
+PR:https://github.com/AngleProtocol/angle-transmuter/commit/864c1c47cb550f8e337244f0f70409a171a4e671Adds a reentrancy guard to several functions.
+Status:Mitigation confirmed. Full details in reports fromauditor0517,Lambda, andJeiwan.
+
+[H-02] The first disputer might lose funds although his dispute is valid
+Submitted byauditor0517, also found byUdsenandJeiwan
+Users can dispute the current tree usingdisputeTree()and the governor refunds the dispute funds if the dispute is valid inresolveDispute().
+functiondisputeTree(stringmemoryreason)external{if(block.timestamp>=endOfDisputePeriod)revertInvalidDispute();IERC20(disputeToken).safeTransferFrom(msg.sender,address(this),disputeAmount);disputer=msg.sender;emitDisputed(reason);}/// @notice Resolve the ongoing dispute, if any/// @param valid Whether the dispute was validfunctionresolveDispute(boolvalid)externalonlyGovernorOrGuardian{if(disputer==address(0))revertNoDispute();if(valid) {IERC20(disputeToken).safeTransfer(disputer,disputeAmount);// If a dispute is valid, the contract falls back to the last tree that was updated_revokeTree();}else{IERC20(disputeToken).safeTransfer(msg.sender,disputeAmount);endOfDisputePeriod=_endOfDisputePeriod(uint48(block.timestamp));}disputer=address(0);emitDisputeResolved(valid);}
+ButdisputeTree()can be called again by another disputer although there is an active disputer andresolveDispute()refunds to the last disputer only.
+In the worst case, a valid disputer might lose the dispute funds by malicious frontrunners.
+A valid disputer creates a dispute usingdisputeTree().As it’s valid, the governor callsresolveDispute(valid = true)to accept the dispute and refund the funds.A malicious user callsdisputeTree()by front running.Then duringresolveDispute(true), the dispute funds will be sent to the second disputer and the first disputer will lose the funds although he’s valid.
+Recommended Mitigation Steps
+disputeTree()shouldn’t allow another dispute when there is an active dispute already.
+Picodes (Angle) confirmed, but disagreed with severity and commented:
+Valid scenario and issue, although this is only a griefing attack, and the governance could still send back the funds to the first dispute usingrecoverERC20.Considering the scenario is very unlikely as it would cost gas to the attacker for nothing, and easily fixable, I think this should be downgraded to Med
+hansfriese (Judge) commented:
+@Picodes - Will keep as High because honest disputers may lose their funds and it requires the governance’s additional work to recover.
+Picodes (Angle) commented:
+@hansfriese - indeed but when there is a dispute it requires additional work from the governance anyway. Like the permissions forresolveDisputeandrecoverERC20, andrecoverERC20is even cheaper. So the trust assumptions of the disputer are exactly the same with and without this issue: he trusts the governance to send him back its deposit at some point.This wholedisputeAmount/periodthing is meant to prevent spam and to force disputers to behave correctly as they will lose some funds if they don’t, so someone using this attack vector also exposes himself to the governance deciding to not accept the dispute and seize the funds. Overall we will of course respect your final decision but still think med is more appropriate here
+hansfriese (Judge) commented:
+@Picodes - I totally understand your point and I’d like to mention two things.The governance should refund one by one outside of the contract.While checkingdisputeTree(), I see it doesn’t emit the disputer’s address anddisputeAmountwhich would be changed later. So it wouldn’t be that easy to refund in practice.I agree it’s between High and Medium and will keep as High.
+Angle mitigated:
+PR:https://github.com/AngleProtocol/merkl-contracts/commit/7402ee6b84789391479c5876b27be23fd579f7b2Applies the suggested fix.
+Status:Mitigation confirmed. Full details in reports fromLambda,auditor0517, andJeiwan.
+
+[H-03] Poor detection of disputed trees allows claiming tokens from a disputed tree
+Submitted byJeiwan, also found byauditor0517
+https://github.com/AngleProtocol/merkl-contracts/blob/1825925daef8b22d9d6c0a2bc7aab3309342e786/contracts/Distributor.sol#L200
+Users can claim rewards from a Merkle tree that’s being disputed. This can potentially lead to loss of funds since a malicious trusted EOA can claim funds from a malicious tree while it’s being disputed.
+Proof of Concept
+TheDistribution.getMerkleRootfunction is used to get the current Merkle root during claiming. The function is aware of the dispute period of the current root and returns the previous root if the current tree is still in the dispute period.
+However, the function doesn’t take into account the situation when:
+a tree was disputed (i.e.the disputer address is set);and the dispute period has finished (i.e. whenblock.timestamp >= endOfDisputePeriod).
+Such situations can happen realistically when a tree is disputed closer to the end of its dispute period and/or when the governor/guardian takes longer time to resolve the dispute. In such situations, the dispute period checks in the above functions will pass, however thedisputeraddress will be set, which means that the tree is being disputed and shouldn’t be used in claims.
+As an example exploit scenario, a malicious trusted EOA can add a Merkle tree root that lets them claim the entire balance of the contract. Even if the tree gets disputed quickly, the success of the attack boils down to how quickly the governor/guardian will resolve the dispute. To increase the chance, the attack can be deliberately executed when the governor/guardian are not active or available immediately.
+Recommended Mitigation Steps
+When thedisputeraddress is set (after a call todisputeTree), consider treating the current tree as disputed, no matter whether the dispute period has passed or not. E.g. consider these changes:
+diff --git a/contracts/Distributor.sol b/contracts/Distributor.solindex bc4e49f..8fb6a4c 100644--- a/contracts/Distributor.sol+++ b/contracts/Distributor.sol@@ -197,7 +197,7 @@ contract Distributor is UUPSHelper {/// @notice Returns the MerkleRoot that is currently live for the contractfunction getMerkleRoot() public view returns (bytes32) {-        if (block.timestamp >= endOfDisputePeriod) return tree.merkleRoot;+        if (block.timestamp >= endOfDisputePeriod && disputer == address(0)) return tree.merkleRoot;else return lastTree.merkleRoot;}
+Picodes (Angle) confirmed
+Angle mitigated:
+PR:https://github.com/AngleProtocol/merkl-contracts/commit/82d8c0ff37b4a9ad8277cac4aef85f3ca0ad5c7cApplies the suggested fix.
+Status:Mitigation confirmed. Full details in reports fromLambda,auditor0517, andJeiwan.
+

@@ -1,0 +1,11 @@
+Type of vulnerability: Economic/Mathematical Vulnerability
+Cause of vulnerability: The contract incorrectly calculates the collateral to be removed during liquidation, potentially leading to the removal of less collateral than the debt being liquidated.
+Execution process: During the `liquidate()` function call, the `_updateBorrowAndCollateralShare()` function is invoked. This function calculates `availableBorrowPart` based on the user's collateral and applies a `liquidationBonusAmount` to the debt. The minimum of the `liquidationBonusAmount` and the user's debt is assigned to `borrowPart`, which represents the maximum debt that can be removed. `borrowPart` is then increased by a `liquidationMultiplier` and converted to `collateralShare`, which may exceed the user's actual collateral. If `collateralShare` exceeds the user's collateral, it is reduced to match the user's collateral, leading to a potential loss of funds for the contract.
+Vulnerable code: 
+```solidity
+if(collateralShare > userCollateralShare[user]) {
+    require(false, "collateralShare and borrowPart not worth the same"); //@audit add this line
+    collateralShare = userCollateralShare[user];
+}
+userCollateralShare[user] -= collateralShare;
+```

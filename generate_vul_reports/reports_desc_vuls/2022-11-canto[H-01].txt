@@ -1,0 +1,15 @@
+Type of vulnerability: Fee Redirection via Proxy Contract
+Cause of vulnerability: Permissionless registration of fee recipients and the direct assignment of transaction fees to the transaction recipient.
+Execution process: A user creates a proxy contract and registers it as the fee recipient using the Turnstile contract. When executing transactions through this proxy, the fees are sent to the proxy contract instead of the intended recipient, allowing the user to redirect the fees to themselves.
+Vulnerable code: 
+```solidity
+function register(address _recipient) public onlyUnregistered returns (uint256 tokenId) {
+    address smartContract = msg.sender;
+    if (_recipient == address(0)) revert InvalidRecipient();
+    tokenId = _tokenIdTracker.current();
+    _mint(_recipient, tokenId);
+    _tokenIdTracker.increment();
+    emit Register(smartContract, _recipient, tokenId);
+    feeRecipient[smartContract] = NftData({tokenId: tokenId, registered: true});
+}
+```

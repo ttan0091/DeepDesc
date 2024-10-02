@@ -1,0 +1,23 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: The logic in the contract does not account for the edge case where bribe rewards are deposited during the first epoch, leading to these rewards being unclaimable.
+Execution process: A briber deposits rewards during the first epoch, but due to the timing of reward distribution and the requirement for a minimum amount of rewards to be available, these rewards remain unclaimable and are stuck in the contract.
+Vulnerable code: 
+```solidity
+function notifyRewardAmount(address token, uint amount) external lock {
+    require(amount > 0);
+    if (!isReward[token]) {
+        require(rewards.length < MAX_REWARD_TOKENS, "too many rewards tokens");
+    }
+    // bribes kick in at the start of next bribe period
+    uint adjustedTstamp = getEpochStart(block.timestamp);
+    uint epochRewards = tokenRewardsPerEpoch[token][adjustedTstamp];
+    _safeTransferFrom(token, msg.sender, address(this), amount);
+    tokenRewardsPerEpoch[token][adjustedTstamp] = epochRewards + amount;
+    if (!isReward[token]) {
+        isReward[token] = true;
+        rewards.push(token);
+        IGauge(gauge).addBribeRewardToken(token);
+    }
+    emit NotifyReward(msg.sender, token, adjustedTstamp, amount);
+}
+```

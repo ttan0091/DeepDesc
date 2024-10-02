@@ -1,0 +1,24 @@
+Type of vulnerability: Accounting Error
+Cause of vulnerability: Failure to update the `idleETH` value when bringing unused ETH back into the giant pool.
+Execution process:
+1. Users stake ETH using `batchDepositETHForStaking()`, reducing `idleETH`.
+2. Users call `bringUnusedETHBackIntoGiantPool()` to return unused ETH from savETH vaults to the giant pool.
+3. The giant pool's ETH balance increases, but `idleETH` is not updated, causing a discrepancy between the actual ETH balance and the tracked `idleETH` value.
+4. This discrepancy leads to the inability to use the returned ETH for future staking or withdrawal.
+
+Vulnerable code:
+```solidity
+function bringUnusedETHBackIntoGiantPool(address[] calldata _savETHVaults, LPToken[][] calldata _lpTokens, uint256[][] calldata _amounts) external {
+    uint256 numOfVaults = _savETHVaults.length;
+    require(numOfVaults > 0, "Empty arrays");
+    require(numOfVaults == _lpTokens.length, "Inconsistent arrays");
+    require(numOfVaults == _amounts.length, "Inconsistent arrays");
+    for (uint256 i; i < numOfVaults; ++i) {
+        SavETHVault vault = SavETHVault(_savETHVaults[i]);
+        for (uint256 j; j < _lpTokens[i].length; ++j) {
+            require(vault.isDETHReadyForWithdrawal(address(_lpTokens[i][j])) == false, "ETH is either staked or derivatives minted");
+        }
+        vault.burnLPTokens(_lpTokens[i], _amounts[i]);
+    }
+}
+```

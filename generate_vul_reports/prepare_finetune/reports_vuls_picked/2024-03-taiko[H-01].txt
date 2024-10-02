@@ -1,0 +1,25 @@
+Type of vulnerability: Gas issuance inflation leading to chain halt or incorrect base fee
+
+Cause of vulnerability: Incorrect calculation of the base fee due to over-issuance of gas, which is inflated because `lastSyncedBlock` is only updated every 5 blocks, leading to an incorrect multiplication of `_config.gasTargetPerL1Block`.
+
+Execution process: 
+1. The `anchor()` function calculates the base fee using `_calc1559BaseFee`.
+2. The function incorrectly multiplies `_config.gasTargetPerL1Block` by the number of L1 blocks since the last sync, which is inflated due to infrequent updates of `lastSyncedBlock`.
+3. This leads to either a chain halt if the calculated base fee does not match `block.basefee`, or a severely deflated base fee if `block.basefee` uses the same flawed calculation.
+
+Vulnerable code:
+```solidity
+if (gasExcess > 0) {
+    uint256 excess = uint256(gasExcess) + _parentGasUsed;
+    uint256 numL1Blocks;
+    if (lastSyncedBlock > 0 && _l1BlockId > lastSyncedBlock) {
+        numL1Blocks = _l1BlockId - lastSyncedBlock;
+    }
+    if (numL1Blocks > 0) {
+        uint256 issuance = numL1Blocks * _config.gasTargetPerL1Block;
+        excess = excess > issuance ? excess - issuance : 1;
+    }
+    gasExcess_ = uint64(excess.min(type(uint64).max));
+    basefee_ = Lib1559Math.basefee(gasExcess_, uint256(_config.basefeeAdjustmentQuotient) * _config.gasTargetPerL1Block);
+}
+```

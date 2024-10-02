@@ -1,0 +1,68 @@
+[H-01] StakedCitadel doesn’t use correct balance for internal accounting
+Submitted by Ruhum, also found by cccz, wuwe1, VAD37, TrungOre, shenwilly, minhquanym, kyliek, danb, gs8nrv, and rayn
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L291-L295
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L772-L776
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L881-L893
+Impact
+The StakedCitadel contract’sbalance()function is supposed to return the balance of the vault + the balance of the strategy. But, it only returns the balance of the vault. The balance is used to determine the number of shares that should be minted when depositing funds into the vault and the number of shares that should be burned when withdrawing funds from it.
+Since most of the funds will be located in the strategy, the vault’s balance will be very low. Some of the issues that arise from this:
+You can’t deposit to a vault that already minted shares but has no balance of the underlying token:
+fresh vault with 0 funds and 0 sharesAlice deposits 10 tokens. She receives 10 shares back (https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L887-L888)Vault’s tokens are deposited into the strategy (nowbalance == 0andtotalSupply == 10)Bob tries to deposit but the transaction fails because the contract tries to divide by zero:https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L890(pool == balance())
+You get more shares than you should
+fresh vault with 0 funds and 0 sharesAlice deposits 10 tokens. She receives 10 shares back (https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L887-L888)Vault’s tokens are deposited into the strategy (nowbalance == 0andtotalSupply == 10)Bob now first transfers 1 token to the vault so that the balance is now1instead of0.Bob deposits 5 tokens. He receives5 * 10 / 1 == 50shares:https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L890
+Now, the vault received 15 tokens. 10 from Alice and 5 from Bob. But Alice only has 10 shares while Bob has 50. Thus, Bob can withdraw more tokens than he should be able to.
+It simply breaks the whole accounting of the vault.
+Proof of Concept
+The comment says that it should be vault’s + strategy’s balance:https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L291-L295
+Here’s another vault from the badger team where the function is implemented correctly:https://github.com/Badger-Finance/badger-vaults-1.5/blob/main/contracts/Vault.sol#L262
+Recommended Mitigation Steps
+Add the strategy’s balance to the return value of thebalance()function likehere.
+GalloDaSballo (BadgerDAO) confirmed and commented:
+Agree balance must have been changed by mistake or perhaps earn should not transfer to a strategy either would work
+
+[H-02] StakedCitadel: wrong setupVesting function name
+Submitted by cccz, also found by TrungOre, wuwe1, reassor, 0xBug, georgypetrov, 0xDjango, scaraven, horsefacts, berndartmueller, CertoraInc, rayn, m9800, pedroais, and VAD37
+In the\_withdrawfunction of the StakedCitadel contract, the setupVesting function of vesting is called, while in the StakedCitadelVester contract, the function name is vest, which will cause the _withdraw function to fail, so that the user cannot withdraw the tokens.
+IVesting(vesting).setupVesting(msg.sender, _amount, block.timestamp);token.safeTransfer(vesting, _amount);...function vest(address recipient,uint256 _amount,uint256 _unlockBegin) external {require(msg.sender == vault, "StakedCitadelVester: only xCTDL vault");require(_amount > 0, "StakedCitadelVester: cannot vest 0");vesting[recipient].lockedAmounts =vesting[recipient].lockedAmounts +_amount;vesting[recipient].unlockBegin = _unlockBegin;vesting[recipient].unlockEnd = _unlockBegin + vestingDuration;emit Vest(recipient,vesting[recipient].lockedAmounts,_unlockBegin,vesting[recipient].unlockEnd);}
+Proof of Concept
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L830
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/interfaces/citadel/IVesting.sol#L5
+Recommended Mitigation Steps
+Use the correct function name
+interface IVesting {function vest(address recipient,uint256 _amount,uint256 _unlockBegin) external;}...IVesting(vesting).vest(msg.sender, _amount, block.timestamp);token.safeTransfer(vesting, _amount);
+dapp-whisperer (BadgerDAO) confirmed and resolved
+
+[H-03] StakedCitadel depositors can be attacked by the first depositor with depressing of vault token denomination
+Submitted by hyh, also found by VAD37, cmichel, 0xDjango, berndartmueller, and danb
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L881-L892
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L293-L295
+Impact
+An attacker can become the first depositor for a recently created StakedCitadel contract, providing a tiny amount of Citadel tokens by callingdeposit(1)(raw values here,1is1 wei,1e18is1 Citadelas it has 18 decimals). Then the attacker can directly transfer, for example,10^6*1e18 - 1Citadel to StakedCitadel, effectively setting the cost of1of the vault token to be10^6 * 1e18Citadel. The attacker will still own 100% of the StakedCitadel’s pool being the only depositor.
+All subsequent depositors will have their Citadel token investments rounded to10^6 * 1e18, due to the lack of precision which initial tiny deposit caused, with the remainder divided between all current depositors, i.e. the subsequent depositors lose value to the attacker.
+For example, if the second depositor brings in1.9*10^6 * 1e18Citadel, only1of new vault to be issued as1.9*10^6 * 1e18divided by10^6 * 1e18will yield just1, which means that2.9*10^6 * 1e18total Citadel pool will be divided 50/50 between the second depositor and the attacker, as each have 1 wei of the total 2 wei of vault tokens, i.e. the depositor lost and the attacker gained0.45*10^6 * 1e18Citadel tokens.
+As there are no penalties to exit with StakedCitadel.withdraw(), the attacker can remain staked for an arbitrary time, gathering the share of all new deposits’ remainder amounts.
+Placing severity to be high as this is principal funds loss scenario for many users (most of depositors), easily executable, albeit only for the new StakedCitadel contract.
+Proof of Concept
+deposit() -> _depositFor() -> _mintSharesFor() call doesn’t require minimum amount and mints according to the provided amount:
+deposit:
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L309-L311
+_depositFor:
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L764-L777
+_mintSharesFor:
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L881-L892
+When StakedCitadel is new the_pool = balance()is just initially empty contract balance:
+https://github.com/code-423n4/2022-04-badger-citadel/blob/main/src/StakedCitadel.sol#L293-L295
+Any deposit lower than total attacker’s stake will be fully stolen from the depositor as0vault tokens will be issued in this case.
+References
+The issue is similar to theTOB-YEARN-003one of the Trail of Bits audit of Yearn Finance:
+https://github.com/yearn/yearn-security/tree/master/audits/20210719_ToB_yearn_vaultsv2
+Recommended Mitigation Steps
+A minimum for deposit value can drastically reduce the economic viability of the attack. I.e.deposit() -> ...can require each amount to surpass the threshold, and then an attacker would have to provide too big direct investment to capture any meaningful share of the subsequent deposits.
+An alternative is to require only the first depositor to freeze big enough initial amount of liquidity. This approach has been used long enough by various projects, for example in Uniswap V2:
+https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Pair.sol#L119-L121
+GalloDaSballo (BadgerDAO) acknowledged, disagreed with severity and commented:
+Disagree with the dramatic effect the warden is implying.Agree with the finding as this is a property of vault based systems
+Also worth noting that anyone else can still get more deposits in and get their fair share, it’s just that the first deposit would now require a deposit of at leastvault.balanceOfin order to get the fair amount of shares (which at this point would be rebased to be 1 =prevBalanceOf)
+jack-the-pug (judge) commented:
+I believe this is a validHigheven though the precondition of this attack is quite strict (the attacker has to be the 1st depositor).The impact is not just a regular precision loss, but with the pricePerShare of the vault being manipulated to an extreme value, all regular users will lose up to the pricePerShare of the deposited amount due to huge precision loss.
+

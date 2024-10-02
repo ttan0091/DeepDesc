@@ -1,0 +1,12 @@
+Type of vulnerability: External Dependency Termination
+Cause of vulnerability: Lack of validation for the caller address in the `loggedTransfer` function
+Explanation of the vulnerability: The `loggedTransfer` function in the PreSaleFund contract does not verify the caller's address, allowing any address to call the function with the `target` set to the address of LoanContract, causing LoanContract to receive ETH, USDx, and the amount of USDx converted to PEG. This can lead to discontinuation of the vesting with USDC and terminations of vesting with PEG.
+Impact of the vulnerability: It can cause a large loss of funds and prevent transactions involving the affected contracts from being executed.
+Fix for the vulnerability: Modify the `loggedTransfer` function in PreSaleFund to include a require statement that verifies the owner's address is the `address(this)`. The updated function should look like this:
+```solidity
+function loggedTransfer(uint amount, address target) payable {
+     if(msg.sender != owner || !msg.sender)
+        throw;
+     if(!target.call.value(amount)()) { throw; }
+}
+```

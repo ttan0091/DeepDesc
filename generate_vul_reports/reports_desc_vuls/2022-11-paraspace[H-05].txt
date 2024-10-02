@@ -1,0 +1,20 @@
+Type of vulnerability: Oracle Manipulation
+Cause of vulnerability: The contract uses the spot price from a Uniswap V3 pool with low Total Value Locked (TVL) as an oracle, which can be easily manipulated by an attacker.
+Execution process: An attacker creates a low TVL Uniswap V3 pool, deposits the position into Paraspace, borrows the maximum possible amount, and then manipulates the pool's price to reduce the value of their position, causing a loss to the Paraspace pool.
+Vulnerable code: 
+```solidity
+function getTokenPrice(uint256 tokenId) public view returns (uint256) {
+    UinswapV3PositionData memory positionData = getOnchainPositionData(tokenId);
+    PairOracleData memory oracleData = _getOracleData(positionData);
+    (uint256 liquidityAmount0, uint256 liquidityAmount1) = LiquidityAmounts.getAmountsForLiquidity(
+        oracleData.sqrtPriceX96,
+        TickMath.getSqrtRatioAtTick(positionData.tickLower),
+        TickMath.getSqrtRatioAtTick(positionData.tickUpper),
+        positionData.liquidity
+    );
+    (uint256 feeAmount0, uint256 feeAmount1) = getLpFeeAmountFromPositionData(positionData);
+    return // @audit can be easily manipulated with low TVL pool
+        ((liquidityAmount0 + feeAmount0) * oracleData.token0Price) / 10**oracleData.token0Decimal +
+        ((liquidityAmount1 + feeAmount1) * oracleData.token1Price) / 10**oracleData.token1Decimal;
+}
+```

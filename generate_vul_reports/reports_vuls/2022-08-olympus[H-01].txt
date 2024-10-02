@@ -1,0 +1,17 @@
+[H-01] InGovernance.sol, it might be impossible to activate a new proposal forever after failed to execute the previous active proposal.
+Submitted by hansfriese, also found by berndartmueller, csanuragjain, m9800, V_B, and zzzitron
+https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L216-L221https://github.com/code-423n4/2022-08-olympus/blob/2a0b515012b4a40076f6eac487f7816aafb8724a/src/policies/Governance.sol#L302-L304
+Currently, if users vote for the active proposal, theVOTESare transferred to the contract so that users can’t vote or endorse other proposals while the voted proposal is active.
+And the active proposal can be replaced only when the proposal is executed successfully or another proposal is activated afterGRACE_PERIOD.
+ButactivateProposal()requires at least 20% endorsementshere, so it might be impossible to activate a new proposal forever if the current active proposal involves more than 80% of total votes.
+Proof of Concept
+The below scenario would be possible.
+Proposal 1was submitted and activated successfully.Let’s assume 81% of the total votes voted for this proposal.Yes = 47%,No = 34%This proposal can’t be executed forthis requirementbecause47% - 34% = 13% < 33%.Currently the contract contains more than 81% of total votes and users have at most 19% in total.Also users can’t reclaim their votes among 81% whileProposal 1is active.So even if a user who has 1% votes submits a new proposal, it’s impossible to activate because of thisrequire().So it’s impossible to deleteProposal 1from an active proposal and there won’t be other active proposal forever.
+Tools Used
+Solidity Visual Developer of VSCode
+Recommended Mitigation Steps
+I think we should add one more constant likeEXECUTION_EXPIRE = 2 weeksso that voters can reclaim their votes after this period even if the proposal is active.
+I am not sure we can use the currentGRACE_PERIODfor that purpose.
+SoreclaimVotes()should be modified like below.
+function reclaimVotes(uint256 proposalId_) external {uint256 userVotes = userVotesForProposal[proposalId_][msg.sender];if (userVotes == 0) {revert CannotReclaimZeroVotes();}if (proposalId_ == activeProposal.proposalId) {if (block.timestamp < activeProposal.activationTimestamp + EXECUTION_EXPIRE) //+++++++++++++++++++++++++++++++++{revert CannotReclaimTokensForActiveVote();}}if (tokenClaimsForProposal[proposalId_][msg.sender] == true) {revert VotingTokensAlreadyReclaimed();}tokenClaimsForProposal[proposalId_][msg.sender] = true;VOTES.transferFrom(address(this), msg.sender, userVotes);}
+fullyallocated (Olympus) confirmed

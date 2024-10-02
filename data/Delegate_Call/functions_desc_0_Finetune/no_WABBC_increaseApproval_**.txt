@@ -1,0 +1,17 @@
+Type of vulnerability: Balance Shift after Reinvestment
+
+Cause of vulnerability: 
+1. The contract updates the savedPegPerRewardToken when stake, withdraw, or getReward is invoked in the reward pool.
+2. When a strategy sells the Peg and realizes the gain, the reward pool's Peg balance increases.
+3. This additional Peg delta is accrued at the next block to the totalPegAccrued, and savedPegPerRewardToken is computed from this.
+4. When a strategy reinvests, they do it by interaction with the reward pool. 
+5. This again increases the Peg delta accrued until the time and increases totalPegAccrued, but totalUnclaimedRewards are updated on whether the user had been claimed.
+6. Since this happens after vault.lockProtocol, reward.doHardWork, then rewards.distribute, a user that decides to lock the protocol is disadvantaged for Peg added as a result of Stategy.reinvest.
+
+Impact of vulnerability: Users who decide to use the vault.lockProtocol and lock the protocol receive less Peg compared to what happen if they had not locked.
+
+Proposed solution: 
+1. There are some possible solutions mentioned in the initial issue reports, but they require future investments into the project.
+2. One possible approach is to sponsor the reward pool for the strategy's investment. 
+3. This approach requires external utilities to solve the problem, such as sponsored Boost, or a similar mechanism.
+4. Another possible approach is to compare the Peg earned against their totalSupply rewards owned, but it might break with rewards in other tokens or future investment dynamics.

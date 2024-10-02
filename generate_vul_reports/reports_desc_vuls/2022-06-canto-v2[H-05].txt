@@ -1,0 +1,23 @@
+Type of vulnerability: Price Manipulation
+Cause of vulnerability: Incorrect calculation of LP token pricing based on total value locked (TVL) in the pool, which can be artificially inflated.
+Execution process: A malicious user can dump a large amount of tokens into the pool, significantly increasing the TVL, which in turn leads to an improper calculation of the LP pair price.
+Vulnerable code: 
+```solidity
+uint price0 = (token0 != USDC) ? IBaseV1Pair(pairFor(USDC, token0, stable0)).quote(token0, 1, 8) : 1;
+uint price1 = (token1 != USDC) ? IBaseV1Pair(pairFor(USDC, token1, stable1)).quote(token1, 1, 8) : 1;
+// how much of each asset is 1 LP token redeemable for
+(uint amt0, uint amt1) = quoteRemoveLiquidity(token0, token1, stablePair, 1);
+price = amt0 * price0 + amt1 * price1;
+
+function quoteRemoveLiquidity(address tokenA, address tokenB, bool stable, uint liquidity) public view returns (uint amountA, uint amountB) {
+    // create the pair if it doesn't exist yet
+    address _pair = IBaseV1Factory(factory).getPair(tokenA, tokenB, stable);
+    if (_pair == address(0)) {
+        return (0,0);
+    }
+    (uint reserveA, uint reserveB) = getReserves(tokenA, tokenB, stable);
+    uint _totalSupply = erc20(_pair).totalSupply();
+    amountA = liquidity * reserveA / _totalSupply; // using balances ensures pro-rata distribution
+    amountB = liquidity * reserveB / _totalSupply; // using balances ensures pro-rata distribution
+}
+```

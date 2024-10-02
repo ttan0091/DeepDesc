@@ -1,0 +1,14 @@
+Type of vulnerability: Invalid Validation
+Cause of vulnerability: The `checkParams` function does not verify that `_dParams.token` is the underlying token of `_dParams.hToken`, allowing a mismatch between the deposit token and the high-value token.
+Execution process: A malicious user specifies a high-value `hToken` (e.g., hEther) and a lower-value `depositToken` (e.g., USDC). The `RootBridgeAgent` increments the user's `hToken` balance by the amount of `depositTokens` they sent, effectively allowing the user to receive a disproportionately high value of tokens on the root chain.
+Vulnerable code: 
+```solidity
+function checkParams(address _localPortAddress, DepositParams memory _dParams, uint24 _fromChain) internal view returns(bool) {
+    if ((_dParams.amount < _dParams.deposit) // Deposit can't be greater than amount.
+        || (_dParams.amount > 0 && !IPort(_localPortAddress).isLocalToken(_dParams.hToken, _fromChain)) // Check local exists.
+        || (_dParams.deposit > 0 && !IPort(_localPortAddress).isUnderlyingToken(_dParams.token, _fromChain)) // Check underlying exists.) {
+        return false;
+    }
+    return true;
+}
+```

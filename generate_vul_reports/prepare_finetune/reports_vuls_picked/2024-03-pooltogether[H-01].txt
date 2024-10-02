@@ -1,0 +1,14 @@
+Type of vulnerability: Loss of Unclaimed Fees
+Cause of vulnerability: Incorrect accounting of yield fee balance during partial claims
+Execution process: A fee recipient claims a portion of the yield fee balance, resulting in the forfeiture of the remaining balance due to improper subtraction of the claimed amount from the total yield fee balance.
+Vulnerable code: 
+```solidity
+function claimYieldFeeShares(uint256 _shares) external onlyYieldFeeRecipient {
+    if (_shares == 0) revert MintZeroShares();
+    uint256 _yieldFeeBalance = yieldFeeBalance;
+    if (_shares > _yieldFeeBalance) revert SharesExceedsYieldFeeBalance(_shares, _yieldFeeBalance);
+    yieldFeeBalance -= _yieldFeeBalance; // @audit issue stems and realized next line of code
+    _mint(msg.sender, _shares); // @audit the point where the claimant gets to lose
+    emit ClaimYieldFeeShares(msg.sender, _shares);
+}
+```

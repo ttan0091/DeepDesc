@@ -1,0 +1,19 @@
+Type of vulnerability: Gas Miscalculation
+
+Cause of vulnerability: The calculation of the gas used in the `anyExecute` method is underestimated due to not accounting for additional gas costs such as pre-first gas checkpoint execution, post-last gas checkpoint execution, and input data fees.
+
+Execution process: When the `anyExecute` method is called, it calculates the gas used based on an initial gas checkpoint and a final gas checkpoint. However, the calculation does not accurately account for all the gas consumed, leading to an underestimation. This underestimation can result in overpaying the remaining gas to the user and a slow draining of the execution budget over time.
+
+Vulnerable code:
+```solidity
+/// Save gas left
+uint256 gasLeft = gasleft();
+// Get Branch Environment Execution Cost
+uint256 minExecCost = tx.gasprice * (MIN_EXECUTION_OVERHEAD + _initialGas - gasLeft);
+// Check if sufficient balance
+if (minExecCost > gasRemaining) {
+    _forceRevert();
+    return;
+}
+```
+https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/BranchBridgeAgent.sol#L1018-L1054

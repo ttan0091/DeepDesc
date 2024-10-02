@@ -1,0 +1,64 @@
+The code provided consists of two contracts: ERC20Basic and TokenVesting. Let's break down each part in detail.
+
+### ERC20Basic Contract
+
+solidity
+contract ERC20Basic {
+  function balanceOf(address who) public view returns (uint256);
+}
+
+
+This contract defines a basic interface for an ERC20 token. It includes a single function balanceOf, which takes an address as an argument and returns the balance of that address. This function is marked as public and view, meaning it can be called externally and does not modify the state of the blockchain.
+
+### TokenVesting Contract
+
+solidity
+contract TokenVesting {
+
+  ERC20Basic public token;
+
+  uint256 public start;
+  uint256 public currentBalance;
+  mapping (address => uint256) public released;
+  uint256 public totalBalance;
+
+  function vestedAmount() public returns (uint256) {
+    currentBalance = token.balanceOf(this);
+    totalBalance = currentBalance + (released[token]);
+
+    if (block.timestamp >= start) {
+        return totalBalance;
+    }
+  }
+}
+
+
+This contract is designed to manage the vesting of tokens. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    token: An instance of the ERC20Basic contract, representing the token being vested.
+    start: A timestamp indicating when the vesting starts.
+    currentBalance: The current balance of the contract.
+    released: A mapping that tracks the amount of tokens released to each address.
+    totalBalance: The total balance of tokens, including both the current balance and the released tokens.
+
+2. Function vestedAmount:
+    This function is public and can be called externally.
+    It first updates the currentBalance by calling balanceOf on the token contract, passing the address of the TokenVesting contract itself.
+    It then calculates the totalBalance by adding the currentBalance to the amount of tokens released to the token address (which seems to be a mistake since released should be indexed by an address, not a token).
+    The function checks if the current timestamp (block.timestamp) is greater than or equal to the start timestamp. If true, it returns the totalBalance. If not, it implicitly returns 0 (since Solidity functions return 0 by default if no return statement is executed).
+
+### Potential Issues and Improvements
+
+1. Mapping Indexing:
+    The line totalBalance = currentBalance + (released[token]); seems incorrect. It should likely be totalBalance = currentBalance + (released[msg.sender]); or another specific address, depending on the intended logic.
+
+2. Vesting Logic:
+    The function vestedAmount does not actually implement any vesting logic beyond checking if the current time is after the start time. Proper vesting logic would typically involve calculating the amount of tokens that should be vested based on the elapsed time and possibly other factors like cliff periods or vesting schedules.
+
+3. Visibility and Mutability:
+    The function vestedAmount is marked as returns (uint256), but it does not explicitly return a value if the condition block.timestamp >= start is not met. This could lead to unexpected behavior.
+
+### Conclusion
+
+The TokenVesting contract is a basic framework for managing token vesting, but it lacks detailed vesting logic and has potential issues with mapping indexing. It would need significant enhancements to be used in a realworld scenario.

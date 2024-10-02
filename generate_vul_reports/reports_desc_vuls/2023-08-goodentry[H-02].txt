@@ -1,0 +1,20 @@
+Type of vulnerability: Unused funds not returned and not counted
+
+Cause of vulnerability: The `GeVault.depositAndStash()` function does not handle the returned unspent tokens from the `TokenisableRange.deposit()` function, leading to these tokens being locked in the contract and not being included in the Total Value Locked (TVL) calculation.
+
+Execution process: 
+1. A user calls `GeVault.deposit()` to deposit funds.
+2. The function calls `rebalance()` to distribute funds among ticks.
+3. `deployAssets()` splits token amounts in halves and calls `depositAndStash()`.
+4. `TokenisableRange.deposit()` deposits tokens into a Uniswap V3 pool and returns unspent tokens.
+5. The unspent tokens are not handled or returned to the depositor, remaining in the `GeVault` contract.
+6. These unspent tokens are not included in the TVL calculation, affecting the total value of the vault and potentially leading to partial loss of funds during withdrawal.
+
+Vulnerable code: 
+```solidity
+(uint128 newLiquidity, uint256 added0, uint256 added1) = POS_MGR.increaseLiquidity(...);
+...
+_mint(msg.sender, lpAmt);
+TOKEN0.token.safeTransfer(msg.sender, n0 - added0);
+TOKEN1.token.safeTransfer(msg.sender, n1 - added1);
+```

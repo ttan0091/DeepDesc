@@ -1,0 +1,17 @@
+[H-02]liquidate()doesn’t mark off bad debt, leading to a ‘last lender to withdraw loses’ scenario
+Submitted by 0xA5DF, also found by cccz and Lambda
+When there’s bad debt which wasn’t marked off yet, thetotalAssets.amountis higher than the actual (solvent) amount the pair has, meaning that lenders who redeem their tokens earlier will get more in return, at the expense of lenders who leave later.
+Therefore bad debt should be marked off as soon as possible, the later it’s done the more interest it accumulates and the higher the chances are that some of the lenders will notice and redeem their shares before the bad debt is subtracted from the total assets amount.
+Having the option to liquidate via theliquidate()function (which doesn’t mark off bad debt) can lead to users using that function and leaving bad debt alongside zero collateral or near-zero collateral (giving no motivation for other users to liquidate the rest).
+Marking off the remaining of the bad debt vialiquidateClean()with 0 shares might be possible (not always, some tokensdon’t allow 0 transfers), however there’s no motivation for outside users to do so. And as for the lenders - redeeming their tokens before the bad debt is subtracted from the total amount might be more profitable than staying and marking off the bad debt.
+Impact
+Some lenders might be able to dodge the loss of the bad debt (+ interest), while the last one(s) will have to absorb the lost of the lenders who left too.
+Proof of Concept
+Consider the following scenario:
+A pair has 10 lenders with 1K$ from each one (10K total)Borrower borrowed that 10KThe collateral price went down and now it’s worth only 7KA liquidator notices that and liquidates it vialiquidate()ThetotalAssets.amountis 10K + interest, but the total asset amount is actually less than 7K (subtracting liquidator fees)6 lenders notice that and redeem their shares, getting back their money + interestThe 7th lender to redeem will only be able to get back part of his moneyThe remaining 3 lenders will loose all of their money
+Recommended Mitigation Steps
+Mark off bad debt when remaining collateral reaches zero or near-zero value.
+(if onlyliquidateClean()was available then there would be a motivation to not leave near-zero collateral, but as long as this isn’t the case consider marking off also in case of near-zero collateral left).
+DrakeEvans (Frax) confirmed
+gititGoro (judge) commented:
+Setting to original in set. Severity will be maintained as the wardens couldn’t know that only one liquidate function would be included in the final release.

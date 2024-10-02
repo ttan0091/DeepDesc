@@ -1,0 +1,11 @@
+Type of vulnerability: Constraint Manipulation
+Cause of vulnerability: Insufficient constraints in the sorting logic allow an attacker to manipulate the sorted queue to emit reverted logs and events.
+Execution process: An attacker can submit a sorted queue with a pattern like "wr rw wr rw" where all logs are reverted, but the constraints are satisfied, leading to the addition of certain logs to the result queue that should not be included.
+Vulnerable code: 
+```solidity
+let same_log = UInt32::equals(cs, &sorted_item.timestamp, &previous_item.timestamp);
+let values_are_equal = UInt256::equals(cs, &sorted_item.written_value, &previous_item.written_value);
+let negate_previous_is_trivial = previous_is_trivial.negated(cs);
+let should_enforce = Boolean::multi_and(cs, &[same_log, negate_previous_is_trivial]);
+values_are_equal.conditionally_enforce_true(cs, should_enforce);
+```

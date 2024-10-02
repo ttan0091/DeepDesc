@@ -1,0 +1,26 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Lack of input validation on array lengths
+Execution process: A user or attacker proposes a migration with mismatched lengths of `selectors` and `plugins` arrays, leading to an out-of-bounds error during the migration process, which permanently locks assets in the vault.
+Vulnerable code: 
+```solidity
+function propose(address _vault, address[] calldata _modules, address[] calldata _plugins, bytes4[] calldata _selectors, uint256 _newFractionSupply, uint256 _targetPrice) external {
+    // @Audit Make sure that selectors and plugins match
+    require(_selectors.length == _plugins.length, "Plugin lengths do not match");
+    // Reverts if address is not a registered vault
+    ( , uint256 id) = IVaultRegistry(registry).vaultToToken(_vault);
+    if (id == 0) revert NotVault(_vault);
+    // Reverts if buyout state is not inactive
+    ( , , State current, , , ) = IBuyout(buyout).buyoutInfo(_vault);
+    State required = State.INACTIVE;
+    if (current != required) revert IBuyout.InvalidState(required, current);
+    // Initializes migration proposal info
+    Proposal storage proposal = migrationInfo[_vault][++nextId];
+    proposal.startTime = block.timestamp;
+    proposal.targetPrice = _targetPrice;
+    proposal.modules = _modules;
+    proposal.plugins = _plugins;
+    proposal.selectors = _selectors;
+    proposal.oldFractionSupply = IVaultRegistry(registry).totalSupply(_vault);
+    proposal.newFractionSupply = _newFractionSupply;
+}
+```

@@ -1,0 +1,18 @@
+Type of vulnerability: Under/Overflow
+Cause of vulnerability: The `secondsPerLiquidityInsideX128` value can overflow `uint256`, causing the calculation to revert.
+Execution process: The `computeBoostedSecondsInsideX128` function calculates the seconds inside by subtracting `secondsPerLiquidityInsideInitialX128` from `secondsPerLiquidityInsideX128` and multiplying by `liquidity`. If `secondsPerLiquidityInsideX128` overflows, the function reverts, leading to the `_unstake` function also reverting and locking the LP position in the contract.
+Vulnerable code: 
+```solidity
+function computeBoostedSecondsInsideX128(
+    uint256 stakedDuration,
+    uint128 liquidity,
+    uint128 boostAmount,
+    uint128 boostTotalSupply,
+    uint160 secondsPerLiquidityInsideInitialX128,
+    uint160 secondsPerLiquidityInsideX128
+) internal pure returns (uint160 boostedSecondsInsideX128) {
+    // this operation is safe, as the difference cannot be greater than 1/stake.liquidity
+    uint160 secondsInsideX128 = (secondsPerLiquidityInsideX128 - secondsPerLiquidityInsideInitialX128) * liquidity;
+    // @audit secondPerLiquidityInsideX128 could smaller than secondsPerLiquidityInsideInitialX128...
+}
+```

@@ -1,0 +1,34 @@
+This code defines a public function named deposit, which allows users to deposit a specified amount of tokens and receive a corresponding amount of liquidity tokens in return. The function returns the amount of liquidity tokens minted as a result of the deposit.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation and State Checks:
+    The function first checks if the contract is not locked (locked == false) and not paused (paused == false). If either condition is not met, it reverts with the error message "ERROR: DEPOSIT_DISABLED".
+    It also checks if the deposited amount (_amount) is greater than zero. If not, it reverts with the error message "ERROR: DEPOSIT_ZERO".
+
+2. Fetching Supply and Liquidity:
+    The function retrieves the total supply of liquidity tokens (_supply) and the total liquidity (_totalLiquidity) by calling totalSupply() and totalLiquidity() respectively.
+
+3. Adding Value to Vault:
+    The function calls vault.addValue(_amount, msg.sender, address(this)), which presumably adds the deposited amount to the vault on behalf of the sender (msg.sender) and credits it to the contract (address(this)).
+
+4. Calculating Mint Amount:
+    The function calculates the amount of liquidity tokens (_mintAmount) to be minted based on the deposited amount and the current supply and liquidity:
+      If both _supply and _totalLiquidity are greater than zero, it calculates _mintAmount as (_amount  _supply) / _totalLiquidity.
+      If _supply is greater than zero but _totalLiquidity is zero, it calculates _mintAmount as _amount  _supply.
+      If both _supply and _totalLiquidity are zero, it sets _mintAmount to _amount.
+
+5. Emitting Deposit Event:
+    The function emits a Deposit event with the sender's address, the deposited amount, and the minted amount.
+
+6. Minting Liquidity Tokens:
+    The function calls _mint(msg.sender, _mintAmount) to mint the calculated amount of liquidity tokens to the sender's address.
+
+7. Updating Liquidity and Leverage Calculation:
+    The function calculates the new total liquidity after the deposit (_liquidityAfter) as _totalLiquidity + _amount.
+    It then calculates the leverage (_leverage) using the formula (totalAllocatedCredit  MAGIC_SCALE_1E6) / _liquidityAfter.
+
+8. Adjusting Allocation if Necessary:
+    The function checks if the target leverage (targetLev) minus the lower slack (parameters.getLowerSlack(address(this))) is greater than the calculated leverage (_leverage). If so, it calls _adjustAlloc(_liquidityAfter) to adjust the allocation based on the new liquidity.
+
+This function ensures that deposits are only processed when the contract is not locked or paused, validates the deposit amount, calculates the appropriate amount of liquidity tokens to mint, and adjusts the allocation if the leverage conditions are not met.

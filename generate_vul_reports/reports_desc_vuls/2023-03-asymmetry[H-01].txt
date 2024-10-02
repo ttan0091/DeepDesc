@@ -1,0 +1,19 @@
+Type of vulnerability: Front-running and Manipulation of Initial State
+
+Cause of vulnerability: The contract allows the first user to manipulate the `totalSupply` and `preDepositPrice` by immediately unstaking most of their tokens, which can lead to an inflated `preDepositPrice` for subsequent users.
+
+Execution process: 
+1. The attacker stakes a large amount of ETH to initialize the `totalSupply` and `preDepositPrice`.
+2. The attacker immediately unstakes all but a small amount, causing `totalSupply` to be significantly less than the initial stake.
+3. The attacker then transfers additional derivative tokens to the contract, increasing the `underlyingValue`.
+4. Subsequent users deposit ETH, but due to the inflated `preDepositPrice`, the `mintAmount` calculation rounds down to zero, allowing the attacker to steal the deposited funds.
+
+Vulnerable code:
+```solidity
+if(totalSupply == 0)
+    preDepositPrice = 10**18; // initializes with a price of 1
+else
+    preDepositPrice = (10**18 * underlyingValue) / totalSupply;
+
+uint256 mintAmount = (totalStakeValueEth * 10**18) / preDepositPrice;
+```

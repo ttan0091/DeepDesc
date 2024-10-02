@@ -1,0 +1,19 @@
+[H-03] Manipulation oflivePriceto receivedefaultIncentivein 2 consecutive blocks
+Submitted byminhquanym
+In StabilizerNode, the default behaviour when twap is below the lower peg threshold, all transfers to the amm pool are blocked. However whenusePrimedWindow = true, it will only block transfers forprimedWindow = 10blocks. After 10 blocks, the block automatically stops and allows free market trading.
+The first call to start this priming will receivedefaultIncentiveMalt and setprimedBlockto start the priming. However, function_validateSwingTraderTrigger()which is used to validate and start the priming usinglivePriceis easy to be manipulated. Attacker can manipulate it to receivedefaultIncentivein 2 consecutive blocks.
+Proof of Concept
+Consider the scenario:
+Block i, twap is below the value returned frommaltDataLab.getSwingTraderEntryPrice(), attacker callstabilize()and receivedefaultIncentive.primedBlock = block.number.Block i+1, call to_validateSwingTraderTrigger()returntrueand trigger swing trader to bring the price back to peg. It’s also resetprimedBlock = 0(stop blocking transfer to AMM pool)Since only 1 block pass, let’s assume twap is still below the value returned frommaltDataLab.getSwingTraderEntryPrice()(because twap moves slowly and will not change immediately to current price)Now attacker can use flash loan to manipulate thelivePriceto be larger thanentryPrice(tranfer to AMM is not blocked) and callstabilize()to receive incentive again then repay the flash loan.
+Attacker cost is only flash loan fee, since his call will start an auction but not trigger swing trader so the state of AMM pool when he repays the flash loan is still the same (only added flash loan fee).
+https://github.com/code-423n4/2023-02-malt/blob/700f9b468f9cf8c9c5cffaa1eba1b8dea40503f9/contracts/StabilityPod/StabilizerNode.sol#L312-L334
+function_validateSwingTraderTrigger(uint256livePrice,uint256entryPrice)internalreturns(bool){if(usePrimedWindow) {if(livePrice>entryPrice) {returnfalse;}if(block.number>primedBlock+primedWindow) {primedBlock=block.number;malt.mint(msg.sender,defaultIncentive* (10**malt.decimals()));emitMintMalt(defaultIncentive* (10**malt.decimals()));returnfalse;}if(primedBlock==block.number) {returnfalse;}}returntrue;}
+Recommended Mitigation Steps
+Consider not giving incentives for caller or reset theprimedBlockat least afterprimedWindowblocks.
+0xScotch (Malt) commented:
+I’m kinda skeptical of this but I think its possible in theory.However:stabilizecan only be called via EOA due tomsg.sender == tx.origincheck (inonlyEOAmodifier)Size of flashloan required is proportional to the size of the pool (as you have to manipulate price of that pool) while the incentive is fixed. So it seems like this would quickly become unprofitableI would be very curious to see a real PoC of this rather than just a theoretical threat.
+Picodes (judge) commented:
+Regarding the previous comment:TheonlyEOAcheck can be bypassed using a sandwich attack instead of a flashloan so the possibility of a MEV attack still existsWe should consider that the cost of capital within a block is 0. For example, Euler already proposes feeless flashloans of up to their TVL. Seehttps://twitter.com/euler_mab/status/1595725665868910595. However there would still be the cost of using the AMM to manipulate the price.
+Picodes (judge) commented:
+Although the possibility of this being implemented depends on the size of the incentives and the cost of manipulating the AMM, it does not seem so unlikely. It could lead to a significant loss for the protocol, so I agree that high severity is appropriate.
+0xScotch (Malt) acknowledged

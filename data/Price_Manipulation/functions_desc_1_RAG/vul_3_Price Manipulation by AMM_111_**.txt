@@ -1,0 +1,25 @@
+This code defines an external view function named getPrice, which takes two addresses (_assetOne and _assetTwo) as parameters and returns a boolean and a uint256 value. The purpose of this function is to retrieve the price ratio between two assets, either directly from a price oracle or by querying a Uniswap pool if the assets are allowed Uniswap pools.
+
+Here’s a detailed explanation of how this function works:
+
+1. Access Control:
+    The function starts by checking if the caller (msg.sender) is a system contract by calling controller.isSystemContract(msg.sender). If the caller is not a system contract, the function reverts with the message "Must be system contract".
+
+2. Validation of Assets:
+    The function then checks if _assetOne and _assetTwo are valid Uniswap pools by looking up their settings in the uniswapPoolsToSettings mapping. This mapping likely contains information about whether a particular asset is a valid Uniswap pool.
+    If neither _assetOne nor _assetTwo are valid Uniswap pools, the function returns (false, 0), indicating that the price cannot be calculated.
+
+3. Price Retrieval:
+    The function retrieves an instance of IPriceOracle from the controller using controller.getPriceOracle().
+    It also gets the address of the master quote asset from the price oracle using priceOracle.masterQuoteAsset(). This master quote asset is used as a reference for price calculations.
+
+4. Price Calculation for Each Asset:
+    For each asset (_assetOne and _assetTwo), the function checks if it is a valid Uniswap pool.
+    If an asset is a valid Uniswap pool, the function calls _getUniswapPrice to get the price of the asset relative to the master quote asset. This helper function likely interacts with the Uniswap pool to fetch the price.
+    If an asset is not a valid Uniswap pool, the function calls priceOracle.getPrice to get the price of the asset relative to the master quote asset from the price oracle.
+
+5. Price Ratio Calculation:
+    Finally, the function calculates the price ratio between _assetOne and _assetTwo by dividing assetOnePriceToMaster by assetTwoPriceToMaster using the preciseDiv function. This function likely performs a division with high precision to ensure accurate results.
+    The function returns (true, priceRatio), indicating that the price ratio was successfully calculated.
+
+This function is designed to provide a flexible way to get the price ratio between two assets, leveraging both a centralized price oracle and decentralized Uniswap pools, depending on the validity of the assets as Uniswap pools.

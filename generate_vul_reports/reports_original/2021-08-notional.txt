@@ -1,0 +1,115 @@
+[H-01] Self transfer can lead to unlimited mint
+Submitted by Omik, also found by gpersoon
+The implementation of the transfer function innTokenAction.solis different from the usual erc20 token transfer function.
+This happens because it counts the incentive that the user gets, but with a self-transfer,  it can lead to unlimited mint. InL278, it makes the amount negative, but inL279, it returns the value to an amount that is not negative. So, in theL281-282, it finalizes a positive value, only because the negative value is changed to the positive value.
+You can interact with this transfer function throughnTokenERC20Proxy.sol.
+Recommend adding(sender != recipient).
+[H-02] DAO proposals can be executed by anyone due to vulnerableTimelockController
+Submitted by cmichel, also found by leastwood
+TheGovernorAlphainherits from a vulnerableTimelockController.
+ThisTimelockControllerallows anEXECUTORrole to escalate privileges and also gain the proposer role. See details onOZand thefix here.
+The bug is that_executeBatchchecks if the proposal was scheduled onlyafterthe transactions have been executed. This allows inserting a call into the batch that schedules the batch itself, and the entire batch will succeed.
+As the customGovernorAlpha.executeProposalfunction removed the original “queued state check” (require(state(proposalId) == ProposalState.Queued), the attack can be executed by anyone, even without theEXEUCTOR_ROLE.
+Proof of concept:
+Create a proposal usingpropose. Thecalldatawill be explained in the next step. (This can be done by anyone passing the minproposalThreshold)CallexecuteProposal(proposalId, ...)such that the following calls are made:
+call-0:grantRole(TIME_LOCK_ADMIN,attackerContract)call-1:grantRole(EXECUTOR,attackerContract)call-2:grantRole(PROPOSER,attackerContract)call-3:updateDelay(0)// such that _afterCall "isOperationReady(id): timestamp[id] = block.timestamp + minDelay (0) <= block.timestamp" passescall-4:attackerContract.hello()// this calls timelock.schedule(args=[targets, values, datas, ...]) where args were previously already stored in contract. (this is necessary because id depends on this function's args and we may not be self-referential)// attackerContract is proposer & executor now and can directly call scheduleBatch & executeBatch without having to create a proposal
+ℹ️  I already talked to Jeff Wu about this and he created a test case for it confirming this finding
+The impact is that, anyone who can create a proposal can becomeTimelockadmin (proposer & executor) and execute arbitrary transactions as the DAO-controlledGovernorAlpha.
+Note that this contract has severe privileges and an attacker can now do anything that previously required approval of the DAO. For example, they could update theglobalTransferOperatorand steal all tokens.
+Recommend updating the vulnerable contract toTimelockController v3.4.2as it currently usesOpenZeppelin/openzeppelin-contracts@3.4.0-solc-0.7
+jeffywu (Notional) confirmed
+[H-03]CompoundToNotionalV2.notionalCallbackERC20 return values not checked
+Submitted by cmichel
+Some tokens (like USDT) don’t correctly implement the EIP20 standard and theirtransfer/transferFromfunctions returnvoid, instead of a success boolean. Calling these functions with the correct EIP20 function signatures will always revert. SeeCompoundToNotionalV2.notionalCallback’sIERC20(underlyingToken).transferFromcall.
+Tokens that don’t correctly implement the latest EIP20 spec, like USDT, will be unusable in the protocol as they revert the transaction because of the missing return value.
+The fact that there is acTokenwithUSDTas the underlying this issue directly applies to the protocol.
+We recommend using OpenZeppelin’sSafeERC20versions with thesafeTransferandsafeTransferFromfunctions that handle the return value check as well as non-standard-compliant tokens.
+jeffywu (Notional) confirmed
+[H-04] Access restrictions onCompoundToNotionalV2.notionalCallbackcan be bypassed
+Submitted by cmichel
+TheCompoundToNotionalV2.notionalCallbackis supposed to only be called from the verified contract that calls this callback. But, the access restrictions can be circumvented by simply providingsender = this, assenderis a parameter of the function that can be chosen by the attacker.
+functionnotionalCallback(addresssender,addressaccount,bytescalldatacallbackData)externalreturns(uint256) {// @audit sender can be passed in by the attackerrequire(sender==address(this),"Unauthorized callback");
+An attacker can call the function passing in an arbitraryaccountwhose tokens are then transferred to the contract.
+Theaccountfirst has to approve this contract but this can happen with accounts that legitimately want to call the outer function and have to send a first transaction to approve the contract, but then an attacker front-runs the actual transaction.
+It’s at least a griefing attack:
+I can pass in a maliciouscTokenBorrowthat returns any token of my choice (through the.underlying()call) but whoserepayBorrowBehalfis a no-op.
+This will lead to any of the victim’s approved tokens becoming stuck in the contract, essentially burning them:
+// @audit using a malicious contract, this can be any tokenaddressunderlyingToken=CTokenInterface(cTokenBorrow).underlying();boolsuccess=IERC20(underlyingToken).transferFrom(account,address(this),cTokenRepayAmount);require(success,"Transfer of repayment failed");// Use the amount transferred to repay the borrow// @audit using a malicious contract, this can be a no-opuintcode=CErc20Interface(cTokenBorrow).repayBorrowBehalf(account,cTokenRepayAmount);
+Note that the assumption at the end of the function ”// When this exits a free collateral check will be triggered” is not correct anymore but I couldn’t find a way to make use of it to lead to an invalid account state.
+Recommend fixing the authorization check.
+jeffywu (Notional) confirmed
+[H-05] Access restrictions onNotionalV1ToNotionalV2.notionalCallbackcan be bypassed
+Submitted by cmichel, also found by pauliax
+TheNotionalV1ToNotionalV2.notionalCallbackis supposed to only be called from the verified contract that calls this callback but the access restrictions can be circumvented by simply providingsender = thisassenderis a parameter of the function that can be chosen by the attacker.
+functionnotionalCallback(addresssender,addressaccount,bytescalldatacallbackData)externalreturns(uint256) {require(sender==address(this),"Unauthorized callback");
+An attacker can call the function passing in an arbitraryaccountwhose tokens can then be stolen.
+Theaccountfirst has to approve this contract but this can happen with accounts that legitimately want to migrate their tokens and therefore have to send a first transaction to approve the contract, but then an attacker frontruns the actual migration transaction.
+The attacker can steal the tokens by performing an attack similar to the following:
+first transaction is used to withdraw the victim’s funds to the contract. This can be done by choosingaccount=victim,v1RepayAmount=0,v1CollateralId=WBTC,v2CollateralId=DAI. TheNotionalV1Erc1155.batchOperationWithdraw(not part of this contest) will withdraw the victim’s funds to this contract. Note that the attacker has to deposit the samev2CollateralBalance = uint256(collateralBalance)for the victim into the V2 version, but they can choose different cheaper collateral (for example, withdraw WBTC, deposit same amount of DAI).second transaction is now used to deposit the victim funds in the contract into the user’s account. They useaccount=attacker,v1DebtCurrencyId=WBTC,v1RepayAmount=amountto deposit it into Notional V1. (They need to have a smallcollateralBalance, etc. to pass all checks).
+Recommend fixing the authorization check.
+[H-06]TokenHandler.safeTransferOutdoes not work on non-standard compliant tokens like USDT
+Submitted by cmichel
+TheTokenHandler.safeTransferOutfunction uses the standardIERC20function for the transfer call and proceeds with acheckReturnCodefunction to handle non-standard compliant tokens that don’t return a return value.
+However, this does not work, as callingtoken.transfer(account, amount)already reverts if the token does not return a return value, astoken’sIERC20.transferis defined to always return aboolean.
+The impact is that, when using any non-standard compliant token like USDT, the function will revert.
+Deposits for these tokens are broken, which is bad asUSDTis a valid underlying for thecUSDTcToken.
+We recommend usingOpenZeppelin’sSafeERC20versions with thesafeApprovefunction that handles the return value check as well as non-standard-compliant tokens.
+jeffywu (Notional) confirmed
+[H-07]TokenHandler.safeTransferIndoes not work on non-standard compliant tokens like USDT
+Submitted by cmichel
+TheTokenHandler.safeTransferInfunction uses the standardIERC20function for the transfer call and proceeds with acheckReturnCodefunction to handle non-standard compliant tokens that don’t return a return value.
+However, this does not work, as callingtoken.transferFrom(account, amount)already reverts if the token does not return a return value, astoken’sIERC20.transferFromis defined to always return aboolean.
+When using any non-standard compliant token like USDT, the function will revert.
+Withdrawals for these tokens are broken, which is bad asUSDTis a valid underlying for thecUSDTcToken.
+We recommend usingOpenZeppelin’sSafeERC20versions with thesafeApprovefunction that handles the return value check as well as non-standard-compliant tokens.
+jeffywu (Notional) confirmed
+[H-08] DOS by Frontrunning NoteERC20initialize()Function
+Submitted by leastwood
+Thescripts/folder outlines a number of deployment scripts used by the Notional team. Some of the contracts deployed utilize the ERC1967 upgradeable proxy standard. This standard involves first deploying an implementation contract and later a proxy contract which uses the implementation contract as its logic.
+When users make calls to the proxy contract, the proxy contract will delegate call to the underlying implementation contract.NoteERC20.solandRouter.solboth implement aninitialize()function which aims to replace the role of theconstructor()when deploying proxy contracts. It is important that these proxy contracts are deployed and initialized in the same transaction to avoid any malicious front-running.
+However,scripts/deployment.pydoes not follow this pattern when deployingNoteERC20.sol’s proxy contract. As a result, a malicious attacker could monitor the Ethereum blockchain for bytecode that matches theNoteERC20contract and front-run theinitialize()transaction to gain ownership of the contract. This can be repeated as a Denial Of Service (DOS) type of attack, effectively preventing Notional’s contract deployment, leading to unrecoverable gas expenses. Seedeployment.pyL44-L60, anddeploy_governance.pyL71-L105.
+As theGovernanceAlpha.solandNoteERC20.solare co-dependent contracts in terms of deployment, it won’t be possible to deploy the governance contract before deploying and initializing the token contract. Therefore, it would be worthwhile to ensure theNoteERC20.solproxy contract is deployed and initialized in the same transaction, or ensure theinitialize()function is callable only by the deployer of theNoteERC20.solcontract. This could be set in the proxy contractsconstructor().
+jeffywu (Notional) confirmed
+[H-09] Potential DOS in Contracts InheritingUUPSUpgradeable.sol
+Submitted by leastwood
+There are a number of contracts which inheritUUPSUpgradeable.sol, namely;GovernanceAction.sol,PauseRouter.solandNoteERC20.sol.
+All these contracts are deployed using a proxy pattern whereby the implementation contract is used by the proxy contract for all its logic. The proxy contract will make delegate calls to the implementation contract. This helps to facilitate future upgrades by pointing the proxy contract to a new and upgraded implementation contract.
+However, if the implementation contract is left uninitialized, it is possible for any user to gain ownership of theonlyOwnerrole in the implementation contract forNoteERC20.sol. Once the user has ownership they are able to perform an upgrade of the implementation contract’s logic contract and delegate call into any arbitrary contract, allowing them to self-destruct the proxy’s implementation contract. Consequently, this will prevent allNoteERC20.solinteractions until a new implementation contract is deployed.
+Initial information about this issue was foundhere.
+Consider the following scenario:
+Notional finance deploys their contracts using their deployment scripts. These deployment scripts leave the implementation contracts uninitialized. Specifically the contract in question isNoteERC20.sol.This allows any arbitrary user to callinitialize()on theNoteERC20.solimplementation contract.Once a user has gained control overNoteERC20.sol’s implementation contract, they can bypass the_authorizeUpgradecheck used to restrict upgrades to theonlyOwnerrole.The malicious user then callsUUPSUpgradeable.upgradeToAndCall()shownherewhich in turn callsthisfunction. The new implementation contract then points to their own contract containing a self-destruct call in its fallback function.As a result, the implementation contract will be self-destructed due to the user-controlled delegate call shownhere, preventing all future calls to theNoteERC20.solproxy contract until a new implementation contract has been deployed.
+Recommend considering initializing the implementation contract forNoteERC20.soland checking the correct permissions before deploying the proxy contract or performing any contract upgrades. This will help to ensure the implementation contract cannot be self-destructed.
+jeffywu (Notional) acknowledged and disagreed with severity:
+Acknowledged, I don’t think this should be categorized high risk because the worst case is a denial of service and a redeployment of the ERC20 contract. As it stands, we’ve already successfully deployed our ERC20 contract so this is a non-issue.I would categorize as0 (Non-critical)
+adamavenir (organizer) commented:
+Warden leastwood added this proof of concept to illustrate the vulnerabilityhttps://gist.github.com/leastwood/b23d9e975883c817780116c2ceb785b8
+jeffywu (Notional) commented:
+Ok I retract my previous statement, I misread the issue description. Up to you guys but do you want to pay out a full amount to someone who is reporting issues discovered elsewhere? OZ has already called initialize on our deployed contract for us.
+adamavenir (organizer) commented:
+@jeffywu (Notional) I think the question is whether the issue is valid based on the original code base. Given your initial response and change after his proof of concept, my read was there was value here in what he reported. Is that a correct understanding?
+jeffywu (Notional) commented:
+There was value added here but perhaps not at the same level as the other high risk issues.
+adamavenir (organizer) commented:
+@jeffywu (Notional) Thanks for the input. As per our rules, awards are determined strictly based on the judge’s assessment of the validity and severity, so we’ll see how our judge chooses to score this.
+[H-10] Liquidity token value can be manipulated
+Submitted by cmichel
+The liquidity token value (AssetHandler.getLiquidityTokenValue) is the sum of the value of the individual claims on cash (underlying or rather cTokens) and fCash.
+The amount to redeem on each of these is computed as the LP token to redeem relative to the total LP tokens, seeAssetHandler.getCashClaims/AssetHandler.getHaircutCashClaims:
+// @audit token.notional are the LP tokens to redeemassetCash=market.totalAssetCash.mul(token.notional).div(market.totalLiquidity);fCash=market.totalfCash.mul(token.notional).div(market.totalLiquidity);
+This means the value depends on thecurrent market reserveswhich can be manipulated.
+You’re essentially computing a spot price (even though the individual values use a TWAP price) because you use the current market reserves which can be manipulated.
+See the “How do I tell if I’m using spot price?” sectionhere.
+However, by doing this you’re actually incorporating the spot price because you’re still dependent on the reserve balances of the pool. This is an extremely subtle detail, and more than one project has been caught by it. You can read more about thisfootgunin this writeup by @cmichelio.
+The value of an LP token is computed asassetCashClaim + assetRate.convertFromUnderlying( presentValue(fCashClaim) ), where(assetCashClaim, fCashClaim)depends on the current market reserves which can be manipulated by an attacker via flashloans.
+Therefore, an attacker trading large amounts in the market can either increase or decrease the value of an LP token.
+If the value decreases, they can try to liquidate users borrowing against their LP tokens / nTokens.
+If the value increases, they can borrow against it and potentially receive an under-collateralized borrow this way, making a profit.
+The exact profitability of such an attack depends on the AMM as the initial reserve manipulation and restoring the reserves later incurs fees and slippage.
+In constant-product AMMs like Uniswap it’s profitable and several projects have already been exploited by this, likewarp.finance.
+However, Notional Finance uses a more complicated AMM and the contest was too short for me to do a more thorough analysis. It seems like a similar attack could be possible here as described by the developers when talking about a different context of using TWAP oracles:
+“Oracle rate protects against short term price manipulation. Time window will be set to a value on the order of minutes to hours. This is to protect fCash valuations from market manipulation. For example, a trader could use a flash loan to dump a large amount of cash into the market and depress interest rates. Since we value fCash in portfolios based on these rates, portfolio values will decrease and they may then be liquidated.” - Market.sol L424
+Recommend not using the current market reserves to determine the value of LP tokens. Also, think about how to implement a TWAP oracle for the LP tokens themselves, instead of combining it from the two TWAPs of the claimables.
+T-Woodward (Notional) confirmed and disagreed with severity:
+It is true that a flash loan could be used to manipulate the value of a liquidity token’s cash and fCash claims. This issue can potentially cause accounts to be liquidated which shouldn’t be, but not for the reasons stated in this issue. I’ll explain what actually can go wrong, and why the fix is simple and non-invasive.First, to restate the issue: The manipulator could borrow or lend a large amount to a liquidity pool, which would change the amount of cash and fCash sitting in that pool and the corresponding cash and fCash claims of a liquidity token associated with that pool. This could change the liquidity token’s net value within the space of a transaction despite the fact that the oracleRate used to value fCash is lagged and manipulation resistant.But it is not true that this manipulation could decrease the value of a liquidity token - in fact it could only increase a liquidity token’s value. By borrowing or lending a large amount using a flash loan, the interest rate that the attacker would receive would deviate from the oracleRate in favor of the liquidity provider. If the attacker executed a large lend order, the interest rate on the loan would be significantly below the oracleRate. This would mean that the liquidity providers had borrowed at a below-market rate and that the net value of that trade would be positive for them. Conversely if the attacker executed a large borrow order, the interest rate on the loan would be significantly above the oracleRate. Again, this would mean that the net value of that trade would be positive for the liquidity providers because they would effectively be lending at an above-market rate. In either case, the value of the liquidity token would increase, not decrease.However, even though the value of a liquidity token could only increase during such an attack, the collateral value of the liquidity token could decrease once the haircuts were applied in the free collateral calculation. The reason for this is that fCash claims are effectively double-haircut (once by the liquidity token haircut and once by the fCash haircut), whereas cash claims are only haircut once (by the liquidity token haircut). This means that even though the attack would increase the value of the liquidity token without haircuts, once you consider the haircuts applied in the free collateral calculation, the collateral value of the liquidity token can be decreased and accounts could become undercollateralized and eligible for liquidation.Remediation:The immediate remediation for this issue is to restrict providing liquidity to the nToken account exclusively. In the longer term, we will plan to add TWAPs to determine the collateral value of liquidity token cash and fCash claims. This immediate remediation will be fine for now though, and will not degrade the system for two reasons:The team does not anticipate users providing liquidity directly outside of the nToken (we don’t even offer a way to do it within the UI for example). Only nToken holders receive NOTE incentives, not direct liquidity providers.The nToken accounts are safe from this attack because the maximum amount that an attacker could temporarily decrease the collateral value of liquidity tokens could never be enough to cause the nToken accounts to become undercollateralized, and therefore they would never be at risk of liquidation due to this attack. The TLDR here is that this attack can’t actually decrease the collateral value of liquidity tokens all that much, and so for an account to be vulnerable they would have to be running quite close to minimum collateralization. This will never happen for the nToken because it doesn’t borrow, it just provides liquidity and always maintains very healthy collateralization levels.
+ghoul-sol (judge) commented:
+Again, I gave it some thought and I think that this is high risk. Keeping as is.

@@ -1,0 +1,70 @@
+The code provided consists of a Solidity library named SafeMath and a contract named PIGGY_BANK. Below is a detailed explanation of how each part works:
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+This library defines a function sub which performs a subtraction operation on two unsigned integers (uint256). The function is marked as internal and pure, meaning it can only be called from within the contract or derived contracts and does not read or modify the state.
+
+ Function sub(uint256 a, uint256 b):
+   Parameters:
+     a: The first operand.
+     b: The second operand.
+   Operation:
+     It first checks if b is less than or equal to a using the assert function. The assert function is used to check for conditions that should never be false. If the condition fails, it indicates a serious error in the code.
+     If the condition is true, it returns the result of a  b.
+
+### PIGGY_BANK Contract
+
+solidity
+contract PIGGY_BANK {
+    using SafeMath for uint;
+    mapping (address => uint) public Accounts;
+
+    function Collect(uint _am) public payable {
+        if(_am <= Accounts[msg.sender]) {
+            if(msg.sender.call.value(_am)()) {
+                Accounts[msg.sender] = Accounts[msg.sender].sub(_am);
+            }
+        }
+    }
+}
+
+
+This contract defines a simple piggy bank where users can collect amounts from their accounts.
+
+ State Variables:
+   mapping (address => uint) public Accounts: This mapping associates each address with a balance. The public keyword automatically generates a getter function for each key in the mapping.
+
+ Function Collect(uint _am):
+   Parameters:
+     _am: The amount to be collected.
+   Operation:
+     The function first checks if the requested amount _am is less than or equal to the balance of the sender (Accounts[msg.sender]).
+     If the condition is true, it attempts to send _am wei to the sender using the call.value(_am)() function. This is a lowlevel call function that sends the specified amount of Ether.
+     If the call is successful, it subtracts the collected amount from the sender's balance using the sub function from the SafeMath library to ensure safe arithmetic operations.
+
+### Potential Vulnerabilities
+
+1. Reentrancy Attack:
+    The use of call.value(_am)() is susceptible to reentrancy attacks. If the recipient of the call is a malicious contract, it can repeatedly call back into the Collect function before the balance is updated, potentially draining the contract.
+
+2. Assert Usage:
+    The use of assert in the SafeMath library is generally discouraged for arithmetic checks. assert should be used for internal errors, not for input validation. Instead, require should be used to check inputs and conditions that can reasonably be false.
+
+### Recommendations
+
+1. Reentrancy Guard:
+    Implement a reentrancy guard (e.g., using OpenZeppelin's ReentrancyGuard) to prevent reentrancy attacks.
+
+2. Replace Assert with Require:
+    Replace the assert in the SafeMath library with require to handle arithmetic checks more appropriately.
+
+By addressing these issues, the contract can be made more secure and robust.

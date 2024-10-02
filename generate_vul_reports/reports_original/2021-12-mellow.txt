@@ -1,0 +1,63 @@
+[H-01]YearnVault.sol#pull()will most certainly fail
+Submitted by WatchPug
+https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/test_brownie/contracts/YearnVault.sol#L84-L101
+for(uint256i=0;i<_yTokens.length;i++) {if(tokenAmounts[i] ==0) {continue;}IYearnVaultyToken=IYearnVault(_yTokens[i]);uint256yTokenAmount= ((tokenAmounts[i] * (10**yToken.decimals())) /yToken.pricePerShare());uint256balance=yToken.balanceOf(address(this));if(yTokenAmount>balance) {yTokenAmount=balance;}if(yTokenAmount==0) {continue;}yToken.withdraw(yTokenAmount,to,maxLoss);(tokenAmounts[i],address(this));}actualTokenAmounts=tokenAmounts;
+The actual token withdrew fromyToken.withdraw()will most certainly be less than thetokenAmounts[i], due to precision loss in the calculation ofyTokenAmount.
+As a result,IERC20(_vaultTokens[i]).safeTransfer(to, actualTokenAmounts[i]);inLpIssuer.sol#withdraw()will revert due to insufficant balance.
+Recommendation
+Change to:
+tokenAmounts[i] =yToken.withdraw(yTokenAmount,to,maxLoss);
+MihanixA (Mellow Protocol) confirmed and disagreed with severity:
+Actually I don’t see how this could lead to fund loss. I think this one is a bug.
+@0xleastwood what do you think?
+0xleastwood (judge) commented:
+my understanding is that users won’t be able to withdraw pushed funds @MihanixAso fund loss is related to not being able to withdraw rather than by extracting value from the protocol
+Oxn1ck (Mellow Protocol) commented:
+While we agree that this will prevent full withdrawal of the funds, that wil be limited to only a couple of wei’s which is the yearn precision loss. So in case you put 100eth you will be able to recover 100eth - 1wei. So we’d rather name the issue “some small amounts cannot be withdrawn from the pool”
+0xleastwood (judge) commented:
+If my understanding is correct,YearnVault._pullwill withdrawyTokenAmountrepresenting the yToken’s shares and then withdraw on this amount but returntokenAmountswhere the amount withdrawn is typically less than the amount intended to be withdrawn.LpIssuer.withdraw()will expectactualTokenAmountsto be available to be transferred which isn’t exactly in the contract’s balance.https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/YearnVault.sol#L90https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/LpIssuer.sol#L152Let’s use an example:Alice callsLpIssuer.withdraw()withtokensAmount[0]equal to 100 tokens. Let’s ignore thelpTokenAmountargument for the sake of this example._subvault().pullis called on thistokensAmount[0].yTokenAmountis calculated according to((tokenAmounts[i] * (10**yToken.decimals())) / yToken.pricePerShare());which potentially leads to a slightly truncated output.This truncated output represents the shares belonging to the user which is then parsed toyToken.withdraw().yToken.withdraw()is likely less than 100 tokens and is sent to theLpIssuer.solcontract butactualTokenAmounts[0]is equal to 100 tokens.LpIssuer.withdraw()attempts to send tokens to the withdrawer but is unable as the contract does not have sufficient balance.IERC20(_vaultTokens[i]).safeTransfer(to, actualTokenAmounts[i]);If I’m not mistaken, it seems like this issue would be apparent on any withdrawal amount (assuming there is some amount truncated).There is also an important edge case where the amount to withdraw from the yearn vault is greater than the available contract balance, it will always revert.
+Oxn1ck (Mellow Protocol) commented:
+Agreed, thank you!
+[H-02] Wrong implementation ofperformanceFeecan cause users to lose 50% to 100% of their funds
+Submitted by WatchPug
+A certain amount of lp tokens (shares of the vault) will be minted to thestrategyPerformanceTreasuryasperformanceFee, the amount is calculated based on theminLpPriceFactor.
+However, the current formula fortoMintis wrong, which issues more than 100% of the current totalSupply of the lp token to thestrategyPerformanceTreasuryeach time. Causing users to lose 50% to 100% of their funds after a few times.
+https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/LpIssuer.sol#L269-L271
+addresstreasury=strategyParams.strategyPerformanceTreasury;uint256toMint= (baseSupply*minLpPriceFactor) /CommonLibrary.DENOMINATOR;_mint(treasury,toMint);
+Proof of Concept
+Given:
+strategyParams.performanceFee:10e7(1%)Alice deposited1,000 USDC, received1000lpToken; the totalSupply of the lpToken is now:1000;3 days later,baseTvlincreased to1,001 USDC, Bob deposited1 USDCand trigegred_chargeFees():Expected Result:strategyPerformanceTreasuryto receive about0.01lpToken (1% of 1 USDC);Actual Result:minLpPriceFactoris about1.001, andstrategyPerformanceTreasurywill received1001lpToken as performanceFee; Alice lose 50% of deposited funds.
+Recommendation
+Change to:
+addresstreasury=strategyParams.strategyPerformanceTreasury;uint256toMint= (baseSupply* (minLpPriceFactor-CommonLibrary.DENOMINATOR) *performanceFee/CommonLibrary.DENOMINATOR) /CommonLibrary.DENOMINATOR;_mint(treasury,toMint);
+MihanixA (Mellow Protocol) confirmed
+[H-03]UniV3Vault.sol#collectEarnings()can be front run
+Submitted by WatchPug
+ForUniV3Vault, it seems that lp fees are collected throughcollectEarnings()callable by thestrategyand reinvested (rebalanced).
+However, in the current implementation, unharvested yields are not included intvl(), making it vulnerable to front-run attacks that steal pending yields.
+https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/UniV3Vault.sol#L100-L122https://github.com/code-423n4/2021-12-mellow/blob/6679e2dd118b33481ee81ad013ece4ea723327b5/mellow-vaults/contracts/UniV3Vault.sol#L80-L97
+Proof Of Concept
+Given:
+Currenttvl()is10 ETHand40,000 USDC;Current unclaimed yields (trading fees) is1 ETHand4,000 USDC;strategycallscollectEarnings()to collect fees and reinvest;The attacker sends a deposit tx with a higher gas price to deposit10 ETHand40,000 USDC, take 50% share of the pool;After the transaction in step 1 is packed, the attacker callswithdraw()and retrieves10.5 ETHand42,000 USDC.
+As a result, the attacker has stolen half of the pending yields in about 1 block of time.
+Recommendation
+Consider including fees intvl().
+For the code to calculate fees earned, please reference_computeFeesEarned()in G-UNI project:
+https://github.com/gelatodigital/g-uni-v1-core/blob/master/contracts/GUniPool.sol#L762-L806
+MihanixA (Mellow Protocol) confirmed:
+Thanks!
+AddedtokensOwedtoUniV3Vault’stvl
+[H-04] AaveVault does not update TVL on deposit/withdraw
+Submitted by cmichel, also found by WatchPug
+Aave usesrebasingtokens which means the token balanceaToken.balanceOf(this)increases over time with the accrued interest.
+TheAaveVault.tvluses a cached value that needs to be updated using aupdateTvlscall.
+This call is not done when depositing tokens which allows an attacker to deposit tokens, get a fair shareof the old tvl, update the tvl to include the interest, and then withdraw the LP tokens receiving a larger share of thenew tvl, receiving back their initial deposit + the share of the interest.
+This can be done risk-free in a single transaction.
+Proof Of Concept
+Imagine an Aave Vault with a single vault token, and current TVL =1,000 aTokensAttacker callsLPIssuer.push([1000]). This loads the old, cachedtvl. NoupdateTvlis called.The1000underlying tokens are already balanced as there’s only one aToken, then the entire amount is pushed:aaveVault.transferAndPush([1000]). This deposists1000underlying tokens to the Aave lending pool and returnsactualTokenAmounts = [1000].After thatthe internal_tvlsvariable is updated with the latest aTokens. This includes the 1000 aTokens just depositedbut also the new rebased aToken amounts, the interest the vault received from supplying the tokens since lastupdateTvlscall._tvls = _tvls + interest + 1000The LP amount to mintamountToMintis still calculated on the old cachedtvlmemory variable, i.e., attacker receivesamount / oldTvl = 1000/1000 = 100%of existing LP supplyAttacker withdraws the LP tokens for 50% of the new TVL (it has been updated indeposit’stransferAndPushcall). Attacker receives50% * _newTvl = 50% * (2,000 + interest) = 1000 + 0.5 * interest.Attacker makes a profit of0.5 * interest
+Impact
+The interest since the last TVL storage update can be stolen as Aave uses rebasing tokens but the tvl is not first recomputed when depositing.
+If the vaults experience low activity a significant amount of interest can accrue which can all be captured by taking a flashloan and depositing and withdrawing a large amount to capture a large share of this interest
+Recommended Mitigation Steps
+Update the tvl when depositing and withdrawing before doing anything else.
+MihanixA (Mellow Protocol) confirmed

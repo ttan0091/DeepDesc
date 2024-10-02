@@ -1,0 +1,19 @@
+[H-07] Business logic bug in __abdicate() function - 2 Bugs
+Submitted by cyberboy, also found by Meta0xNull
+Impact
+The\__abdicate()function athttps://github.com/code-423n4/2021-11-streaming/blob/main/Streaming/src/Locke.sol#L46-L50is the logic to remove the governance i.e., to renounce governance. However, the function logic does not consider emergency governor and pending governor, which can be a backdoor as only the “gov” is set to zero address while the emergency and pending gov remains. A pending gov can just claim and become the gov again, replacing the zero address.
+Proof of Concept
+Compile the contract and set the\_GOVERNORand\_EMERGENCY_GOVERNOR.Now set apendingGovbut do not callacceptGov()
+Bug 1
+Call the\__abdicate()function and we will notice only “gov” is set to zero address while emergency gov remains.
+Bug2
+Now use the address used inpendingGovto callacceptGov()function.We will notice the new gov has been updated to the new address from the zero address.
+Hence the\__abdicate()functionality can be used as a backdoor using emergency governor or leaving a pending governor to claim later.
+Tools Used
+Remix to test the proof of concept.
+Recommended Mitigation Steps
+The\__abdicate()function should setemergency_govandpendingGovas well to zero address.
+brockelmore (Streaming Protocol) confirmed and disagreed with severity:
+Yes, the governor can be recovered from abdication if pendingGov != 0 as well as emergency gov needs to be set to 0 before abdication because it won’t be able to abdicate itself.Would consider it to be medium risk because chances of it ever being called are slim as it literally would cutoff the protocol from being able to capture its fees.
+0xean (judge) commented:
+Given that the functionality and vulnerability exists, and the governor does claim fees, this could lead to the loss of funds. Based on the documentation for C4, that would qualify as high severity.3 — High: Assets can be stolen/lost/compromised directly (or indirectly if there is a valid attack path that does not have hand-wavy hypotheticals).

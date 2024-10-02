@@ -1,0 +1,25 @@
+Type of vulnerability: Improper Collateral Calculation
+
+Cause of vulnerability: The calculation of the required collateral to mint DUSD during the cancellation of a short order uses the short order's collateral ratio and price, which can be manipulated to be less than the actual required collateral.
+
+Execution process:
+1. A user creates a short order with a collateral ratio less than 1 ether and a price potentially lower than the current market price.
+2. The order is partially filled.
+3. The user cancels the order, triggering the calculation to fill the short record up to the minimum short ERC (minShortErc).
+4. The system incorrectly calculates the required collateral using the short order's collateral ratio and price, resulting in less collateral being deducted than necessary.
+5. The user receives more DUSD than the value of the collateral they provided, potentially leading to a liquidatable position.
+
+Vulnerable code:
+```solidity
+uint88 collateralDiff = shortOrder.price.mulU88(debtDiff).mulU88(LibOrders.convertCR(shortOrder.shortOrderCR));
+LibShortRecord.fillShortRecord(
+    asset,
+    shorter,
+    shortRecordId,
+    SR.FullyFilled,
+    collateralDiff,
+    debtDiff,
+    Asset.ercDebtRate,
+    Vault.dethYieldRate
+);
+```

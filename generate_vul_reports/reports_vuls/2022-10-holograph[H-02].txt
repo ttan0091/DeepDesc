@@ -1,0 +1,17 @@
+[H-02] If user sets a lowgasPricethe operator would have to choose between being locked out of the pod or executing the job anyway
+Submitted by 0xA5DF, also found by cryptphi, Jeiwan, and Picodes
+HolographOperator.sol#L202-L340HolographOperator.sol#L593-L596LayerZeroModule.sol#L277-L294
+During the beaming process the user compensates the operator for the gas he has to pay by sending some source-chain-native-tokens viahToken.The amount he has to pay is determined according to thegasPriceset by the user, which is supposed to be the maximum gas price to be used on dest chain (therefore predicting the max gas fee the operator would pay and paying him the same value in src chain native tokens).However, in case the user sets a low price (as low as 1 wei) the operator can’t skip the job because he’s locked out of the pod till he executes the job.The operator would have to choose between loosing money by paying a higher gas fee than he’s compensated for or being locked out of the pod - not able to execute additional jobs or get back his bonded amount.
+Impact
+Operator would be losing money by having to pay gas fee that’s higher than the compensation (gas fee can be a few dozens of USD for heavy txs).This could also be used by attackers to make operators pay for the attackers’ expensive gas tasks:
+They can deploy their own contract as the ‘source contract’Use thebridgeInevent and thedatathat’s being sent to it to instruct the source contract what operations need to be executedThey can use it for execute operations where thetx.origindoesn’t matter (e.g. USDc gasless send)
+Proof of Concept
+An operator can’t execute any further jobs or leave the pod till the job is executed. Fromthe docs:
+When an operator is selected for a job, they are temporarily removed from the pod, until they complete the job. If an operator successfully finalizes a job, they earn a reward and are placed back into their selected pod.
+Operator can’t skip a job. Can’t prove a negative but that’s pretty clear from reading the code.There’s indeed a third option - that some other operator/user would execute the job instead of the selected operator, but a) the operator would get slashed for that. b) If the compensation is lower than the gas fee then other users have no incentive to execute it as well.
+Recommended Mitigation Steps
+Allow operator to opt out of executing the job if thegasPriceis higher than the current gas price.
+alexanderattar (Holograph) commented:
+Is a known issue, and we will be fixing it.
+alexanderattar (Holograph) resolved:
+Feature/HOLO-604: implementing critical issue fixes

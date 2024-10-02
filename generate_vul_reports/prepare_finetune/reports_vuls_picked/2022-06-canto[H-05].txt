@@ -1,0 +1,18 @@
+Type of vulnerability: Incorrect Initialization Code Hash
+
+Cause of vulnerability: The init code hash in the `UniswapV2Library.pairFor()` function is outdated due to changes in the `UniswapV2Pair` contract code, leading to incorrect calculation of the pair address.
+
+Execution process: When the `UniswapV2Library.pairFor()` function is called to determine the address of a token pair, it uses an outdated init code hash. This results in the function returning a wrong and non-existing address. As a consequence, all dependent functions and contracts, including `UniswapV2Oracle`, `UniswapV2Router02`, and `SushiRoll`, will malfunction because they rely on the incorrect pair address.
+
+Vulnerable code:
+```solidity
+function pairFor(address factory, address tokenA, address tokenB) internal pure returns (address pair) {
+    (address token0, address token1) = sortTokens(tokenA, tokenB);
+    pair = address(uint(keccak256(abi.encodePacked(
+        hex'ff',
+        factory,
+        keccak256(abi.encodePacked(token0, token1)),
+        hex'e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303' // init code hash
+    ))));
+}
+```

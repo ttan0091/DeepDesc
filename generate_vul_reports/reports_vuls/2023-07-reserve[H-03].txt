@@ -1,0 +1,23 @@
+[H-03] ConvexStakingWrapper.sol after shutdown，rewards can be stolen
+Submitted bybin2chen
+After shutdown, checkpoints are stopped, leading to possible theft of rewards.
+Proof of Concept
+ConvexStakingWrapperNo morecheckpointsaftershutdown, i.e. no updatesreward.reward_integral_for[user]
+function_beforeTokenTransfer(address_from,address_to,uint256)internaloverride{@>_checkpoint([_from,_to]);}function_checkpoint(address[2]memory_accounts)internalnonReentrant{//if shutdown, no longer checkpoint in case there are problems@>if(isShutdown())return;uint256supply=_getTotalSupply();uint256[2]memorydepositedBalance;depositedBalance[0] =_getDepositedBalance(_accounts[0]);depositedBalance[1] =_getDepositedBalance(_accounts[1]);IRewardStaking(convexPool).getReward(address(this),true);_claimExtras();uint256rewardCount=rewards.length;for(uint256i=0;i<rewardCount;i++) {_calcRewardIntegral(i,_accounts,depositedBalance,supply,false);}}
+This would result in, aftershutdown, being able to stealrewardsby transferringtokensto new users.
+Example:Suppose the currentreward.reward_integral = 1000
+When ashutdownoccurs:
+Alice transfers 100 to the new user, Bob.
+Since Bob is the new user and_beforeTokenTransfer()->_checkpoint()is not actually executed.Result:balanceOf[bob] = 100reward.reward_integral_for[bob] = 0
+Bob executesclaimRewards()to steal the reward.
+reward amount = balanceOf[bob] * (reward.reward_integral - reward.reward_integral_for[bob])= 100 * (1000-0)
+Bob transfers the balance to other new users, looping steps 1-2 and stealing all rewards.
+Recommended Mitigation Steps
+Still execute\_checkpoint
+function_checkpoint(address[2]memory_accounts)internalnonReentrant{//if shutdown, no longer checkpoint in case there are problems-if(isShutdown())return;uint256supply=_getTotalSupply();uint256[2]memorydepositedBalance;depositedBalance[0] =_getDepositedBalance(_accounts[0]);depositedBalance[1] =_getDepositedBalance(_accounts[1]);IRewardStaking(convexPool).getReward(address(this),true);_claimExtras();uint256rewardCount=rewards.length;for(uint256i=0;i<rewardCount;i++) {_calcRewardIntegral(i,_accounts,depositedBalance,supply,false);}}
+Assessed type
+Context
+pmckelvy1 (Reserve) acknowledged
+Reserve Mitigated:
+Skip reward claim in_checkpointif shutdown.PR:https://github.com/reserve-protocol/protocol/pull/930
+Status:Mitigation confirmed. Full details in reports fromronnyx2017,bin2chenandRaymondFam.

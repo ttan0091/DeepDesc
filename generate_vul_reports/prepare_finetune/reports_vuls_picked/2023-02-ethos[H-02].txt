@@ -1,0 +1,19 @@
+Type of vulnerability: Improper Loss Calculation in Withdrawal Process
+
+Cause of vulnerability: The vulnerability arises because the `_withdraw()` function in `ReaperVaultV2` does not correctly account for the actual loss when there are locked funds in the strategy. The function resets the value to the token balance of the contract if the balance is insufficient for the withdrawal, which leads to an inaccurate calculation of the total loss.
+
+Execution process: When a user requests to withdraw shares from the vault, the `_withdraw()` function calculates the value of the shares based on the available funds. If the balance of the contract is less than the calculated value, the function sets the value to the balance. This value is then used in a check against the `withdrawMaxLoss` to ensure the loss does not exceed the allowed slippage. However, if there are locked funds in the strategy, the actual loss can be higher than what is calculated, leading to the user receiving fewer assets than expected while their shares are fully burned.
+
+Vulnerable code:
+```solidity
+function _withdraw(uint256 _shares, address _receiver, address _owner) internal nonReentrant returns (uint256 value) {
+    ...
+    vaultBalance = token.balanceOf(address(this));
+    if (value > vaultBalance) {
+        value = vaultBalance;
+    }
+    require(totalLoss <= ((value + totalLoss) * withdrawMaxLoss) / PERCENT_DIVISOR, "Withdraw loss exceeds slippage");
+    token.safeTransfer(_receiver, value);
+    emit Withdraw(msg.sender, _receiver, _owner, value, _shares);
+}
+```

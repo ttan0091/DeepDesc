@@ -1,0 +1,35 @@
+This code defines an external function named permit, which is designed to allow an owner to approve a spender to spend a certain amount of tokens on their behalf using a signed message (EIP2612). Here’s a detailed explanation of how this function works:
+
+1. Parameter Initialization:
+    owner: The address of the token owner who is approving the spender.
+    spender: The address of the spender who is being approved to spend tokens on behalf of the owner.
+    rawAmount: The amount of tokens to be approved, provided as an unsigned integer.
+    deadline: The timestamp until which the signature is valid.
+    v, r, s: The components of the ECDSA signature.
+
+2. Amount Handling:
+    The function initializes a uint96 variable named amount.
+    If rawAmount is equal to uint(1), which is the maximum value for a uint, amount is set to uint96(1), which is the maximum value for a uint96.
+    Otherwise, amount is set to the value returned by the safe96 function, which ensures that rawAmount does not exceed 96 bits. If rawAmount exceeds 96 bits, the function will revert with the message "Tribe: amount exceeds 96 bits".
+
+3. Domain Separator Calculation:
+    The domainSeparator is calculated using the keccak256 hash function on the encoded data of the DOMAIN_TYPEHASH, the hash of the token name, the chain ID, and the contract address. This is part of the EIP712 standard to prevent replay attacks across different contracts and chains.
+
+4. Struct Hash Calculation:
+    The structHash is calculated using the keccak256 hash function on the encoded data of the PERMIT_TYPEHASH, the owner address, the spender address, the rawAmount, the current nonce of the owner (which is incremented after being used), and the deadline.
+
+5. Digest Calculation:
+    The digest is calculated using the keccak256 hash function on the encoded packed data of the EIP191 prefix (\x19\x01), the domainSeparator, and the structHash. This digest is used to verify the signature.
+
+6. Signature Verification:
+    The ecrecover function is used to recover the address of the signatory from the digest, v, r, and s components of the signature.
+    The function checks that the recovered signatory address is not zero (indicating an invalid signature) and that the signatory address matches the owner address.
+    It also checks that the current block timestamp is less than or equal to the deadline to ensure the signature has not expired.
+
+7. Approval Update:
+    The allowances mapping is updated to set the approved amount for the spender on behalf of the owner to amount.
+
+8. Event Emission:
+    An Approval event is emitted with the owner, spender, and amount to notify external observers of the approval.
+
+This function leverages cryptographic signatures to allow offchain approval of token transfers, reducing the need for onchain transactions and associated gas fees. The use of EIP712 ensures that the signatures are specific to the contract and chain, preventing replay attacks.

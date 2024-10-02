@@ -1,0 +1,10 @@
+Type of vulnerability: Reentrancy or Frontrunning
+Cause of vulnerability: The msg.sender is allowed to manipulate the from address’s approval down by the value amount, enabling msg.sender to potentially invalidate a user deposit.
+        The malicious action can occur within Execute Proposal where a proposal is affecting the proposal params for the user deposit approval to operate around Frontrunner Attack An example would be a proposal calling Denylist Action to put the user deposit address offchain.
+Extent of damage: Can freeze user deposits causing them to become illiquid if proposal is executed where disallowed action is taken e.g Denylist Acting triggering circuit break on user deposit causing it to be disabled for the runtime of the AnyswapV6MultiUSDCBridge contract operation and a malicious actor could denylist a number of user deposit contracts leading to a risk zone created where deposits of other user deposits contracts could be stopped for a long time causing a potential iliquidity issues for those who are affected if this influences a system of many user deposits on recovery mode or guarding.
+Mitigation: Implement checks in the transferFrom function to ensure that the allowance is not reduced to zero specifically for SAFE_PROPOSALS (minimum vote size not set to 0) for a deposit. Here are the proposed changes:
+
+1. Before reducing the allowance, validate that the reduced allowance is not zero.
+2. Validate that the from address has enough remaining allowance after the reduction before allowing the transfer to proceed. This check is skipped if proposal.minimumVoteSize is set to 0, which is the case for a SAFE_PROPOSALS for a user deposit.
+
+Affected repository: https://github.com/Anyswap/AnyswapV6MultiUSDCBridge/commit/33ba8eabf3eeb5b382930eae1f7c6179b6c551b2

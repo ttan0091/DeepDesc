@@ -1,0 +1,36 @@
+This code defines a public function named setEYEBasedAssetStake, which is used to manage the staking of assets based on the EYE token in the LimboDAO system. The function takes four parameters: finalAssetBalance, finalEYEBalance, rootEYE, and asset. It is decorated with modifiers isLive and incrementFate, indicating that it can only be executed when the system is live and it increments the fate of the caller.
+
+Here’s a detailed explanation of how this function works:
+
+1. Input Validation and Initial Setup:
+    The function starts by checking if the provided asset is approved using the require statement. If not, it reverts with the message "LimboDAO: illegal asset".
+    It then retrieves the sender's address using _msgSender().
+    It fetches the FateGrowthStrategy for the given asset from the fateGrowthStrategy mapping.
+
+2. Mathematical Invariants Check:
+    It calculates rootEYESquared and rootEYEPlusOneSquared by squaring rootEYE and rootEYE + 1, respectively.
+    It checks if finalEYEBalance lies between rootEYESquared and rootEYEPlusOneSquared (exclusive of the upper bound). If not, it reverts with the message "LimboDAO: Stake EYE invariant."
+
+3. Staking Logic Based on Strategy:
+    It retrieves the AssetClout storage for the sender and asset from stakedUserAssetWeight.
+    It updates the sender's fatePerDay by subtracting the current fateWeight of the clout.
+    It stores the initial balance of the asset in initialBalance.
+
+    Direct Root Strategy:
+      If the strategy is directRoot, it checks if finalAssetBalance equals finalEYEBalance and if the asset is the EYE token.
+      It then updates the clout's fateWeight and balance, and adjusts the sender's fatePerDay accordingly.
+
+    Indirect Two Root Eye Strategy:
+      If the strategy is indirectTwoRootEye, it sets the fateWeight to twice the rootEYE and updates the sender's fatePerDay.
+      It calculates the actual EYE balance of the asset, checks if it's greater than zero, and computes the implied EYE balance based on the final asset balance.
+      It verifies if the computed implied EYE balance matches the provided finalEYEBalance. If not, it reverts.
+      It updates the clout's balance.
+
+    Fallback for Unsupported Strategies:
+      If the strategy does not match any of the predefined types, it reverts with the message "LimboDAO: asset growth strategy not accounted for".
+
+4. Final Asset Transfer:
+    It calculates the net balance change (netBalance) between the final and initial asset balances.
+    It calls ERC20NetTransfer on the asset to transfer the net balance from the sender to the contract.
+
+This function is crucial for maintaining the integrity and functionality of the staking system in LimboDAO, ensuring that all staked assets and their associated EYE balances are correctly managed according to predefined strategies.

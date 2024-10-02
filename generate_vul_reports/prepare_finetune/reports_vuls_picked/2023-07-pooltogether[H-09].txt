@@ -1,0 +1,18 @@
+Type of vulnerability: Incompatibility with certain ERC4626 vaults
+Cause of vulnerability: The `_currentExchangeRate` function in the `Vault` contract uses the `maxWithdraw` function of the underlying yield vault to determine the current exchange rate. This can lead to incorrect exchange rates if the yield vault returns a value less than the actual balance due to borrowing or withdrawal limits, causing depositors to receive fewer shares than they should.
+Execution process: When a user deposits or withdraws assets, the `_convertToShares` function calculates the number of shares the user will receive based on the current exchange rate obtained from `_currentExchangeRate`. If the yield vault returns a lower `maxWithdraw` value due to borrowing or withdrawal limits, the exchange rate is adjusted downwards, leading to depositors losing funds.
+Vulnerable code:
+```solidity
+function _currentExchangeRate() internal view returns (uint256) {
+    uint256 _totalSupplyAmount = _totalSupply();
+    uint256 _totalSupplyToAssets = _convertToAssets(_totalSupplyAmount, _lastRecordedExchangeRate, Math.Rounding.Down);
+    uint256 _withdrawableAssets = _yieldVault.maxWithdraw(address(this));
+    if (_withdrawableAssets > _totalSupplyToAssets) {
+        _withdrawableAssets = _withdrawableAssets - (_withdrawableAssets - _totalSupplyToAssets);
+    }
+    if (_totalSupplyAmount != 0 && _withdrawableAssets != 0) {
+        return _withdrawableAssets.mulDiv(_assetUnit, _totalSupplyAmount, Math.Rounding.Down);
+    }
+    return _assetUnit;
+}
+```

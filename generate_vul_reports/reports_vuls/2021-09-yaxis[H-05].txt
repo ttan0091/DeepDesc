@@ -1,0 +1,32 @@
+[H-05] Vault treats all tokens exactly the same that creates (huge) arbitrage opportunities.
+Submitted by jonah1005, also found by cmichel and itsmeSTYJ
+Impact
+The v3 vault treats all valid tokens exactly the same. Depositing 1M DAI would get the same share as depositing 1M USDT. User can withdraw their share in another token. Though there’swithdrawalProtectionFee(0.1 percent), the vault is still a no slippage stable coin exchange.
+Also, I notice that 3crvtoken is added to the vault in the test. Treating 3crvtoken and all other stable coins the same would make the vault vulnerable to flashloan attack. 3crv_token is an lp token and at the point of writing, the price of it is 1.01. The arbitrage space is about 0.8 percent and makes the vault vulnerable to flashloan attacks.
+Though the team may not add crv_token and dai to the same vault, its design makes the vault vulnerable. Strategies need to be designed with super caution or the vault would be vulnerable to attackers.
+Given the possibility of a flashloan attack, I consider this a high-risk issue.
+Proof of Concept
+The issue locates at the deposit function (Vault.sol#L147-L180).
+The share is minted according to the calculation here
+_shares=_shares.add(_amount);
+The share is burned atVault.sol L217
+uint256_amount= (balance().mul(_shares)).div(totalSupply());
+Here’s a sample exploit in web3.py.
+deposit_amount =100000*10**6user = w3.eth.accounts[0]get_token(usdt, user, deposit_amount)usdt.functions.approve(vault.address, deposit_amount).transact()vault.functions.deposit(usdt.address, deposit_amount).transact()vault.functions.withdrawAll(t3crv.address).transact()# user can remove liquiditiy and get the profit.
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Given the protocols’ scenario, I feel like we can take iearn token’s architect as a Ref.yDdai
+yDai handles multiple tokens (cDai/ aDai/ dydx/ fulcrum). Though four tokens are pretty much the same, the contract still needs to calculate the price of each token.
+Or, creating a vault for each token might be an easier quick fix.
+Haz077 (yAxis) acknowledged
+transferAndCall (yAxis) commented:
+The design of the v3 vaults is to intentionally assume that all allowed tokens are of equal value. I do not see us enabling the 3CRV token in our Vault test, though if we did, that doesn’t mean we would in reality. Using a separate vault per token is an architecture we want to avoid.
+GalloDaSballo (judge) commented:
+Anecdotal example from warden makes sense.Assuming that 3CRV is worth the same as a stablecoin is in principle very similar to assuming that a swap between each stable on curve will yield a balanced tradeThis reminds me of the Single Sided Exposure Exploit that Yearn Suffered, and would recommend mitigating by checking the virtual_price on the 3CRV token
+GalloDaSballo (judge) commented:
+TODO: Review and check duplicates, need to read yaxis vault code and use cases before can judge this
+GalloDaSballo (judge) commented:
+After reviewing the code and the submissions, I have to agree that the vault creates arbitrage opportunities, since it heavily relies on 3CRV you may want to use it’svirtual_priceas a way to mitigate potential exploits, alternatively you can roll your own pricing oracle solutionNot mitigating this opportunity means that an attacker will exploit it at the detriment of the depositors
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.

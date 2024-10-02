@@ -1,0 +1,15 @@
+Type of vulnerability: Access Control
+Cause of vulnerability: Lack of ownership check for NFT operations
+Execution process: An adversary can call the `exerciseOption` function for another user's approved NFT by exploiting the absence of a check that `msg.sender` is the owner of the NFT.
+Vulnerable code: 
+```solidity
+function _processTapTokenOperation(address _target, bytes calldata _actionCalldata, uint256 _actionValue, bool _allowFailure) private {
+    if (!cluster.isWhitelisted(0, _target)) revert Magnetar_NotAuthorized(_target, _target);
+    bytes4 funcSig = bytes4(_actionCalldata[:4]);
+    if (funcSig == ITapiocaOptionBroker.exerciseOption.selector || funcSig == ITapiocaOptionBroker.participate.selector || funcSig == ITapiocaOptionBroker.exitPosition.selector || funcSig == ITapiocaOptionLiquidityProvision.lock.selector || funcSig == ITapiocaOptionLiquidityProvision.unlock.selector) {
+        _executeCall(_target, _actionCalldata, _actionValue, _allowFailure);
+        return;
+    }
+    revert Magnetar_ActionNotValid(MagnetarAction.TapToken, _actionCalldata);
+}
+```

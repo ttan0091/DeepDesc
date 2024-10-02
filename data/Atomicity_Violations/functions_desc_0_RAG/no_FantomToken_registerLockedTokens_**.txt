@@ -1,0 +1,28 @@
+[Execution Flow]:
+This code defines an internal function named registerLockedTokens, which is used to register a specified amount of tokens to be locked for a given term for a particular account. The function accepts three parameters: an address (_account), a uint (_tokens), and a uint (_term). Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Parameters:
+    registerLockedTokens is an internal function, meaning it can only be called within the contract or its derived contracts.
+    The function accepts three parameters: _account (an address representing the account), _tokens (a uint representing the amount of tokens to be locked), and _term (a uint representing the term for which the tokens will be locked).
+    The function returns a uint variable named idx, which will store the index of the slot where the tokens are registered.
+
+2. Validation of Term:
+    The function starts by checking if the _term is in the future using require(_term > now, "lock term must be in the future");. This ensures that the lock term is valid and not in the past.
+
+3. Finding a Slot:
+    The function initializes idx to 9999, which is used to track the index of the slot where the tokens will be registered.
+    It then retrieves the storage arrays term and amnt from lockTerm[_account] and lockAmnt[_account] respectively. These arrays store the terms and amounts of locked tokens for the given account.
+    A for loop iterates over the slots (up to LOCK_SLOTS). In each iteration:
+      If the term in the current slot is less than the current time (now), it means the slot is expired and can be reused. The term and amount in this slot are set to 0, and if idx is still 9999, idx is updated to the current index i.
+      If the term in the current slot matches the _term, idx is updated to the current index i.
+
+4. Slot Availability Check:
+    After the loop, the function checks if idx is still 9999 using require(idx != 9999, "registerLockedTokens: no available slot found");. This ensures that a valid slot was found for registering the locked tokens.
+
+5. Registering Locked Tokens:
+    If the term in the found slot (term[idx]) is 0, it means the slot was empty or expired, so the term is updated to _term.
+    The amount of tokens in the found slot (amnt[idx]) is updated by adding _tokens to it using amnt[idx] = amnt[idx].add(_tokens);.
+    The mayHaveLockedTokens[_account] is set to true, indicating that the account may have locked tokens.
+    An event RegisteredLockedTokens is emitted to notify external listeners about the registration of locked tokens.
+
+This function ensures that tokens are locked for a specified term and manages the slots efficiently by reusing expired slots or finding an empty slot.

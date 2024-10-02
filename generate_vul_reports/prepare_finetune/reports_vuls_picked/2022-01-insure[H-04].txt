@@ -1,0 +1,24 @@
+Type of vulnerability: Front-running Attack
+Cause of vulnerability: Lack of access control in market creation allows an attacker to front-run the initial deposit transaction and create a market with malicious parameters.
+Execution process: An attacker observes the pending `Factory.createMarket` transaction and submits their own transaction to create a market with malicious parameters, setting `_conditions[1]` to the desired amount and `_references[4]` to the victim's address. This causes the victim's tokens to be deposited into a market they did not intend to participate in.
+Vulnerable code: 
+```solidity
+function initialize(string calldata _metaData, uint256[] calldata _conditions, address[] calldata _references) external override {
+    // ...
+    if (_conditions[1] > 0) {
+        // @audit vault calls asset.transferFrom(_references[4], vault, _conditions[1])
+        _depositFrom(_conditions[1], _references[4]);
+    }
+}
+
+function _depositFrom(uint256 _amount, address _from) internal returns (uint256 _mintAmount) {
+    require(marketStatus == MarketStatus.Trading && paused == false, "ERROR: DEPOSIT_DISABLED");
+    require(_amount > 0, "ERROR: DEPOSIT_ZERO");
+    _mintAmount = worth(_amount);
+    // @audit vault calls asset.transferFrom(_from, vault, _amount)
+    vault.addValue(_amount, _from, address(this));
+    emit Deposit(_from, _amount, _mintAmount);
+    // mint iToken
+    _mint(_from, _mintAmount);
+}
+```

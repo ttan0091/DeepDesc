@@ -1,0 +1,33 @@
+[H-03] Create a short call order with non empty floor makes the option impossible to exercise and withdraw
+Submitted by zzzitron, also found by danb, Kenshin, Metatron, minhquanym, and PwnedNoMore
+HIGH- assets can be lost
+If a short call order is created with non empty floorTokens array, the taker cannot exercise. Also, the maker cannot withdraw after the expiration. The maker will still get premium when the order is filled. If the non empty floorTokens array was included as an accident, it is a loss for both parties: the taker loses premium without possible exercise, the maker loses the locked ERC20s and ERC721s.
+This bug is not suitable for exploitation to get a ‘free’ premium by creating not exercisable options, because the maker will lose the ERC20s and ERC721s without getting any strike. In that sense it is similar but different issue to theCreate a short put order with zero tokenAmount makes the option impossible to exercise, therefore reported separately.
+Proof of Concept
+proof of conceptreference case
+The proof of concept shows a scenario where babe makes an short call order with non emptyfloorTokensarray. Bob filled the order, and now he has long call option NFT. He wants to exercise his option and callsexercise. There are two cases.
+case 1: he calls exercise with emptyfloorAssetTokenIdsarraycase 2: he calls exercise with non-emptyfloorAssetTokenIdsarray with matching length to theorders.floorTokens
+In the case1,the inputfloorAssetTokenIdswere checked to be empty for put orders, and his call passes this requirement. But eventually_transferFloorsInwas called and he getsIndex out of boundserror, becausefloorTokensis not emptywhich does not match with emptyfloorAssetTokenIds.
+// case 1// PuttyV2.sol: _transferFloorsIn called by exercise// The floorTokens and floorTokenIds do not match the lenghts// floorTokens.length is not zero, while floorTokenIds.length is zeroERC721(floorTokens[i]).safeTransferFrom(from,address(this),floorTokenIds[i]);
+In the case2,the inputfloorAssetTokenIdswere checked to be empty for put orders, but it is not empty. So it reverts.
+// case2// PuttyV2.sol: exercise// non empty floorAssetTokenIds array is passed for put option, it will revert!order.isCall? require(floorAssetTokenIds.length == order.floorTokens.length, "Wrong amount of floor tokenIds"): require(floorAssetTokenIds.length == 0, "Invalid floor tokenIds length");
+After the option is expired, the maker - babe is trying to withdraw but fails due to thesame issue with the case1.
+// maker trying to withdraw// PuttyV2.sol: withdraw_transferFloorsOut(order.floorTokens,positionFloorAssetTokenIds[floorPositionId]);
+Note on the PoC:
+Thetest for case1 is commented outbecause foundry could not catch the revert. But by running the test with un-commenting these lines will show that the call reverts withIndex out of bounds.For the same reason thewithdrawalso is commented outThe reference case just shows that it works as intended when the order does not contain non-emptyfloorTokens.
+Tools Used
+Foundry.
+Recommended Mitigation Steps
+It happens because thefillOrderdoes not ensuretheorder.floorTokensto be empty when the order is short call.
+STYJ (warden) commented:
+Note that it is possible to cause loss of funds for others through this.Assume that maker (A) creates a long call and taker (B) fills it, transferring floor tokens (XYZ) into putty.If maker (C) creates a short call with floorTokens (XYZ), taker (D) is able to fill and exercise his long call since XYZ already resides on Putty. This will however invalidate the options pair that was created between A and B since A cannot exercise and B cannot withdraw.
+outdoteth (Putty Finance) commented:
+Agree that this should be marked as high severity given the exploit scenario provided by @STYJ above.
+outdoteth (Putty Finance) confirmed and commented:
+Report: Short call with floorTokens will result in a revert when exercising.
+HickupHH3 (judge) commented:
+Agreed, all wardens gave the same scenario that leads to a direct loss of NFTs and premium, but @STYJ’s exploit scenario raises the gravity of the situation since users can be griefed.
+outdoteth (Putty Finance) resolved:
+PR with fix:https://github.com/outdoteth/putty-v2/pull/1.
+hyh (warden) reviewed mitigation:
+Fixed by prohibiting non-emptyorder.floorTokensfor short calls.Other option types do needfloorTokens: long calls’ taker provides floor tokens on filling, while long put owner brings in the floor tokens on exercise, taking the strike. Short put owner can thereafter retrieve the tokens on withdraw.

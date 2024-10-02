@@ -1,0 +1,16 @@
+Type of vulnerability: Accounting Error
+Cause of vulnerability: The accounted balance in the prize pool is not updated when the reserve is increased, leading to discrepancies between the actual balance and the accounted balance.
+Execution process: An attacker can call the `increaseReserve` method to add tokens to the reserve without updating the accounted balance. Subsequently, any vault can call `contributePrizeTokens` to effectively steal the funds meant for the reserve, leading to double counting of the same prize tokens.
+Vulnerable code: 
+```solidity
+function increaseReserve(uint104 _amount) external {
+    _reserve += _amount;
+    prizeToken.safeTransferFrom(msg.sender, address(this), _amount);
+    emit IncreaseReserve(msg.sender, _amount);
+}
+
+function _accountedBalance() internal view returns (uint256) {
+    Observation memory obs = DrawAccumulatorLib.newestObservation(totalAccumulator);
+    return (obs.available + obs.disbursed) - _totalWithdrawn;
+}
+```

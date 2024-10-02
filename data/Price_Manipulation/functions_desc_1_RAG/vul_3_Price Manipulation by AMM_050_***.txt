@@ -1,0 +1,85 @@
+This code defines an internal function named _burn, which is used to burn liquidity tokens and return the corresponding amounts of native and foreign assets to the specified address. The function is marked as nonReentrant to prevent reentrancy attacks. Here’s a detailed explanation of how this function works:
+
+1. Ownership Check:
+   solidity
+   require(
+       ownerOf(id) == address(this),
+       "BasePoolV2::burn: Incorrect Ownership"
+   );
+   
+   This line checks if the owner of the token with ID id is the contract itself. If not, the function reverts with an error message indicating incorrect ownership.
+
+2. Retrieve Foreign Asset:
+   solidity
+   IERC20 foreignAsset = positions[id].foreignAsset;
+   
+   This line retrieves the foreign asset associated with the liquidity position identified by id.
+
+3. Get Reserves:
+   solidity
+   (uint112 reserveNative, uint112 reserveForeign, ) = getReserves(foreignAsset); // gas savings
+   
+   This line fetches the reserves of native and foreign assets for the given foreign asset. The third return value (typically a timestamp) is ignored for gas savings.
+
+4. Retrieve Liquidity:
+   solidity
+   uint256 liquidity = positions[id].liquidity;
+   
+   This line retrieves the amount of liquidity tokens associated with the position identified by id.
+
+5. Calculate Amounts to Burn:
+   solidity
+   PairInfo storage pair = pairInfo[foreignAsset];
+   uint256 _totalSupply = pair.totalSupply;
+   amountNative = (liquidity  reserveNative) / _totalSupply;
+   amountForeign = (liquidity  reserveForeign) / _totalSupply;
+   
+   These lines calculate the amounts of native and foreign assets to be returned based on the proportion of liquidity tokens being burned. The calculations are based on the current reserves and the total supply of liquidity tokens.
+
+6. Insufficient Liquidity Check:
+   solidity
+   require(
+       amountNative > 0 && amountForeign > 0,
+       "BasePoolV2::burn: Insufficient Liquidity Burned"
+   );
+   
+   This line ensures that the amounts of native and foreign assets to be returned are greater than zero. If not, the function reverts with an error message indicating insufficient liquidity burned.
+
+7. Update Total Supply:
+   solidity
+   pair.totalSupply = _totalSupply  liquidity;
+   
+   This line updates the total supply of liquidity tokens by subtracting the amount of liquidity tokens being burned.
+
+8. Burn Liquidity Tokens:
+   solidity
+   _burn(id);
+   
+   This line burns the liquidity tokens identified by id.
+
+9. Transfer Assets to Recipient:
+   solidity
+   nativeAsset.safeTransfer(to, amountNative);
+   foreignAsset.safeTransfer(to, amountForeign);
+   
+   These lines transfer the calculated amounts of native and foreign assets to the specified address to.
+
+10. Update Reserves:
+    solidity
+    _update(
+        foreignAsset,
+        reserveNative  amountNative,
+        reserveForeign  amountForeign,
+        reserveNative,
+        reserveForeign
+    );
+    
+    This line updates the reserves of the pool after the burn operation. It adjusts the reserves by subtracting the amounts of native and foreign assets that were transferred out.
+
+11. Emit Event:
+    solidity
+    emit Burn(msg.sender, amountNative, amountForeign, to);
+    
+    This line emits an event to log the burn operation, including the sender, the amounts of native and foreign assets burned, and the recipient address.
+
+In summary, the _burn function ensures that the correct ownership is verified, calculates the appropriate amounts of native and foreign assets to be returned based on the liquidity being burned, updates the total supply and reserves, transfers the assets to the specified address, and logs the operation with an event.

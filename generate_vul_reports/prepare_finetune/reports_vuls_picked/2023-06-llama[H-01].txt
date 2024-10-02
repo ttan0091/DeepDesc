@@ -1,0 +1,25 @@
+Type of vulnerability: Incorrect Governance Result Calculation
+
+Cause of vulnerability: The `getApprovalQuantityAt()` and `getDisapprovalQuantityAt()` functions return the quantity of tokens held by a policyholder instead of the number of role holders, which mismatches the supply calculation used in `validateActionCreation()`.
+
+Execution process: When an action is created, `actionApprovalSupply` and `actionDisapprovalSupply` are set based on the number of role holders. However, during the approval/disapproval counting, the functions `getApprovalQuantityAt()` and `getDisapprovalQuantityAt()` return the token quantities instead of the number of holders, leading to an incorrect governance result.
+
+Vulnerable code:
+```solidity
+function validateActionCreation(ActionInfo calldata actionInfo) external {
+    LlamaPolicy llamaPolicy = policy; // Reduce SLOADs.
+    uint256 approvalPolicySupply = llamaPolicy.getRoleSupplyAsNumberOfHolders(approvalRole);
+    if (approvalPolicySupply == 0) revert RoleHasZeroSupply(approvalRole);
+    uint256 disapprovalPolicySupply = llamaPolicy.getRoleSupplyAsNumberOfHolders(disapprovalRole);
+    if (disapprovalPolicySupply == 0) revert RoleHasZeroSupply(disapprovalRole);
+    // Save off the supplies to use for checking quorum.
+    actionApprovalSupply[actionInfo.id] = approvalPolicySupply;
+    actionDisapprovalSupply[actionInfo.id] = disapprovalPolicySupply;
+}
+
+function getApprovalQuantityAt(address policyholder, uint8 role, uint256 timestamp) external view returns (uint128) {
+    if (role != approvalRole && !forceApprovalRole[role]) return 0;
+    uint128 quantity = policy.getPastQuantity(policyholder, role, timestamp);
+    return quantity > 0 && forceApprovalRole[role] ? type(uint128).max : quantity; //@audit should return supply, not quantity
+}
+```

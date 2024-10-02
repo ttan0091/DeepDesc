@@ -1,0 +1,17 @@
+Type of vulnerability: Logic Error
+Cause of vulnerability: Incorrect order of operations in the loop that allows bypassing the debt repayment check.
+Execution process: An attacker can call the `pay()` function with `param.assetsIn[0] == 0` and `param.collateralsOut[i] == due.collateral`, causing the `require` statement to pass due to `assetIn` and `collateralOut` being zero initially.
+Vulnerable code: 
+```solidity
+for (uint256 i; i < param.ids.length;) {
+    Due storage due = dues[param.ids[i]];
+    require(due.startBlock != BlockNumber.get(), 'E207');
+    if (param.owner != msg.sender) require(param.collateralsOut[i] == 0, 'E213');
+    require(uint256(assetIn) * due.collateral >= uint256(collateralOut) * due.debt, 'E303');
+    due.debt -= param.assetsIn[i];
+    due.collateral -= param.collateralsOut[i];
+    assetIn += param.assetsIn[i];
+    collateralOut += param.collateralsOut[i];
+    unchecked { ++i; }
+}
+```

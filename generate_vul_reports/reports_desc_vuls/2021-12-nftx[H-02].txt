@@ -1,0 +1,18 @@
+Type of vulnerability: Unchecked Return Value
+Cause of vulnerability: The `_sendForReceiver` function does not return a value when the receiver is not a contract, causing the default return value of `false` to be used, which leads to the `distribute` function believing that the fee sending has failed.
+Execution process: When the `distribute` function calls `_sendForReceiver` for a non-contract receiver, it incorrectly assumes that the fee transfer failed due to the missing return statement, causing it to attempt to send more fees in subsequent iterations.
+Vulnerable code: 
+```solidity
+function _sendForReceiver(FeeReceiver memory _receiver, uint256 _vaultId, address _vault, uint256 amountToSend) internal virtual returns (bool) {
+    if (_receiver.isContract) {
+        IERC20Upgradeable(_vault).approve(_receiver.receiver, amountToSend);
+        // If the receive is not properly processed, send it to the treasury instead.
+        bytes memory payload = abi.encodeWithSelector(INFTXLPStaking.receiveRewards.selector, _vaultId, amountToSend);
+        (bool success, ) = address(_receiver.receiver).call(payload);
+        // If the allowance has not been spent, it means we can pass it forward to next.
+        return success && IERC20Upgradeable(_vault).allowance(address(this), _receiver.receiver) == 0;
+    } else {
+        IERC20Upgradeable(_vault).safeTransfer(_receiver.receiver, amountToSend);
+    }
+}
+```

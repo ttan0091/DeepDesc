@@ -1,0 +1,39 @@
+Type of vulnerability: Collateral Lock and Loss
+Cause of vulnerability: Hardcoding the fee for the UniQuoter and improper handling of leftover collateral after swaps
+Execution process: 
+1. Compute deltaDebt to adjust loan to value.
+2. Take a WETH flashloan for deltaDebt.
+3. Repay WETH on Aave.
+4. Use UniQuoterV2 to compute collateral needed for flashloan repayment.
+5. Withdraw collateral from Aave.
+6. Perform EXACT_OUTPUT swap on Uniswap.
+7. Leftover collateral is not properly managed, leading to its loss.
+Vulnerable code: 
+```solidity
+function _payDebt(uint256 debtAmount, uint256 fee) internal {
+    // Get a Quote to know how much collateral i require to pay debt
+    (uint256 amountIn, , , ) = uniQuoter().quoteExactOutputSingle(
+        IQuoterV2.QuoteExactOutputSingleParams(ierc20A(), wETHA(), debtAmount + fee, 500, 0)
+    );
+    // Withdraws the exact computed `amountIn` by the UniQuoter
+    _withdraw(ierc20A(), amountIn, address(this));
+    uint256 output = _swap(ISwapHandler.SwapParams(ierc20A(), wETHA(), ISwapHandler.SwapType.EXACT_OUTPUT, amountIn, debtAmount + fee, _swapFeeTier, bytes("")));
+}
+
+function _swap(ISwapHandler.SwapParams memory params) internal override returns (uint256 amountOut) {
+    if (params.mode == ISwapHandler.SwapType.EXACT_OUTPUT) {
+        uint256 amountIn = _uniRouter.exactOutputSingle(IV3SwapRouter.ExactOutputSingleParams({
+            tokenIn: params.underlyingIn,
+            tokenOut: params.underlyingOut,
+            fee: fee,
+            recipient: address(this),
+            amountOut: params.amountOut,
+            amountInMaximum: params.amountIn,
+            sqrtPriceLimitX96: 0
+        }));
+        if (amountIn < params.amountIn) {
+            IERC20(params.underlyingIn).safeTransfer(address(this), params.amountIn - amountIn);
+        }
+    }
+}
+```

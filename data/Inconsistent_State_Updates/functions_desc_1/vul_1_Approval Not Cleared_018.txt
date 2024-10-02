@@ -1,0 +1,26 @@
+This code defines a public function named burnAsset, which is designed to handle the burning of a specified asset and the creation of a corresponding amount of "fate" tokens within the LimboDAO system. The function takes two parameters: asset, which is the address of the asset to be burned, and amount, which is the amount of the asset to be burned.
+
+Here’s a detailed explanation of how this function works:
+
+1. Access Control and State Management:
+    The function is decorated with isLive and incrementFate, which are likely modifiers that enforce certain conditions before the function can execute. isLive might ensure that the contract is in an active state, and incrementFate might be responsible for updating some global state related to the fate tokens.
+
+2. Input Validation:
+    The function starts by checking if the asset is approved for burning using require(assetApproved[asset], "LimboDAO: illegal asset");. This ensures that only assets that are approved for burning can be processed.
+    It then retrieves the sender's address using _msgSender(), which is a function typically provided by the OpenZeppelin library to return the sender of the current call.
+
+3. Asset Transfer:
+    The function attempts to transfer the specified amount of the asset from the sender to the contract itself using ERC677(asset).transferFrom(sender, address(this), amount). The ERC677 interface is used here, which is an extension of the ERC20 token standard that includes additional functionality for token transfers.
+    If the transfer fails, the function reverts with the message "LimboDAO: transferFailed".
+
+4. Fate Calculation:
+    The function then calculates the amount of fate tokens to be created based on the type of asset being burned.
+    If the asset is the same as domainConfig.eye, it multiplies the amount by 10 to determine the fate created and then burns the amount of domainConfig.eye tokens using ERC677(domainConfig.eye).burn(amount).
+    If the asset is not domainConfig.eye, it calculates the fate tokens based on the proportion of domainConfig.eye tokens held by the asset. It first checks if the asset holds any domainConfig.eye tokens and requires that the balance is greater than zero.
+    It then calculates the total supply of the asset and determines the amount of domainConfig.eye tokens per unit of the asset. This is used to calculate the implied amount of domainConfig.eye tokens that the amount of the asset represents, which is then multiplied by 20 to determine the fate created.
+
+5. State Update and Event Emission:
+    The fate balance of the sender is updated by adding the calculated fateCreated to fateState[_msgSender()].fateBalance.
+    An event assetBurnt is emitted to log the transaction, including the sender's address, the asset address, and the amount of fate created.
+
+This function is crucial for the internal economics and token management of the LimboDAO, ensuring that assets are properly burned and converted into fate tokens according to the specified rules.

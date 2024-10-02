@@ -1,0 +1,14 @@
+[H-03]fillOrderexecutor can be front-run by the order creator by changing order’slimitPrice_e36, the executor’s assets can be stolen
+Submitted bysaid, also found byrvierdiievandladboy233
+https://github.com/code-423n4/2024-01-init-capital-invitational/blob/main/contracts/hook/MarginTradingHook.sol#L539-L563
+https://github.com/code-423n4/2024-01-init-capital-invitational/blob/main/contracts/hook/MarginTradingHook.sol#L387
+limitPrice_e36acts as slippage protection for the order creator, depending on the trade/order position (whether long or short). A higher or lower limit price impacts thetokenOutamount that needs to be transferred to the order’s creator. However, when the executor executesfillOrder, it can be front-run by the order creator to updatelimitPrice_e36and steal tokens from the executor.
+Proof of Concept
+WhenfillOrderis executed, it will calculate theamtOutthat needs to be transferred toorder.recipientby calling_calculateFillOrderInfo.
+https://github.com/code-423n4/2024-01-init-capital-invitational/blob/main/contracts/hook/MarginTradingHook.sol#L532-L564
+function_calculateFillOrderInfo(Ordermemory_order,MarginPosmemory_marginPos,address_collToken)internalreturns(uintamtOut,uintrepayShares,uintrepayAmt){(repayShares,repayAmt) =_calculateRepaySize(_order,_marginPos);uintcollTokenAmt=ILendingPool(_marginPos.collPool).toAmtCurrent(_order.collAmt);// NOTE: all roundings favor the order owner (amtOut)if(_collToken==_order.tokenOut) {if(_marginPos.isLongBaseAsset) {// long eth hold eth// (2 * 1500 - 1500) = 1500 / 1500 = 1 eth// ((c * limit - borrow) / limit>>>amtOut=collTokenAmt-repayAmt*ONE_E36/_order.limitPrice_e36;}else{// short eth hold usdc// 2000 - 1 * 1500 = 500 usdc// (c - borrow * limit)>>>amtOut=collTokenAmt- (repayAmt*_order.limitPrice_e36/ONE_E36);}}else{if(_marginPos.isLongBaseAsset) {// long eth hold usdc// (2 * 1500 - 1500) = 1500 usdc// ((c * limit - borrow)>>>amtOut= (collTokenAmt*_order.limitPrice_e36).ceilDiv(ONE_E36) -repayAmt;}else{// short eth hold eth// (3000 - 1 * 1500) / 1500 = 1 eth// (c - borrow * limit) / limit>>>amtOut= (collTokenAmt*ONE_E36).ceilDiv(_order.limitPrice_e36) -repayAmt;}}}
+As can be observed, it heavily relies onlimitPrice_e36to calculateamtOut. A malicious order creator can front-run the execution offillOrderand steal assets from the executor by changinglimitPrice_e36, resulting in a high value ofamtOutdepending on the order’s position.
+Recommended Mitigation Steps
+Consider to addlimitPrice_e36check inside thefillOrderif it bigger than min/max provided limit price, revert the operation.
+fez-init (INIT) confirmed and commented:
+We will change theupdateOrderlogic to cancel and create a new order instead of modifying the existing order instead.

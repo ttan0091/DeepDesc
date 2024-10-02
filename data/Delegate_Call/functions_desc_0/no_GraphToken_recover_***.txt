@@ -1,0 +1,28 @@
+This code defines an internal function named recover, which is used to recover the address of the signer from a given hash and signature. The function is marked as pure because it does not read from or modify the state of the blockchain. Here’s a detailed explanation of how this function works:
+
+1. Signature Length Check:
+    The function first checks if the length of the provided signature is exactly 65 bytes. This is because an ECDSA (Elliptic Curve Digital Signature Algorithm) signature consists of 64 bytes (32 bytes for r and 32 bytes for s) plus 1 byte for v.
+    If the signature length is not 65 bytes, the function reverts with the error message "ECDSA: invalid signature length".
+
+2. Extracting r, s, and v from the Signature:
+    The function declares three variables: r (32 bytes), s (32 bytes), and v (1 byte).
+    To extract these values from the signature, the function uses inline assembly. This is necessary because the ecrecover function requires the signature parameters to be provided in a specific way, and currently, the only way to get them is through assembly.
+    The assembly code does the following:
+      r := mload(add(signature, 0x20)): Loads the first 32 bytes of the signature into r.
+      s := mload(add(signature, 0x40)): Loads the next 32 bytes of the signature into s.
+      v := byte(0, mload(add(signature, 0x60))): Loads the last byte of the signature into v.
+
+3. Validating s and v Values:
+    The function checks if the s value is within the valid range as defined in the Ethereum Yellow Paper. The valid range for s is 0 < s < secp256k1n ÷ 2 + 1. This ensures that the signature is not malleable.
+    The function also checks if the v value is either 27 or 28. These are the standard values for v in ECDSA signatures.
+    If either the s or v value is invalid, the function reverts with the corresponding error message.
+
+4. Recovering the Signer Address:
+    The function uses the ecrecover precompiled contract to recover the signer's address from the provided hash, v, r, and s.
+    ecrecover returns the address of the signer if the signature is valid. If the signature is invalid, ecrecover returns the zero address (address(0)).
+    The function checks if the recovered signer address is not the zero address. If it is, the function reverts with the error message "ECDSA: invalid signature".
+
+5. Returning the Signer Address:
+    If all checks pass, the function returns the recovered signer address.
+
+This function is commonly used in smart contracts to verify the authenticity of a signed message or transaction, ensuring that it was indeed signed by the claimed signer.

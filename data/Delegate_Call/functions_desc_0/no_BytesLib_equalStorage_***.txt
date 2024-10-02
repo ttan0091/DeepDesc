@@ -1,0 +1,39 @@
+This code defines an internal view function named equalStorage, which compares two byte arrays for equality. One array is stored in storage (_preBytes), and the other is in memory (_postBytes). The function returns a boolean indicating whether the two arrays are equal.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Declaration and Initialization:
+    The function equalStorage is declared as internal and view, meaning it can only be called from within the contract and does not modify the state.
+    It takes two parameters: _preBytes (a storage pointer to a byte array) and _postBytes (a memory pointer to a byte array).
+    It returns a boolean value (bool).
+
+2. Assembly Block:
+    The function uses inline assembly to perform lowlevel operations for efficiency.
+
+3. Loading and Decoding the Storage Array Length:
+    let fslot := sload(_preBytes.slot): Loads the storage slot of _preBytes into fslot.
+    let slength := div(and(fslot, sub(mul(0x100, iszero(and(fslot, 1))), 1)), 2): Decodes the length of the stored array. This is done by masking and shifting the bits to extract the length.
+
+4. Loading the Memory Array Length:
+    let mlength := mload(_postBytes): Loads the length of the memory array _postBytes.
+
+5. Length Comparison:
+    switch eq(slength, mlength): Compares the lengths of the two arrays. If they are not equal, the arrays are considered not equal.
+
+6. Detailed Comparison for Equal Lengths:
+    If the lengths are equal (case 1), the function proceeds to compare the contents of the arrays.
+    If slength is less than 32 bytes (case 1 of switch lt(slength, 32)), it directly compares the contents of fslot with the memory array after masking the length byte.
+    If slength is 32 bytes or more (default case), it uses a loop to compare the contents of the storage array with the memory array.
+
+7. Loop for Detailed Comparison:
+    let cb := 1: A circuit breaker initialized to 1 to allow the loop to run.
+    mstore(0x0, _preBytes.slot): Stores the storage slot of _preBytes at memory location 0x0.
+    let sc := keccak256(0x0, 0x20): Computes the Keccak256 hash of the storage slot to get the starting point for the storage array contents.
+    let mc := add(_postBytes, 0x20): Sets mc to the starting point of the memory array contents.
+    let end := add(mc, mlength): Sets end to the end point of the memory array contents.
+    The loop (for {} eq(add(lt(mc, end), cb), 2) {} {}) iterates over each 32byte chunk of the arrays, comparing each chunk from storage (sload(sc)) with the corresponding chunk from memory (mload(mc)). If any chunk does not match, success is set to 0, and cb is set to 0 to break the loop.
+
+8. Return Result:
+    The function returns the value of success, which is true if the arrays are equal and false otherwise.
+
+This function leverages lowlevel operations and inline assembly to efficiently compare byte arrays stored in storage and memory, ensuring that the comparison is performed with minimal gas costs.

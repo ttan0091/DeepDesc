@@ -1,0 +1,33 @@
+This code defines a public view function named allowance, which is used to check the remaining allowance of tokens that a _spender is allowed to spend on behalf of a _owner. The function returns a uint256 value representing the remaining allowance.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Signature and Access Control:
+    The function allowance takes two parameters: address _owner and address _spender.
+    It is marked as public and view, meaning it can be called externally and does not modify the state of the contract.
+
+2. Basic Allowance Check:
+    The function first checks if the _spender is not the owner. If this condition is true, it directly returns the value stored in the allowed mapping, which maps owners to spenders to their allowances (allowed[_owner][_spender]).
+
+3. Special Cases for Allocations:
+    If the _spender is the owner, the function proceeds to handle special cases for different allocations (overdraft, team, community, and advisers).
+    For each of these allocations, it calculates the unlockedTokens and spentTokens to determine the remaining allowance.
+
+4. Calculation of Unlocked Tokens:
+    For each allocation type, the function calls _calculateUnlockedTokens with specific parameters related to the allocation's cliff, period length, period amount, number of periods, and unvested amount. This function calculates the total number of tokens that have been unlocked up to the current time.
+
+5. Calculation of Spent Tokens:
+    The spentTokens are calculated by subtracting the current balance of the allocation address from the total allocated tokens for that category (overdraftTotal, teamTotal, communityTotal, advisersTotal).
+
+6. Return Value:
+    The function returns the difference between unlockedTokens and spentTokens, which represents the remaining allowance for the _spender to spend on behalf of the _owner.
+
+7. Fallback for NonAllocation Owners:
+    If the _owner does not match any of the specified allocation types, the function defaults to returning the value from the allowed mapping.
+
+### Potential Vulnerabilities and Considerations:
+ Precision in Calculations: Ensure that the _calculateUnlockedTokens function correctly handles timebased calculations to avoid any discrepancies in the unlocked token amounts.
+ State Consistency: The function relies on accurate and uptodate balances and total allocations. Any discrepancies in these values could lead to incorrect allowances being reported.
+ Access Control: The function assumes that the owner and _spender roles are correctly managed and that the allowed mapping accurately reflects the approved allowances.
+
+This function is crucial for managing token allowances in scenarios where specific allocations have vesting schedules or other constraints, ensuring that spenders can only use the tokens that have been effectively unlocked and not yet spent.

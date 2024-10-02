@@ -1,0 +1,133 @@
+This code defines a smart contract named ERC20Proxy that implements the ERC20 token standard interface. The contract is designed to delegate its business logic to another contract instance, allowing for upgradeability and separation of concerns. Here’s a detailed explanation of how this contract works:
+
+### Contract Structure and Inheritance
+
+1. Inheritance:
+    ERC20Interface: This is the interface that defines the standard ERC20 functions and events.
+    ERC20ImplUpgradeable: This is an abstract contract that handles the upgradeability of the ERC20 implementation. It manages the custodian and the implementation address.
+
+2. Members:
+    name: A public string that returns the name of the token.
+    symbol: A public string that returns the symbol of the token.
+    decimals: A public uint8 that returns the number of decimals the token uses.
+
+### Constructor
+
+The constructor of ERC20Proxy initializes the contract with the token's name, symbol, decimals, and the custodian address. It calls the constructor of ERC20ImplUpgradeable to set the custodian.
+
+solidity
+function ERC20Proxy(
+    string _name,
+    string _symbol,
+    uint8 _decimals,
+    address _custodian
+)
+    ERC20ImplUpgradeable(_custodian)
+    public
+{
+    name = _name;
+    symbol = _symbol;
+    decimals = _decimals;
+}
+
+
+### Public Functions
+
+1. totalSupply:
+    This function returns the total supply of the token. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function totalSupply() public view returns (uint256) {
+       return erc20Impl.totalSupply();
+   }
+   
+
+2. balanceOf:
+    This function returns the balance of tokens for a given address _owner. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function balanceOf(address _owner) public view returns (uint256 balance) {
+       return erc20Impl.balanceOf(_owner);
+   }
+   
+
+3. emitTransfer:
+    This internal function is used to emit a Transfer event. It is restricted to be called only by the erc20Impl contract using the onlyImpl modifier.
+
+   solidity
+   function emitTransfer(address _from, address _to, uint256 _value) public onlyImpl {
+       emit Transfer(_from, _to, _value);
+   }
+   
+
+4. transfer:
+    This function transfers _value amount of tokens from the caller's address to the address _to. It delegates the call to the erc20Impl contract and includes the sender's address (msg.sender).
+
+   solidity
+   function transfer(address _to, uint256 _value) public returns (bool success) {
+       return erc20Impl.transferWithSender(msg.sender, _to, _value);
+   }
+   
+
+5. transferFrom:
+    This function transfers _value amount of tokens from address _from to address _to. It requires the caller to have been approved to spend the tokens on behalf of _from. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function transferFrom(address _from, address _to, uint256 _value) public returns (bool success) {
+       return erc20Impl.transferFromWithSender(msg.sender, _from, _to, _value);
+   }
+   
+
+6. emitApproval:
+    This internal function is used to emit an Approval event. It is restricted to be called only by the erc20Impl contract using the onlyImpl modifier.
+
+   solidity
+   function emitApproval(address _owner, address _spender, uint256 _value) public onlyImpl {
+       emit Approval(_owner, _spender, _value);
+   }
+   
+
+7. approve:
+    This function allows _spender to withdraw from the caller's account multiple times, up to the _value amount. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function approve(address _spender, uint256 _value) public returns (bool success) {
+       return erc20Impl.approveWithSender(msg.sender, _spender, _value);
+   }
+   
+
+8. increaseApproval:
+    This function increases the allowance of _spender by _addedValue. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function increaseApproval(address _spender, uint256 _addedValue) public returns (bool success) {
+       return erc20Impl.increaseApprovalWithSender(msg.sender, _spender, _addedValue);
+   }
+   
+
+9. decreaseApproval:
+    This function decreases the allowance of _spender by _subtractedValue. It delegates the call to the erc20Impl contract.
+
+   solidity
+   function decreaseApproval(address _spender, uint256 _subtractedValue) public returns (bool success) {
+       return erc20Impl.decreaseApprovalWithSender(msg.sender, _spender, _subtractedValue);
+   }
+   
+
+10. allowance:
+     This function returns the remaining amount _spender is allowed to withdraw from _owner's balance. It delegates the call to the erc20Impl contract.
+
+    solidity
+    function allowance(address _owner, address _spender) public view returns (uint256 remaining) {
+        return erc20Impl.allowance(_owner, _spender);
+    }
+    
+
+### Events
+
+ Transfer: This event is emitted when tokens are transferred from one address to another.
+ Approval: This event is emitted when an approval is granted or modified.
+
+### Summary
+
+The ERC20Proxy contract acts as a proxy for the ERC20 token operations, delegating all the logic to an implementation contract (erc20Impl). This design allows for upgradeability and separation of concerns, ensuring that the token's metadata (name, symbol, decimals) and the core logic (transfers, approvals) can be managed independently. The use of events and restricted internal functions (emitTransfer and emitApproval) ensures that state changes are properly logged and that only the implementation contract can trigger these events.

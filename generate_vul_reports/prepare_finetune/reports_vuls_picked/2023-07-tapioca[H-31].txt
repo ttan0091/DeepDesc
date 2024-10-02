@@ -1,0 +1,34 @@
+Type of vulnerability: Denial of Service (DoS) leading to asset locking
+
+Cause of vulnerability: The `BigBang.getDebtRate()` function reverts when `_currentDebt` is less than `debtStartPoint`, causing `BigBang._accrue()` to fail, which is a prerequisite for functions like `liquidate()` and `repay()`. This locks the collateral of the first borrower.
+
+Execution process:
+1. A non-ETH BigBang market is registered with a non-zero `debtStartPoint` via `Penrose.registerBigBang()`.
+2. The first borrower borrows an amount less than `debtStartPoint` using `BigBang.borrow()`.
+3. `BigBang.getDebtRate()` reverts due to `_currentDebt` being less than `debtStartPoint`.
+4. Functions that require `BigBang._accrue()` to be called beforehand, such as `liquidate()` and `repay()`, become unusable, locking the borrower's collateral.
+
+Vulnerable code:
+```solidity
+// BigBang.sol
+function getDebtRate() public view returns (uint256) {
+    if (_isEthMarket) return penrose.bigBangEthDebtRate(); // default 0.5%
+    if (totalBorrow.elastic == 0) return minDebtRate;
+
+    uint256 _ethMarketTotalDebt = BigBang(penrose.bigBangEthMarket())
+        .getTotalDebt();
+    uint256 _currentDebt = totalBorrow.elastic;
+    uint256 _maxDebtPoint = (_ethMarketTotalDebt *
+        debtRateAgainstEthMarket) / 1e18;
+
+    if (_currentDebt >= _maxDebtPoint) return maxDebtRate;
+
+    uint256 debtPercentage = ((_currentDebt - debtStartPoint) *
+        DEBT_PRECISION) / (_maxDebtPoint - debtStartPoint);
+    uint256 debt = ((maxDebtRate - minDebtRate) * debtPercentage) /
+        DEBT_PRECISION +
+        minDebtRate;
+
+    return debt;
+}
+```

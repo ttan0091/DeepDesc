@@ -1,0 +1,148 @@
+[H-01] Users can get unlimited votes
+Submitted by IllIllI, also found by kenzo
+Users can get unlimited votes which leads to them:
+gaining control over governancegetting undeserved rewardshaving their pools favored due to gauge values
+Proof of Concept
+_mint()calls_moveTokenDelegates()to set up delegation…
+File:contracts/contracts/VotingEscrow.sol#1462function_mint(address_to,uint_tokenId)internalreturns(bool) {463// Throws if `_to` is zero address464assert(_to!=address(0));465// TODO add delegates466// checkpoint for gov467_moveTokenDelegates(address(0),delegates(_to),_tokenId);
+VotingEscrow.sol#L462-L467
+and_transferFrom()calls_moveTokenDelegates()to transfer delegates…
+File:contracts/contracts/VotingEscrow.sol#2301function_transferFrom(302address_from,303address_to,304uint_tokenId,305address_sender306       )internal{307require(attachments[_tokenId] ==0&& !voted[_tokenId],"attached");308// Check requirements309require(_isApprovedOrOwner(_sender,_tokenId));310// Clear approval. Throws if `_from` is not the current owner311_clearApproval(_from,_tokenId);312// Remove NFT. Throws if `_tokenId` is not a valid NFT313_removeTokenFrom(_from,_tokenId);314// TODO delegates315// auto re-delegate316_moveTokenDelegates(delegates(_from),delegates(_to),_tokenId);
+VotingEscrow.sol#L301-L316
+but_burn()does not transfer them back toaddress(0)
+File:contracts/contracts/VotingEscrow.sol#3517function_burn(uint_tokenId)internal{518require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");519520addressowner=ownerOf(_tokenId);521522// Clear approval523approve(address(0),_tokenId);524// TODO add delegates525// Remove token526_removeTokenFrom(msg.sender,_tokenId);527emitTransfer(owner,address(0),_tokenId);528}
+VotingEscrow.sol#L517-L528
+A user can deposit a token, lock it, wait for the lock to expire, transfer the token to another address, and repeat. During each iteration, a new NFT is minted and checkpointed. Calls togetPastVotes()will show the wrong values, since it will think the account still holds the delegation of the burnt NFT. Bribes and gauges also look at the checkpoints and will also have the wrong information
+Recommended Mitigation Steps
+Call_moveTokenDelegates(owner,address(0))in_burn()
+pooltypes (Velodrome) confirmed and commented:
+Nice catch! We intended to fix this issue (seeTODO), included in our mainnet deploy. Thanks for surfacing.
+Alex the Entreprenerd (judge) commented:
+The warden has shown an exploit that, leveraging the_moveTokenDelegatesfunction, which is not present inburncan allow any attacker to inflate their votes.The sponsor has confirmed and they indeed have mitigated the issue in theirdeployed code.
+
+[H-02]VotingEscrow’s merge and withdraw aren’t available for approved users
+Submitted by hyh, also found by hansfriese, rotcivegaf, and WatchPug
+Users who are approved, but do not own a particular NFT, are supposed to be eligible to call merge and withdraw from the NFT.
+Currently _burn(), used by merge() and withdraw() to remove the NFT from the system, will revert unless the sender is the owner of NFT as the function tries to update the accounting for the sender, not the owner.
+Setting the severity to medium as the impact is merge() and withdraw() permanent unavailability for any approved sender, who isn’t the owner of the involved NFT.
+Proof of Concept
+_removeTokenFrom() requires_fromto be the NFT owner as it removes_tokenIdfrom the_fromaccount:
+VotingEscrow.sol#L504-L515
+/// @dev Remove a NFT from a given address///      Throws if `_from` is not the current owner.function_removeTokenFrom(address_from,uint_tokenId)internal{// Throws if `_from` is not the current ownerassert(idToOwner[_tokenId] ==_from);// Change the owneridToOwner[_tokenId] =address(0);// Update owner token index tracking_removeTokenFromOwnerList(_from,_tokenId);// Change count trackingownerToNFTokenCount[_from] -=1;}
+_burn() allows_tokenIdto approved or owner, but calls _removeTokenFrom() withmsg.senderas_from:
+VotingEscrow.sol#L517-L528
+function_burn(uint_tokenId)internal{require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");addressowner=ownerOf(_tokenId);// Clear approvalapprove(address(0),_tokenId);// TODO add delegates// Remove token_removeTokenFrom(msg.sender,_tokenId);emitTransfer(owner,address(0),_tokenId);}
+This way if _burn() is called by an approved account who isn’t an owner, it will revert on _removeTokenFrom()‘sassert(idToOwner[_tokenId] == _from)check.
+Now burn() is used by merge():
+VotingEscrow.sol#L1084-L1097
+functionmerge(uint_from,uint_to)external{require(attachments[_from] ==0&& !voted[_from],"attached");require(_from!=_to);require(_isApprovedOrOwner(msg.sender,_from));require(_isApprovedOrOwner(msg.sender,_to));LockedBalancememory_locked0=locked[_from];LockedBalancememory_locked1=locked[_to];uintvalue0=uint(int256(_locked0.amount));uintend=_locked0.end>=_locked1.end?_locked0.end:_locked1.end;locked[_from] =LockedBalance(0,0);_checkpoint(_from,_locked0,LockedBalance(0,0));_burn(_from);
+And withdraw():
+VotingEscrow.sol#L842-L864
+/// @notice Withdraw all tokens for `_tokenId`/// @dev Only possible if the lock has expiredfunctionwithdraw(uint_tokenId)externalnonreentrant{assert(_isApprovedOrOwner(msg.sender,_tokenId));require(attachments[_tokenId] ==0&& !voted[_tokenId],"attached");LockedBalancememory_locked=locked[_tokenId];require(block.timestamp>=_locked.end,"The lock didn't expire");uintvalue=uint(int256(_locked.amount));locked[_tokenId] =LockedBalance(0,0);uintsupply_before=supply;supply=supply_before-value;// old_locked can have either expired <= timestamp or zero end// _locked has only 0 end// Both can have >= 0 amount_checkpoint(_tokenId,_locked,LockedBalance(0,0));assert(IERC20(token).transfer(msg.sender,value));// Burn the NFT_burn(_tokenId);
+Recommended Mitigation Steps
+Consider changing _removeTokenFrom() argument to be the owner:
+VotingEscrow.sol#L517-L528
+function_burn(uint_tokenId)internal{require(_isApprovedOrOwner(msg.sender,_tokenId),"caller is not owner nor approved");addressowner=ownerOf(_tokenId);// Clear approvalapprove(address(0),_tokenId);// TODO add delegates// Remove token-_removeTokenFrom(msg.sender,_tokenId);+_removeTokenFrom(owner,_tokenId);emitTransfer(owner,address(0),_tokenId);}
+pooltypes (Velodrome) disputed
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has shown how an approved user is unable to execute ordinary operations due to a logic flaw. While the impact may make Medium Severity valid, as the owner can still operate, but delegated users cannot, I believe the finding shows a logical flaw in the system in that it doesn’t work as intended.For that reason I believe this finding is of High Severity.
+
+[H-03] User rewards stop accruing after any_writeCheckpointcalling action
+Submitted by hyh, also found by smiling_heretic, unforgiven, and xiaoming90
+Any user balance affecting action, i.e. deposit, withdraw/withdrawToken or getReward, calls _writeCheckpoint to update the balance records used for the earned reward estimation. The issue is that _writeCheckpoint always sets false tovotedflag for the each new checkpoint due to wrong index used in the mapping access, while only voted periods are eligible for accruing the rewards.
+This way any balance changing action of a voted user will lead to stopping of the rewards accrual for the user, until next vote will be cast. I.e. any action that has no relation to voting and should have only balance change as the reward accruing process impact, in fact removes any future rewards from the user until the next vote.
+Setting the severity to be high as the impact here violates system logic and means next periods accrued rewards loss for a user.
+Proof of Concept
+_writeCheckpoint adds a new checkpoint if block.timestamp is not found in the last checkpoint:
+Gauge.sol#L302-L313
+function_writeCheckpoint(addressaccount,uintbalance)internal{uint_timestamp=block.timestamp;uint_nCheckPoints=numCheckpoints[account];if(_nCheckPoints>0&&checkpoints[account][_nCheckPoints-1].timestamp==_timestamp) {checkpoints[account][_nCheckPoints-1].balanceOf=balance;}else{boolprevVoteStatus= (_nCheckPoints>0) ?checkpoints[account][_nCheckPoints].voted:false;checkpoints[account][_nCheckPoints] =Checkpoint(_timestamp,balance,prevVoteStatus);numCheckpoints[account] =_nCheckPoints+1;}}
+However, instead of moving vote status from the previous checkpoint it recordsfalsetoprevVoteStatusall the time as last status ischeckpoints[account][_nCheckPoints-1].voted, whilecheckpoints[account][_nCheckPoints]isn’t created yet and is empty:
+Gauge.sol#L309
+boolprevVoteStatus= (_nCheckPoints>0) ?checkpoints[account][_nCheckPoints].voted:false;
+Notice thatcheckpointsis a mapping and no range check violation happens:
+Gauge.sol#L74-L75
+/// @notice A record of balance checkpoints for each account, by indexmapping(address=>mapping(uint=>Checkpoint))publiccheckpoints;
+This will effectively lead to rewards removal on any user action, as earned() used in rewards estimation counts only voted periods:
+Gauge.sol#L483-L502
+if(_endIndex>0) {for(uinti=_startIndex;i<_endIndex;i++) {Checkpointmemorycp0=checkpoints[account][i];Checkpointmemorycp1=checkpoints[account][i+1];(uint_rewardPerTokenStored0,) =getPriorRewardPerToken(token,cp0.timestamp);(uint_rewardPerTokenStored1,) =getPriorRewardPerToken(token,cp1.timestamp);if(cp0.voted) {reward+=cp0.balanceOf* (_rewardPerTokenStored1-_rewardPerTokenStored0) /PRECISION;}}}Checkpointmemorycp=checkpoints[account][_endIndex];uintlastCpWeeksVoteEnd=cp.timestamp- (cp.timestamp% (7days)) +BRIBE_LAG+DURATION;if(block.timestamp>lastCpWeeksVoteEnd) {(uint_rewardPerTokenStored,) =getPriorRewardPerToken(token,cp.timestamp);if(cp.voted) {reward+=cp.balanceOf* (rewardPerToken(token) -Math.max(_rewardPerTokenStored,userRewardPerTokenStored[token][account])) /PRECISION;}}
+I.e. if a user has voted, then performed any of the operations that call _writeCheckpoint update: deposit, withdraw/withdrawToken or getReward, then this user will not have any rewards for the period between this operation and the next vote as all checkpoints that were created by _writeCheckpoint will havevoted == false.
+Recommended Mitigation Steps
+Update the index to be_nCheckPoints-1:
+https://github.com/code-423n4/2022-05-velodrome/blob/7fda97c570b758bbfa7dd6724a336c43d4041740/contracts/contracts/Gauge.sol#L309
+-boolprevVoteStatus= (_nCheckPoints>0) ?checkpoints[account][_nCheckPoints].voted:false;+boolprevVoteStatus= (_nCheckPoints>0) ?checkpoints[account][_nCheckPoints-1].voted:false;
+pooltypes (Velodrome) disputed
+Alex the Entreprenerd (judge) commented:
+Due to 1 typo / oversight in the linebool prevVoteStatus = (_nCheckPoints > 0) ? checkpoints[account][_nCheckPoints].voted : false;All future checkpoints are registered as havingvotedset to false.Due to a configuration choice (or mistake as detailed in other findings), havingvotedset to false causes all rewards to not be receiveable.While the impact is loss of Yield (typically a medium finding), the finding shows how this bug will systematically impact all gauges for all users.Because of that, I believe High Severity to be appropriate.
+
+[H-04] Bribe Rewards Struck In Contract If Deposited During First Epoch
+Submitted by xiaoming90
+Bribe rewards added to theBribecontract in the first epoch will not be claimable by any voters, and the rewards will struck in theBribecontract.
+Proof-of-Concept
+Assume that the current epoch isepoch 0, and start date ofepoch 0isDay 0.
+When a briber adds a new rewards by callingBribe.notifyRewardAmount(), theBribe.getEpochStart()will return thestart date of current epoch (epoch 0) + 1 day (Bribe Lag)
+Thus,adjustedTstampwill be set toDay 1.tokenRewardsPerEpoch[token][adjustedTstamp]will evaluate totokenRewardsPerEpoch[DAI][Day 1]and the briber’s rewards will be stored intokenRewardsPerEpoch[DAI][Day 1]
+Bribe.sol#L35
+functiongetEpochStart(uinttimestamp)publicviewreturns(uint) {uintbribeStart=timestamp- (timestamp% (7days)) +BRIBE_LAG;uintbribeEnd=bribeStart+DURATION-COOLDOWN;returntimestamp<bribeEnd?bribeStart:bribeStart+7days;}
+Bribe.sol#L41
+functionnotifyRewardAmount(addresstoken,uintamount)externallock{require(amount>0);if(!isReward[token]) {require(rewards.length<MAX_REWARD_TOKENS,"too many rewards tokens");}// bribes kick in at the start of next bribe perioduintadjustedTstamp=getEpochStart(block.timestamp);uintepochRewards=tokenRewardsPerEpoch[token][adjustedTstamp];_safeTransferFrom(token,msg.sender,address(this),amount);tokenRewardsPerEpoch[token][adjustedTstamp] =epochRewards+amount;if(!isReward[token]) {isReward[token] =true;rewards.push(token);IGauge(gauge).addBribeRewardToken(token);}emitNotifyReward(msg.sender,token,adjustedTstamp,amount);}
+OnDay 6, thevotingphase has ended and the state is currently in therewardphase. Alice decided to call theVoter.distributeto trigger the distribution of bribe rewards.
+However, the main issue is that calling theVoter.distributefunction on Epoch 0’s Day 6 (Reward Phase) will not executed theGauge.deliverBribes()becauseclaimable[_gauge]or_claimableis currently0.
+Gauge.deliverBribes()is the main function responsible for distributing bribe rewards. SinceGauge.deliverBribes()cannot be triggered, the bribe rewards are forever struck in theBribeContract.
+claimable[_gauge]will always be zero on the first epoch because the gauge rewards will only come in the later epoch. The value ofclaimable[_gauge]will only increase when theMinter.update_period()function starts minting VELO and distribute them to the gauges. Per the source code ofMintercontract, the VELO emission will only start from third epoch onwards (active_period = ((block.timestamp + (2 * WEEK)) / WEEK) * WEEK;). Thus, before the VELO emission,claimable[_gauge]will always remain at0.
+Voter.sol#L315
+functiondistribute(address_gauge)publiclock{require(isAlive[_gauge]);// killed gauges cannot distributeuintdayCalc=block.timestamp% (7days);require((dayCalc<BRIBE_LAG) || (dayCalc> (DURATION+BRIBE_LAG)),"cannot claim during votes period");IMinter(minter).update_period();_updateFor(_gauge);uint_claimable=claimable[_gauge];if(_claimable>IGauge(_gauge).left(base) &&_claimable/DURATION>0) {claimable[_gauge] =0;IGauge(_gauge).notifyRewardAmount(base,_claimable);emitDistributeReward(msg.sender,_gauge,_claimable);// distribute bribes & fees tooIGauge(_gauge).deliverBribes();}}
+If someone attempt to callVoter.distribute()on epoch 1 or subsequent epoch, it will fetch the bribe rewards in their respective epoch.
+In theGauge.deliverBribesfunction, the codeuint bribeStart = block.timestamp - (block.timestamp % (7 days)) + BRIBE_LAG;will calculate the start date of current epoch + BRIBE_LAG (1 day). So, if someone callGauge.deliverBribesin epoch 1, thebribeStartvariable will be set to theEpoch 1 + 1 day, which is equivalent to Day 9. There is no way to fetch the bribe rewards struck in epoch 0.
+Gauge.sol#L173
+functiondeliverBribes()externallock{require(msg.sender==voter);IBribesb=IBribe(bribe);uintbribeStart=block.timestamp- (block.timestamp% (7days)) +BRIBE_LAG;uintnumRewards=sb.rewardsListLength();for(uinti=0;i<numRewards;i++) {addresstoken=sb.rewards(i);uintepochRewards=sb.deliverReward(token,bribeStart);if(epochRewards>0) {_notifyBribeAmount(token,epochRewards,bribeStart);}}}
+Bribe.sol#L83
+functiondeliverReward(addresstoken,uintepochStart)externallockreturns(uint) {require(msg.sender==gauge);uintrewardPerEpoch=tokenRewardsPerEpoch[token][epochStart];if(rewardPerEpoch>0) {_safeTransfer(token,address(gauge),rewardPerEpoch);}returnrewardPerEpoch;}
+Recommended Mitigation Steps
+Implement logic to handle the edge case where bribe rewards are added during first epoch. Consider aligning the start of bribe period with VELO emission period.
+pooltypes (Velodrome) acknowledged
+Alex the Entreprenerd (judge) commented:
+The warden has shown how tokens can be stuck in the Bribes Contract indefinitely.This is because bribes can be added at the beginning (day 0), while rewards can be received only after a delay (7 days), due to the need for a minimum amount of rewards to be available in order for bribes to be claimable, the logic will prevent the bribes deposited on day 0 to be claimable.I’m conflicted on the severity as technically this can only happen for the first week, however the loss of tokens is irreversible as there’s no code that would allow rescuing them.On further consideration, because thedeployment of new Bribes and Gauges is mostly permissioneless, this bug will be present for every new pair of deployed contract, and it is highly likely that a new protocol would want to add rewards immediately.For those reasons, I believe High Severity to be appropriate.
+
+[H-05] Voting overwritescheckpoint.votedin last checkpoint, so users can just vote right before claiming rewards
+Submitted by smiling_heretic
+Gauge.sol#L195Gauge.sol#L489-L490Gauge.sol#L499-L500
+if (cp0.voted) {reward += cp0.balanceOf * (_rewardPerTokenStored1 - _rewardPerTokenStored0) / PRECISION;
+this line ingauge.earnedfunction looks like the intention here is to incentivize users to keep theirescrow.balanceOfNftvoted for this gauge.
+However, it’s enough to vote just before claiming rewards (even in the same transaction) andvoter.resetjust after receiving rewards to pass thisifand get rewards for full period since last interaction with the gauge.
+Proof of Concept
+Seeoriginal submissionfor test file.
+Note, that Bob kept his votes for this gauge for full 6-day period but Alice just voted before claiming rewards. In logs, we can see that they both received the same (non-zero) amount of VELO tokens.
+Alice can reset her votes in the same transaction after claiming rewards, if she decides to do so.
+Tools Used
+Foundry
+Recommended Mitigation Steps
+A partial solution would be to create a new checkpoint each time user’svotedstatus changes (setVoteStatusis called) instead of overwriting thevotedin last one.
+However, even then, users can just assign very small weight to this gauge, and lock very little VELO, so I don’t think thisifstatement helps with anything. I think, it’s better to rethink how to incentivize users to vote for specific gauges.
+pooltypes (Velodrome) acknowledged and commented:
+Patched in mainnet deployment.
+Alex the Entreprenerd (judge) increased severity to High and commented:
+The warden has found a way to sidestep the loss of rewards that automatically happens due to the faulty checkpoint system that always sets voted to false.In doing so they also showed how the system can fall apart and provided a POC to replicate.Because I’ve rated issues related to thevotedcheckpoints and loss of rewards with High Severity, at this time I believe this finding should also be bumped as it shows how the system is broken and the way to avoid a loss of rewards.The sponsor seems to have remedied by deleting the voted logic.
+
+[H-06] Attacker can block LayerZero channel
+Submitted by Ruhum
+According to the LayerZero docs, the default behavior is that when a transaction on the destination application fails, the channel between the src and dst app is blocked. Before any new transactions can be executed, the failed transaction has to be retried until it succeeds.
+Seehttps://layerzero.gitbook.io/docs/faq/messaging-properties#message-ordering&https://layerzero.gitbook.io/docs/guides/advanced/nonblockinglzapp
+So an attacker is able to initiate a transaction they know will fail to block the channel between FTM and Optimism. The RedemptionSender & Receiver won’t be usable anymore.
+Proof of Concept
+The RedemptionReceiver contract doesn’t implement the non-blocking approach as seen here:https://github.com/code-423n4/2022-05-velodrome/blob/main/contracts/contracts/redeem/RedemptionReceiver.sol#L72-L105
+An example implementation of the non-blocking approach by LayerZero:https://github.com/LayerZero-Labs/solidity-examples/blob/main/contracts/lzApp/NonblockingLzApp.sol
+Recommended Mitigation Steps
+Use the non-blocking approach as describedhere.
+pooltypes (Velodrome) disagreed with severity
+Alex the Entreprenerd (judge) commented:
+@pooltypes Can anyone send a message or would they need to be whitelisted?
+Alex the Entreprenerd (judge) commented:
+If anyone can call and deny, the contract is not suited to handle exceptions and doesn’t implement theforceReceivefunction, meaning the channel can be griefed and I don’t believe there’s a way to remedy.The contract needs to implementforceResumeReceiveto allow to remove malicious messages that may be received.I still am unsure if anyone can send a malicious message or if they need to be approved. If only the admin can this is a Medium Severity. If anyone can, this is a High Severity finding.From the documentation it seems like anyone can call the function:https://layerzero.gitbook.io/docs/guides/master/how-to-send-a-message
+Alex the Entreprenerd (judge) increased severity to High and commented:
+With the information I currently have, it seems like the channel can be setup to receive messages only by the specified contract, however for multiple reasons, the message sent can cause a revert, and in lack of a “nonblocking” architecture, the messages can get stuck indefinitely.However, the implementation under scope has none of these defenses, it seems like the contact under scope can be denied functionality by any caller that builds their own LZApp.Seeexampleof how to prevent untrusted callers.Because of that, the message queue can be filled with blocking messages that cannot be removed.Because the contract under scope also has no way of re-setting the queue, I have reason to believe that any attack can permanently brick the receiver.For these reasons, I believe High Severity to be more appropriate.
+ethzoomer (Velodrome) commented:
+At this point in time we’ve already completed all of the redemptions.Is it possible to send a message from the contract other than what sender sends? lz’s msg queues are per src addr.https://layerzero.gitbook.io/docs/faq/messaging-properties“STORED message will block the delivery of any future message from srcUA to all dstUA on the same destination chain and can be retried until the message becomes SUCCESS”
+The only way that can get gummed up is if redemption’s over, right?
+Alex the Entreprenerd (judge) commented:
+My understanding is any sender can block the queue as the receiver will revert.That said if redemption is over, there’s no loss beside the risk of burning funds from the FTM side.
+

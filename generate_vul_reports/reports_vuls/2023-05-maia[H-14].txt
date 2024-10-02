@@ -1,0 +1,23 @@
+[H-14] User may underpay for the remote callExecutionGason the root chain
+Submitted byEvo, also found byxuwinnie
+User may underpay for the remote callExecutionGas. Meaning, the incorrectminExecCostis being deposited at the_replenishGascall inside_payExecutionGasfunction.
+Proof of Concept
+Multichain contracts -anycallv7 lines:https://github.com/anyswap/multichain-smart-contracts/blob/645d0053d22ed63005b9414b5610879094932304/contracts/anycall/v7/AnycallV7Upgradeable.sol#L265https://github.com/anyswap/multichain-smart-contracts/blob/645d0053d22ed63005b9414b5610879094932304/contracts/anycall/v7/AnycallV7Upgradeable.sol#L167https://github.com/anyswap/multichain-smart-contracts/blob/645d0053d22ed63005b9414b5610879094932304/contracts/anycall/v7/AnycallV7Upgradeable.sol#L276
+Ulysses-omnichain contract lines:https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/RootBridgeAgent.sol#L811https://github.com/code-423n4/2023-05-maia/blob/main/src/ulysses-omnichain/RootBridgeAgent.sol#L851
+The user is paying the incorrect minimum execution cost forAnycall MutlichainL820, as the value ofminExecCostis calculated incorrectly. TheAnycallV7protocol considers a premium fee (_feeData.premium) on top of the TX gas price, which is not considered here.
+Let’s get into the flow from the start. WhenanyExecis called by the executor (L265), theanycallrequest that comes from a source chain includes thechargeDestFeemodifier.
+functionanyExec(address_to,bytescalldata_data,stringcalldata_appID,RequestContextcalldata_ctx,bytescalldata_extdata)externalvirtuallockwhenNotPausedchargeDestFee(_to, _ctx.flags)onlyMPC{IAnycallConfig(config).checkExec(_appID,_ctx.from,_to);
+Now, thechargeDestFeemodifier will call thechargeFeeOnDestChainfunction as well atL167.
+/// @dev Charge an account for execution costs on this chain/// @param _from The account to charge for execution costsmodifierchargeDestFee(address_from,uint256_flags) {if(_isSet(_flags,AnycallFlags.FLAG_PAY_FEE_ON_DEST)) {uint256_prevGasLeft=gasleft();_;IAnycallConfig(config).chargeFeeOnDestChain(_from,_prevGasLeft);}else{_;}}
+As you see here inL198-L210, inside thechargeFeeOnDestChainfunction includes_feeData.premiumfor the execution costtotalCost.
+functionchargeFeeOnDestChain(address_from,uint256_prevGasLeft)externalonlyAnycallContract{if(!_isSet(mode,FREE_MODE)) {uint256gasUsed=_prevGasLeft+EXECUTION_OVERHEAD-gasleft();uint256totalCost=gasUsed* (tx.gasprice+_feeData.premium);uint256budget=executionBudget[_from];require(budget>totalCost,"no enough budget");executionBudget[_from] =budget-totalCost;_feeData.accruedFees+=uint128(totalCost);}}
+The conclusion: theminExecCostcalculation doesn’t include_feeData.premiumatL811, according to the MultichainAnycallV7protocol.
+You should include_feeData.premiuminminExecCostas well. The same as inL204.
+uint256 totalCost = gasUsed * (tx.gasprice + _feeData.premium);
+This also applicable on:_payFallbackGas()inRootBridgeAgentatL836._payFallbackGas()inBranchBridgeAgentatL1066._payExecutionGasinBranchBridgeAgentatL1032.
+Recommended Mitigation Steps
+Add_feeData.premiumtominExecCostat the_payExecutionGasfunctionL811.
+You need to get_feeData.premiumfirst fromAnycallV7Configby thepremium() function atL286-L288.
+uint256 minExecCost = (tx.gasprice  + _feeData.premium) * (MIN_EXECUTION_OVERHEAD + _initialGas - gasleft()));
+0xBugsy (Maia) confirmed and commented:
+We recognize the audit’s findings on Anycall Gas Management. These will not be rectified due to the upcoming migration of this section to LayerZero.

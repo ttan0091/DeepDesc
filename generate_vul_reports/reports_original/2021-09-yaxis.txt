@@ -1,0 +1,209 @@
+[H-01]Controller.setCapsets wrong vault balance
+Submitted by cmichel
+TheController.setCapfunction sets a cap for a strategy and withdraws any excess amounts (_diff).
+The vault balance is decreased by the entire strategy balance instead of by this_diff:
+// @audit why not sub _diff?_vaultDetails[_vault].balance=_vaultDetails[_vault].balance.sub(_balance);
+Impact
+The_vaultDetails[_vault].balancevariable does not correctly track the actual vault balances anymore, it will usuallyunderestimatethe vault balance.
+This variable is used inController.balanceOf(), which in turn is used inVault.balance(), which in turn is used to determine how many shares to mint / amount to receive when redeeming shares.
+If the value is less, users will lose money as they can redeem fewer tokens.
+Also, an attacker candepositand will receive more shares than they should receive. They can then wait until the balance is correctly updated again and withdraw their shares for a higher amount than they deposited. This leads to the vault losing tokens.
+Recommended Mitigation Steps
+Sub the_diffinstead of thebalance:_vaultDetails[_vault].balance = _vaultDetails[_vault].balance.sub(_diff);
+Haz077 (yAxis) confirmed and patched:
+Already fixed in code-423n4/2021-09-yaxis#1
+GalloDaSballo (judge) commented:
+Finding is valid, has been mitigated by sponsor as of 14 days ago
+[H-02]  set cap breaks vault’s Balance
+Submitted by jonah1005, also found by 0xsanson
+Impact
+In controller.sol’s functionsetCap, the contract wrongly handles_vaultDetails[_vault].balance. While the balance should be decreased by the difference of strategies balance, it subtracts the remaining balance of the strategy. SeeController.sol L262-L278._vaultDetails[_vault].balance = _vaultDetails[_vault].balance.sub(_balance);
+This would result invaultDetails[_vault].balancebeing far smaller than the strategy’s value. A user would trigger the assertion atController.sol#475and the fund would be locked in the strategy.
+ThoughsetCapis a permission function that only the operator can call, it’s likely to be called and the fund would be locked in the contract. I consider this a high severity issue.
+Proof of Concept
+We can trigger the issue by setting the cap 1 wei smaller than the strategy’s balance.
+strategy_balance = strategy.functions.balanceOf().call()controller.functions.setCap(vault.address, strategy.address, strategy_balance -1, dai.address).transact()## this would be revertedvault.functions.withdrawAll(dai.address).transact()
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+I believe the dev would spot the issue in the test if_vaultDetails[_vault].balanceis a public variable.
+One possible fix is to subtract the difference of the balance.
+uintpreviousBalance=IStrategy(_strategy).balanceOf();_vaultDetails[_vault].balance.sub(previousBalance.sub(_amount));
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/1to verify resolution.
+GalloDaSballo (judge) commented:
+High risk vulnerability due to incorrect logic which can impact protocol functionalitySponsor has mitigated
+[H-03] No safety check inaddToken
+Submitted by jonah1005, also found by hrkrshnn and 0xRajeev
+Impact
+There’s no safety check inManager.soladdToken. There are two possible cases that might happen.
+One token being added twice in a Vault. Token would be counted doubly in the vault. Ref:Vault.sol#L293-L303. There would be two item in the array when queryingmanager.getTokens(address(this));.A token first being added to two vaults. The value calculation of the first vault would be broken. Asvaults[_token] = _vault;would point to the other vault.
+Permission keys should always be treated cautiously. However, calling the same initialize function twice should not be able to destroy the vault. Also, as the protocol develops, there’s likely that one token is supported in two vaults. The DAO may mistakenly add the same token twice. I consider this a high-risk issue.
+Proof of Concept
+Adding same token twice would not raise any error here.
+manager.functions.addToken(vault.address,dai.address).transact()manager.functions.addToken(vault.address,dai.address).transact()
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+I recommend to add two checks
+require(vaults[_token] ==address(0));boolnotFound=True;for(uint256i;i<tokens[_vault].length;i++) {if(tokens[_vault] ==_token) {notFound=False;}}require(notFound,"duplicate token");
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/2to verify resolution.
+GalloDaSballo (judge) commented:
+Lack of check for duplicates can cause undefined behaviour, sponsor mitigated by adding a require check
+[H-04] Controller does not raise an error when there’s insufficient liquidity
+Submitted by jonah1005, also found by 0xRajeev and WatchPug
+Impact
+When a user tries to withdraw the token from the vault, the vault would withdraw the token from the controller if there’s insufficient liquidity in the vault. However, the controller does not raise an error when there’s insufficient liquidity in the controller/ strategies. The user would lose his shares while getting nothing.
+An MEV searcher could apply this attack on any withdrawal. When an attacker found an unconfirmed tx that tries to withdraw 1M dai, he can do such sandwich attack.
+Deposits USDC into the vault.Withdraw all dai left in the vault/controller/strategy.Place the vitims tx here. The victim would get zero dai while burning 1 M share.This would pump the share price.Withdraw all liquidity.
+All users would be vulnerable to MEV attackers. I consider this is a high-risk issue.
+Proof of Concept
+Here’s web3.py script to reproduce the issue.
+deposit_amount =100000*10**18user = w3.eth.accounts[0]get_token(dai, user, deposit_amount)dai.functions.approve(vault.address, deposit_amount + margin_deposit).transact()vault.functions.deposit(dai.address, deposit_amount).transact()vault.functions.withdrawAll(usdt.address).transact()#print("usdt amount: ", usdt.functions.balanceOf(user).call())
+Recommended Mitigation Steps
+There are two issues involved.
+First, users pay the slippage when they try to withdraw. I do not find this fair. Users have to pay extra gas to withdraw liquidity from strategy, convert the token, and still paying the slippage. I recommend writing a view function for the frontend to display how much slippage the user has to pay (Controler.sol L448-L479).
+Second, the controller does not revert the transaction there’s insufficient liquidity (Controller.sol#L577-L622).
+Recommend to revert the transaction when_amountis not equal to zero after the loop finishes.
+GainsGoblin (yAxis) acknowledged
+GalloDaSballo (judge) commented:
+Agree with warden finding, this shows the path for an attack that is based on the Vault treating all tokens equally
+Since the finding shows a specific attack, the finding is uniqueRecommend the sponsor mitigates Single Sided Exposure risks to avoid this attack
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.
+[H-05] Vault treats all tokens exactly the same that creates (huge) arbitrage opportunities.
+Submitted by jonah1005, also found by cmichel and itsmeSTYJ
+Impact
+The v3 vault treats all valid tokens exactly the same. Depositing 1M DAI would get the same share as depositing 1M USDT. User can withdraw their share in another token. Though there’swithdrawalProtectionFee(0.1 percent), the vault is still a no slippage stable coin exchange.
+Also, I notice that 3crvtoken is added to the vault in the test. Treating 3crvtoken and all other stable coins the same would make the vault vulnerable to flashloan attack. 3crv_token is an lp token and at the point of writing, the price of it is 1.01. The arbitrage space is about 0.8 percent and makes the vault vulnerable to flashloan attacks.
+Though the team may not add crv_token and dai to the same vault, its design makes the vault vulnerable. Strategies need to be designed with super caution or the vault would be vulnerable to attackers.
+Given the possibility of a flashloan attack, I consider this a high-risk issue.
+Proof of Concept
+The issue locates at the deposit function (Vault.sol#L147-L180).
+The share is minted according to the calculation here
+_shares=_shares.add(_amount);
+The share is burned atVault.sol L217
+uint256_amount= (balance().mul(_shares)).div(totalSupply());
+Here’s a sample exploit in web3.py.
+deposit_amount =100000*10**6user = w3.eth.accounts[0]get_token(usdt, user, deposit_amount)usdt.functions.approve(vault.address, deposit_amount).transact()vault.functions.deposit(usdt.address, deposit_amount).transact()vault.functions.withdrawAll(t3crv.address).transact()# user can remove liquiditiy and get the profit.
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Given the protocols’ scenario, I feel like we can take iearn token’s architect as a Ref.yDdai
+yDai handles multiple tokens (cDai/ aDai/ dydx/ fulcrum). Though four tokens are pretty much the same, the contract still needs to calculate the price of each token.
+Or, creating a vault for each token might be an easier quick fix.
+Haz077 (yAxis) acknowledged
+transferAndCall (yAxis) commented:
+The design of the v3 vaults is to intentionally assume that all allowed tokens are of equal value. I do not see us enabling the 3CRV token in our Vault test, though if we did, that doesn’t mean we would in reality. Using a separate vault per token is an architecture we want to avoid.
+GalloDaSballo (judge) commented:
+Anecdotal example from warden makes sense.Assuming that 3CRV is worth the same as a stablecoin is in principle very similar to assuming that a swap between each stable on curve will yield a balanced tradeThis reminds me of the Single Sided Exposure Exploit that Yearn Suffered, and would recommend mitigating by checking the virtual_price on the 3CRV token
+GalloDaSballo (judge) commented:
+TODO: Review and check duplicates, need to read yaxis vault code and use cases before can judge this
+GalloDaSballo (judge) commented:
+After reviewing the code and the submissions, I have to agree that the vault creates arbitrage opportunities, since it heavily relies on 3CRV you may want to use it’svirtual_priceas a way to mitigate potential exploits, alternatively you can roll your own pricing oracle solutionNot mitigating this opportunity means that an attacker will exploit it at the detriment of the depositors
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.
+[H-06] earn results in decreasing share price
+Submitted by jonah1005
+Impact
+For a dai vault that pairs withNativeStrategyCurve3Crv, every timeearn()is called, shareholders would lose money. (about 2%)
+There are two issues involved. TheVaultcontract and thecontrollercontract doesn’t handle the price difference between the want token and other tokens.
+AtVault.sol L293, when a vault calculates its value, it sums up all tokens balance. However, when the controller calculates vaults’ value (atController.sol L410-L436), it only adds the amount ofstrategy.wantit received. (in this case, it’s t3crv).
+Under the current design, users who deposit dai to the vault would not get yield. Instead, they would keep losing money. I consider this a high-risk issue
+Proof of Concept
+I trigger the bug with the following web3.py script:
+previous_price = vault.functions.getPricePerFullShare().call()vault.functions.available(dai.address).call()vault.functions.earn(dai.address, strategy.address).transact()current_price = vault.functions.getPricePerFullShare().call()print(previous_price)print(current_price)
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+The protocol should decide what the balance sheet in each contract stands for and make it consistent in all cases. Take, for example, if_vaultDetails[_vault].balance;stands for the amount of ‘want’ token the vault owns, there shouldn’t exist two different want in all the strategies the vault has. Also, when the vault queries controllersfunction balanceOf(), they should always multiply it by the price.
+transferAndCall (yAxis) acknowledged
+gpersoon commented:
+I think this is also related to the underlying problem that all coins are assumed to have the same value.
+See also #2, #8 and #158
+GalloDaSballo (judge) commented:
+Agree with wardens finding and acknowledge it’s similitude with other issuesPersonally this is a different vulnerability that can be solved by solving the same underlying problemMarking this as unique finding as it’s a specific exploit the protocol could face
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.
+[H-07]Vault.balance()mixes normalized and standard amounts
+Submitted by cmichel
+TheVault.balancefunction uses thebalanceOfThisfunction which scales (“normalizes”) all balances to 18 decimals.
+for(uint8i;i<_tokens.length;i++) {address_token=_tokens[i];// everything is padded to 18 decimals_balance=_balance.add(_normalizeDecimals(_token,IERC20(_token).balanceOf(address(this))));}
+Note thatbalance()’s second termIController(manager.controllers(address(this))).balanceOf()is not normalized.
+The code is adding a non-normalized amount (for example 6 decimals only for USDC) to a normalized (18 decimals).
+Impact
+The result is that thebalance()will be under-reported.
+This leads to receiving wrong shares whendepositing tokens, and a wrong amount when redeemingtokens.
+Recommended Mitigation Steps
+The second termIController(manager.controllers(address(this))).balanceOf()must also be normalized before adding it.IController(manager.controllers(address(this))).balanceOf()uses_vaultDetails[msg.sender].balancewhich directly uses the raw token amounts which are not normalized.
+GainsGoblin (yAxis) acknowledged
+GalloDaSballo (judge) commented:
+balanceandbalanceOfThismixes the usage of decimals by alternatingly using_normalizeDecimalsThis can break accounting as well as create opportunities for abuse
+A consistent usage of_normalizeDecimalswould mitigate
+BobbyYaxis (yAxis) noted:
+Mitigated in PR 114:https://github.com/yaxis-project/metavault/pull/114/commits/b3c0405640719aa7d43560f4b4b910b7ba88170b
+[H-08]Vault.withdrawmixes normalized and standard amounts
+Submitted by cmichel, also found by hickuphh3 and jonah1005
+TheVault.balancefunction uses thebalanceOfThisfunction which scales (“normalizes”) all balances to 18 decimals.
+for(uint8i;i<_tokens.length;i++) {address_token=_tokens[i];// everything is padded to 18 decimals_balance=_balance.add(_normalizeDecimals(_token,IERC20(_token).balanceOf(address(this))));}
+Note thatbalance()’s second termIController(manager.controllers(address(this))).balanceOf()is not normalized, but it must be.
+This leads to many issues through the contracts that usebalancebut don’t treat these values as normalized values.
+For example, inVault.withdraw, the computed_amountvalue is normalized (in 18 decimals).
+But theuint256 _balance = IERC20(_output).balanceOf(address(this));value is not normalized but compared to the normalized_amountand even subtracted:
+// @audit compares unnormalzied output to normalized outputif(_balance<_amount) {IController_controller=IController(manager.controllers(address(this)));// @audit cannot directly subtract unnormalizeduint256_toWithdraw=_amount.sub(_balance);if(_controller.strategies() >0) {_controller.withdraw(_output,_toWithdraw);}uint256_after=IERC20(_output).balanceOf(address(this));uint256_diff=_after.sub(_balance);if(_diff<_toWithdraw) {_amount=_balance.add(_diff);}}
+Impact
+Imagine inwithdraw, theoutputis USDC with 6 decimals, then the normalized_toWithdrawwith 18 decimals (due to using_amount) will be a huge number and attempt to withdraw an inflated amount.
+An attacker can steal tokens this way by withdrawing a tiny amount of shares and receive an inflated USDC or USDT amount (or any_outputtoken with less than 18 decimals).
+Recommended Mitigation Steps
+Whenever using anything involvingvault.balanceOfThis()orvault.balance()one needs to be sure that any derived token amount needs to be denormalized again before using them.
+GalloDaSballo (judge) commented:
+An inconsistent usage of_normalizeDecimalswill cause accounting issues and potentially paths for an exploit
+BobbyYaxis (yAxis) noted:
+Mitigated in PR 114:https://github.com/yaxis-project/metavault/pull/114/commits/b3c0405640719aa7d43560f4b4b910b7ba88170b
+[H-09]removeTokenwould break the vault/protocol.
+Submitted by jonah1005
+Impact
+There’s no safety check in Manager.sol’sremoveToken.Manager.sol#L454-L487
+The token would be locked in the original vault. Given the current design, the vault would keep a ratio of total amount to save the gas. Once the token is removed at manager contract, these token would lost.Controller’sbalanceOfwould no longer reflects the real value.Controller.sol#L488-L495While_vaultDetails[msg.sender].balance;remains the same, user can nolonger withdraw those amount.Share price in the vault would decrease drastically. The share price is calculated astotalValue / totalSupplyVault.sol#L217. While thetotalSupplyof the share remains the same, the total balance has drastically decreased.
+CallingremoveTokenway would almost break the whole protocol if the vault has already started. I consider this is a high-risk issue.
+Proof of Concept
+We can see how the vault would be affected with below web3.py script.
+print(vault.functions.balanceOfThis().call())print(vault.functions.totalSupply().call())manager.functions.removeToken(vault.address, dai.address).transact()print(vault.functions.balanceOfThis().call())print(vault.functions.totalSupply().call())
+output
+1000000000000000000000001000000000000000000000000100000000000000000000000
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Remove tokens from a vault would be a really critical job. I recommend the team cover all possible cases and check all components’ states (all vault/ strategy/ controller’s state) in the test.
+Some steps that I try to come up with that is required to remove TokenA from a vault.
+Withdraw all tokenA from all strategies (and handle it correctly in the controller).Withdraw all tokenA from the vault.Convert all tokenA that’s collected in the previous step into tokenB.Transfer tokenB to the vault and compensate the transaction fee/slippage cost to the vault.
+transferAndCall (yAxis) acknowledged:
+Removing a token is understood as a critical (and possibly nuclear) operation within this architecture. We knew we would have to first withdraw all of the identified token from strategies, but what was missed was converting that token to another (without withdrawing, as that would be too much centralization).Proposed method of resolution:Withdraw all tokenA from all strategies (this sends it to the vault)Swap tokenA for tokenB in the vault (requires implementing a new function to be called by the strategist)Remove the token via the Manager function
+transferAndCall (yAxis) confirmed and patched:
+Please reviewhttps://github.com/code-423n4/2021-09-yaxis/pull/5to check resolution.
+GalloDaSballo (judge) commented:
+Removing a token can cause accounting errors, stuck funds and break some of the functionalityAdding additional checks to prevent removing the token until all tokens have been migrated may be the simplest path forwardSponsor has mitigated by adding custom functionality, however it is up to them to enforce that the vault has no token left before removing it, adding a couple extra checks may provide a guarantee against admin privileged abuses
+[H-10] An attacker can steal funds from multi-token vaults
+Submitted by WatchPug, also found by cmichel and jonah1005
+The total balance should NOT be simply added from different tokens’ tokenAmounts, considering that the price of tokens may not be the same.
+Vault.solL324
+functionbalanceOfThis()publicviewreturns(uint256_balance){address[]memory_tokens=manager.getTokens(address(this));for(uint8i;i<_tokens.length;i++) {address_token=_tokens[i];_balance=_balance.add(_normalizeDecimals(_token,IERC20(_token).balanceOf(address(this))));}}
+Controller.solL396
+functionharvestStrategy(address_strategy,uint256_estimatedWETH,uint256_estimatedYAXIS)externaloverridenotHaltedonlyHarvesteronlyStrategy(_strategy){uint256_before=IStrategy(_strategy).balanceOf();IStrategy(_strategy).harvest(_estimatedWETH,_estimatedYAXIS);uint256_after=IStrategy(_strategy).balanceOf();address_vault=_vaultStrategies[_strategy];_vaultDetails[_vault].balance=_vaultDetails[_vault].balance.add(_after.sub(_before));_vaultDetails[_vault].balances[_strategy] =_after;emitHarvest(_strategy);}
+Vault.solL310
+/***@noticeReturns the total balance of the vault, including strategies*/functionbalance()publicviewoverridereturns(uint256_balance){returnbalanceOfThis().add(IController(manager.controllers(address(this))).balanceOf());}
+Impact
+An attacker can steal funds from multi-token vaults. Resulting in fund loss of all other users.
+Proof of Concept
+If there is a multi-token vault with 3 tokens: DAI, USDC, USDT, and their price in USD is now 1.05, 0.98, and 0.95. If the current balances are: 2M, 1M, and 0.5M.
+An attacker may do the following steps:
+Deposit 3M of USDT;Withdraw 3M, receive 2M in DAI and 1M in USDC.
+As 2M of DAI + 1M of USDC worth much more than 3M of USDT. The attacker will profit and all other users will be losing funds.
+Recommended Mitigation Steps
+Always consider the price differences between tokens.
+BobbyYaxis (yAxis) acknowledged
+GalloDaSballo (judge) commented:
+Fully agree with the finding, assuming price of tokens is the same exposes the Vault and all depositors to risk of Single Sided ExposureThis risk has been exploited multiple times, notably in the Yearn ExploitThe solution for for managing tokens with multiple values while avoiding being rekt is to have an index that ensures your LP  Token maintains it’s peg, curve’s solution is calledvirtual_priceHaving a virtual price would allow to maintain the Vault Architecture, while mitigating exploits that directly use balances
+BobbyYaxis (yAxis) noted:
+We have mitigated by deploying vaults that only accept the Curve LP token itself used in the strategy. There is no longer an array of tokens accepted. E.g Instead of a wBTC vault, we have a renCrv vault. Or instead of 3CRV vault, we have a mimCrv vault. The strategy want token = the vault token.

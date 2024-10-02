@@ -1,0 +1,32 @@
+Type of vulnerability: Access Control
+Cause of vulnerability: Lack of proper checks and constraints on the `setController` function allowing the owner to set an arbitrary address as the controller, which can be malicious.
+Execution process:
+1. The owner calls `setController` with a malicious contract address.
+2. The old controller transfers funds to the new, malicious controller.
+3. The owner calls `utilize` to transfer all the balance in the Vault contract to the malicious controller.
+4. The malicious controller withdraws all the funds.
+Vulnerable code:
+```solidity
+function setController(address _controller) public override onlyOwner {
+    require(_controller != address(0), "ERROR_ZERO_ADDRESS");
+    if (address(controller) != address(0)) {
+        controller.migrate(address(_controller));
+        controller = IController(_controller);
+    } else {
+        controller = IController(_controller);
+    }
+    emit ControllerSet(_controller);
+}
+
+function utilize() external override returns (uint256 _amount) {
+    if (keeper != address(0)) {
+        require(msg.sender == keeper, "ERROR_NOT_KEEPER");
+    }
+    _amount = available(); // balance
+    if (_amount > 0) {
+        IERC20(token).safeTransfer(address(controller), _amount);
+        balance -= _amount;
+        controller.earn(address(token), _amount);
+    }
+}
+```

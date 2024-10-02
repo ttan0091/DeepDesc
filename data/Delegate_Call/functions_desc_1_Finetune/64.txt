@@ -1,0 +1,13 @@
+Type of vulnerability: Reentrancy or Logic Error
+Cause of vulnerability: Incorrect handling of token balances when a sale percent is specified and funds pool amount is less than sale percent.
+Details of vulnerability: When a sale percent is is specified and funds pool amount is less than sale percent, the contract does not check if contributor token balance is more than zero. As a result, the funds pool amount is immediately sent to the contributor without the contract attempting to pay from peg token to contributor.
+Working process of the vulnerability: 
+1. The vulnerability occurs during the withdrawTokensToSender function when it calls another internal function transferInPeg. 
+2. The transferInPeg function calculates the contribution amount based on the numTokensToBuy. 
+3. If contributionAmount is less than sumEthTokensLiquidity and less than salePercent, it transfers contributionAmount from peg token to contract, and then transfers contributionAmount ETH from contract to sender. 
+4. Since salePercent is more than contributionAmount, the contract does not care about the token transferred to it.
+5. So, it calculates to send contributionAmount ETH from contract to sender, and then the withdrawEther function sends ETH to sender regardless of token balance.
+
+Solution to the vulnerability: 
+1. Before calling the transferInPeg, the withdrawTokensToSender function should check if numTokensToBuy > 0.
+2. Inside the transferInPeg, if numTokensToBuy < 0, it should use numTokensToBuy instead of contributionAmount.

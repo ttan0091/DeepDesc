@@ -1,0 +1,38 @@
+[H-01] Any borrower with bad debt can be liquidated multiple times to lock funds in the lending pair
+Submitted by panprog, also found by 0xA5DF and Lambda
+Leftover shares inliquidateCleanare only subtracted from pair totals, but not from user’s borrowed shares. This means that afterliquidateClean, borrower’s shares will be greater than0(leftover shares after liquidations), but the user is still insolvent and can be liquidated again and again (with_sharesToLiquidateset to0). Each subsequent liquidation will write off the bad debt (reduce pair totals by borrower leftover shares/amounts), but doesn’t take anything from liquidator nor borrower (since_sharesToLiquidate == 0).
+This messes up the whole pair accounting, with total asset amounts reducing and total borrow amounts and shares reducing. This will make it impossible for borrowers to repay debt (or be liquidated), because borrow totals will underflow, and lenders amount to withdraw will reduce a lot (they will share non-existant huge bad debt).
+Reducing pair totals scenario:
+Alice borrows1000 FRAX(1000shares) against1.5 ETHcollateral (1 ETH = 1000,Max LTV=75%)ETH drops to500very quickly with liquidators being unable to liquidate Alice due to network congestionAt ETH =500, Alice collateral is worth750against1000 FRAXdebt, making Alice insolvent and in a bad debtLiquidator callsliquidateCleanfor800shares, which cleans up all available collateral of1.5 ETH.At this point Alice has200shares debt with0collateralLiquidator repeatedly callsliquidateCleanwith0shares to liquidate. Each call pair totals are reduced by200shares (and total borrow amount by a corresponding amount).When pair totals reach close to0, the pool is effectively locked. Borrowers can’t repay, lenders can withdraw severly reduced amounts.
+Proof of Concept
+Copy this to src/test/e2e/LiquidationBugTest.sol
+https://gist.github.com/panprog/cbdc1658d63c30c9fe94127a4b4b7e72
+Recommended Mitigation Steps
+After the line
+https://github.com/code-423n4/2022-08-frax/blob/c4189a3a98b38c8c962c5ea72f1a322fbc2ae45f/src/contracts/FraxlendPairCore.sol#L1012
+add
+_sharesToLiquidate += _sharesToAdjust;
+amirnader-ghazvini (Frax) marked as duplicate and commented:
+Duplicate of#112
+gititGoro (judge) commented:
+Setting to original in set.
+DrakeEvans (Frax) confirmed
+
+[H-02]liquidate()doesn’t mark off bad debt, leading to a ‘last lender to withdraw loses’ scenario
+Submitted by 0xA5DF, also found by cccz and Lambda
+When there’s bad debt which wasn’t marked off yet, thetotalAssets.amountis higher than the actual (solvent) amount the pair has, meaning that lenders who redeem their tokens earlier will get more in return, at the expense of lenders who leave later.
+Therefore bad debt should be marked off as soon as possible, the later it’s done the more interest it accumulates and the higher the chances are that some of the lenders will notice and redeem their shares before the bad debt is subtracted from the total assets amount.
+Having the option to liquidate via theliquidate()function (which doesn’t mark off bad debt) can lead to users using that function and leaving bad debt alongside zero collateral or near-zero collateral (giving no motivation for other users to liquidate the rest).
+Marking off the remaining of the bad debt vialiquidateClean()with 0 shares might be possible (not always, some tokensdon’t allow 0 transfers), however there’s no motivation for outside users to do so. And as for the lenders - redeeming their tokens before the bad debt is subtracted from the total amount might be more profitable than staying and marking off the bad debt.
+Impact
+Some lenders might be able to dodge the loss of the bad debt (+ interest), while the last one(s) will have to absorb the lost of the lenders who left too.
+Proof of Concept
+Consider the following scenario:
+A pair has 10 lenders with 1K$ from each one (10K total)Borrower borrowed that 10KThe collateral price went down and now it’s worth only 7KA liquidator notices that and liquidates it vialiquidate()ThetotalAssets.amountis 10K + interest, but the total asset amount is actually less than 7K (subtracting liquidator fees)6 lenders notice that and redeem their shares, getting back their money + interestThe 7th lender to redeem will only be able to get back part of his moneyThe remaining 3 lenders will loose all of their money
+Recommended Mitigation Steps
+Mark off bad debt when remaining collateral reaches zero or near-zero value.
+(if onlyliquidateClean()was available then there would be a motivation to not leave near-zero collateral, but as long as this isn’t the case consider marking off also in case of near-zero collateral left).
+DrakeEvans (Frax) confirmed
+gititGoro (judge) commented:
+Setting to original in set. Severity will be maintained as the wardens couldn’t know that only one liquidate function would be included in the final release.
+

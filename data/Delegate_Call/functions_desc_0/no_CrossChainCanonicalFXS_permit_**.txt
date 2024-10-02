@@ -1,0 +1,30 @@
+This code defines a public function named permit, which is used to approve a transaction on behalf of the token owner using a digital signature instead of the traditional method of calling the approve function directly. This function is typically found in ERC20 token contracts that support the ERC20Permit extension, allowing for gasless token approvals by leveraging EIP712 typed structured data hashing and signing.
+
+Here’s a detailed explanation of how this function works:
+
+1. Function Parameters:
+    owner: The address of the token owner who is granting the approval.
+    spender: The address of the spender who is being granted approval to spend the tokens.
+    value: The amount of tokens that the spender is allowed to spend.
+    deadline: The timestamp after which the permit is no longer valid.
+    v, r, s: Components of the digital signature provided by the owner to authorize this transaction.
+
+2. Deadline Check:
+    The function starts by checking if the current block timestamp (block.timestamp) is less than or equal to the deadline. If the deadline has passed, the function reverts with the error message "ERC20Permit: expired deadline".
+
+3. Structured Data Hashing:
+    The function then constructs a hash of the structured data that needs to be signed. This includes the permit typehash (a constant defined elsewhere in the contract), the owner address, the spender address, the value, a nonce for the owner (_useNonce(owner)), and the deadline. This is done using abi.encode to create the data and keccak256 to hash it.
+
+4. Typed Data Hashing:
+    The hash of the structured data is further processed by _hashTypedDataV4, which applies the EIP712 typed data hashing scheme. This step ensures that the data is hashed in a way that is compliant with EIP712, which enhances security by clearly defining the structure of the data being signed.
+
+5. Signature Recovery:
+    Using the ECDSA.recover function, the contract recovers the address of the signer from the provided signature components (v, r, s) and the hashed message. This step verifies that the signature was indeed created by the owner.
+
+6. Signature Validation:
+    The function checks if the recovered signer address matches the owner address. If they do not match, it indicates an invalid signature, and the function reverts with the error message "ERC20Permit: invalid signature".
+
+7. Approval Execution:
+    If all checks pass, the function calls _approve(owner, spender, value) to approve the spender to spend value amount of tokens on behalf of the owner. This internal function updates the allowance mapping in the ERC20 token contract.
+
+This permit function streamlines the approval process by allowing offchain signatures to be used for onchain approvals, reducing the need for multiple transactions and saving gas fees, especially useful in decentralized applications and protocols that require frequent token approvals.

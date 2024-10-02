@@ -1,0 +1,22 @@
+[H-33]BaseTOFTLeverageModule.sol:leverageDownInternaltries to burn tokens from wrong address
+Submitted bycarrotsmuggler, also found byxuwinnie
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTLeverageModule.sol#L212
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTLeverageModule.sol#L269-L277
+The functionsendForLeverageis used to interact with the USDO token on a different chain. Lets assume the origin of the tx is chain A, and the destination is chain B. The BaseTOFT contract sends a message through the lz endpoints to make a call in the destination chain.
+The flow of control is as follows:
+Chain A : user -call-> BaseTOFT.sol:sendForLeverage-delegateCall-> BaseTOFTLeverageModule.sol:sendForLeverage-call-> lzEndpointA
+Chain B : lzEndpointB -call-> BaseTOFT.sol:_nonblockingLzReceive-delegateCall-> BaseTOFTLeverageModule.sol:leverageDown-delegateCall->leverageDownInternal
+For the last call toleverageDownInternal, themsg.senderis the lzEndpointB. This is because all the calls since then have been delegate calls, and thus msg.sender has not been able to change. We analyze theleverageDownInternalfunction in this context.
+functionleverageDownInternal(uint256amount,IUSDOBase.ILeverageSwapDatamemoryswapData,IUSDOBase.ILeverageExternalContractsDatamemoryexternalData,IUSDOBase.ILeverageLZDatamemorylzData,addressleverageFor)publicpayable{_unwrap(address(this),amount);
+The very first operation is to do an unwrap of the mTapiocaOFT token. This is done by calling_unwrapdefined in thesamecontractas shown.
+function_unwrap(address_toAddress,uint256_amount)private{_burn(msg.sender,_amount);if(erc20==address(0)) {_safeTransferETH(_toAddress,_amount);}else{IERC20(erc20).safeTransfer(_toAddress,_amount);}}
+Here we see the contract is trying to burn tokens from themsg.senderaddress. But the issue is in this context, themsg.senderis the lzEndpoint on chain B who is doing the call, and they dont have any TOFT tokens there. Thus this call will revert.
+The TOFT tokens are actually held within the same contract where the execution is happening. This is because in theleverageDownfunction, we see the contract credit itself with TOFT tokens.
+if(!credited) {_creditTo(_srcChainId,address(this),amount);creditedPackets[_srcChainId][_srcAddress][_nonce] =true;}
+Thus the tokens are actually present inaddress(this)and not inmsg.sender. Thus the burn should be done fromaddress(this)and notmsg.sender. Thus all cross chain calls for this function will fail and revert.
+Since this leads to broken functionality, this is considered a high severity issue.
+Proof of Concept
+Since no test exists for thesendForLeveragefunction, no POC is provided. However the flow of control and detailed explanation is provided above.
+Recommended Mitigation Steps
+Run_burn(address(this),amount)to burn the tokens instead of unwrapping. Then do the eth/erc20 transfer from the contract.
+0xRektora (Tapioca) confirmed via duplicate issue 725

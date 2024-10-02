@@ -1,0 +1,11 @@
+Type of vulnerability: Reentrancy
+Cause of vulnerability: The `HODLWallet` contract uses the `.call.value()` method to transfer ETH, which can be manipulated in a reentrancy attack.
+Working process of the vulnerability: 
+1. An attacker deposits LP tokens in the `HODLWallet`.
+2. The attacker manipulates the price of the staked LP token, causing the `unstake` function to transfer fewer tokens to the `HODLWallet` than expected.
+3. The `withdraw` function then transfers fewer LP tokens (and thereby fewer LP peg tokens) and ETH than it should, by calling the `doWithdraw` function.
+4. The `doWithdraw` function subtracts the `amount` to be transferred (a manipulatively small fraction) from the balance of the `HODLWallet`.
+5. The `doWithdraw` function transfers ETH to the `msg.sender`.
+6. The attack contracts receive the manipulated ETH, correct the token balance and ETH on Uniswap, and then call `burn` on the `HODLWallet` to trade the token balance for ETH on Uniswap.
+
+Vulnerability fix: Change the `.call.value()` method to `address(from).call.value()()` in the `doWithdraw` function to reduce the risk of reentrancy attacks.

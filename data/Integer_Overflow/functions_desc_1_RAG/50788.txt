@@ -1,0 +1,65 @@
+The code provided consists of two main parts: a utility library SafeMath and a smart contract NinjaToken. Below, I will explain each part in detail.
+
+### SafeMath Library
+
+solidity
+library SafeMath {
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        assert(b <= a);
+        return a  b;
+    }
+}
+
+
+This code defines a library named SafeMath which contains a single function sub. Here’s a detailed explanation of how this function works:
+
+ Function Name: sub
+ Parameters: 
+   uint256 a: The first operand.
+   uint256 b: The second operand.
+ Return Value: The function returns a uint256 which is the result of subtracting b from a.
+ Internal and Pure: The function is marked as internal and pure. internal means it can only be called from within the current contract or contracts deriving from it. pure indicates that the function does not read from or modify the state of the blockchain.
+ Assertion: The function uses assert(b <= a) to ensure that b is less than or equal to a. This is a safety check to prevent underflows, which can occur if b is greater than a. If b is greater than a, the function will throw an exception, reverting any state changes made during the call.
+ Operation: The function returns the result of a  b.
+
+### NinjaToken Contract
+
+solidity
+contract NinjaToken {
+    using SafeMath for uint;
+    mapping(address=>string) public commit;
+    mapping(address=>uint) public balances;
+    address public fundingAccount;
+
+    function buy(string _commit) payable {
+        if(!fundingAccount.call.value(msg.value)()) throw;
+        balances[fundingAccount] = balances[fundingAccount].sub(msg.value);
+    }
+}
+
+
+This code defines a contract named NinjaToken. Here’s a detailed explanation of how this contract works:
+
+ Using SafeMath: The contract uses the SafeMath library for all uint operations by declaring using SafeMath for uint;. This means that any uint variable can call the sub function directly.
+ Mappings: 
+   mapping(address=>string) public commit: This mapping associates each address with a string. The public keyword automatically generates a getter function for this mapping.
+   mapping(address=>uint) public balances: This mapping keeps track of the balance of each address.
+ State Variable: 
+   address public fundingAccount: This is the address of the account that receives funds. The public keyword generates a getter function for this variable.
+ Function: 
+   Function Name: buy
+   Parameters: 
+     string _commit: A string parameter that presumably represents some commitment or identifier.
+   Payable: The function is marked as payable, which means it can receive Ether.
+   Execution: 
+     The function first attempts to send the received Ether (msg.value) to the fundingAccount using the call.value() method. If the call fails, the function throws an exception, reverting any state changes.
+     If the transfer is successful, the function then subtracts the sent amount (msg.value) from the fundingAccount's balance using the sub function from the SafeMath library to prevent underflows.
+
+### Potential Vulnerabilities
+
+ Reentrancy: The buy function uses the lowlevel call.value() method, which can be vulnerable to reentrancy attacks. If the fundingAccount is a contract that performs external calls in its fallback function, an attacker could repeatedly call the buy function, draining the contract's funds.
+ Unchecked Call Return Value: The if(!fundingAccount.call.value(msg.value)()) throw; line does not check the return value of the call. If the call fails for any reason, the function will throw an exception, but it might be better to handle the failure more gracefully.
+
+### Conclusion
+
+The SafeMath library provides a safe way to perform subtraction operations to prevent underflows. The NinjaToken contract uses this library to ensure safe balance updates. However, the contract should be reviewed for potential reentrancy vulnerabilities and better handling of lowlevel call return values.

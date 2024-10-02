@@ -1,0 +1,20 @@
+[H-01] Reentrancy issue with thewithdrawmethod of USDC. All tokens could be drained.
+Submitted bySanketKogekar, also found byak1andemerald7017
+https://github.com/code-423n4/2023-07-amphora/blob/daae020331404647c661ab534d20093c875483e1/core/solidity/contracts/core/USDA.sol#L147-L157https://github.com/code-423n4/2023-07-amphora/blob/daae020331404647c661ab534d20093c875483e1/core/solidity/contracts/core/USDA.sol#L114
+Impact
+High: All USDC tokens could be drained from the protocol.
+Proof of Concept
+There is a reentrancy issue with the ‘withdraw’ methods of USDC.
+A user could call either of the external withdraw functions:withdraworwithdrawTo.
+Which further calls_withdraw();which basically burns the user’s token and transfers user the_susdAmount. The exchange is 1 to 1.
+functionwithdraw(uint256_susdAmount)externaloverride{_withdraw(_susdAmount,_msgSender());}
+function_withdraw(uint256_susdAmount,address_target)internalpaysInterestwhenNotPaused{if(reserveAmount==0)revertUSDA_EmptyReserve();if(_susdAmount==0)revertUSDA_ZeroAmount();if(_susdAmount>this.balanceOf(_msgSender()))revertUSDA_InsufficientFunds();// Account for the susd withdrawnreserveAmount-=_susdAmount;sUSD.transfer(_target,_susdAmount);_burn(_msgSender(),_susdAmount);emitWithdraw(_target,_susdAmount);}
+The issue is that the_withdraw()function does not follow the CEI pattern and fails to update the state (burning token in this case) before the token transfer.
+sUSD.transfer(_target,_susdAmount);_burn(_msgSender(),_susdAmount);
+It is possible to re-enter the functionUSDC.withdraw()from the malicious attack contract’s fallback function as soon as it recieves the transfered amount.
+This will again hit the attacker contract’s fallback function (with the withdrawn token amount) and repeat the flow until USDA tokens from contract are completely drained.
+https://github.com/code-423n4/2023-07-amphora/blob/daae020331404647c661ab534d20093c875483e1/core/solidity/contracts/core/USDA.sol#L147-L157
+Recommended Mitigation Steps
+This could be prevented by first burning the user’s tokens or using a Mutex / Re-entrancy guard from OpenZeppelin lib.
+Assessed type
+Reentrancy

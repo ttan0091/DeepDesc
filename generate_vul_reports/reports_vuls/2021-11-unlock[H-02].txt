@@ -1,0 +1,21 @@
+[H-02] Wrong design/implementation of freeTrial allows attacker to steal funds from the protocol
+Submitted by WatchPug
+The current design/implementation offreeTrialallows users to get full refund before thefreeTrialends. Plus, a user can transfer partial of their time to another user usingshareKey.
+This makes it possible for the attacker to steal from the protocol by transferringfreeTrialtime from multiple addresses to one address and adding up toexpirationDurationand call refund to steal from the protocol.
+Proof of Concept
+Given:
+keyPriceis 1 ETH;expirationDurationis 360 days;freeTrialLengthis 31 days.
+The attacker can create two wallet addresses: Alice and Bob.
+Alice callspurchase(), transfer 30 days viashareKey()to Bob, then callscancelAndRefund()to get full refund; Repeat 12 times;Bob callscancelAndRefund()and get 1 ETH.
+Recommendation
+Consider disablingcancelAndRefund()for users who transferred time to another user.
+julien51 (Unlock Protocol) confirmed and commented:
+I think this is valid! The free trial approach is indeed a risk on that front and we need to “warn” lock managers about this more.For lock manager who still want to offer free trials, the best approach would probably be to set a high transfer fee to make sure that free trials cannot be transfered.As a consequence of this, I am not sure this is as critical as indicated by the submitter.
+0xleastwood (judge) commented:
+Nice find!From what I can tell at least, this does seem like a viable attack vector. Can I ask why this should not be treated ashighrisk? @julien51
+julien51 (Unlock Protocol) commented:
+Sorry for the long delay here.
+In short: this is valid, but only an issue for locks which are enabling free trials (no one has done it) and we would make sure our UI shows this as a potential issue.
+In other words: a lock manager would need toexplicitlyenable free trials, despite our warning to put their own funds at risk. For that reason I don’t think this is “High”.
+0xleastwood (judge) commented:
+While this is a valid issue pertaining only to lock managers whoexplicitlyenable free trials, this may still lead to a loss of funds ifcancelAndRefundis called by a user who has transferred their time to another account. I still believe this deserves ahighseverity rating.In my honest opinion, a warning isn’t sufficient to prevent such abuse. I think on-chain enforcement ideal in this situation.

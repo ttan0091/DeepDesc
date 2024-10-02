@@ -1,0 +1,12 @@
+Type of vulnerability: Reentrancy and Reward Distribution Manipulation
+Cause of vulnerability: The contract allows repeated calls to `claim()` for an expired bond, which updates `accRewardsPerShare` cumulatively, leading to an increase in pending rewards for other bonds.
+Execution process: A malicious user creates two bonds with different `expireEpoch`, repeatedly calls `claim()` on the expired bond to inflate the rewards of the other bond, and then claims the inflated rewards.
+Vulnerable code: 
+```solidity
+if(bond.expired) {
+    uint _pendingDelta = (bond.shares * accRewardsPerShare[bond.asset][epoch[bond.asset]] / 1e18 - bondPaid[_id][bond.asset]) - (bond.shares * accRewardsPerShare[bond.asset][bond.expireEpoch-1] / 1e18 - bondPaid[_id][bond.asset]);
+    if(totalShares[bond.asset] > 0) {
+        accRewardsPerShare[bond.asset][epoch[bond.asset]] += _pendingDelta * 1e18 / totalShares[bond.asset];
+    }
+}
+```

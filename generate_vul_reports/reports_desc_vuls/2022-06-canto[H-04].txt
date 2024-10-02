@@ -1,0 +1,13 @@
+Type of vulnerability: Randomness Misuse
+Cause of vulnerability: The function `getBorrowRate` uses a random value derived from the caller's address, which is not deterministic and can be manipulated.
+Execution process: An attacker can call the function with different addresses to receive different borrow rates, potentially exploiting the system by paying much lower or much higher rates than intended.
+Vulnerable code: 
+```solidity
+function getBorrowRate(uint cash, uint borrows, uint reserves) public view override returns (uint) {
+    uint rand = uint(keccak256(abi.encodePacked(msg.sender))) % 100;
+    uint ir = (100 - rand).mul(adjusterCoefficient).add(baseRatePerYear).mul(1e16);
+    uint newRatePerYear = ir >= 0 ? ir : 0;
+    uint newRatePerBlock = newRatePerYear.div(blocksPerYear);
+    return newRatePerBlock;
+}
+```

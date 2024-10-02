@@ -1,0 +1,14 @@
+[H-01] The design ofwibBTCis not fully compatible with the current Curve StableSwap pool
+Submitted by WatchPug, also found by gzeon
+Per the documentation,wibBTCis designed for a Curve StableSwap pool. However, the design ofwibBTCmakes the balances change dynamically and automatically. This is unusual for an ERC20 token, and it’s not fully compatible with the current Curve StableSwap pool.
+Specifically, a Curve StableSwap pool will maintain the balances of itscoinsbased on the amount of tokens added, removed, and exchanged each time. In another word, it can not adopt the dynamic changes of the balances that happened automatically.
+The pool’s actual dynamic balance ofwibBTCwill deviate from the recorded balance in the pool contract as thepricePerShareincreases.
+Furthermore, there is no such way in Curve StableSwap similar to thesync()function of UNI v2, which will force sync the storedreservesto match the balances.
+PoC
+Given:
+The currentpricePerShareis:1;The Curve pool is newly created with 0 liquidity;Alice added100 wibBTCand100 wBTCto the Curve pool; Alice holds 100% of the pool;After 1 month with no activity (no other users, no trading), and thepricePerShareofibBTCincreases to1.2;Alice removes all the liquidity from the Curve pool.
+While it’s expected to receive150 wibBTCand100 wBTC, Alice actually can only receive100 wibBTCand100 wBTC.
+Recommended Mitigation Steps
+Consider creating a revised version of the Curve StableSwap contract that can handle dynamic balances properly.
+dapp-whisperer (BadgerDAO) confirmed:
+We will be creating a custom pool that takes this into account based on the rate_multiplier variable on the MetaPools.Draft implementation

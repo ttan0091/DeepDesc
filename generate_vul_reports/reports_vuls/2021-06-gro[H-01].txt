@@ -1,0 +1,16 @@
+[H-01] implicit underflows
+Submitted by gpersoon, also found by cmichel
+There are a few underflows that are converted via a typecast afterwards to the expected value. If solidity 0.8.x would be used, then the code would revert.
+int256(a-b)where a and b are uint: For example, ifa=1andb=2, then the intermediate result would beuint(-1) == 2**256-1int256(-x)where x is a uint. For example, ifx=1, then the intermediate result would beuint(-1) == 2**256-1
+It’s better not to have underflows by using the appropriate typecasts. This is especially relevant when moving to solidity 0.8.x.
+FromExposure.solL178:
+functionsortVaultsByDelta(..)..for(uint256i=0;i<N_COINS;i++) {// Get difference between vault current assets and vault targetint256delta=int256(unifiedAssets[i] -unifiedTotalAssets.mul(targetPercents[i]).div(PERCENTAGE_DECIMAL_FACTOR));// underflow in intermediate result
+FromPnL.solL112:
+functiondecreaseGTokenLastAmount(boolpwrd,uint256dollarAmount,uint256bonus).....emitLogNewGtokenChange(pwrd,int256(-dollarAmount));// underflow in intermediate result
+FromBuoy3Pool.solL87:
+functionsafetyCheck()externalviewoverridereturns(bool) {..._ratio=abs(int256(_ratio-lastRatio[i]));// underflow in intermediate result
+Recommend replacingint256(a-b)withint256(a)-int256(b), and replacingint256(-x)with-int256(x)
+kristian-gro (Gro) confirmed but disagreed with severity:
+Confirmed and We’ve mitigated this issue in our release version.
+ghoul-sol (Judge) commented:
+Majority of overflow listed above seems low risk with one exception ofsafetyCheck. Underflow is a real risk here.safetyCheckis run every time a deposit is made. Ratios can change and the change does not need to be substantial for it to overflow. For that reason it’s a high risk.

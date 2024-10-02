@@ -1,0 +1,17 @@
+Type of vulnerability: Arithmetic Error
+Cause of vulnerability: Incorrect order of operations in the calculation of the input amount for a swap, leading to an overestimation of the required input tokens.
+Execution process: When the function `_getAmountsIn` is called with `_binStep == 0` and `_token < _tokenPath[i]`, it incorrectly calculates the input amount (`amountsIn[i-1]`) using a flawed formula that results in a higher than necessary token transfer to the pair.
+Vulnerable code: 
+```solidity
+if(_binStep == 0) {
+    (uint256 _reserveIn, uint256 _reserveOut, ) = IJoePair(_pair).getReserves();
+    if(_token > _tokenPath[i]) {
+        (_reserveIn, _reserveOut) = (_reserveOut, _reserveIn);
+    }
+    uint256 amountOut_ = amountsIn[i];
+    // Legacy uniswap way of rounding
+    amountsIn[i-1] = (_reserveIn * amountOut_ * 1_000) / (_reserveOut - amountOut_ * 997) + 1;
+} else {
+    (amountsIn[i-1], ) = getSwapIn(ILBPair(_pair), amountsIn[i], ILBPair(_pair).tokenX() == _token);
+}
+```

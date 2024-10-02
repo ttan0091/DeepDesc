@@ -1,0 +1,41 @@
+[H-01] Spend limit on owner can be bypassed
+Submitted by csanuragjain, also found by cmichel
+https://github.com/code-423n4/2022-02-anchor/blob/main/contracts/anchor-token-contracts/contracts/distributor/src/contract.rs#L140https://github.com/code-423n4/2022-02-anchor/blob/main/contracts/anchor-token-contracts/contracts/community/src/contract.rs#L69
+It seems that the owner is only allowed to spend amount uptil config.spend_limit. However it was observed that thisconfig.spend_limitis never decreased even if owner has spend an amount. This makesconfig.spend_limituseless as owner can simply send 2-multiple transactions each ofconfig.spend_limitwhich will all pass and hence bypassing the spend limit placed on owner.
+Proof of Concept
+Assume spend limit of 100 is placed on ownerOwner simply calls the spend function at either distributor or community contract with amount 100Ideally after this transaction owner should not be allowed to perform any more spend operationSinceconfig.spend_limitremains unchanged, owner can call step 2 multiple times which will spend amount 100 several times bypassing spend limit
+Recommended Mitigation Steps
+After successful spend, theconfig.spend_limitshould be decreased by the amount spend.
+Albert Chon (judge) commented via duplicate issue #34:
+Indeed, this is a serious oversight, unless one expects the whitelisted addresses to not exceed the spend limit (which is not a good assumption to bake in).
+
+[H-02]money-market-contracts/oracle#feed_prices()delayed transaction may disrupt price feeds
+Submitted by WatchPug
+https://github.com/code-423n4/2022-02-anchor/blob/7af353e3234837979a19ddc8093dc9ad3c63ab6b/contracts/money-market-contracts/contracts/oracle/src/contract.rs#L106-L113
+The implementation only takes two attributes:assetandprice. And thelast_updated_timeof the record will always be set to the currentblock.time.
+This makes it possible for the price feeds to be disrupted when the network is congested, or the endpoint is down for a while, or thefeederbot handled the message queue inappropriately, as a result, the transactions with stale prices get accepted as fresh prices.
+Since the price feeds are essential to the protocol, that can result in users’ positions being liquidated wrongfully and case fund loss to users.
+Proof of Concept
+Given:
+feederi connected to an endpoint currently experiencing degraded performance;ETH price is$10,000;Themax_ltvratio of ETH is60%.Alice borrowed5,000 USDCwith1 ETHas collateral;ETH price dropped to$9,000, to avoid liquidation, Alice repaid1,000 USD;The price of ETH dropped to$8,000;feedertries toupdateMainFeedData()with the latest price:$8,000, however, since the network is congested, the transactions were not get packed timely;ETH price rebound to$10,000; Alice borrowed another1,000 USDC;The txs send byfeederat step 3 finally got packed, the protocol now believes the price of ETH has suddenly dropped to$8,000, as a result, Alice’s position got liquidated.
+Recommended Mitigation Steps
+Change to:
+pubfnfeed_prices(deps:DepsMut,env:Env,info:MessageInfo,prices:Vec<(String,Decimal256,u64)>,) ->Result<Response,ContractError> {let mutattributes=vec![attr("action","feed_prices")];letsender_raw=deps.api.addr_canonicalize(info.sender.as_str())?;forpriceinprices{letasset:String=price.0;letmutupdated_time:u64=price.2;letprice:Decimal256=price.1;// Check feeder permissionletfeeder=read_feeder(deps.storage, &asset)?;iffeeder!=sender_raw{returnErr(ContractError::Unauthorized{});}letconfig:Config=read_config(deps.storage)?;ifenv.block.time.seconds() >updated_time{// reject stale priceif env.block.time.seconds() - updated_time > config.valid_period {returnErr(ContractError::InvalidInputs{});}}else{// reject future timestamp, graceFuturePeriod can be set to 3, which means < 3s is allowedif updated_time - env.block.time.seconds() > config.grace_future_period {returnErr(ContractError::InvalidInputs{});}updated_time=env.block.time.seconds();}attributes.push(attr("asset",asset.to_string()));attributes.push(attr("price",price.to_string()));store_price(deps.storage,&asset,&PriceInfo{last_updated_time:updated_time,price,},)?;}Ok(Response::new().add_attributes(attributes))}
+bitn8 (Anchor) disputed and commented:
+We currently have a mean shorting function that pulls multiple price feeds so that if one is stale it gets rejected.
+Alex the Entreprenerd (triage) commented:
+Seems like the warden has shown a specific scenario, contingent on external conditions.However, from the code, there seems to be no “mean shorting function”, at least in the code in scope.
+Albert Chon (judge) commented:
+Agreed with @Alex the Entreprenerd, oracle staleness is still an issue in this version of the code.
+
+[H-03] Missing Access Control forFabricateMIRClaimandFabricateANCClaim
+Submitted by jmak
+https://github.com/code-423n4/2022-02-anchor/blob/7af353e3234837979a19ddc8093dc9ad3c63ab6b/contracts/anchor-bAsset-contracts/contracts/anchor_airdrop_registry/src/contract.rs#L109https://github.com/code-423n4/2022-02-anchor/blob/7af353e3234837979a19ddc8093dc9ad3c63ab6b/contracts/anchor-bAsset-contracts/contracts/anchor_airdrop_registry/src/contract.rs#L71
+FabricateMIRClaimandFabricateANCClaimshould only be issued by the Hub contract (the central hub for all minted bLuna managed by Lido). However,execute_fabricate_anchor_claimandexecute_fabricate_mir_claimdo not restrict the caller, allowing anyone to submit these msgs.
+Recommended Mitigation Steps
+Recommended to add at least simple access control checks in the contract to ensure that these functions can only be called by the Hub and not by others.
+See a below for a potential code snippet.
+// only hub contract can send this message.let config = read_config(deps.storage)?;let sender_raw = deps.api.addr_canonicalize(&info.sender.to_string())?;if sender_raw != config.hub_contract {return Err(StdError::generic_err("unauthorized"));}
+Alex the Entreprenerd (triage) commented:
+The finding is correct in that anyone can call the function.The finding lacks any form of impact as to what would happen.I think these may be test functions also.Not convinced the report makes sense for high severity given the lack of detail.
+

@@ -1,0 +1,21 @@
+[H-09]TricryptoLPStrategy.compoundAmountalways returns 0 because it’s using staticall vs call
+Submitted byGalloDaSballo
+compoundAmountwill always try to sell 0 tokens because thestaticallwill revert since the function changes storage incheckpoint
+This causes thecompoundAmountto always return 0, which means that the Strategy is underpriced at all times allowing to Steal all Rewards via:
+Deposit to own a high % of ownerhsip in the strategy (shares are underpriced)Compound (shares socialize the yield to new total supply, we get the majority of that)Withdraw (lock in immediate profits without contributing to the Yield)
+POC
+This Test is done on the Arbitrum Tricrypto Gauge with Foundry
+1 is the flag value for a revert
+0 is the expected value
+We get 1 when we use staticcall since the call reverts internally
+We get 0 when we use call since the call doesn’t
+The comment in the Gauge Code is meant for usage off-chain, onChain you must accrue (or you could use a Accrue Then Revert Pattern, similar to UniV3 Quoter)
+NOTE: The code for Mainnet is the same, so it will result in the same impacthttps://etherscan.io/address/0xDeFd8FdD20e0f34115C7018CCfb655796F6B2168#code#L375
+Foundry POC
+forge test --match-test test_callWorks --rpc-url https://arb-mainnet.g.alchemy.com/v2/ALCHEMY_KEY
+Which will revert sincecheckpointis a non-view function and staticall reverts if any state is changed
+https://arbiscan.io/address/0x555766f3da968ecbefa690ffd49a2ac02f47aa5f#code#L168
+// SPDX-License Identifier: MITpragmasolidity^0.8.0;import"forge-std/Test.sol";import"forge-std/console2.sol";contractGaugeCallTestisTest{// Arb Tricrypto GaugeaddresslpGauge=0x555766f3da968ecBefa690Ffd49A2Ac02f47aa5f;functionsetUp()public{}functiondoTheCallView()internalreturns(uint256) {(boolsuccess,bytesmemoryresponse) =address(lpGauge).staticcall(abi.encodeWithSignature("claimable_tokens(address)",address(this)));uint256claimable=1;if(success) {claimable=abi.decode(response, (uint256));}returnclaimable;}functiondoTheCallCall()internalreturns(uint256) {(boolsuccess,bytesmemoryresponse) =address(lpGauge).call(abi.encodeWithSignature("claimable_tokens(address)",address(this)));uint256claimable=1;if(success) {claimable=abi.decode(response, (uint256));}returnclaimable;}functiontest_callWorks()public{uint256claimableView=doTheCallView();assertEq(claimableView,1);// Return 1 which is our flag for failureuint256claimableNonView=doTheCallCall();assertEq(claimableNonView,0);// Return 0 which means we read the proper value}}
+Mitigation Step
+You should use a non-view function like incompound
+cryptotechmaker (Tapioca) confirmed

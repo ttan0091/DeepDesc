@@ -1,0 +1,15 @@
+Type of exploit: Denial of Service (DoS) due to insufficient gas stipend
+
+Cause of exploit: The `payable` function `pullTokenAmountAndIsWithdrawalOrderVNew` in `TopUp0PegDepositsViaTokenPull_ERC20v3` transfers ETH to the target addr via `msg.sender.call.value` which initially provides a 2300 gas stipend. This gas limit is insufficient to cover the `25_000` gas needed for `withdrawPayments` in `PullPaymentCapable`.
+
+Working process of the exploit:
+1. A malicious user with a small Peg balance calls `topUpWithDeposit` to set `payments[msg.sender]` to a small nonzero value but fails topUp.
+2. The same user or another user calls `withdrawPayments` for the victim, causing them to receive a 2300 gas stipend for every subcall to a modified `payable` function.
+3. If `withdrawPayments` subcall fails (taking the whole 2300 stipend), `pullTokenAmountAndIsWithdrawalOrderVNew` silently treats this as success (no `throw`/`revert`) but transfers some ETH to offset the gas shortfall.
+4. The victim's `payments[msg.sender]` being small relative to their gas needs, if their balance `—= payments[msg.sender]` in `withdrawPayments` (i.e., all tokens), calling `withdrawPayments` would fail and stop at the first victim, denying others service.
+
+Mitigation of the exploit:
+1. Make `withdrawPayments` external and implement ERC20's `payable` function.
+2. Implement a payout priority queue for `pullTokenAmountAndIsWithdrawalOrderVNew`.
+3. Withdraw a portion of each user's balance on `payExtensionFee`, distributing the fee proportionally.
+4. Initiate withdrawal manually (using a separate address or multi-signature) and send the whole balance to multi-signature address.

@@ -1,0 +1,22 @@
+Type of vulnerability: Randomness Manipulation
+Cause of vulnerability: Lack of sufficient balance check for the subscription ID at request-time, allowing the draw organizer to manipulate the draw outcome by controlling the timing of funding the subscription ID.
+Execution process: The draw organizer initiates a draw and waits until the redraw cooldown period passes. They then fund the subscription ID, which allows the Chainlink node to send a transaction with the random response. If the organizer does not like the response, they can front-run the Chainlink transaction with a `redraw()` call, creating a new random request and discarding the old one.
+Vulnerable code: 
+```solidity
+function fulfillRandomWords(uint256 _requestId, uint256[] memory _randomWords) internal override {
+    // Validate request ID
+    if (_requestId != request.currentChainlinkRequestId) {
+        revert REQUEST_DOES_NOT_MATCH_CURRENT_ID();
+    }
+    ...
+}
+
+// Redraw swaps currentChainlinkRequestId
+request.currentChainlinkRequestId = coordinator.requestRandomWords({
+    keyHash: settings.keyHash,
+    subId: settings.subscriptionId,
+    minimumRequestConfirmations: minimumRequestConfirmations,
+    callbackGasLimit: callbackGasLimit,
+    numWords: wordsRequested
+});
+```

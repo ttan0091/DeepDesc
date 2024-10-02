@@ -1,0 +1,24 @@
+Type of vulnerability: Token Confusion
+Cause of vulnerability: The contract allows the deposit and reward tokens to be the same token, and the `recoverTokens` function does not account for this when calculating the excess tokens to be recovered, leading to double recovery of the same tokens.
+Execution process: The stream creator calls `recoverTokens` with the deposit token as the token parameter. The function incorrectly calculates the excess tokens by not subtracting the reward token amount from the total balance, leading to the transfer of both deposit and reward tokens to the creator.
+Vulnerable code:
+```solidity
+function recoverTokens(address token, address recipient) public lock {
+    require(msg.sender == streamCreator, "!creator");
+    if (token == depositToken) {
+        require(block.timestamp > endDepositLock, "time");
+        uint256 excess = ERC20(token).balanceOf(address(this)) - (depositTokenAmount - redeemedDepositTokens);
+        ERC20(token).safeTransfer(recipient, excess);
+        emit RecoveredTokens(token, recipient, excess);
+        return;
+    }
+    if (token == rewardToken) {
+        require(block.timestamp > endRewardLock, "time");
+        uint256 excess = ERC20(token).balanceOf(address(this)) - (rewardTokenAmount + rewardTokenFeeAmount);
+        ERC20(token).safeTransfer(recipient, excess);
+        emit RecoveredTokens(token, recipient, excess);
+        return;
+    }
+    // ...
+}
+```

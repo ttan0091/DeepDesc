@@ -1,0 +1,12 @@
+Type of vulnerability: Precision Error
+
+Cause of vulnerability: The vulnerability arises from the improper handling of time calculations, specifically in the determination of the number of months elapsed (`nbMonthEllapsed`). The division operation truncates the fractional part, leading to an underestimation of the actual time passed.
+
+Execution process: When the function `_updateDropPerSecond()` is called, it calculates the number of months elapsed since the last update. If the current time is just under two months from the last update (i.e., `lastDropUpdate + (2*MONTH-1)`), the calculation `(block.timestamp - lastDropUpdate) / MONTH` rounds down to 1, indicating only one month has passed. This results in the `DropPerSecond` being decreased by only one month's worth of decrease (`dropDecreasePerMonth`), instead of the actual nearly two months that have passed. This discrepancy accumulates over time, leading to a significantly higher emission rate than intended by the end of the `dropDecreaseDuration`.
+
+Vulnerable code: 
+```solidity
+uint256 nbMonthEllapsed = (block.timestamp - lastDropUpdate) / MONTH;
+uint256 dropPerSecondDecrease = dropDecreasePerMonth * nbMonthEllapsed;
+```
+This code snippet is responsible for the miscalculation of the number of months elapsed and the subsequent incorrect adjustment of the `DropPerSecond`.

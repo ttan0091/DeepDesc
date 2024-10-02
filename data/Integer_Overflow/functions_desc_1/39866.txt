@@ -1,0 +1,20 @@
+This code defines a smart contract named NinjaToken, which includes several functionalities related to token management and purchasing. Here’s a detailed explanation of how this contract works:
+
+1. State Variables:
+    mapping(address => string) public commit;: This mapping associates each address with a string, which could represent some form of commitment or identifier.
+    mapping(address => uint) public balances;: This mapping keeps track of the token balances of each address.
+    address public fundingAccount;: This variable stores the address of the funding account, which is likely the account that receives the funds when tokens are bought.
+
+2. Function buy(string _commit) payable:
+    This function allows users to buy tokens by sending Ether to the contract. It takes a single parameter _commit, which is a string that represents the user's commitment.
+    The function is marked as payable, meaning it can receive Ether.
+    Inside the function, the following steps occur:
+      if(!fundingAccount.call.value(msg.value)()) throw;: This line sends the Ether received (msg.value) to the fundingAccount using the call method. The call method is a lowlevel function that sends Ether and can also execute code at the recipient address. If the call fails, the function throws an exception, which reverts all state changes made so far in the transaction.
+      balances[fundingAccount] = msg.value;: This line decreases the balance of the fundingAccount by the amount of Ether received (msg.value). This implies that the fundingAccount initially had a balance that was at least equal to msg.value.
+
+Potential Issues and Considerations:
+ Reentrancy Attack: The use of call.value can be risky as it can be exploited by malicious contracts to perform reentrancy attacks. A safer approach would be to use transfer or send methods, or to follow the ChecksEffectsInteractions pattern to prevent reentrancy.
+ Balance Update: The balance update (balances[fundingAccount] = msg.value;) should ideally occur before the Ether transfer to adhere to the ChecksEffectsInteractions pattern, which helps in preventing reentrancy attacks.
+ Funding Account Initialization: The contract does not show how fundingAccount is initialized. It is crucial to ensure that fundingAccount is set to a valid address before any token buying transactions occur.
+
+In summary, the NinjaToken contract allows users to buy tokens by sending Ether to the contract, which then forwards the Ether to the fundingAccount. The contract maintains balances of addresses and associates each address with a commitment string. However, the contract should be reviewed and potentially refactored to mitigate security risks, particularly around the handling of Ether transfers.
