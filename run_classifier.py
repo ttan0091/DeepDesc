@@ -1,4 +1,4 @@
-# 从 utils 文件夹中的generate_description_from_gpt_RAG.py文件中导入GenerateDescriptionFromLLMsRAG类，然后创建一个processor对象，调用process_all_files方法。
+# Import GenerateDescriptionFromLLMsRAG class from generate_description_from_gpt_RAG.py file in utils folder, then create a processor object and call process_all_files method.
 from utils.generate_description_from_gpt_RAG import GenerateDescriptionFromLLMsRAG
 from utils.source_embedding import BertEmbeddingGenerator
 
@@ -9,7 +9,7 @@ from classifier_code_desc import do_train_and_evaluate_MLP
 from data.delete_star import run_remove_star
 def run_classifier(vul_type):
 
-    # 从 LLMs 生成函数描述
+    # Generate function descriptions from LLMs
     # processor1 = GenerateDescriptionFromLLMs('api_key_deepseek.txt', 'sourcecode_functions_1', 'functions_desc_1', 'question_template.md',vul_type)
     # processor1.process_all_files()
     # processor0 = GenerateDescriptionFromLLMs('api_key_deepseek.txt', 'sourcecode_functions_0', 'functions_desc_0', 'question_template.md',vul_type)
@@ -27,7 +27,7 @@ def run_classifier(vul_type):
     
     # run_remove_star(vul_type)
     
-    # 根据函数描述生成嵌入
+    # Generate embeddings based on function descriptions
     # embedding_generator = BertEmbeddingGenerator()
     # embedding_generator.generate_embeddings('functions_desc_1', 'embeddings_desc_1.csv', 1,vul_type)
     # embedding_generator.generate_embeddings('functions_desc_0', 'embeddings_desc_0.csv', 0,vul_type)
